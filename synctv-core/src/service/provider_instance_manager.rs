@@ -11,78 +11,27 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 
-/// Connected Provider Instance
-///
-/// Represents a provider instance with an active connection.
-/// - Local instance: `channel` is None
-/// - Remote instance: `channel` contains active gRPC Channel
-pub struct ConnectedProviderInstance {
-    pub config: ProviderInstance,
-    pub channel: Option<Channel>,
-}
-
-impl ConnectedProviderInstance {
-    /// Check if this is a local instance
-    pub fn is_local(&self) -> bool {
-        self.channel.is_none()
-    }
-
-    /// Check if this is a remote instance
-    pub fn is_remote(&self) -> bool {
-        self.channel.is_some()
-    }
-}
-
 /// Provider Instance Manager
 ///
-/// Global singleton that manages provider instances with automatic fallback.
+/// Manages remote provider instances (gRPC connections).
+/// When no remote instance is found, providers fallback to singleton local clients.
 ///
 /// Architecture:
-/// - `local_instance`: Always-available local implementation (fallback)
-/// - `instances`: HashMap of remote instances (indexed by name)
-/// - `get(name)`: Returns remote if found, otherwise returns local (guaranteed to always return)
+/// - `instances`: HashMap of remote gRPC channels (indexed by name)
+/// - `get(name)`: Returns Some(channel) if remote instance found, None otherwise
 pub struct ProviderInstanceManager {
-    /// Remote instances (indexed by name)
-    instances: Arc<RwLock<HashMap<String, Arc<ConnectedProviderInstance>>>>,
-
-    /// Local instance (fallback, always available)
-    local_instance: Arc<ConnectedProviderInstance>,
+    /// Remote instances (indexed by name → gRPC Channel)
+    instances: Arc<RwLock<HashMap<String, Channel>>>,
 
     /// Repository for database operations
     repository: Arc<ProviderInstanceRepository>,
 }
 
 impl ProviderInstanceManager {
-    /// Create a new ProviderInstanceManager with local instance fallback
+    /// Create a new ProviderInstanceManager
     pub fn new(repository: Arc<ProviderInstanceRepository>) -> Self {
-        // Create local instance (no gRPC connection needed)
-        let local_instance = Arc::new(ConnectedProviderInstance {
-            config: ProviderInstance {
-                name: "local".to_string(),
-                endpoint: "local://".to_string(),
-                comment: Some("Local in-process implementation".to_string()),
-                jwt_secret: None,
-                custom_ca: None,
-                timeout: "10s".to_string(),
-                tls: false,
-                insecure_tls: false,
-                providers: vec![
-                    "bilibili".to_string(),
-                    "alist".to_string(),
-                    "emby".to_string(),
-                    "rtmp".to_string(),
-                    "direct_url".to_string(),
-                ],
-                enabled: true,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            },
-            channel: None, // Local instance has no gRPC channel
-        });
-
         Self {
             instances: Arc::new(RwLock::new(HashMap::new())),
-            local_instance,
             repository,
         }
     }
@@ -92,7 +41,7 @@ impl ProviderInstanceManager {
     /// Call this at application startup to establish gRPC connections
     /// to all configured remote provider instances.
     pub async fn init(&self) -> anyhow::Result<()> {
-        tracing::info!("Initializing provider instance manager with local instance");
+        tracing::info!("Initializing provider instance manager");
 
         // Load all enabled instances from database
         let configs = self.repository.get_all_enabled().await?;
@@ -102,9 +51,9 @@ impl ProviderInstanceManager {
         let mut error_count = 0;
 
         for config in configs {
-            match Self::create_connected_instance(config.clone()).await {
-                Ok(instance) => {
-                    instances.insert(config.name.clone(), Arc::new(instance));
+            match Self::create_grpc_channel(&config).await {
+                Ok(channel) => {
+                    instances.insert(config.name.clone(), channel);
                     tracing::info!("Loaded remote provider instance: {}", config.name);
                     success_count += 1;
                 }
@@ -128,12 +77,12 @@ impl ProviderInstanceManager {
         Ok(())
     }
 
-    /// Create a connected provider instance with gRPC channel
+    /// Create a gRPC channel for the given provider instance
     ///
     /// Establishes gRPC connection with configured TLS settings, timeout, and middleware.
-    async fn create_connected_instance(
-        config: ProviderInstance,
-    ) -> anyhow::Result<ConnectedProviderInstance> {
+    async fn create_grpc_channel(
+        config: &ProviderInstance,
+    ) -> anyhow::Result<Channel> {
         // Parse timeout
         let timeout = config
             .parse_timeout()
@@ -181,70 +130,21 @@ impl ProviderInstanceManager {
             config.tls
         );
 
-        Ok(ConnectedProviderInstance {
-            config,
-            channel: Some(channel),
-        })
+        Ok(channel)
     }
 
-    /// Get a provider instance by name with automatic fallback
-    ///
-    /// **Guaranteed to always return an instance:**
-    /// - If remote instance with `name` exists: returns remote instance
-    /// - Otherwise: returns local instance (fallback)
-    ///
-    /// This ensures providers can always operate without needing to handle None.
-    pub async fn get(&self, name: &str) -> Arc<ConnectedProviderInstance> {
-        // Try to get remote instance
-        if let Some(instance) = self.instances.read().await.get(name).cloned() {
-            return instance;
-        }
-
-        // Fallback to local instance (always available)
-        tracing::debug!(
-            "Provider instance '{}' not found, using local instance",
-            name
-        );
-        self.local_instance.clone()
-    }
-
-    /// Try to get a remote instance by name (no automatic fallback)
+    /// Get a remote provider instance channel by name
     ///
     /// Returns:
-    /// - `Some(instance)` if remote instance exists
-    /// - `None` if not found
-    ///
-    /// Use this when you need to explicitly check if a remote instance exists.
-    /// For normal operations, prefer `get()` which guarantees a return value.
-    pub async fn try_get(&self, name: &str) -> Option<Arc<ConnectedProviderInstance>> {
+    /// - `Some(channel)` if remote instance exists
+    /// - `None` if not found (caller should fallback to singleton local client)
+    pub async fn get(&self, name: &str) -> Option<Channel> {
         self.instances.read().await.get(name).cloned()
     }
 
-    /// Get the local instance
-    ///
-    /// Returns the always-available local (in-process) provider implementation.
-    pub fn get_local(&self) -> Arc<ConnectedProviderInstance> {
-        self.local_instance.clone()
-    }
-
-    /// List all remote instances
-    pub async fn list(&self) -> Vec<Arc<ConnectedProviderInstance>> {
-        self.instances.read().await.values().cloned().collect()
-    }
-
-    /// Find remote instances that support a specific provider type
-    ///
-    /// Returns all enabled remote instances that have `provider` in their supported list.
-    pub async fn find_by_provider(&self, provider: &str) -> Vec<Arc<ConnectedProviderInstance>> {
-        self.instances
-            .read()
-            .await
-            .values()
-            .filter(|instance| {
-                instance.config.enabled && instance.config.supports_provider(provider)
-            })
-            .cloned()
-            .collect()
+    /// List all remote instance names
+    pub async fn list(&self) -> Vec<String> {
+        self.instances.read().await.keys().cloned().collect()
     }
 
     /// Add a new provider instance
@@ -253,18 +153,13 @@ impl ProviderInstanceManager {
     /// 2. Saves to database
     /// 3. Adds to in-memory registry
     pub async fn add(&self, config: ProviderInstance) -> anyhow::Result<()> {
-        // Validate name is not "local" (reserved)
-        if config.name == "local" {
-            anyhow::bail!("Instance name 'local' is reserved");
-        }
-
         // Check if instance already exists
         if self.instances.read().await.contains_key(&config.name) {
             anyhow::bail!("Instance '{}' already exists", config.name);
         }
 
         // Create gRPC connection
-        let instance = Self::create_connected_instance(config.clone()).await?;
+        let channel = Self::create_grpc_channel(&config).await?;
 
         // Save to database
         self.repository.create(&config).await?;
@@ -273,7 +168,7 @@ impl ProviderInstanceManager {
         self.instances
             .write()
             .await
-            .insert(config.name.clone(), Arc::new(instance));
+            .insert(config.name.clone(), channel);
 
         tracing::info!("Added provider instance: {}", config.name);
         Ok(())
@@ -283,24 +178,19 @@ impl ProviderInstanceManager {
     ///
     /// 1. Creates new gRPC connection
     /// 2. Updates database
-    /// 3. Replaces in-memory instance (old connection closed automatically)
+    /// 3. Replaces in-memory channel (old connection closed automatically)
     pub async fn update(&self, config: ProviderInstance) -> anyhow::Result<()> {
-        // Cannot update local instance
-        if config.name == "local" {
-            anyhow::bail!("Cannot update reserved 'local' instance");
-        }
-
         // Create new gRPC connection
-        let instance = Self::create_connected_instance(config.clone()).await?;
+        let channel = Self::create_grpc_channel(&config).await?;
 
         // Update database
         self.repository.update(&config).await?;
 
-        // Replace in-memory instance (old connection auto-closed via Arc drop)
+        // Replace in-memory channel (old connection auto-closed)
         self.instances
             .write()
             .await
-            .insert(config.name.clone(), Arc::new(instance));
+            .insert(config.name.clone(), channel);
 
         tracing::info!("Updated provider instance: {}", config.name);
         Ok(())
@@ -311,15 +201,10 @@ impl ProviderInstanceManager {
     /// 1. Removes from database
     /// 2. Removes from in-memory registry (connection closed automatically)
     pub async fn delete(&self, name: &str) -> anyhow::Result<()> {
-        // Cannot delete local instance
-        if name == "local" {
-            anyhow::bail!("Cannot delete reserved 'local' instance");
-        }
-
         // Remove from database
         self.repository.delete(name).await?;
 
-        // Remove from memory (connection auto-closed via Arc drop)
+        // Remove from memory (connection auto-closed)
         self.instances.write().await.remove(name);
 
         tracing::info!("Deleted provider instance: {}", name);
@@ -341,11 +226,11 @@ impl ProviderInstanceManager {
             .ok_or_else(|| anyhow::anyhow!("Instance '{}' not found", name))?;
 
         // Create connection and add to registry
-        let instance = Self::create_connected_instance(config.clone()).await?;
+        let channel = Self::create_grpc_channel(&config).await?;
         self.instances
             .write()
             .await
-            .insert(config.name.clone(), Arc::new(instance));
+            .insert(config.name.clone(), channel);
 
         tracing::info!("Enabled provider instance: {}", name);
         Ok(())
@@ -372,21 +257,12 @@ impl ProviderInstanceManager {
         let instances = self.instances.read().await;
         let mut results = HashMap::new();
 
-        for (name, instance) in instances.iter() {
-            // Check if gRPC channel is ready
-            let is_healthy = if instance.channel.is_some() {
-                // For now, assume healthy if channel exists
-                // TODO: Implement actual health check RPC
-                true
-            } else {
-                false
-            };
-
+        for (name, _channel) in instances.iter() {
+            // For now, assume healthy if channel exists
+            // TODO: Implement actual health check RPC
+            let is_healthy = true;
             results.insert(name.clone(), is_healthy);
         }
-
-        // Local instance is always healthy
-        results.insert("local".to_string(), true);
 
         results
     }

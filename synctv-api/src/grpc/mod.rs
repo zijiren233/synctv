@@ -7,22 +7,31 @@ pub mod proto {
         include!("proto/synctv.client.rs");
     }
 
+    pub mod admin {
+        include!("proto/synctv.admin.rs");
+    }
+
     pub mod cluster {
         include!("proto/synctv.cluster.rs");
     }
 }
 
 pub mod client_service;
+pub mod admin_service;
 pub mod interceptors;
+pub mod provider_registration;
 
 pub use client_service::ClientServiceImpl;
+pub use admin_service::AdminServiceImpl;
+pub use provider_registration::register_provider_services;
 // pub use interceptors::{AuthInterceptor, LoggingInterceptor};
 
 use proto::client::client_service_server::ClientServiceServer;
+use proto::admin::admin_service_server::AdminServiceServer;
 use tonic::transport::Server;
 use tonic_reflection::server::Builder as ReflectionBuilder;
 
-use synctv_core::service::{UserService, RoomService, RateLimiter, RateLimitConfig, ContentFilter};
+use synctv_core::service::{UserService, RoomService, RateLimiter, RateLimitConfig, ContentFilter, ProvidersManager};
 use synctv_core::Config;
 use synctv_cluster::sync::{RoomMessageHub, PublishRequest, ConnectionManager};
 use std::sync::Arc;
@@ -38,21 +47,30 @@ pub async fn serve(
     rate_limit_config: RateLimitConfig,
     content_filter: ContentFilter,
     connection_manager: ConnectionManager,
+    providers_manager: Option<Arc<ProvidersManager>>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
 
     tracing::info!("Starting gRPC server on {}", addr);
 
-    // Create service instance
+    // Create service instances
+    let user_service_clone = Arc::try_unwrap(user_service.clone()).unwrap_or_else(|arc| (*arc).clone());
+    let room_service_clone = Arc::try_unwrap(room_service.clone()).unwrap_or_else(|arc| (*arc).clone());
+
     let client_service = ClientServiceImpl::new(
-        Arc::try_unwrap(user_service).unwrap_or_else(|arc| (*arc).clone()),
-        Arc::try_unwrap(room_service).unwrap_or_else(|arc| (*arc).clone()),
+        user_service_clone,
+        room_service_clone,
         (*message_hub).clone(),
         redis_publish_tx,
         rate_limiter,
         rate_limit_config,
         content_filter,
         connection_manager,
+    );
+
+    let admin_service = AdminServiceImpl::new(
+        Arc::try_unwrap(user_service).unwrap_or_else(|arc| (*arc).clone()),
+        Arc::try_unwrap(room_service).unwrap_or_else(|arc| (*arc).clone()),
     );
 
     // Create server builder
@@ -75,10 +93,23 @@ pub async fn serve(
 
     // Build router
     let mut router = server_builder
-        .add_service(ClientServiceServer::new(client_service));
+        .add_service(ClientServiceServer::new(client_service))
+        .add_service(AdminServiceServer::new(admin_service));
 
     if let Some(reflection) = reflection_service {
         router = router.add_service(reflection);
+    }
+
+    // Register provider gRPC services (Bilibili, Alist, Emby)
+    if let Some(providers_manager) = providers_manager {
+        let providers = providers_manager.get_providers_needing_registration().await;
+        if !providers.is_empty() {
+            tracing::info!(
+                "Registering {} provider gRPC service(s)",
+                providers.len()
+            );
+            router = register_provider_services(router, providers).await?;
+        }
     }
 
     // Start server

@@ -12,15 +12,11 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 /// Direct URL MediaProvider
-pub struct DirectUrlProvider {
-    instance_id: String,
-}
+pub struct DirectUrlProvider {}
 
 impl DirectUrlProvider {
-    pub fn new(instance_id: impl Into<String>) -> Self {
-        Self {
-            instance_id: instance_id.into(),
-        }
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Detect format from URL
@@ -46,7 +42,7 @@ impl DirectUrlProvider {
 
 impl Default for DirectUrlProvider {
     fn default() -> Self {
-        Self::new("direct_url_default")
+        Self::new()
     }
 }
 
@@ -73,10 +69,6 @@ impl TryFrom<&Value> for DirectUrlSourceConfig {
 impl MediaProvider for DirectUrlProvider {
     fn name(&self) -> &'static str {
         "direct_url"
-    }
-
-    fn instance_id(&self) -> &str {
-        &self.instance_id
     }
 
     fn capabilities(&self) -> ProviderCapabilities {

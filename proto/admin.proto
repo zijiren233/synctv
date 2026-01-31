@@ -1,0 +1,443 @@
+syntax = "proto3";
+
+package synctv.admin;
+
+// Admin API for SyncTV - Requires admin or root permissions
+service AdminService {
+    // =========================
+    // System Settings Management
+    // =========================
+    rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse);
+    rpc GetSettingsGroup(GetSettingsGroupRequest) returns (GetSettingsGroupResponse);
+    rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse);
+    rpc SendTestEmail(SendTestEmailRequest) returns (SendTestEmailResponse);
+
+    // =========================
+    // Provider Backend Management
+    // =========================
+    rpc ListProviderBackends(ListProviderBackendsRequest) returns (ListProviderBackendsResponse);
+    rpc AddProviderBackend(AddProviderBackendRequest) returns (AddProviderBackendResponse);
+    rpc UpdateProviderBackend(UpdateProviderBackendRequest) returns (UpdateProviderBackendResponse);
+    rpc DeleteProviderBackend(DeleteProviderBackendRequest) returns (DeleteProviderBackendResponse);
+    rpc ReconnectProviderBackend(ReconnectProviderBackendRequest) returns (ReconnectProviderBackendResponse);
+    rpc EnableProviderBackend(EnableProviderBackendRequest) returns (EnableProviderBackendResponse);
+    rpc DisableProviderBackend(DisableProviderBackendRequest) returns (DisableProviderBackendResponse);
+
+    // =========================
+    // User Management
+    // =========================
+    rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+    rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+    rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+    rpc GetUser(GetUserRequest) returns (GetUserResponse);
+    rpc UpdateUserPassword(UpdateUserPasswordRequest) returns (UpdateUserPasswordResponse);
+    rpc UpdateUserUsername(UpdateUserUsernameRequest) returns (UpdateUserUsernameResponse);
+    rpc UpdateUserRole(UpdateUserRoleRequest) returns (UpdateUserRoleResponse);
+    rpc BanUser(BanUserRequest) returns (BanUserResponse);
+    rpc UnbanUser(UnbanUserRequest) returns (UnbanUserResponse);
+    rpc GetUserRooms(GetUserRoomsRequest) returns (GetUserRoomsResponse);
+    rpc ApproveUser(ApproveUserRequest) returns (ApproveUserResponse);
+
+    // =========================
+    // Room Management
+    // =========================
+    rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+    rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
+    rpc UpdateRoomPassword(UpdateRoomPasswordRequest) returns (UpdateRoomPasswordResponse);
+    rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
+    rpc BanRoom(BanRoomRequest) returns (BanRoomResponse);
+    rpc UnbanRoom(UnbanRoomRequest) returns (UnbanRoomResponse);
+    rpc ApproveRoom(ApproveRoomRequest) returns (ApproveRoomResponse);
+    rpc GetRoomMembers(GetRoomMembersRequest) returns (GetRoomMembersResponse);
+
+    // =========================
+    // Admin Management (Root Only)
+    // =========================
+    rpc AddAdmin(AddAdminRequest) returns (AddAdminResponse);
+    rpc RemoveAdmin(RemoveAdminRequest) returns (RemoveAdminResponse);
+    rpc ListAdmins(ListAdminsRequest) returns (ListAdminsResponse);
+
+    // =========================
+    // System Statistics
+    // =========================
+    rpc GetSystemStats(GetSystemStatsRequest) returns (GetSystemStatsResponse);
+}
+
+// =========================
+// Common Types
+// =========================
+
+message AdminUser {
+    string id = 1;
+    string username = 2;
+    string email = 3;
+    int64 permissions = 4;
+    string role = 5; // guest, user, admin, root
+    string status = 6; // active, banned, pending
+    int64 created_at = 7;
+    int64 updated_at = 8;
+}
+
+message AdminRoom {
+    string id = 1;
+    string name = 2;
+    string creator_id = 3;
+    string creator_username = 4;
+    string status = 5; // active, closed, banned, pending
+    bytes settings = 6;
+    int32 member_count = 7;
+    int64 created_at = 8;
+    int64 updated_at = 9;
+}
+
+message ProviderBackend {
+    string id = 1;
+    string name = 2; // User-defined name
+    string provider_type = 3; // bilibili, alist, emby
+    string endpoint = 4; // Base URL or connection string
+    bool enabled = 5;
+    bytes config = 6; // JSON config (credentials, etc.)
+    string status = 7; // connected, disconnected, error
+    int64 created_at = 8;
+    int64 updated_at = 9;
+}
+
+message SettingsGroup {
+    string name = 1;
+    bytes settings = 2; // JSON settings
+}
+
+// =========================
+// Settings Management
+// =========================
+
+message GetSettingsRequest {}
+
+message GetSettingsResponse {
+    repeated SettingsGroup groups = 1;
+}
+
+message GetSettingsGroupRequest {
+    string group = 1; // e.g., "server", "email", "oauth"
+}
+
+message GetSettingsGroupResponse {
+    SettingsGroup group = 1;
+}
+
+message UpdateSettingsRequest {
+    string group = 1;
+    bytes settings = 2; // JSON settings
+}
+
+message UpdateSettingsResponse {
+    SettingsGroup group = 1;
+}
+
+message SendTestEmailRequest {
+    string to = 1;
+}
+
+message SendTestEmailResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// =========================
+// Provider Backend Management
+// =========================
+
+message ListProviderBackendsRequest {
+    string provider_type = 1; // Optional filter
+}
+
+message ListProviderBackendsResponse {
+    repeated ProviderBackend backends = 1;
+}
+
+message AddProviderBackendRequest {
+    string name = 1;
+    string provider_type = 2; // bilibili, alist, emby
+    string endpoint = 3;
+    bytes config = 4; // JSON config
+}
+
+message AddProviderBackendResponse {
+    ProviderBackend backend = 1;
+}
+
+message UpdateProviderBackendRequest {
+    string id = 1;
+    string name = 2; // Optional
+    string endpoint = 3; // Optional
+    bytes config = 4; // Optional JSON config
+}
+
+message UpdateProviderBackendResponse {
+    ProviderBackend backend = 1;
+}
+
+message DeleteProviderBackendRequest {
+    string id = 1;
+}
+
+message DeleteProviderBackendResponse {
+    bool success = 1;
+}
+
+message ReconnectProviderBackendRequest {
+    string id = 1;
+}
+
+message ReconnectProviderBackendResponse {
+    ProviderBackend backend = 1;
+}
+
+message EnableProviderBackendRequest {
+    string id = 1;
+}
+
+message EnableProviderBackendResponse {
+    ProviderBackend backend = 1;
+}
+
+message DisableProviderBackendRequest {
+    string id = 1;
+}
+
+message DisableProviderBackendResponse {
+    ProviderBackend backend = 1;
+}
+
+// =========================
+// User Management
+// =========================
+
+message CreateUserRequest {
+    string username = 1;
+    string password = 2;
+    string email = 3;
+    string role = 4; // user, admin (default: user)
+}
+
+message CreateUserResponse {
+    AdminUser user = 1;
+}
+
+message DeleteUserRequest {
+    string user_id = 1;
+}
+
+message DeleteUserResponse {
+    bool success = 1;
+}
+
+message ListUsersRequest {
+    int32 page = 1;
+    int32 page_size = 2;
+    string status = 3; // Optional filter: active, banned, pending
+    string role = 4; // Optional filter: guest, user, admin, root
+    string search = 5; // Search by username or email
+}
+
+message ListUsersResponse {
+    repeated AdminUser users = 1;
+    int32 total = 2;
+}
+
+message GetUserRequest {
+    string user_id = 1;
+}
+
+message GetUserResponse {
+    AdminUser user = 1;
+}
+
+message UpdateUserPasswordRequest {
+    string user_id = 1;
+    string new_password = 2;
+}
+
+message UpdateUserPasswordResponse {
+    bool success = 1;
+}
+
+message UpdateUserUsernameRequest {
+    string user_id = 1;
+    string new_username = 2;
+}
+
+message UpdateUserUsernameResponse {
+    AdminUser user = 1;
+}
+
+message UpdateUserRoleRequest {
+    string user_id = 1;
+    string role = 2; // user, admin
+}
+
+message UpdateUserRoleResponse {
+    AdminUser user = 1;
+}
+
+message BanUserRequest {
+    string user_id = 1;
+    string reason = 2; // Optional
+}
+
+message BanUserResponse {
+    AdminUser user = 1;
+}
+
+message UnbanUserRequest {
+    string user_id = 1;
+}
+
+message UnbanUserResponse {
+    AdminUser user = 1;
+}
+
+message GetUserRoomsRequest {
+    string user_id = 1;
+}
+
+message GetUserRoomsResponse {
+    repeated AdminRoom rooms = 1;
+}
+
+message ApproveUserRequest {
+    string user_id = 1;
+}
+
+message ApproveUserResponse {
+    AdminUser user = 1;
+}
+
+// =========================
+// Room Management
+// =========================
+
+message ListRoomsRequest {
+    int32 page = 1;
+    int32 page_size = 2;
+    string status = 3; // Optional filter: active, closed, banned, pending
+    string search = 4; // Search by name
+    string creator_id = 5; // Optional filter by creator
+}
+
+message ListRoomsResponse {
+    repeated AdminRoom rooms = 1;
+    int32 total = 2;
+}
+
+message GetRoomRequest {
+    string room_id = 1;
+}
+
+message GetRoomResponse {
+    AdminRoom room = 1;
+}
+
+message UpdateRoomPasswordRequest {
+    string room_id = 1;
+    string new_password = 2; // Empty to remove password
+}
+
+message UpdateRoomPasswordResponse {
+    bool success = 1;
+}
+
+message DeleteRoomRequest {
+    string room_id = 1;
+}
+
+message DeleteRoomResponse {
+    bool success = 1;
+}
+
+message BanRoomRequest {
+    string room_id = 1;
+    string reason = 2; // Optional
+}
+
+message BanRoomResponse {
+    AdminRoom room = 1;
+}
+
+message UnbanRoomRequest {
+    string room_id = 1;
+}
+
+message UnbanRoomResponse {
+    AdminRoom room = 1;
+}
+
+message ApproveRoomRequest {
+    string room_id = 1;
+}
+
+message ApproveRoomResponse {
+    AdminRoom room = 1;
+}
+
+message GetRoomMembersRequest {
+    string room_id = 1;
+}
+
+message GetRoomMembersResponse {
+    repeated RoomMember members = 1;
+}
+
+message RoomMember {
+    string room_id = 1;
+    string user_id = 2;
+    string username = 3;
+    int64 permissions = 4;
+    int64 joined_at = 5;
+    bool is_online = 6;
+}
+
+// =========================
+// Admin Management (Root Only)
+// =========================
+
+message AddAdminRequest {
+    string user_id = 1;
+}
+
+message AddAdminResponse {
+    AdminUser user = 1;
+}
+
+message RemoveAdminRequest {
+    string user_id = 1;
+}
+
+message RemoveAdminResponse {
+    bool success = 1;
+}
+
+message ListAdminsRequest {}
+
+message ListAdminsResponse {
+    repeated AdminUser admins = 1;
+}
+
+// =========================
+// System Statistics
+// =========================
+
+message GetSystemStatsRequest {}
+
+message GetSystemStatsResponse {
+    int32 total_users = 1;
+    int32 active_users = 2;
+    int32 banned_users = 3;
+    int32 total_rooms = 4;
+    int32 active_rooms = 5;
+    int32 banned_rooms = 6;
+    int32 total_media = 7;
+    int32 provider_backends = 8;
+    int64 uptime_seconds = 9;
+    bytes additional_stats = 10; // JSON for extensibility
+}

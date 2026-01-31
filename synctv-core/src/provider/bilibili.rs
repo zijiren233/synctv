@@ -3,35 +3,51 @@
 //! Adapter that calls BilibiliClient to implement MediaProvider trait
 
 use super::{
-    provider_client::BilibiliClientArc, MediaProvider, PlaybackInfo, PlaybackResult,
-    ProviderCapabilities, ProviderContext, ProviderError, SubtitleTrack,
+    provider_client::{
+        create_remote_bilibili_client, load_local_bilibili_client, BilibiliClientArc,
+    },
+    MediaProvider, PlaybackInfo, PlaybackResult, ProviderCapabilities, ProviderContext,
+    ProviderError, SubtitleTrack,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::service::ProviderInstanceManager;
 
 /// Bilibili MediaProvider
+///
+/// Holds a reference to ProviderInstanceManager to select appropriate provider instance.
 pub struct BilibiliProvider {
-    instance_id: String,
-    base_url: String,
-    client: BilibiliClientArc,
+    provider_instance_manager: Arc<ProviderInstanceManager>,
 }
 
 impl BilibiliProvider {
-    /// Create a new BilibiliProvider with client
-    pub fn new(
-        instance_id: impl Into<String>,
-        base_url: impl Into<String>,
-        client: BilibiliClientArc,
-    ) -> Self {
+    /// Create a new BilibiliProvider with ProviderInstanceManager
+    pub fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
         Self {
-            instance_id: instance_id.into(),
-            base_url: base_url.into(),
-            client,
+            provider_instance_manager,
         }
     }
 
+    /// Get Bilibili client for the given instance name
+    ///
+    /// Selection priority:
+    /// 1. Instance specified by instance_name parameter
+    /// 2. Fallback to singleton local client
+    async fn get_client(&self, instance_name: Option<&str>) -> BilibiliClientArc {
+        if let Some(name) = instance_name {
+            if let Some(channel) = self.provider_instance_manager.get(name).await {
+                // Remote instance - create gRPC client
+                return create_remote_bilibili_client(channel);
+            }
+        }
+
+        // Fallback to singleton local client
+        load_local_bilibili_client()
+    }
 }
 
 // Note: Default implementation removed as it requires ProviderInstanceManager
@@ -46,26 +62,53 @@ enum BilibiliSourceConfig {
         cid: u64,
         #[serde(default)]
         cookies: HashMap<String, String>,
+        #[serde(default)]
+        provider_instance_name: Option<String>,
     },
     Pgc {
         epid: u64,
         cid: u64,
         #[serde(default)]
         cookies: HashMap<String, String>,
+        #[serde(default)]
+        provider_instance_name: Option<String>,
     },
     Live {
         room_id: u64,
         #[serde(default)]
         cookies: HashMap<String, String>,
+        #[serde(default)]
+        provider_instance_name: Option<String>,
     },
+}
+
+impl BilibiliSourceConfig {
+    /// Get provider_instance_name from any variant
+    fn provider_instance_name(&self) -> Option<&str> {
+        match self {
+            Self::Video {
+                provider_instance_name,
+                ..
+            } => provider_instance_name.as_deref(),
+            Self::Pgc {
+                provider_instance_name,
+                ..
+            } => provider_instance_name.as_deref(),
+            Self::Live {
+                provider_instance_name,
+                ..
+            } => provider_instance_name.as_deref(),
+        }
+    }
 }
 
 impl TryFrom<&Value> for BilibiliSourceConfig {
     type Error = ProviderError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(value.clone())
-            .map_err(|e| ProviderError::InvalidConfig(format!("Failed to parse Bilibili source config: {}", e)))
+        serde_json::from_value(value.clone()).map_err(|e| {
+            ProviderError::InvalidConfig(format!("Failed to parse Bilibili source config: {}", e))
+        })
     }
 }
 
@@ -73,10 +116,6 @@ impl TryFrom<&Value> for BilibiliSourceConfig {
 impl MediaProvider for BilibiliProvider {
     fn name(&self) -> &'static str {
         "bilibili"
-    }
-
-    fn instance_id(&self) -> &str {
-        &self.instance_id
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
@@ -94,7 +133,11 @@ impl MediaProvider for BilibiliProvider {
         _ctx: &ProviderContext<'_>,
         source_config: &Value,
     ) -> Result<PlaybackResult, ProviderError> {
+        // Parse source_config first
         let config = BilibiliSourceConfig::try_from(source_config)?;
+
+        // Get appropriate client based on instance_name from config
+        let client = self.get_client(config.provider_instance_name()).await;
 
         match config {
             BilibiliSourceConfig::Video {
@@ -102,6 +145,7 @@ impl MediaProvider for BilibiliProvider {
                 aid,
                 cid,
                 cookies,
+                ..
             } => {
                 let bvid = bvid.unwrap_or_default();
                 let aid = aid.unwrap_or(0);
@@ -113,7 +157,7 @@ impl MediaProvider for BilibiliProvider {
                     cookies: cookies.clone(),
                 };
 
-                let dash_resp = self.client.get_dash_video_url(request).await?;
+                let dash_resp = client.get_dash_video_url(request).await?;
 
                 let mut playback_infos = HashMap::new();
                 let mut metadata = HashMap::new();
@@ -151,10 +195,7 @@ impl MediaProvider for BilibiliProvider {
                     );
 
                     metadata.insert("duration".to_string(), json!(dash.duration));
-                    metadata.insert(
-                        "min_buffer_time".to_string(),
-                        json!(dash.min_buffer_time),
-                    );
+                    metadata.insert("min_buffer_time".to_string(), json!(dash.min_buffer_time));
                 }
 
                 // Add HEVC DASH if available
@@ -198,7 +239,7 @@ impl MediaProvider for BilibiliProvider {
                     cookies,
                 };
 
-                if let Ok(subtitle_resp) = self.client.get_subtitles(subtitle_request).await {
+                if let Ok(subtitle_resp) = client.get_subtitles(subtitle_request).await {
                     let subtitles: Vec<SubtitleTrack> = subtitle_resp
                         .subtitles
                         .into_iter()
@@ -228,7 +269,9 @@ impl MediaProvider for BilibiliProvider {
                 })
             }
 
-            BilibiliSourceConfig::Pgc { epid, cid, cookies } => {
+            BilibiliSourceConfig::Pgc {
+                epid, cid, cookies, ..
+            } => {
                 // Get PGC DASH URL
                 let request = synctv_providers::grpc::bilibili::GetDashPgcurlReq {
                     epid,
@@ -236,7 +279,7 @@ impl MediaProvider for BilibiliProvider {
                     cookies: cookies.clone(),
                 };
 
-                let dash_resp = self.client.get_dash_pgcurl(request).await?;
+                let dash_resp = client.get_dash_pgcurl(request).await?;
 
                 let mut playback_infos = HashMap::new();
                 let mut metadata = HashMap::new();
@@ -318,7 +361,9 @@ impl MediaProvider for BilibiliProvider {
                 })
             }
 
-            BilibiliSourceConfig::Live { room_id, cookies } => {
+            BilibiliSourceConfig::Live {
+                room_id, cookies, ..
+            } => {
                 // Get live streams
                 let request = synctv_providers::grpc::bilibili::GetLiveStreamsReq {
                     cid: room_id,
@@ -326,7 +371,7 @@ impl MediaProvider for BilibiliProvider {
                     cookies,
                 };
 
-                let live_resp = self.client.get_live_streams(request).await?;
+                let live_resp = client.get_live_streams(request).await?;
 
                 let mut playback_infos = HashMap::new();
                 let mut metadata = HashMap::new();
@@ -363,7 +408,11 @@ impl MediaProvider for BilibiliProvider {
                 metadata.insert("is_live".to_string(), json!(true));
 
                 // Default to highest quality
-                let default_mode = playback_infos.keys().next().cloned().unwrap_or_else(|| "direct".to_string());
+                let default_mode = playback_infos
+                    .keys()
+                    .next()
+                    .cloned()
+                    .unwrap_or_else(|| "direct".to_string());
 
                 Ok(PlaybackResult {
                     playback_infos,
@@ -375,6 +424,6 @@ impl MediaProvider for BilibiliProvider {
     }
 
     fn cache_key(&self, _ctx: &ProviderContext<'_>, source_config: &Value) -> String {
-        format!("bilibili:{}:{}", self.instance_id, source_config)
+        format!("bilibili:{}", source_config)
     }
 }

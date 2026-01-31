@@ -11,5 +11,5 @@ pub use user::UserService;
 pub use room::RoomService;
 pub use rate_limit::{RateLimiter, RateLimitConfig, RateLimitError};
 pub use content_filter::{ContentFilter, ContentFilterError};
-pub use provider_instance_manager::{ConnectedProviderInstance, ProviderInstanceManager};
+pub use provider_instance_manager::ProviderInstanceManager;
 pub use providers_manager::ProvidersManager;

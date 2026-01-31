@@ -1,10 +1,11 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 use tonic::{Request, Response, Status};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 
 use synctv_core::service::{UserService, RoomService, RateLimiter, RateLimitConfig, ContentFilter};
-use synctv_core::models::{RoomId, UserId, MediaId, ProviderType, PermissionBits};
+use synctv_core::models::{RoomId, UserId, MediaId, ProviderType, PermissionBits, RoomListQuery, RoomStatus, RoomSettings};
 use synctv_cluster::sync::{RoomMessageHub, ClusterEvent, PublishRequest, ConnectionManager};
 
 use super::proto::client::{
@@ -705,9 +706,44 @@ impl ClientService for ClientServiceImpl {
 
     async fn list_rooms(
         &self,
-        _request: Request<ListRoomsRequest>,
+        request: Request<ListRoomsRequest>,
     ) -> Result<Response<ListRoomsResponse>, Status> {
-        Err(Status::unimplemented("ListRooms not yet implemented"))
+        let req = request.into_inner();
+
+        // Build query
+        let query = RoomListQuery {
+            page: if req.page == 0 { 1 } else { req.page },
+            page_size: if req.page_size == 0 { 20 } else { req.page_size },
+            status: None,
+            search: None,
+        };
+
+        // Get rooms
+        let (rooms, total) = self.room_service
+            .list_rooms(&query)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to list rooms: {}", e)))?;
+
+        // Convert to response
+        let room_list = rooms.into_iter().map(|room| {
+            Room {
+                id: room.id.to_string(),
+                name: room.name,
+                created_by: room.created_by.to_string(),
+                status: match room.status {
+                    RoomStatus::Active => "active".to_string(),
+                    RoomStatus::Closed => "closed".to_string(),
+                },
+                settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
+                created_at: room.created_at.timestamp(),
+                member_count: 0, // TODO: Get actual count in query
+            }
+        }).collect();
+
+        Ok(Response::new(ListRoomsResponse {
+            rooms: room_list,
+            total: total as i32,
+        }))
     }
 
     async fn delete_room(
@@ -734,30 +770,136 @@ impl ClientService for ClientServiceImpl {
 
     async fn update_room_settings(
         &self,
-        _request: Request<UpdateRoomSettingsRequest>,
+        request: Request<UpdateRoomSettingsRequest>,
     ) -> Result<Response<UpdateRoomSettingsResponse>, Status> {
-        Err(Status::unimplemented("UpdateRoomSettings not yet implemented"))
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
+        let req = request.into_inner();
+        let room_id = RoomId::from_string(req.room_id);
+
+        // Parse settings from JSON bytes
+        let settings = if !req.settings.is_empty() {
+            serde_json::from_slice(&req.settings)
+                .map_err(|e| Status::invalid_argument(format!("Invalid settings: {}", e)))?
+        } else {
+            RoomSettings::default()
+        };
+
+        // Update settings
+        let updated_room = self.room_service
+            .update_settings(room_id.clone(), user_id, settings)
+            .await
+            .map_err(|e| match e {
+                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
+                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                _ => Status::internal("Failed to update room settings"),
+            })?;
+
+        Ok(Response::new(UpdateRoomSettingsResponse {
+            room: Some(Room {
+                id: updated_room.id.to_string(),
+                name: updated_room.name,
+                created_by: updated_room.created_by.to_string(),
+                status: match updated_room.status {
+                    RoomStatus::Active => "active".to_string(),
+                    RoomStatus::Closed => "closed".to_string(),
+                },
+                settings: serde_json::to_vec(&updated_room.settings).unwrap_or_default(),
+                created_at: updated_room.created_at.timestamp(),
+                member_count: 0, // TODO: Get actual count
+            }),
+        }))
     }
 
     async fn get_room_members(
         &self,
-        _request: Request<GetRoomMembersRequest>,
+        request: Request<GetRoomMembersRequest>,
     ) -> Result<Response<GetRoomMembersResponse>, Status> {
-        Err(Status::unimplemented("GetRoomMembers not yet implemented"))
+        let req = request.into_inner();
+        let room_id = RoomId::from_string(req.room_id);
+
+        // Get members
+        let members = self.room_service
+            .get_room_members(&room_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get room members: {}", e)))?;
+
+        // Convert to response
+        let member_list = members.into_iter().map(|m| {
+            RoomMember {
+                room_id: room_id.to_string(),
+                user_id: m.user_id.to_string(),
+                username: m.username,
+                permissions: m.permissions.0,
+                joined_at: m.joined_at.timestamp(),
+                is_online: m.is_online,
+            }
+        }).collect();
+
+        Ok(Response::new(GetRoomMembersResponse {
+            members: member_list,
+        }))
     }
 
     async fn update_member_permission(
         &self,
-        _request: Request<UpdateMemberPermissionRequest>,
+        request: Request<UpdateMemberPermissionRequest>,
     ) -> Result<Response<UpdateMemberPermissionResponse>, Status> {
-        Err(Status::unimplemented("UpdateMemberPermission not yet implemented"))
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
+        let req = request.into_inner();
+        let room_id = RoomId::from_string(req.room_id.clone());
+        let target_user_id = UserId::from_string(req.user_id);
+
+        // Update permissions
+        let member = self.room_service
+            .update_member_permission(
+                room_id,
+                user_id,
+                target_user_id,
+                PermissionBits(req.permissions),
+            )
+            .await
+            .map_err(|e| match e {
+                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
+                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                _ => Status::internal("Failed to update member permission"),
+            })?;
+
+        Ok(Response::new(UpdateMemberPermissionResponse {
+            member: Some(RoomMember {
+                room_id: req.room_id,
+                user_id: member.user_id.to_string(),
+                username: String::new(), // TODO: Get username
+                permissions: member.permissions.0,
+                joined_at: member.joined_at.timestamp(),
+                is_online: false,
+            }),
+        }))
     }
 
     async fn kick_member(
         &self,
-        _request: Request<KickMemberRequest>,
+        request: Request<KickMemberRequest>,
     ) -> Result<Response<KickMemberResponse>, Status> {
-        Err(Status::unimplemented("KickMember not yet implemented"))
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
+        let req = request.into_inner();
+        let room_id = RoomId::from_string(req.room_id);
+        let target_user_id = UserId::from_string(req.user_id);
+
+        // Kick member
+        self.room_service
+            .kick_member(room_id, user_id, target_user_id)
+            .await
+            .map_err(|e| match e {
+                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
+                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                synctv_core::Error::InvalidInput(msg) => Status::invalid_argument(msg),
+                _ => Status::internal("Failed to kick member"),
+            })?;
+
+        Ok(Response::new(KickMemberResponse { success: true }))
     }
 
     async fn add_media(
@@ -861,9 +1003,26 @@ impl ClientService for ClientServiceImpl {
 
     async fn swap_media(
         &self,
-        _request: Request<SwapMediaRequest>,
+        request: Request<SwapMediaRequest>,
     ) -> Result<Response<SwapMediaResponse>, Status> {
-        Err(Status::unimplemented("SwapMovies not yet implemented"))
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
+        let req = request.into_inner();
+        let room_id = RoomId::from_string(req.room_id);
+        let media_id1 = MediaId::from_string(req.media_id1);
+        let media_id2 = MediaId::from_string(req.media_id2);
+
+        // Swap media positions
+        self.room_service
+            .swap_media(room_id, user_id, media_id1, media_id2)
+            .await
+            .map_err(|e| match e {
+                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
+                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                _ => Status::internal("Failed to swap media"),
+            })?;
+
+        Ok(Response::new(SwapMediaResponse { success: true }))
     }
 
     async fn play(
@@ -1230,8 +1389,116 @@ impl ClientService for ClientServiceImpl {
 
     async fn get_chat_history(
         &self,
-        _request: Request<GetChatHistoryRequest>,
+        request: Request<GetChatHistoryRequest>,
     ) -> Result<Response<GetChatHistoryResponse>, Status> {
-        Err(Status::unimplemented("GetChatHistory not yet implemented"))
+        let req = request.into_inner();
+        let _room_id = RoomId::from_string(req.room_id);
+
+        // TODO: Implement ChatRepository and chat history retrieval
+        // For now, return empty history
+        Ok(Response::new(GetChatHistoryResponse {
+            messages: vec![],
+        }))
+    }
+
+    async fn logout(
+        &self,
+        _request: Request<LogoutRequest>,
+    ) -> Result<Response<LogoutResponse>, Status> {
+        // TODO: Implement token blacklist
+        Ok(Response::new(LogoutResponse { success: true }))
+    }
+
+    async fn update_username(
+        &self,
+        request: Request<UpdateUsernameRequest>,
+    ) -> Result<Response<UpdateUsernameResponse>, Status> {
+        let user_id = self.get_user_id(&request)?;
+        let req = request.into_inner();
+
+        // TODO: Implement username update
+        Err(Status::unimplemented("UpdateUsername not yet implemented"))
+    }
+
+    async fn update_password(
+        &self,
+        request: Request<UpdatePasswordRequest>,
+    ) -> Result<Response<UpdatePasswordResponse>, Status> {
+        let user_id = self.get_user_id(&request)?;
+        let req = request.into_inner();
+
+        // TODO: Implement password update with old password verification
+        Err(Status::unimplemented("UpdatePassword not yet implemented"))
+    }
+
+    async fn get_my_rooms(
+        &self,
+        request: Request<GetMyRoomsRequest>,
+    ) -> Result<Response<GetMyRoomsResponse>, Status> {
+        let user_id = self.get_user_id(&request)?;
+        let req = request.into_inner();
+
+        // TODO: Implement get my rooms (rooms created by user)
+        Ok(Response::new(GetMyRoomsResponse {
+            rooms: vec![],
+            total: 0,
+        }))
+    }
+
+    async fn get_joined_rooms(
+        &self,
+        request: Request<GetJoinedRoomsRequest>,
+    ) -> Result<Response<GetJoinedRoomsResponse>, Status> {
+        let user_id = self.get_user_id(&request)?;
+        let req = request.into_inner();
+
+        // TODO: Implement get joined rooms
+        Ok(Response::new(GetJoinedRoomsResponse {
+            rooms: vec![],
+            total: 0,
+        }))
+    }
+
+    async fn check_room(
+        &self,
+        request: Request<CheckRoomRequest>,
+    ) -> Result<Response<CheckRoomResponse>, Status> {
+        let req = request.into_inner();
+        let room_id = RoomId::from_string(req.room_id);
+
+        match self.room_service.get_room(&room_id).await {
+            Ok(room) => {
+                // Check if room requires password
+                let requires_password = room.settings
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false);
+
+                Ok(Response::new(CheckRoomResponse {
+                    exists: true,
+                    requires_password,
+                    name: room.name,
+                }))
+            }
+            Err(_) => Ok(Response::new(CheckRoomResponse {
+                exists: false,
+                requires_password: false,
+                name: String::new(),
+            })),
+        }
+    }
+
+    async fn get_hot_rooms(
+        &self,
+        request: Request<GetHotRoomsRequest>,
+    ) -> Result<Response<GetHotRoomsResponse>, Status> {
+        let req = request.into_inner();
+        let limit = if req.limit == 0 || req.limit > 50 { 10 } else { req.limit };
+
+        // TODO: Implement hot rooms with online count sorting
+        Ok(Response::new(GetHotRoomsResponse {
+            rooms: vec![],
+        }))
     }
 }

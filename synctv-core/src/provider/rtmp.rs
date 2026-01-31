@@ -12,14 +12,12 @@ use std::collections::HashMap;
 
 /// RTMP MediaProvider
 pub struct RtmpProvider {
-    instance_id: String,
     base_url: String,
 }
 
 impl RtmpProvider {
-    pub fn new(instance_id: impl Into<String>, base_url: impl Into<String>) -> Self {
+    pub fn new(base_url: impl Into<String>) -> Self {
         Self {
-            instance_id: instance_id.into(),
             base_url: base_url.into(),
         }
     }
@@ -27,7 +25,7 @@ impl RtmpProvider {
 
 impl Default for RtmpProvider {
     fn default() -> Self {
-        Self::new("rtmp_default", "https://localhost:8080")
+        Self::new("https://localhost:8080")
     }
 }
 
@@ -35,10 +33,6 @@ impl Default for RtmpProvider {
 impl MediaProvider for RtmpProvider {
     fn name(&self) -> &'static str {
         "rtmp"
-    }
-
-    fn instance_id(&self) -> &str {
-        &self.instance_id
     }
 
     fn capabilities(&self) -> ProviderCapabilities {

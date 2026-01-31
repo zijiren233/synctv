@@ -5,6 +5,7 @@ pub mod auth;
 pub mod room;
 pub mod error;
 pub mod middleware;
+pub mod provider_routes;
 
 use axum::{
     Router,
@@ -62,6 +63,9 @@ pub fn create_router(
         .route("/api/rooms/:room_id/playback/speed", post(room::change_speed))
         .route("/api/rooms/:room_id/playback/switch", post(room::switch_media))
         .route("/api/rooms/:room_id/playback", get(room::get_playback_state))
+
+        // Provider routes (parse, login, proxy)
+        .nest("/api/providers", provider_routes::build_provider_routes())
 
         .with_state(state)
         .layer(CorsLayer::new()

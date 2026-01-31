@@ -16,6 +16,7 @@
 
 use super::ProviderError;
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
 use std::sync::Arc;
 use synctv_providers::alist::{AlistError, AlistInterface};
 use synctv_providers::grpc::alist::{FsGetResp, FsListResp, FsOtherResp};
@@ -27,9 +28,14 @@ use synctv_providers::grpc::alist::{FsGetResp, FsListResp, FsOtherResp};
 /// Type alias for Alist client
 pub type AlistClientArc = Arc<dyn AlistInterface>;
 
-/// Create local Alist client (uses complete AlistService implementation)
-pub fn create_local_alist_client() -> AlistClientArc {
+/// Singleton local Alist client
+static LOCAL_ALIST_CLIENT: Lazy<AlistClientArc> = Lazy::new(|| {
     Arc::new(synctv_providers::alist::AlistService::new())
+});
+
+/// Load local Alist client (singleton)
+pub fn load_local_alist_client() -> AlistClientArc {
+    LOCAL_ALIST_CLIENT.clone()
 }
 
 /// Create remote Alist client (thin wrapper around gRPC client)
@@ -266,9 +272,14 @@ use synctv_providers::bilibili::{BilibiliError, BilibiliInterface};
 /// Type alias for Bilibili client
 pub type BilibiliClientArc = Arc<dyn BilibiliInterface>;
 
-/// Create local Bilibili client (uses complete BilibiliService implementation)
-pub fn create_local_bilibili_client() -> BilibiliClientArc {
+/// Singleton local Bilibili client
+static LOCAL_BILIBILI_CLIENT: Lazy<BilibiliClientArc> = Lazy::new(|| {
     Arc::new(synctv_providers::bilibili::BilibiliService::new())
+});
+
+/// Load local Bilibili client (singleton)
+pub fn load_local_bilibili_client() -> BilibiliClientArc {
+    LOCAL_BILIBILI_CLIENT.clone()
 }
 
 /// Create remote Bilibili client (thin wrapper around gRPC client)
@@ -482,9 +493,14 @@ use synctv_providers::emby::{EmbyError, EmbyInterface};
 /// Type alias for Emby client
 pub type EmbyClientArc = Arc<dyn EmbyInterface>;
 
-/// Create local Emby client (uses complete EmbyService implementation)
-pub fn create_local_emby_client() -> EmbyClientArc {
+/// Singleton local Emby client
+static LOCAL_EMBY_CLIENT: Lazy<EmbyClientArc> = Lazy::new(|| {
     Arc::new(synctv_providers::emby::EmbyService::new())
+});
+
+/// Load local Emby client (singleton)
+pub fn load_local_emby_client() -> EmbyClientArc {
+    LOCAL_EMBY_CLIENT.clone()
 }
 
 /// Create remote Emby client (thin wrapper around gRPC client)

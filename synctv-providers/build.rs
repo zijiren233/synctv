@@ -1,24 +1,23 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let proto_dir = "../proto";
-    let providers_dir = format!("{}/providers", proto_dir);
-
-    // Configure tonic build to generate both server and client code
+    // Configure tonic build to generate both client and server implementations
+    // - Server: For exposing provider APIs to external clients (parse, browse, etc.)
+    // - Client: For internal use by synctv-core (cross-provider communication)
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
         .compile_protos(
             &[
-                format!("{}/alist.proto", providers_dir),
-                format!("{}/bilibili.proto", providers_dir),
-                format!("{}/emby.proto", providers_dir),
+                "proto/alist.proto",
+                "proto/bilibili.proto",
+                "proto/emby.proto",
             ],
-            &[proto_dir],
+            &["proto"],
         )?;
 
     // Trigger rebuild if proto files change
-    println!("cargo:rerun-if-changed={}/alist.proto", providers_dir);
-    println!("cargo:rerun-if-changed={}/bilibili.proto", providers_dir);
-    println!("cargo:rerun-if-changed={}/emby.proto", providers_dir);
+    println!("cargo:rerun-if-changed=proto/alist.proto");
+    println!("cargo:rerun-if-changed=proto/bilibili.proto");
+    println!("cargo:rerun-if-changed=proto/emby.proto");
 
     Ok(())
 }

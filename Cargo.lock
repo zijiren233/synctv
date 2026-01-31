@@ -5201,6 +5201,7 @@ dependencies = [
  "sqlx",
  "synctv-cluster",
  "synctv-core",
+ "synctv-providers",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",

@@ -4,18 +4,27 @@ package synctv.client;
 
 // Client-Server API for SyncTV
 service ClientService {
-    // Authentication
+    // Authentication & User Profile
     rpc Register(RegisterRequest) returns (RegisterResponse);
     rpc Login(LoginRequest) returns (LoginResponse);
     rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+    rpc Logout(LogoutRequest) returns (LogoutResponse);
     rpc GetCurrentUser(GetCurrentUserRequest) returns (GetCurrentUserResponse);
+    rpc UpdateUsername(UpdateUsernameRequest) returns (UpdateUsernameResponse);
+    rpc UpdatePassword(UpdatePasswordRequest) returns (UpdatePasswordResponse);
+
+    // User Rooms
+    rpc GetMyRooms(GetMyRoomsRequest) returns (GetMyRoomsResponse); // Rooms created by user
+    rpc GetJoinedRooms(GetJoinedRoomsRequest) returns (GetJoinedRoomsResponse); // Rooms user joined
 
     // Room Management
     rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse);
     rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
+    rpc CheckRoom(CheckRoomRequest) returns (CheckRoomResponse);
     rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
     rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
     rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+    rpc GetHotRooms(GetHotRoomsRequest) returns (GetHotRoomsResponse);
     rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
     rpc UpdateRoomSettings(UpdateRoomSettingsRequest) returns (UpdateRoomSettingsResponse);
 
@@ -412,4 +421,79 @@ message GetChatHistoryRequest {
 
 message GetChatHistoryResponse {
     repeated ChatMessageReceive messages = 1;
+}
+
+// User Profile Management
+message LogoutRequest {}
+
+message LogoutResponse {
+    bool success = 1;
+}
+
+message UpdateUsernameRequest {
+    string new_username = 1;
+}
+
+message UpdateUsernameResponse {
+    User user = 1;
+}
+
+message UpdatePasswordRequest {
+    string old_password = 1;
+    string new_password = 2;
+}
+
+message UpdatePasswordResponse {
+    bool success = 1;
+}
+
+message GetMyRoomsRequest {
+    int32 page = 1;
+    int32 page_size = 2;
+}
+
+message GetMyRoomsResponse {
+    repeated Room rooms = 1;
+    int32 total = 2;
+}
+
+message GetJoinedRoomsRequest {
+    int32 page = 1;
+    int32 page_size = 2;
+}
+
+message GetJoinedRoomsResponse {
+    repeated RoomWithRole rooms = 1;
+    int32 total = 2;
+}
+
+message RoomWithRole {
+    Room room = 1;
+    int64 permissions = 2; // User's permissions in this room
+    string role = 3; // creator, admin, member, guest
+}
+
+// Room Discovery
+message CheckRoomRequest {
+    string room_id = 1;
+}
+
+message CheckRoomResponse {
+    bool exists = 1;
+    bool requires_password = 2;
+    string name = 3;
+}
+
+message GetHotRoomsRequest {
+    int32 limit = 1; // Default 10, max 50
+}
+
+message GetHotRoomsResponse {
+    repeated RoomWithStats rooms = 1;
+}
+
+message RoomWithStats {
+    Room room = 1;
+    int32 online_count = 2; // Current online users
+    int32 total_members = 3;
 }

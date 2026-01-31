@@ -4,11 +4,6 @@
 //! Integrates with ProviderInstanceManager for local/remote vendor client dispatch.
 
 use crate::provider::{
-    provider_client::{
-        create_local_alist_client, create_remote_alist_client,
-        create_local_bilibili_client, create_remote_bilibili_client,
-        create_local_emby_client, create_remote_emby_client,
-    },
     AlistProvider, BilibiliProvider, DirectUrlProvider, EmbyProvider, MediaProvider,
     RtmpProvider,
 };
@@ -39,8 +34,8 @@ pub struct ProvidersManager {
     /// Registered factory functions (provider_type → factory)
     factories: HashMap<String, ProviderFactory>,
 
-    /// Created provider instances (instance_id → MediaProvider)
-    instances: Arc<RwLock<HashMap<String, Arc<dyn MediaProvider>>>>,
+    /// Created MediaProvider instances (provider_id → MediaProvider)
+    media_providers: Arc<RwLock<HashMap<String, Arc<dyn MediaProvider>>>>,
 
     /// Provider instance manager (for local/remote dispatch)
     instance_manager: Arc<ProviderInstanceManager>,
@@ -51,7 +46,7 @@ impl ProvidersManager {
     pub fn new(instance_manager: Arc<ProviderInstanceManager>) -> Self {
         let mut manager = Self {
             factories: HashMap::new(),
-            instances: Arc::new(RwLock::new(HashMap::new())),
+            media_providers: Arc::new(RwLock::new(HashMap::new())),
             instance_manager,
         };
 
@@ -66,120 +61,45 @@ impl ProvidersManager {
         // Alist factory
         self.register_factory(
             "alist",
-            Box::new(|instance_id, config, instance_manager| {
-                let base_url = config
-                    .get("base_url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                // Get provider instance to determine local/remote
-                let instance = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(instance_manager.get(instance_id))
-                });
-
-                // Create appropriate client based on instance type
-                let client = if instance.is_local() {
-                    // LOCAL: Create local client (direct HTTP calls)
-                    create_local_alist_client()
-                } else {
-                    // REMOTE: Create remote client (gRPC calls)
-                    let channel = instance
-                        .channel
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("No gRPC channel for remote instance"))?
-                        .clone();
-                    create_remote_alist_client(channel)
-                };
-
-                Ok(Arc::new(AlistProvider::new(instance_id, base_url, client)))
+            Box::new(|_instance_id, _config, instance_manager| {
+                Ok(Arc::new(AlistProvider::new(instance_manager)))
             }),
         );
 
         // Bilibili factory
         self.register_factory(
             "bilibili",
-            Box::new(|instance_id, config, instance_manager| {
-                let base_url = config
-                    .get("base_url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                // Get provider instance to determine local/remote
-                let instance = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(instance_manager.get(instance_id))
-                });
-
-                // Create appropriate client based on instance type
-                let client = if instance.is_local() {
-                    // LOCAL: Create local client (direct HTTP calls)
-                    create_local_bilibili_client()
-                } else {
-                    // REMOTE: Create remote client (gRPC calls)
-                    let channel = instance
-                        .channel
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("No gRPC channel for remote instance"))?
-                        .clone();
-                    create_remote_bilibili_client(channel)
-                };
-
-                Ok(Arc::new(BilibiliProvider::new(instance_id, base_url, client)))
+            Box::new(|_instance_id, _config, instance_manager| {
+                Ok(Arc::new(BilibiliProvider::new(instance_manager)))
             }),
         );
 
         // Emby factory
         self.register_factory(
             "emby",
-            Box::new(|instance_id, config, instance_manager| {
-                let base_url = config
-                    .get("base_url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                // Get provider instance to determine local/remote
-                let instance = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(instance_manager.get(instance_id))
-                });
-
-                // Create appropriate client based on instance type
-                let client = if instance.is_local() {
-                    // LOCAL: Create local client (direct HTTP calls)
-                    create_local_emby_client()
-                } else {
-                    // REMOTE: Create remote client (gRPC calls)
-                    let channel = instance
-                        .channel
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("No gRPC channel for remote instance"))?
-                        .clone();
-                    create_remote_emby_client(channel)
-                };
-
-                Ok(Arc::new(EmbyProvider::new(instance_id, base_url, client)))
+            Box::new(|_instance_id, _config, instance_manager| {
+                Ok(Arc::new(EmbyProvider::new(instance_manager)))
             }),
         );
 
         // RTMP factory
         self.register_factory(
             "rtmp",
-            Box::new(|instance_id, config, _instance_manager| {
+            Box::new(|_instance_id, config, _instance_manager| {
                 let base_url = config
                     .get("base_url")
                     .and_then(|v| v.as_str())
                     .unwrap_or("https://localhost:8080");
 
-                Ok(Arc::new(RtmpProvider::new(instance_id, base_url)))
+                Ok(Arc::new(RtmpProvider::new(base_url)))
             }),
         );
 
         // DirectUrl factory
         self.register_factory(
             "direct_url",
-            Box::new(|instance_id, _config, _instance_manager| {
-                Ok(Arc::new(DirectUrlProvider::new(instance_id)))
+            Box::new(|_instance_id, _config, _instance_manager| {
+                Ok(Arc::new(DirectUrlProvider::new()))
             }),
         );
     }
@@ -210,7 +130,7 @@ impl ProvidersManager {
         let provider = factory(instance_id, config, self.instance_manager.clone())?;
 
         // Store in instances map
-        self.instances
+        self.media_providers
             .write()
             .await
             .insert(instance_id.to_string(), provider.clone());
@@ -226,17 +146,17 @@ impl ProvidersManager {
 
     /// Get a provider instance by ID
     pub async fn get_provider(&self, instance_id: &str) -> Option<Arc<dyn MediaProvider>> {
-        self.instances.read().await.get(instance_id).cloned()
+        self.media_providers.read().await.get(instance_id).cloned()
     }
 
     /// List all provider instances
     pub async fn list_providers(&self) -> Vec<Arc<dyn MediaProvider>> {
-        self.instances.read().await.values().cloned().collect()
+        self.media_providers.read().await.values().cloned().collect()
     }
 
     /// Remove a provider instance
     pub async fn remove_provider(&self, instance_id: &str) -> Option<Arc<dyn MediaProvider>> {
-        self.instances.write().await.remove(instance_id)
+        self.media_providers.write().await.remove(instance_id)
     }
 
     /// Get or create a provider instance
@@ -264,6 +184,23 @@ impl ProvidersManager {
     /// List all registered provider types
     pub fn list_provider_types(&self) -> Vec<String> {
         self.factories.keys().cloned().collect()
+    }
+
+    /// Get all providers that need gRPC service registration
+    ///
+    /// Returns a list of provider instances that expose client-facing APIs
+    /// (parse, browse, etc.) and need to be registered in the synctv-api layer.
+    ///
+    /// # Returns
+    /// Vector of providers where `needs_service_registration()` returns true
+    pub async fn get_providers_needing_registration(&self) -> Vec<Arc<dyn MediaProvider>> {
+        self.media_providers
+            .read()
+            .await
+            .values()
+            .filter(|provider| provider.needs_service_registration())
+            .cloned()
+            .collect()
     }
 }
 

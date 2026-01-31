@@ -3,35 +3,48 @@
 //! Adapter that calls EmbyClient to implement MediaProvider trait
 
 use super::{
-    provider_client::EmbyClientArc, MediaProvider, PlaybackInfo, PlaybackResult,
-    ProviderCapabilities, ProviderContext, ProviderError, SubtitleTrack,
+    provider_client::{create_remote_emby_client, load_local_emby_client, EmbyClientArc},
+    MediaProvider, PlaybackInfo, PlaybackResult, ProviderCapabilities, ProviderContext,
+    ProviderError, SubtitleTrack,
 };
+use crate::service::ProviderInstanceManager;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Emby MediaProvider
+///
+/// Holds a reference to ProviderInstanceManager to select appropriate provider instance.
 pub struct EmbyProvider {
-    instance_id: String,
-    base_url: String,
-    client: EmbyClientArc,
+    provider_instance_manager: Arc<ProviderInstanceManager>,
 }
 
 impl EmbyProvider {
-    /// Create a new EmbyProvider with client
-    pub fn new(
-        instance_id: impl Into<String>,
-        base_url: impl Into<String>,
-        client: EmbyClientArc,
-    ) -> Self {
+    /// Create a new EmbyProvider with ProviderInstanceManager
+    pub fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
         Self {
-            instance_id: instance_id.into(),
-            base_url: base_url.into(),
-            client,
+            provider_instance_manager,
         }
     }
 
+    /// Get Emby client for the given instance name
+    ///
+    /// Selection priority:
+    /// 1. Instance specified by instance_name parameter
+    /// 2. Fallback to singleton local client
+    async fn get_client(&self, instance_name: Option<&str>) -> EmbyClientArc {
+        if let Some(name) = instance_name {
+            if let Some(channel) = self.provider_instance_manager.get(name).await {
+                // Remote instance - create gRPC client
+                return create_remote_emby_client(channel);
+            }
+        }
+
+        // Fallback to singleton local client
+        load_local_emby_client()
+    }
 }
 
 /// Emby source configuration
@@ -41,14 +54,17 @@ struct EmbySourceConfig {
     token: String,
     user_id: String,
     item_id: String,
+    #[serde(default)]
+    provider_instance_name: Option<String>,
 }
 
 impl TryFrom<&Value> for EmbySourceConfig {
     type Error = ProviderError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(value.clone())
-            .map_err(|e| ProviderError::InvalidConfig(format!("Failed to parse Emby source config: {}", e)))
+        serde_json::from_value(value.clone()).map_err(|e| {
+            ProviderError::InvalidConfig(format!("Failed to parse Emby source config: {}", e))
+        })
     }
 }
 
@@ -58,10 +74,6 @@ impl TryFrom<&Value> for EmbySourceConfig {
 impl MediaProvider for EmbyProvider {
     fn name(&self) -> &'static str {
         "emby"
-    }
-
-    fn instance_id(&self) -> &str {
-        &self.instance_id
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
@@ -79,7 +91,13 @@ impl MediaProvider for EmbyProvider {
         _ctx: &ProviderContext<'_>,
         source_config: &Value,
     ) -> Result<PlaybackResult, ProviderError> {
+        // Parse source_config first
         let config = EmbySourceConfig::try_from(source_config)?;
+
+        // Get appropriate client based on instance_name from config
+        let client = self
+            .get_client(config.provider_instance_name.as_deref())
+            .await;
 
         // Get item details first
         let item_request = synctv_providers::grpc::emby::GetItemReq {
@@ -88,7 +106,7 @@ impl MediaProvider for EmbyProvider {
             item_id: config.item_id.clone(),
         };
 
-        let item = self.client.get_item(item_request).await?;
+        let item = client.get_item(item_request).await?;
 
         let mut metadata = HashMap::new();
         metadata.insert("name".to_string(), json!(item.name));
@@ -112,7 +130,7 @@ impl MediaProvider for EmbyProvider {
             max_streaming_bitrate: 0, // No limit
         };
 
-        let playback_info = self.client.playback_info(playback_request).await?;
+        let playback_info = client.playback_info(playback_request).await?;
 
         let mut playback_infos = HashMap::new();
 
@@ -126,7 +144,11 @@ impl MediaProvider for EmbyProvider {
 
             // Get direct stream URL (no transcoding)
             let direct_url = if !source.direct_play_url.is_empty() {
-                format!("{}{}", config.host.trim_end_matches('/'), source.direct_play_url)
+                format!(
+                    "{}{}",
+                    config.host.trim_end_matches('/'),
+                    source.direct_play_url
+                )
             } else if !source.path.is_empty() {
                 // Build direct play URL
                 format!(
@@ -226,6 +248,6 @@ impl MediaProvider for EmbyProvider {
     }
 
     fn cache_key(&self, _ctx: &ProviderContext<'_>, source_config: &Value) -> String {
-        format!("emby:{}:{}", self.instance_id, source_config)
+        format!("emby:{}", source_config)
     }
 }

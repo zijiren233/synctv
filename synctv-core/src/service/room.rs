@@ -3,8 +3,9 @@ use serde_json::json;
 
 use crate::{
     models::{
-        Room, RoomId, RoomMember, RoomSettings, RoomStatus, UserId, PermissionBits, Role,
-        RoomPlaybackState, Media, MediaId, ProviderType,
+        Room, RoomId, RoomMember, RoomMemberWithUser, RoomSettings, RoomStatus, UserId,
+        PermissionBits, Role, RoomPlaybackState, Media, MediaId, ProviderType,
+        RoomListQuery,
     },
     repository::{RoomRepository, RoomMemberRepository, MediaRepository, RoomPlaybackStateRepository},
     service::auth::password::{hash_password, verify_password},
@@ -342,6 +343,82 @@ impl RoomService {
         self.member_repo
             .update_permissions(&room_id, &target_user_id, member.permissions)
             .await
+    }
+
+    /// List all rooms (paginated)
+    pub async fn list_rooms(&self, query: &RoomListQuery) -> Result<(Vec<Room>, i64)> {
+        self.room_repo.list(query).await
+    }
+
+    /// Get room members with user info
+    pub async fn get_room_members(&self, room_id: &RoomId) -> Result<Vec<RoomMemberWithUser>> {
+        self.member_repo.list_by_room(room_id).await
+    }
+
+    /// Get member count for a room
+    pub async fn get_member_count(&self, room_id: &RoomId) -> Result<i32> {
+        self.member_repo.count_by_room(room_id).await
+    }
+
+    /// Update member permissions
+    pub async fn update_member_permission(
+        &self,
+        room_id: RoomId,
+        granter_id: UserId,
+        target_user_id: UserId,
+        permissions: PermissionBits,
+    ) -> Result<RoomMember> {
+        // Check if granter has permission to modify permissions
+        self.check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION).await?;
+
+        // Verify target is a member
+        if !self.member_repo.is_member(&room_id, &target_user_id).await? {
+            return Err(Error::NotFound("User is not a member of this room".to_string()));
+        }
+
+        // Update permissions
+        self.member_repo
+            .update_permissions(&room_id, &target_user_id, permissions)
+            .await
+    }
+
+    /// Kick member from room
+    pub async fn kick_member(
+        &self,
+        room_id: RoomId,
+        kicker_id: UserId,
+        target_user_id: UserId,
+    ) -> Result<()> {
+        // Check if kicker has permission to kick
+        self.check_permission(&room_id, &kicker_id, PermissionBits::KICK_USER).await?;
+
+        // Can't kick yourself
+        if kicker_id == target_user_id {
+            return Err(Error::InvalidInput("Cannot kick yourself".to_string()));
+        }
+
+        // Remove member
+        let removed = self.member_repo.remove(&room_id, &target_user_id).await?;
+        if !removed {
+            return Err(Error::NotFound("User is not a member of this room".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Swap positions of two media items in playlist
+    pub async fn swap_media(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        media_id1: MediaId,
+        media_id2: MediaId,
+    ) -> Result<()> {
+        // Check permission - swapping media requires ADD_MEDIA permission
+        self.check_permission(&room_id, &user_id, PermissionBits::ADD_MEDIA).await?;
+
+        // Swap positions
+        self.media_repo.swap_positions(&media_id1, &media_id2).await
     }
 }
 

@@ -97,32 +97,16 @@ impl ProviderRegistry {
         self.instances.remove(instance_id).is_some()
     }
 
-    /// Build aggregated HTTP routes from all providers
+    /// Get all providers that need service registration
     ///
-    /// Collects HTTP routes from all registered provider instances.
-    ///
-    /// Note: This will be implemented when HTTP integration is added
-    pub async fn build_routes(&self) -> Result<(), ProviderError> {
-        for instance in self.instances.values() {
-            if instance.needs_service_registration() {
-                instance.register_http_routes().await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Build aggregated gRPC services from all providers
-    ///
-    /// Collects gRPC services from all registered provider instances.
-    ///
-    /// Note: This will be implemented when gRPC integration is added
-    pub async fn build_grpc_services(&self) -> Result<(), ProviderError> {
-        for instance in self.instances.values() {
-            if instance.needs_service_registration() {
-                instance.register_grpc_service().await?;
-            }
-        }
-        Ok(())
+    /// Returns a list of provider instances that expose client-facing APIs
+    /// (parse, browse, etc.) that need to be registered in synctv-api layer.
+    pub fn get_providers_needing_registration(&self) -> Vec<Arc<dyn MediaProvider>> {
+        self.instances
+            .values()
+            .filter(|instance| instance.needs_service_registration())
+            .cloned()
+            .collect()
     }
 }
 
@@ -136,18 +120,12 @@ impl Default for ProviderRegistry {
 mod tests {
     use super::*;
 
-    struct MockProvider {
-        instance_id: String,
-    }
+    struct MockProvider {}
 
     #[async_trait::async_trait]
     impl MediaProvider for MockProvider {
         fn name(&self) -> &'static str {
             "mock"
-        }
-
-        fn instance_id(&self) -> &str {
-            &self.instance_id
         }
 
         fn capabilities(&self) -> super::super::ProviderCapabilities {
@@ -180,10 +158,8 @@ mod tests {
         // Register factory
         registry.register_factory(
             "mock",
-            Box::new(|instance_id, _config| {
-                Ok(Arc::new(MockProvider {
-                    instance_id: instance_id.to_string(),
-                }))
+            Box::new(|_instance_id, _config| {
+                Ok(Arc::new(MockProvider {}))
             }),
         );
 
@@ -193,8 +169,7 @@ mod tests {
             .unwrap();
 
         // Get instance
-        let instance = registry.get_instance("mock_main").unwrap();
-        assert_eq!(instance.instance_id(), "mock_main");
-        assert_eq!(instance.name(), "mock");
+        let provider = registry.get_instance("mock_main").unwrap();
+        assert_eq!(provider.name(), "mock");
     }
 }

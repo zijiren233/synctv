@@ -155,6 +155,7 @@ async fn main() -> Result<()> {
             rate_limit_config,
             content_filter,
             connection_manager,
+            None, // TODO: Initialize and pass ProvidersManager
         ).await {
             error!("gRPC server error: {}", e);
         }

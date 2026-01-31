@@ -121,15 +121,15 @@ pub struct ProviderCapabilities {
 ///
 /// Core interface that all providers must implement.
 /// Only `generate_playback()` is mandatory.
+///
+/// Note: MediaProvider is a capability provider, not a concrete instance.
+/// It may use different provider_instances internally via ProviderInstanceManager.
 #[async_trait]
 pub trait MediaProvider: Send + Sync {
     // ========== Basic Information ==========
 
     /// Provider type name (e.g., "bilibili", "alist", "emby")
     fn name(&self) -> &'static str;
-
-    /// Provider instance ID (e.g., "bilibili_main", "alist_company")
-    fn instance_id(&self) -> &str;
 
     /// Provider capabilities
     fn capabilities(&self) -> ProviderCapabilities;
@@ -175,44 +175,34 @@ pub trait MediaProvider: Send + Sync {
         false
     }
 
-    /// Register gRPC service (optional)
+    /// Get provider-specific client for gRPC service registration
     ///
-    /// Providers can register their own gRPC services for:
-    /// - Parse endpoint (URL → source_config options)
-    /// - Browse endpoint (file/folder listing)
-    /// - Proxy endpoints (MPD/Segment streaming)
+    /// This method returns the underlying client (e.g., BilibiliClient, AlistClient)
+    /// that can be used by synctv-api to create and register gRPC services.
     ///
-    /// # Example
-    /// ```rust
-    /// // Bilibili registers BilibiliService with Parse and ProxySegment methods
-    /// ```
+    /// The registration logic is handled in synctv-api layer, not in synctv-core,
+    /// to avoid circular dependencies between synctv-core and web frameworks.
     ///
-    /// Note: This method will be implemented when gRPC integration is added
-    /// For now, it returns Ok(()) as default
-    async fn register_grpc_service(&self) -> Result<(), ProviderError> {
-        Ok(()) // Default: no-op
-    }
-
-    /// Register HTTP routes (optional)
-    ///
-    /// Providers can register HTTP routes for:
-    /// - Parse endpoint: POST /api/providers/{instance_id}/parse
-    /// - Browse endpoint: GET /api/providers/{instance_id}/browse
-    /// - Proxy endpoint: GET /api/providers/{instance_id}/proxy/*path
+    /// # Returns
+    /// None for providers that don't need service registration.
+    /// Some(client) for providers that expose client-facing APIs.
     ///
     /// # Example
-    /// ```rust
-    /// // Register parse endpoint
-    /// router.route(
-    ///     &format!("/api/providers/{}/parse", self.instance_id()),
-    ///     post(Self::handle_parse)
-    /// )
+    /// ```rust,ignore
+    /// // In synctv-api/src/grpc/provider_registration.rs
+    /// match provider.name() {
+    ///     "bilibili" => {
+    ///         if let Some(client) = provider.get_service_client() {
+    ///             let client = client.downcast_ref::<BilibiliClient>().unwrap();
+    ///             let service = BilibiliServiceImpl::new(client.clone());
+    ///             router = router.add_service(BilibiliServer::new(service));
+    ///         }
+    ///     }
+    ///     _ => {}
+    /// }
     /// ```
-    ///
-    /// Note: This method will be implemented when HTTP integration is added
-    /// For now, it returns Ok(()) as default
-    async fn register_http_routes(&self) -> Result<(), ProviderError> {
-        Ok(()) // Default: no-op
+    fn get_service_client(&self) -> Option<&dyn std::any::Any> {
+        None // Default: no client to expose
     }
 
     // ========== Caching Strategy ==========

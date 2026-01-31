@@ -20,3 +20,8 @@ pub mod emby {
 pub mod alist_server;
 pub mod bilibili_server;
 pub mod emby_server;
+
+// Re-export server types for external registration
+pub use alist_server::AlistService;
+pub use bilibili_server::BilibiliService;
+pub use emby_server::EmbyService;

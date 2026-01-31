@@ -4,52 +4,50 @@
 //! VendorClient abstracts local/remote implementation, so MediaProvider doesn't need to know.
 
 use super::{
-    provider_client::{AlistClientArc, AlistClientExt, AlistFileInfo},
+    provider_client::{
+        create_remote_alist_client, load_local_alist_client, AlistClientArc, AlistClientExt,
+        AlistFileInfo,
+    },
     MediaProvider, PlaybackInfo, PlaybackResult, ProviderCapabilities, ProviderContext,
     ProviderError, SubtitleTrack,
 };
+use crate::service::ProviderInstanceManager;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Alist MediaProvider
 ///
-/// Uses AlistClient trait (abstraction over local/remote) to implement playback.
-/// The client can be either LocalAlistClient or RemoteAlistClient.
+/// Holds a reference to ProviderInstanceManager to select appropriate provider instance.
 pub struct AlistProvider {
-    instance_id: String,
-    base_url: String,
-    client: AlistClientArc,
+    provider_instance_manager: Arc<ProviderInstanceManager>,
 }
 
 impl AlistProvider {
-    /// Create a new AlistProvider with client
-    ///
-    /// The client implements AlistClient trait, which can be either:
-    /// - LocalAlistClient (direct HTTP calls)
-    /// - RemoteAlistClient (gRPC calls)
-    ///
-    /// MediaProvider doesn't need to know which implementation is used.
-    pub fn new(
-        instance_id: impl Into<String>,
-        base_url: impl Into<String>,
-        client: AlistClientArc,
-    ) -> Self {
+    /// Create a new AlistProvider with ProviderInstanceManager
+    pub fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
         Self {
-            instance_id: instance_id.into(),
-            base_url: base_url.into(),
-            client,
+            provider_instance_manager,
         }
     }
 
-    /// Legacy constructor name for compatibility
-    pub fn new_with_manager(
-        instance_id: impl Into<String>,
-        base_url: impl Into<String>,
-        client: AlistClientArc,
-    ) -> Self {
-        Self::new(instance_id, base_url, client)
+    /// Get Alist client for the given instance name
+    ///
+    /// Selection priority:
+    /// 1. Instance specified by instance_name parameter
+    /// 2. Fallback to singleton local client
+    async fn get_client(&self, instance_name: Option<&str>) -> AlistClientArc {
+        if let Some(name) = instance_name {
+            if let Some(channel) = self.provider_instance_manager.get(name).await {
+                // Remote instance - create gRPC client
+                return create_remote_alist_client(channel);
+            }
+        }
+
+        // Fallback to singleton local client
+        load_local_alist_client()
     }
 
     /// Detect file format from extension
@@ -76,14 +74,17 @@ struct AlistSourceConfig {
     path: String,
     #[serde(default)]
     password: Option<String>,
+    #[serde(default)]
+    provider_instance_name: Option<String>,
 }
 
 impl TryFrom<&Value> for AlistSourceConfig {
     type Error = ProviderError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(value.clone())
-            .map_err(|e| ProviderError::InvalidConfig(format!("Failed to parse Alist source config: {}", e)))
+        serde_json::from_value(value.clone()).map_err(|e| {
+            ProviderError::InvalidConfig(format!("Failed to parse Alist source config: {}", e))
+        })
     }
 }
 
@@ -93,10 +94,6 @@ impl TryFrom<&Value> for AlistSourceConfig {
 impl MediaProvider for AlistProvider {
     fn name(&self) -> &'static str {
         "alist"
-    }
-
-    fn instance_id(&self) -> &str {
-        &self.instance_id
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
@@ -114,8 +111,13 @@ impl MediaProvider for AlistProvider {
         _ctx: &ProviderContext<'_>,
         source_config: &Value,
     ) -> Result<PlaybackResult, ProviderError> {
-        // Parse source_config
+        // Parse source_config first
         let config = AlistSourceConfig::try_from(source_config)?;
+
+        // Get appropriate client based on instance_name from config
+        let client = self
+            .get_client(config.provider_instance_name.as_deref())
+            .await;
 
         // Build proto request
         let request = synctv_providers::grpc::alist::FsGetReq {
@@ -127,7 +129,7 @@ impl MediaProvider for AlistProvider {
         };
 
         // Call client (trait method - implementation handles local/remote)
-        let fs_get_data = self.client.fs_get(request).await?;
+        let fs_get_data = client.fs_get(request).await?;
 
         let file_info: AlistFileInfo = fs_get_data.into();
 
@@ -149,9 +151,13 @@ impl MediaProvider for AlistProvider {
         }
 
         // Try to get video preview info for transcoded URLs (optional)
-        let has_video_preview = if let Some(preview) = self
-            .client
-            .get_video_preview(&config.host, &config.token, &config.path, config.password.as_deref())
+        let has_video_preview = if let Some(preview) = client
+            .get_video_preview(
+                &config.host,
+                &config.token,
+                &config.path,
+                config.password.as_deref(),
+            )
             .await?
         {
             // Add transcoding quality options
