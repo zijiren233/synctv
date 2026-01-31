@@ -56,6 +56,11 @@ impl ProvidersManager {
         manager
     }
 
+    /// Get a reference to the provider instance manager
+    pub fn instance_manager(&self) -> &Arc<ProviderInstanceManager> {
+        &self.instance_manager
+    }
+
     /// Register all built-in provider factories
     fn register_builtin_providers(&mut self) {
         // Alist factory
@@ -186,21 +191,20 @@ impl ProvidersManager {
         self.factories.keys().cloned().collect()
     }
 
-    /// Get all providers that need gRPC service registration
-    ///
-    /// Returns a list of provider instances that expose client-facing APIs
-    /// (parse, browse, etc.) and need to be registered in the synctv-api layer.
-    ///
-    /// # Returns
-    /// Vector of providers where `needs_service_registration()` returns true
-    pub async fn get_providers_needing_registration(&self) -> Vec<Arc<dyn MediaProvider>> {
-        self.media_providers
-            .read()
-            .await
-            .values()
-            .filter(|provider| provider.needs_service_registration())
-            .cloned()
-            .collect()
+    // Note: Service/route registration is now handled via extension traits
+    // in synctv-api layer. See:
+    // - synctv-api/src/http/provider_extensions.rs
+    // - synctv-api/src/grpc/provider_extensions.rs
+}
+
+impl std::fmt::Debug for ProvidersManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let providers_count = self.media_providers.blocking_read().len();
+        f.debug_struct("ProvidersManager")
+            .field("factories_count", &self.factories.len())
+            .field("media_providers_count", &providers_count)
+            .field("instance_manager", &self.instance_manager)
+            .finish()
     }
 }
 

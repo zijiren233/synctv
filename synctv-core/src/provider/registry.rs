@@ -97,17 +97,11 @@ impl ProviderRegistry {
         self.instances.remove(instance_id).is_some()
     }
 
-    /// Get all providers that need service registration
-    ///
-    /// Returns a list of provider instances that expose client-facing APIs
-    /// (parse, browse, etc.) that need to be registered in synctv-api layer.
-    pub fn get_providers_needing_registration(&self) -> Vec<Arc<dyn MediaProvider>> {
-        self.instances
-            .values()
-            .filter(|instance| instance.needs_service_registration())
-            .cloned()
-            .collect()
-    }
+    // Note: Service/route registration is now handled via extension traits
+    // in synctv-api layer. Use list_instances() to get all providers.
+    // See:
+    // - synctv-api/src/http/provider_extensions.rs
+    // - synctv-api/src/grpc/provider_extensions.rs
 }
 
 impl Default for ProviderRegistry {
@@ -126,16 +120,6 @@ mod tests {
     impl MediaProvider for MockProvider {
         fn name(&self) -> &'static str {
             "mock"
-        }
-
-        fn capabilities(&self) -> super::super::ProviderCapabilities {
-            super::super::ProviderCapabilities {
-                can_parse: true,
-                can_play: true,
-                supports_subtitles: false,
-                supports_quality: false,
-                requires_auth: false,
-            }
         }
 
         async fn generate_playback(

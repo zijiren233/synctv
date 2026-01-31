@@ -1,0 +1,146 @@
+// Bilibili Provider Client API
+//
+// This is the client-facing gRPC API for Bilibili provider
+
+syntax = "proto3";
+
+package synctv.provider.bilibili;
+
+// Bilibili Provider Service
+//
+// Client-facing API for Bilibili video parsing, login, and user management
+service BilibiliProviderService {
+  // Parse Bilibili URL (video, anime, live)
+  rpc Parse(ParseRequest) returns (ParseResponse);
+
+  // Generate QR code for login
+  rpc LoginQR(LoginQRRequest) returns (QRCodeResponse);
+
+  // Check QR code login status
+  rpc CheckQR(CheckQRRequest) returns (QRStatusResponse);
+
+  // Get captcha for SMS login
+  rpc GetCaptcha(GetCaptchaRequest) returns (CaptchaResponse);
+
+  // Send SMS verification code
+  rpc SendSMS(SendSMSRequest) returns (SendSMSResponse);
+
+  // Login with SMS code
+  rpc LoginSMS(LoginSMSRequest) returns (LoginSMSResponse);
+
+  // Get user info
+  rpc GetUserInfo(UserInfoRequest) returns (UserInfoResponse);
+
+  // Logout
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+// Parse video URL request
+message ParseRequest {
+  string url = 1;
+  map<string, string> cookies = 2;
+  string backend = 3; // Optional backend instance name
+}
+
+// Parse video URL response
+message ParseResponse {
+  string title = 1;
+  repeated string actors = 2;
+  repeated VideoInfo videos = 3;
+}
+
+// Video information
+message VideoInfo {
+  string bvid = 1;
+  int64 cid = 2;
+  int64 epid = 3;
+  string name = 4;
+  string cover = 5;
+  bool is_live = 6;
+}
+
+// QR code login request
+message LoginQRRequest {
+  string backend = 1; // Optional backend instance name
+}
+
+// QR code response
+message QRCodeResponse {
+  string url = 1;
+  string key = 2;
+}
+
+// Check QR status request
+message CheckQRRequest {
+  string key = 1;
+  string backend = 2; // Optional backend instance name
+}
+
+// QR status response
+message QRStatusResponse {
+  int32 status = 1; // 0=success, 1=expired, 2=not_scanned, 3=scanned_not_confirmed
+  map<string, string> cookies = 2;
+}
+
+// Get captcha request
+message GetCaptchaRequest {
+  string backend = 1; // Optional backend instance name
+}
+
+// Captcha response
+message CaptchaResponse {
+  string token = 1;
+  string gt = 2;
+  string challenge = 3;
+}
+
+// Send SMS request
+message SendSMSRequest {
+  string phone = 1;
+  string token = 2;
+  string challenge = 3;
+  string validate = 4;
+  string backend = 5; // Optional backend instance name
+}
+
+// Send SMS response
+message SendSMSResponse {
+  string captcha_key = 1;
+}
+
+// Login with SMS request
+message LoginSMSRequest {
+  string phone = 1;
+  string code = 2;
+  string captcha_key = 3;
+  string backend = 4; // Optional backend instance name
+}
+
+// Login with SMS response
+message LoginSMSResponse {
+  map<string, string> cookies = 1;
+}
+
+// User info request
+message UserInfoRequest {
+  map<string, string> cookies = 1;
+  string backend = 2; // Optional backend instance name
+}
+
+// User info response
+message UserInfoResponse {
+  bool is_login = 1;
+  string username = 2;
+  string face = 3;
+  bool is_vip = 4;
+}
+
+// Logout request
+message LogoutRequest {
+  string backend = 1; // Optional backend instance name
+}
+
+// Logout response
+message LogoutResponse {
+  string message = 1;
+}

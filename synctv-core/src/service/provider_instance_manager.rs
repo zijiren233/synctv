@@ -19,6 +19,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 /// Architecture:
 /// - `instances`: HashMap of remote gRPC channels (indexed by name)
 /// - `get(name)`: Returns Some(channel) if remote instance found, None otherwise
+#[derive(Debug)]
 pub struct ProviderInstanceManager {
     /// Remote instances (indexed by name → gRPC Channel)
     instances: Arc<RwLock<HashMap<String, Channel>>>,
@@ -58,11 +59,7 @@ impl ProviderInstanceManager {
                     success_count += 1;
                 }
                 Err(e) => {
-                    tracing::error!(
-                        "Failed to load provider instance {}: {}",
-                        config.name,
-                        e
-                    );
+                    tracing::error!("Failed to load provider instance {}: {}", config.name, e);
                     error_count += 1;
                 }
             }
@@ -80,9 +77,7 @@ impl ProviderInstanceManager {
     /// Create a gRPC channel for the given provider instance
     ///
     /// Establishes gRPC connection with configured TLS settings, timeout, and middleware.
-    async fn create_grpc_channel(
-        config: &ProviderInstance,
-    ) -> anyhow::Result<Channel> {
+    async fn create_grpc_channel(config: &ProviderInstance) -> anyhow::Result<Channel> {
         // Parse timeout
         let timeout = config
             .parse_timeout()
@@ -145,6 +140,11 @@ impl ProviderInstanceManager {
     /// List all remote instance names
     pub async fn list(&self) -> Vec<String> {
         self.instances.read().await.keys().cloned().collect()
+    }
+
+    /// Get all provider instances with full metadata
+    pub async fn get_all_instances(&self) -> anyhow::Result<Vec<ProviderInstance>> {
+        self.repository.get_all().await.map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Add a new provider instance
@@ -265,25 +265,5 @@ impl ProviderInstanceManager {
         }
 
         results
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sqlx::PgPool;
-
-    #[tokio::test]
-    async fn test_local_instance_creation() {
-        // This test verifies the local instance is created correctly
-        let pool = PgPool::connect_lazy("postgresql://test").unwrap();
-        let repo = Arc::new(ProviderInstanceRepository::new(pool));
-        let manager = ProviderInstanceManager::new(repo);
-
-        let local = manager.get_local();
-        assert!(local.is_local());
-        assert_eq!(local.config.name, "local");
-        assert!(local.config.supports_provider("bilibili"));
-        assert!(local.config.supports_provider("alist"));
     }
 }

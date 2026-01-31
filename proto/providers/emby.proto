@@ -1,0 +1,111 @@
+// Emby Provider Client API
+//
+// This is the client-facing gRPC API for Emby provider
+
+syntax = "proto3";
+
+package synctv.provider.emby;
+
+// Emby Provider Service
+//
+// Client-facing API for Emby/Jellyfin media server access
+service EmbyProviderService {
+  // Login to Emby/Jellyfin server (validate API key)
+  rpc Login(LoginRequest) returns (LoginResponse);
+
+  // List library items
+  rpc List(ListRequest) returns (ListResponse);
+
+  // Get current user info
+  rpc GetMe(GetMeRequest) returns (GetMeResponse);
+
+  // Logout from Emby
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+
+  // Get saved credentials (binds)
+  rpc GetBinds(GetBindsRequest) returns (GetBindsResponse);
+}
+
+// Login request
+message LoginRequest {
+  string host = 1;
+  string api_key = 2;
+  string backend = 3; // Optional backend instance name
+}
+
+// Login response
+message LoginResponse {
+  string user_id = 1;
+  string username = 2;
+  bool is_admin = 3;
+}
+
+// List items request
+message ListRequest {
+  string host = 1;
+  string token = 2;
+  string path = 3;
+  uint64 start_index = 4;
+  uint64 limit = 5;
+  string search_term = 6;
+  string user_id = 7;
+  string backend = 8; // Optional backend instance name
+}
+
+// List items response
+message ListResponse {
+  repeated MediaItem items = 1;
+  uint64 total = 2;
+}
+
+// Media item information
+message MediaItem {
+  string id = 1;
+  string name = 2;
+  string type = 3;
+  string parent_id = 4;
+  string series_name = 5;
+  string series_id = 6;
+  string season_name = 7;
+}
+
+// Get user info request
+message GetMeRequest {
+  string host = 1;
+  string token = 2;
+  string backend = 3; // Optional backend instance name
+}
+
+// Get user info response
+message GetMeResponse {
+  string id = 1;
+  string name = 2;
+}
+
+// Logout request
+message LogoutRequest {
+  string backend = 1; // Optional backend instance name
+}
+
+// Logout response
+message LogoutResponse {
+  string message = 1;
+}
+
+// Get binds request
+message GetBindsRequest {
+  string backend = 1; // Optional backend instance name
+}
+
+// Get binds response
+message GetBindsResponse {
+  repeated BindInfo binds = 1;
+}
+
+// Saved credential information
+message BindInfo {
+  string id = 1;
+  string host = 2;
+  string user_id = 3;
+  string created_at = 4;
+}

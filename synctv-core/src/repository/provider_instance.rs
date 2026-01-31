@@ -10,6 +10,14 @@ pub struct ProviderInstanceRepository {
     pool: PgPool,
 }
 
+impl std::fmt::Debug for ProviderInstanceRepository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderInstanceRepository")
+            .field("pool", &"PgPool")
+            .finish()
+    }
+}
+
 impl ProviderInstanceRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }

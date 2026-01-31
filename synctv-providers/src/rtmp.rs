@@ -12,8 +12,7 @@
 // URL format: rtmp://server/live/{room_id}/{stream_key}
 
 use synctv_core::provider::{
-    MediaProvider, PlaybackInfo, PlaybackResult, ProviderCapabilities, ProviderContext,
-    ProviderError,
+    MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -63,16 +62,6 @@ impl MediaProvider for RtmpProvider {
 
     fn instance_id(&self) -> &str {
         &self.instance_id
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            can_parse: false,      // RTMP doesn't parse URLs
-            can_play: true,        // Can generate playback URLs
-            supports_subtitles: false, // Live streams don't have subtitles
-            supports_quality: false,   // Live streams have single quality
-            requires_auth: false,  // No authentication needed
-        }
     }
 
     async fn generate_playback(

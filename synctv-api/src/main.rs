@@ -5,7 +5,11 @@ mod observability;
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
-use synctv_core::{Config, logging, service::{JwtService, UserService, RateLimiter, RateLimitConfig, ContentFilter}};
+use synctv_core::{
+    Config, logging,
+    service::{JwtService, UserService, RateLimiter, RateLimitConfig, ContentFilter, ProviderInstanceManager},
+    repository::ProviderInstanceRepository,
+};
 use tracing::{info, error};
 
 #[tokio::main]
@@ -68,7 +72,7 @@ async fn main() -> Result<()> {
     info!("UserService initialized");
 
     // Initialize RoomService
-    let room_service = synctv_core::service::RoomService::new(pool);
+    let room_service = synctv_core::service::RoomService::new(pool.clone());
     info!("RoomService initialized");
 
     // Initialize RoomMessageHub for real-time messaging
@@ -96,6 +100,19 @@ async fn main() -> Result<()> {
         content_filter.max_chat_length,
         content_filter.max_danmaku_length
     );
+
+    // Initialize ProviderInstanceManager
+    info!("Initializing ProviderInstanceManager...");
+    let provider_instance_repo = std::sync::Arc::new(ProviderInstanceRepository::new(pool.clone()));
+    let provider_instance_manager = std::sync::Arc::new(ProviderInstanceManager::new(provider_instance_repo));
+
+    // Load all enabled provider instances from database
+    if let Err(e) = provider_instance_manager.init().await {
+        error!("Failed to initialize ProviderInstanceManager: {}", e);
+        error!("Continuing without remote provider instances");
+    } else {
+        info!("ProviderInstanceManager initialized successfully");
+    }
 
     // Initialize connection manager
     let connection_manager = synctv_cluster::sync::ConnectionManager::default();
@@ -140,6 +157,7 @@ async fn main() -> Result<()> {
     // Clone Arc for HTTP server
     let user_service_http = user_service.clone();
     let room_service_http = room_service.clone();
+    let provider_instance_manager_http = provider_instance_manager.clone();
 
     // Start gRPC server in background task
     info!("Starting gRPC server on {}...", config.grpc_address());
@@ -161,10 +179,24 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Initialize ProvidersManager
+    info!("Initializing ProvidersManager...");
+    let providers_manager = std::sync::Arc::new(synctv_core::service::ProvidersManager::new(
+        provider_instance_manager.clone()
+    ));
+    info!("ProvidersManager initialized");
+
+    let providers_manager_http = providers_manager.clone();
+
     // Start HTTP/REST server
     let http_address = config.http_address();
     info!("Starting HTTP server on {}...", http_address);
-    let http_router = http::create_router(user_service_http, room_service_http);
+    let http_router = http::create_router(
+        user_service_http,
+        room_service_http,
+        provider_instance_manager_http,
+        providers_manager_http,
+    );
 
     let http_handle = tokio::spawn(async move {
         let http_addr: std::net::SocketAddr = http_address.parse()

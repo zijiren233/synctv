@@ -8,8 +8,7 @@ use super::{
         create_remote_alist_client, load_local_alist_client, AlistClientArc, AlistClientExt,
         AlistFileInfo,
     },
-    MediaProvider, PlaybackInfo, PlaybackResult, ProviderCapabilities, ProviderContext,
-    ProviderError, SubtitleTrack,
+    MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
 };
 use crate::service::ProviderInstanceManager;
 use async_trait::async_trait;
@@ -94,16 +93,6 @@ impl TryFrom<&Value> for AlistSourceConfig {
 impl MediaProvider for AlistProvider {
     fn name(&self) -> &'static str {
         "alist"
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            can_parse: true,
-            can_play: true,
-            supports_subtitles: true,
-            supports_quality: true,
-            requires_auth: true,
-        }
     }
 
     async fn generate_playback(

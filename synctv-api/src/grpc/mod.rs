@@ -19,11 +19,12 @@ pub mod proto {
 pub mod client_service;
 pub mod admin_service;
 pub mod interceptors;
-pub mod provider_registration;
+
+// Provider gRPC service extensions (decoupled via trait)
+pub mod providers;
 
 pub use client_service::ClientServiceImpl;
 pub use admin_service::AdminServiceImpl;
-pub use provider_registration::register_provider_services;
 // pub use interceptors::{AuthInterceptor, LoggingInterceptor};
 
 use proto::client::client_service_server::ClientServiceServer;
@@ -53,9 +54,18 @@ pub async fn serve(
 
     tracing::info!("Starting gRPC server on {}", addr);
 
+    // Clone services for all uses before unwrapping
+    let user_service_for_client = user_service.clone();
+    let user_service_for_admin = user_service.clone();
+    let user_service_for_provider = user_service.clone();
+
+    let room_service_for_client = room_service.clone();
+    let room_service_for_admin = room_service.clone();
+    let room_service_for_provider = room_service.clone();
+
     // Create service instances
-    let user_service_clone = Arc::try_unwrap(user_service.clone()).unwrap_or_else(|arc| (*arc).clone());
-    let room_service_clone = Arc::try_unwrap(room_service.clone()).unwrap_or_else(|arc| (*arc).clone());
+    let user_service_clone = Arc::try_unwrap(user_service_for_client).unwrap_or_else(|arc| (*arc).clone());
+    let room_service_clone = Arc::try_unwrap(room_service_for_client).unwrap_or_else(|arc| (*arc).clone());
 
     let client_service = ClientServiceImpl::new(
         user_service_clone,
@@ -69,8 +79,8 @@ pub async fn serve(
     );
 
     let admin_service = AdminServiceImpl::new(
-        Arc::try_unwrap(user_service).unwrap_or_else(|arc| (*arc).clone()),
-        Arc::try_unwrap(room_service).unwrap_or_else(|arc| (*arc).clone()),
+        Arc::try_unwrap(user_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
+        Arc::try_unwrap(room_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
     );
 
     // Create server builder
@@ -100,16 +110,26 @@ pub async fn serve(
         router = router.add_service(reflection);
     }
 
-    // Register provider gRPC services (Bilibili, Alist, Emby)
-    if let Some(providers_manager) = providers_manager {
-        let providers = providers_manager.get_providers_needing_registration().await;
-        if !providers.is_empty() {
-            tracing::info!(
-                "Registering {} provider gRPC service(s)",
-                providers.len()
-            );
-            router = register_provider_services(router, providers).await?;
-        }
+    // Register provider gRPC services via registry pattern
+    // Each provider module self-registers, achieving complete decoupling!
+    if let Some(providers_mgr) = providers_manager {
+        tracing::info!("Initializing provider gRPC service modules");
+
+        // Create AppState for provider extensions
+        let app_state = Arc::new(crate::http::AppState {
+            user_service: user_service_for_provider,
+            room_service: room_service_for_provider,
+            provider_instance_manager: providers_mgr.instance_manager().clone(),
+            providers_manager: providers_mgr,
+        });
+
+        // Initialize all provider modules (triggers self-registration)
+        providers::bilibili::init();
+        providers::alist::init();
+        providers::emby::init();
+
+        // Build services from registry (no knowledge of specific types!)
+        router = providers::build_provider_services(app_state, router);
     }
 
     // Start server

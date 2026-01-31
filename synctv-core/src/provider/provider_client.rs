@@ -46,12 +46,12 @@ pub fn create_remote_alist_client(channel: tonic::transport::Channel) -> AlistCl
 /// Thin wrapper around gRPC client
 ///
 /// Implements AlistInterface by delegating to gRPC client.
-struct GrpcAlistClient {
+pub struct GrpcAlistClient {
     channel: tonic::transport::Channel,
 }
 
 impl GrpcAlistClient {
-    fn new(channel: tonic::transport::Channel) -> Self {
+    pub fn new(channel: tonic::transport::Channel) -> Self {
         Self { channel }
     }
 }
@@ -288,12 +288,12 @@ pub fn create_remote_bilibili_client(channel: tonic::transport::Channel) -> Bili
 }
 
 /// Thin wrapper around gRPC client for Bilibili
-struct GrpcBilibiliClient {
+pub struct GrpcBilibiliClient {
     channel: tonic::transport::Channel,
 }
 
 impl GrpcBilibiliClient {
-    fn new(channel: tonic::transport::Channel) -> Self {
+    pub fn new(channel: tonic::transport::Channel) -> Self {
         Self { channel }
     }
 }
@@ -509,12 +509,12 @@ pub fn create_remote_emby_client(channel: tonic::transport::Channel) -> EmbyClie
 }
 
 /// Thin wrapper around gRPC client for Emby
-struct GrpcEmbyClient {
+pub struct GrpcEmbyClient {
     channel: tonic::transport::Channel,
 }
 
 impl GrpcEmbyClient {
-    fn new(channel: tonic::transport::Channel) -> Self {
+    pub fn new(channel: tonic::transport::Channel) -> Self {
         Self { channel }
     }
 }

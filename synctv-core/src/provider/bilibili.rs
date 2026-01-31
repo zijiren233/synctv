@@ -6,8 +6,7 @@ use super::{
     provider_client::{
         create_remote_bilibili_client, load_local_bilibili_client, BilibiliClientArc,
     },
-    MediaProvider, PlaybackInfo, PlaybackResult, ProviderCapabilities, ProviderContext,
-    ProviderError, SubtitleTrack,
+    MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -116,16 +115,6 @@ impl TryFrom<&Value> for BilibiliSourceConfig {
 impl MediaProvider for BilibiliProvider {
     fn name(&self) -> &'static str {
         "bilibili"
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            can_parse: true,
-            can_play: true,
-            supports_subtitles: true,
-            supports_quality: true,
-            requires_auth: false,
-        }
     }
 
     async fn generate_playback(

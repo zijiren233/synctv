@@ -3,8 +3,7 @@
 //! Provides direct playback for HTTP(S) URLs
 
 use super::{
-    MediaProvider, PlaybackInfo, PlaybackResult, ProviderCapabilities, ProviderContext,
-    ProviderError,
+    MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -69,16 +68,6 @@ impl TryFrom<&Value> for DirectUrlSourceConfig {
 impl MediaProvider for DirectUrlProvider {
     fn name(&self) -> &'static str {
         "direct_url"
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            can_parse: false,
-            can_play: true,
-            supports_subtitles: false,
-            supports_quality: false,
-            requires_auth: false,
-        }
     }
 
     async fn generate_playback(

@@ -4,8 +4,7 @@
 
 use super::{
     provider_client::{create_remote_emby_client, load_local_emby_client, EmbyClientArc},
-    MediaProvider, PlaybackInfo, PlaybackResult, ProviderCapabilities, ProviderContext,
-    ProviderError, SubtitleTrack,
+    MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
 };
 use crate::service::ProviderInstanceManager;
 use async_trait::async_trait;
@@ -74,16 +73,6 @@ impl TryFrom<&Value> for EmbySourceConfig {
 impl MediaProvider for EmbyProvider {
     fn name(&self) -> &'static str {
         "emby"
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            can_parse: true,
-            can_play: true,
-            supports_subtitles: true,
-            supports_quality: true,
-            requires_auth: true,
-        }
     }
 
     async fn generate_playback(

@@ -102,21 +102,6 @@ pub enum ItemType {
     Video,
 }
 
-/// Media provider capabilities
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProviderCapabilities {
-    /// Can parse URLs
-    pub can_parse: bool,
-    /// Can generate playback URLs
-    pub can_play: bool,
-    /// Supports subtitles
-    pub supports_subtitles: bool,
-    /// Supports multiple quality options
-    pub supports_quality: bool,
-    /// Requires authentication
-    pub requires_auth: bool,
-}
-
 /// Media provider trait
 ///
 /// Core interface that all providers must implement.
@@ -130,9 +115,6 @@ pub trait MediaProvider: Send + Sync {
 
     /// Provider type name (e.g., "bilibili", "alist", "emby")
     fn name(&self) -> &'static str;
-
-    /// Provider capabilities
-    fn capabilities(&self) -> ProviderCapabilities;
 
     // ========== Core Method (MANDATORY) ==========
 
@@ -168,42 +150,10 @@ pub trait MediaProvider: Send + Sync {
         source_config: &Value,
     ) -> Result<PlaybackResult, ProviderError>;
 
-    // ========== Service Registration ==========
-
-    /// Whether this provider needs to register custom services
-    fn needs_service_registration(&self) -> bool {
-        false
-    }
-
-    /// Get provider-specific client for gRPC service registration
-    ///
-    /// This method returns the underlying client (e.g., BilibiliClient, AlistClient)
-    /// that can be used by synctv-api to create and register gRPC services.
-    ///
-    /// The registration logic is handled in synctv-api layer, not in synctv-core,
-    /// to avoid circular dependencies between synctv-core and web frameworks.
-    ///
-    /// # Returns
-    /// None for providers that don't need service registration.
-    /// Some(client) for providers that expose client-facing APIs.
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// // In synctv-api/src/grpc/provider_registration.rs
-    /// match provider.name() {
-    ///     "bilibili" => {
-    ///         if let Some(client) = provider.get_service_client() {
-    ///             let client = client.downcast_ref::<BilibiliClient>().unwrap();
-    ///             let service = BilibiliServiceImpl::new(client.clone());
-    ///             router = router.add_service(BilibiliServer::new(service));
-    ///         }
-    ///     }
-    ///     _ => {}
-    /// }
-    /// ```
-    fn get_service_client(&self) -> Option<&dyn std::any::Any> {
-        None // Default: no client to expose
-    }
+    // Note: Service/Route registration is handled in synctv-api layer
+    // via extension traits to avoid circular dependencies.
+    // See synctv-api/src/http/provider_extensions.rs
+    // See synctv-api/src/grpc/provider_extensions.rs
 
     // ========== Caching Strategy ==========
 

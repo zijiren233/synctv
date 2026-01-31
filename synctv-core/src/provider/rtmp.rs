@@ -3,8 +3,7 @@
 //! Provides playback URLs for RTMP live streams
 
 use super::{
-    MediaProvider, PlaybackInfo, PlaybackResult, ProviderCapabilities, ProviderContext,
-    ProviderError,
+    MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -33,16 +32,6 @@ impl Default for RtmpProvider {
 impl MediaProvider for RtmpProvider {
     fn name(&self) -> &'static str {
         "rtmp"
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            can_parse: false,
-            can_play: true,
-            supports_subtitles: false,
-            supports_quality: false,
-            requires_auth: false,
-        }
     }
 
     async fn generate_playback(
