@@ -1,0 +1,243 @@
+syntax = "proto3";
+
+package api.bilibili;
+
+
+service Bilibili {
+  rpc NewQRCode(Empty) returns (NewQRCodeResp);
+  rpc LoginWithQRCode(LoginWithQRCodeReq) returns (LoginWithQRCodeResp);
+  rpc NewCaptcha(Empty) returns (NewCaptchaResp);
+  rpc NewSMS(NewSMSReq) returns (NewSMSResp);
+  rpc LoginWithSMS(LoginWithSMSReq) returns (LoginWithSMSResp);
+  rpc ParseVideoPage(ParseVideoPageReq) returns (VideoPageInfo);
+  rpc GetVideoURL(GetVideoURLReq) returns (VideoURL);
+  rpc GetDashVideoURL(GetDashVideoURLReq) returns (GetDashVideoURLResp);
+  rpc GetSubtitles(GetSubtitlesReq) returns (GetSubtitlesResp);
+  rpc ParsePGCPage(ParsePGCPageReq) returns (VideoPageInfo);
+  rpc GetPGCURL(GetPGCURLReq) returns (VideoURL);
+  rpc GetDashPGCURL(GetDashPGCURLReq) returns (GetDashPGCURLResp);
+  rpc UserInfo(UserInfoReq) returns (UserInfoResp);
+  rpc Match(MatchReq) returns (MatchResp);
+  rpc GetLiveStreams(GetLiveStreamsReq) returns (GetLiveStreamsResp);
+  rpc ParseLivePage(ParseLivePageReq) returns (VideoPageInfo);
+  rpc GetLiveDanmuInfo(GetLiveDanmuInfoReq) returns (GetLiveDanmuInfoResp);
+}
+
+message Empty {}
+
+message NewQRCodeResp {
+  string url = 1;
+  string key = 2;
+}
+
+message LoginWithQRCodeReq { string key = 1; }
+
+enum QRCodeStatus {
+  UNKNOWN = 0;
+  EXPIRED = 1;
+  NOTSCANNED = 2;
+  SCANNED = 3;
+  SUCCESS = 4;
+}
+
+message LoginWithQRCodeResp {
+  QRCodeStatus status = 1;
+  map<string, string> cookies = 2;
+}
+
+message NewCaptchaResp {
+  string token = 1;
+  string gt = 2;
+  string challenge = 3;
+}
+
+message NewSMSReq {
+  string phone = 1;
+  string token = 2;
+  string challenge = 3;
+  string validate = 4;
+}
+
+message NewSMSResp { string captchaKey = 1; }
+
+message LoginWithSMSReq {
+  string phone = 1;
+  string code = 2;
+  string captchaKey = 3;
+}
+
+message LoginWithSMSResp { map<string, string> cookies = 1; }
+
+message VideoPageInfo {
+  string title = 2;
+  string actors = 3;
+  repeated VideoInfo videoInfos = 4;
+}
+
+message VideoInfo {
+  string bvid = 2;
+  uint64 cid = 3;
+  uint64 epid = 4;
+  string name = 5;
+  string coverImage = 6;
+  bool live = 7;
+}
+
+message ParseVideoPageReq {
+  map<string, string> cookies = 1;
+  uint64 aid = 2;
+  string bvid = 3;
+  bool sections = 4;
+}
+
+message VideoURL {
+  repeated string acceptDescription = 1;
+  repeated uint64 acceptQuality = 2;
+  uint64 currentQuality = 3;
+  string url = 4;
+}
+
+message GetVideoURLReq {
+  map<string, string> cookies = 1;
+  uint64 aid = 2;
+  string bvid = 3;
+  uint64 cid = 4;
+  uint64 quality = 5;
+}
+
+message GetDashVideoURLReq {
+  map<string, string> cookies = 1;
+  uint64 aid = 2;
+  string bvid = 3;
+  uint64 cid = 4;
+}
+
+message GetDashVideoURLResp {
+  DashInfo dash = 1;
+  DashInfo hevcDash = 2;
+}
+
+// DASH stream information
+message DashInfo {
+  double duration = 1;
+  double minBufferTime = 2;
+  repeated VideoStream videoStreams = 3;
+  repeated AudioStream audioStreams = 4;
+}
+
+// Video stream representation
+message VideoStream {
+  uint64 id = 1;
+  string baseUrl = 2;
+  string mimeType = 3;
+  string codecs = 4;
+  uint64 width = 5;
+  uint64 height = 6;
+  string frameRate = 7;
+  uint64 bandwidth = 8;
+  uint64 startWithSap = 9;
+  SegmentBase segmentBase = 10;
+}
+
+// Audio stream representation
+message AudioStream {
+  uint64 id = 1;
+  string baseUrl = 2;
+  string mimeType = 3;
+  string codecs = 4;
+  uint64 bandwidth = 5;
+  uint64 startWithSap = 6;
+  SegmentBase segmentBase = 7;
+}
+
+// Segment base information
+message SegmentBase {
+  string indexRange = 1;
+  string initializationRange = 2;
+}
+
+message GetSubtitlesReq {
+  map<string, string> cookies = 1;
+  uint64 aid = 2;
+  string bvid = 3;
+  uint64 cid = 4;
+}
+
+message GetSubtitlesResp { map<string, string> subtitles = 1; }
+
+message ParsePGCPageReq {
+  map<string, string> cookies = 1;
+  uint64 ssid = 2;
+  uint64 epid = 3;
+}
+
+message GetPGCURLReq {
+  map<string, string> cookies = 1;
+  uint64 epid = 2;
+  uint64 cid = 3;
+  uint64 quality = 4;
+}
+
+message GetDashPGCURLReq {
+  map<string, string> cookies = 1;
+  uint64 epid = 2;
+  uint64 cid = 3;
+}
+
+message GetDashPGCURLResp {
+  DashInfo dash = 1;
+  DashInfo hevcDash = 2;
+}
+
+message UserInfoReq { map<string, string> cookies = 1; }
+
+message UserInfoResp {
+  bool isLogin = 1;
+  string username = 2;
+  string face = 3;
+  bool isVip = 4;
+}
+
+message MatchReq { string url = 1; }
+
+message MatchResp {
+  string type = 1;
+  string id = 2;
+}
+
+message GetLiveStreamsReq {
+  map<string, string> cookies = 1;
+  uint64 cid = 2;
+  bool hls = 3;
+}
+
+message LiveStream {
+  uint64 quality = 1;
+  repeated string urls = 2;
+  string desc = 3;
+}
+
+message GetLiveStreamsResp {
+  repeated LiveStream liveStreams = 1;
+}
+
+message ParseLivePageReq {
+  map<string, string> cookies = 1;
+  uint64 roomID = 2;
+}
+
+message GetLiveDanmuInfoReq {
+  map<string, string> cookies = 1;
+  uint64 roomID = 2;
+}
+
+message GetLiveDanmuInfoResp {
+  message Host {
+    string host = 1;
+    uint32 port = 2;
+    uint32 wss_port = 3;
+    uint32 ws_port = 4;
+  }
+  string token = 1;
+  repeated Host hostList = 2;
+}

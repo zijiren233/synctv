@@ -1,0 +1,74 @@
+[package]
+name = "synctv-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Internal
+synctv-providers = { path = "../synctv-providers" }
+
+# Async
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# gRPC
+tonic.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# Redis
+redis.workspace = true
+
+# Security
+argon2.workspace = true
+jsonwebtoken.workspace = true
+aes-gcm.workspace = true
+ammonia.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Caching
+moka.workspace = true
+dashmap.workspace = true
+
+# IDs & Crypto
+nanoid.workspace = true
+uuid.workspace = true
+rand.workspace = true
+md5.workspace = true
+humantime.workspace = true
+
+# Utilities
+anyhow.workspace = true
+thiserror.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+once_cell.workspace = true
+url.workspace = true
+regex.workspace = true
+
+# HTTP Client
+reqwest.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+log.workspace = true
+
+# Configuration
+config.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+rsa = "0.9"

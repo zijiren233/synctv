@@ -1,0 +1,78 @@
+[package]
+name = "synctv-stream"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "synctv-stream"
+path = "src/main.rs"
+
+[dependencies]
+# Internal
+synctv-core.workspace = true
+synctv-cluster.workspace = true
+
+# Async
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+async-recursion.workspace = true
+futures.workspace = true
+
+# HTTP Framework
+axum.workspace = true
+
+# gRPC
+tonic.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+tokio-stream.workspace = true
+
+# Streaming
+xiu.workspace = true
+rtmp.workspace = true
+streamhub.workspace = true
+hls.workspace = true
+httpflv.workspace = true
+xflv.workspace = true
+xmpegts.workspace = true
+
+# Object Storage
+opendal.workspace = true
+
+# Redis
+redis.workspace = true
+
+# Caching
+moka.workspace = true
+dashmap.workspace = true
+
+# Utilities
+anyhow.workspace = true
+thiserror.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hostname.workspace = true
+uuid.workspace = true
+nanoid.workspace = true
+sha2.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Configuration
+config.workspace = true
+clap.workspace = true
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+wiremock.workspace = true
+tempfile = "3.8"

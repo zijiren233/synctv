@@ -1,0 +1,238 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use synctv_core::models::id::{MediaId, RoomId, UserId};
+use synctv_core::models::permission::PermissionBits;
+use synctv_core::models::playback::RoomPlaybackState;
+
+/// Events that are synchronized across cluster nodes via Redis Pub/Sub
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClusterEvent {
+    /// Chat message sent in a room
+    ChatMessage {
+        room_id: RoomId,
+        user_id: UserId,
+        username: String,
+        message: String,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// Danmaku (bullet comment) sent in a room
+    Danmaku {
+        room_id: RoomId,
+        user_id: UserId,
+        username: String,
+        message: String,
+        position: f64, // Video position in seconds
+        timestamp: DateTime<Utc>,
+    },
+
+    /// Room playback state changed (play, pause, seek, etc.)
+    PlaybackStateChanged {
+        room_id: RoomId,
+        user_id: UserId,
+        username: String,
+        state: RoomPlaybackState,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// User joined a room
+    UserJoined {
+        room_id: RoomId,
+        user_id: UserId,
+        username: String,
+        permissions: PermissionBits,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// User left a room
+    UserLeft {
+        room_id: RoomId,
+        user_id: UserId,
+        username: String,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// Movie added to room playlist
+    MovieAdded {
+        room_id: RoomId,
+        user_id: UserId,
+        username: String,
+        media_id: MediaId,
+        movie_title: String,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// Movie removed from room playlist
+    MovieRemoved {
+        room_id: RoomId,
+        user_id: UserId,
+        username: String,
+        media_id: MediaId,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// User permissions changed in a room
+    PermissionChanged {
+        room_id: RoomId,
+        target_user_id: UserId,
+        target_username: String,
+        changed_by: UserId,
+        changed_by_username: String,
+        new_permissions: PermissionBits,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// Room settings updated
+    RoomSettingsChanged {
+        room_id: RoomId,
+        user_id: UserId,
+        username: String,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// Room closed/deleted
+    RoomClosed {
+        room_id: RoomId,
+        closed_by: UserId,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// Notification for all clients (system-wide)
+    SystemNotification {
+        message: String,
+        level: NotificationLevel,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+/// Notification severity level
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+impl ClusterEvent {
+    /// Get the room ID for events that belong to a specific room
+    pub fn room_id(&self) -> Option<&RoomId> {
+        match self {
+            Self::ChatMessage { room_id, .. }
+            | Self::Danmaku { room_id, .. }
+            | Self::PlaybackStateChanged { room_id, .. }
+            | Self::UserJoined { room_id, .. }
+            | Self::UserLeft { room_id, .. }
+            | Self::MovieAdded { room_id, .. }
+            | Self::MovieRemoved { room_id, .. }
+            | Self::PermissionChanged { room_id, .. }
+            | Self::RoomSettingsChanged { room_id, .. }
+            | Self::RoomClosed { room_id, .. } => Some(room_id),
+            Self::SystemNotification { .. } => None,
+        }
+    }
+
+    /// Get the user ID that initiated this event
+    pub fn user_id(&self) -> Option<&UserId> {
+        match self {
+            Self::ChatMessage { user_id, .. }
+            | Self::Danmaku { user_id, .. }
+            | Self::PlaybackStateChanged { user_id, .. }
+            | Self::UserJoined { user_id, .. }
+            | Self::UserLeft { user_id, .. }
+            | Self::MovieAdded { user_id, .. }
+            | Self::MovieRemoved { user_id, .. }
+            | Self::RoomSettingsChanged { user_id, .. } => Some(user_id),
+            Self::PermissionChanged { changed_by, .. } => Some(changed_by),
+            Self::RoomClosed { closed_by, .. } => Some(closed_by),
+            Self::SystemNotification { .. } => None,
+        }
+    }
+
+    /// Get the timestamp of this event
+    pub fn timestamp(&self) -> &DateTime<Utc> {
+        match self {
+            Self::ChatMessage { timestamp, .. }
+            | Self::Danmaku { timestamp, .. }
+            | Self::PlaybackStateChanged { timestamp, .. }
+            | Self::UserJoined { timestamp, .. }
+            | Self::UserLeft { timestamp, .. }
+            | Self::MovieAdded { timestamp, .. }
+            | Self::MovieRemoved { timestamp, .. }
+            | Self::PermissionChanged { timestamp, .. }
+            | Self::RoomSettingsChanged { timestamp, .. }
+            | Self::RoomClosed { timestamp, .. }
+            | Self::SystemNotification { timestamp, .. } => timestamp,
+        }
+    }
+
+    /// Get a short description of the event type
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::ChatMessage { .. } => "chat_message",
+            Self::Danmaku { .. } => "danmaku",
+            Self::PlaybackStateChanged { .. } => "playback_state_changed",
+            Self::UserJoined { .. } => "user_joined",
+            Self::UserLeft { .. } => "user_left",
+            Self::MovieAdded { .. } => "movie_added",
+            Self::MovieRemoved { .. } => "movie_removed",
+            Self::PermissionChanged { .. } => "permission_changed",
+            Self::RoomSettingsChanged { .. } => "room_settings_changed",
+            Self::RoomClosed { .. } => "room_closed",
+            Self::SystemNotification { .. } => "system_notification",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cluster_event_serialization() {
+        let event = ClusterEvent::ChatMessage {
+            room_id: RoomId::from_string("room123".to_string()),
+            user_id: UserId::from_string("user456".to_string()),
+            username: "testuser".to_string(),
+            message: "Hello world!".to_string(),
+            timestamp: Utc::now(),
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("chat_message"));
+        assert!(json.contains("Hello world!"));
+
+        // Deserialize back
+        let deserialized: ClusterEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.event_type(), "chat_message");
+    }
+
+    #[test]
+    fn test_cluster_event_room_id() {
+        let event = ClusterEvent::UserJoined {
+            room_id: RoomId::from_string("room123".to_string()),
+            user_id: UserId::from_string("user456".to_string()),
+            username: "testuser".to_string(),
+            permissions: PermissionBits(0),
+            timestamp: Utc::now(),
+        };
+
+        assert_eq!(event.room_id().unwrap().as_str(), "room123");
+        assert_eq!(event.user_id().unwrap().as_str(), "user456");
+    }
+
+    #[test]
+    fn test_system_notification_no_room() {
+        let event = ClusterEvent::SystemNotification {
+            message: "Server maintenance in 1 hour".to_string(),
+            level: NotificationLevel::Warning,
+            timestamp: Utc::now(),
+        };
+
+        assert!(event.room_id().is_none());
+        assert!(event.user_id().is_none());
+        assert_eq!(event.event_type(), "system_notification");
+    }
+}

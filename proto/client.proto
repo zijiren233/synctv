@@ -1,0 +1,415 @@
+syntax = "proto3";
+
+package synctv.client;
+
+// Client-Server API for SyncTV
+service ClientService {
+    // Authentication
+    rpc Register(RegisterRequest) returns (RegisterResponse);
+    rpc Login(LoginRequest) returns (LoginResponse);
+    rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+    rpc GetCurrentUser(GetCurrentUserRequest) returns (GetCurrentUserResponse);
+
+    // Room Management
+    rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse);
+    rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
+    rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
+    rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
+    rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+    rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
+    rpc UpdateRoomSettings(UpdateRoomSettingsRequest) returns (UpdateRoomSettingsResponse);
+
+    // Room Members
+    rpc GetRoomMembers(GetRoomMembersRequest) returns (GetRoomMembersResponse);
+    rpc UpdateMemberPermission(UpdateMemberPermissionRequest) returns (UpdateMemberPermissionResponse);
+    rpc KickMember(KickMemberRequest) returns (KickMemberResponse);
+
+    // Playlist Management
+    rpc AddMedia(AddMediaRequest) returns (AddMediaResponse);
+    rpc RemoveMedia(RemoveMediaRequest) returns (RemoveMediaResponse);
+    rpc GetPlaylist(GetPlaylistRequest) returns (GetPlaylistResponse);
+    rpc SwapMedia(SwapMediaRequest) returns (SwapMediaResponse);
+
+    // Playback Control
+    rpc Play(PlayRequest) returns (PlayResponse);
+    rpc Pause(PauseRequest) returns (PauseResponse);
+    rpc Seek(SeekRequest) returns (SeekResponse);
+    rpc ChangeSpeed(ChangeSpeedRequest) returns (ChangeSpeedResponse);
+    rpc SwitchMedia(SwitchMediaRequest) returns (SwitchMediaResponse);
+    rpc GetPlaybackState(GetPlaybackStateRequest) returns (GetPlaybackStateResponse);
+
+    // Real-time Messaging (bidirectional streaming)
+    rpc MessageStream(stream ClientMessage) returns (stream ServerMessage);
+
+    // Chat
+    rpc GetChatHistory(GetChatHistoryRequest) returns (GetChatHistoryResponse);
+}
+
+// Common Types
+message User {
+    string id = 1;
+    string username = 2;
+    string email = 3;
+    int64 permissions = 4;
+    int64 created_at = 5;
+}
+
+message Room {
+    string id = 1;
+    string name = 2;
+    string created_by = 3;
+    string status = 4; // active, closed
+    bytes settings = 5; // JSON settings
+    int64 created_at = 6;
+    int32 member_count = 7;
+}
+
+message Media {
+    string id = 1;
+    string room_id = 2;
+    string url = 3;
+    string provider = 4; // bilibili, alist, emby, direct
+    string title = 5;
+    bytes metadata = 6; // JSON metadata
+    int32 position = 7; // Position in playlist
+    int64 added_at = 8;
+    string added_by = 9;
+}
+
+message PlaybackState {
+    string room_id = 1;
+    string current_media_id = 2;
+    double position = 3; // seconds
+    double speed = 4;
+    bool is_playing = 5;
+    int64 updated_at = 6;
+    int32 version = 7; // For optimistic locking
+}
+
+message RoomMember {
+    string room_id = 1;
+    string user_id = 2;
+    string username = 3;
+    int64 permissions = 4;
+    int64 joined_at = 5;
+    bool is_online = 6;
+}
+
+// Authentication Messages
+message RegisterRequest {
+    string username = 1;
+    string password = 2;
+    string email = 3;
+}
+
+message RegisterResponse {
+    User user = 1;
+    string access_token = 2;
+    string refresh_token = 3;
+}
+
+message LoginRequest {
+    string username = 1;
+    string password = 2;
+}
+
+message LoginResponse {
+    User user = 1;
+    string access_token = 2;
+    string refresh_token = 3;
+}
+
+message RefreshTokenRequest {
+    string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+    string access_token = 1;
+    string refresh_token = 2;
+}
+
+message GetCurrentUserRequest {}
+
+message GetCurrentUserResponse {
+    User user = 1;
+}
+
+// Room Management Messages
+message CreateRoomRequest {
+    string name = 1;
+    string password = 2; // Optional room password
+    bytes settings = 3; // JSON settings
+}
+
+message CreateRoomResponse {
+    Room room = 1;
+}
+
+message GetRoomRequest {
+    string room_id = 1;
+}
+
+message GetRoomResponse {
+    Room room = 1;
+    PlaybackState playback_state = 2;
+}
+
+message JoinRoomRequest {
+    string room_id = 1;
+    string password = 2; // Optional room password
+}
+
+message JoinRoomResponse {
+    Room room = 1;
+    PlaybackState playback_state = 2;
+    repeated RoomMember members = 3;
+}
+
+message LeaveRoomRequest {
+    string room_id = 1;
+}
+
+message LeaveRoomResponse {
+    bool success = 1;
+}
+
+message ListRoomsRequest {
+    int32 page = 1;
+    int32 page_size = 2;
+}
+
+message ListRoomsResponse {
+    repeated Room rooms = 1;
+    int32 total = 2;
+}
+
+message DeleteRoomRequest {
+    string room_id = 1;
+}
+
+message DeleteRoomResponse {
+    bool success = 1;
+}
+
+message UpdateRoomSettingsRequest {
+    string room_id = 1;
+    bytes settings = 2; // JSON settings
+}
+
+message UpdateRoomSettingsResponse {
+    Room room = 1;
+}
+
+// Room Members Messages
+message GetRoomMembersRequest {
+    string room_id = 1;
+}
+
+message GetRoomMembersResponse {
+    repeated RoomMember members = 1;
+}
+
+message UpdateMemberPermissionRequest {
+    string room_id = 1;
+    string user_id = 2;
+    int64 permissions = 3;
+}
+
+message UpdateMemberPermissionResponse {
+    RoomMember member = 1;
+}
+
+message KickMemberRequest {
+    string room_id = 1;
+    string user_id = 2;
+}
+
+message KickMemberResponse {
+    bool success = 1;
+}
+
+// Playlist Messages
+message AddMediaRequest {
+    string room_id = 1;
+    string url = 2;
+    string provider = 3; // Optional, auto-detect if empty
+}
+
+message AddMediaResponse {
+    Media media = 1;
+}
+
+message RemoveMediaRequest {
+    string room_id = 1;
+    string media_id = 2;
+}
+
+message RemoveMediaResponse {
+    bool success = 1;
+}
+
+message GetPlaylistRequest {
+    string room_id = 1;
+}
+
+message GetPlaylistResponse {
+    repeated Media media = 1;
+}
+
+message SwapMediaRequest {
+    string room_id = 1;
+    string media_id1 = 2;
+    string media_id2 = 3;
+}
+
+message SwapMediaResponse {
+    bool success = 1;
+}
+
+// Playback Control Messages
+message PlayRequest {
+    string room_id = 1;
+}
+
+message PlayResponse {
+    PlaybackState playback_state = 1;
+}
+
+message PauseRequest {
+    string room_id = 1;
+}
+
+message PauseResponse {
+    PlaybackState playback_state = 1;
+}
+
+message SeekRequest {
+    string room_id = 1;
+    double position = 2; // seconds
+}
+
+message SeekResponse {
+    PlaybackState playback_state = 1;
+}
+
+message ChangeSpeedRequest {
+    string room_id = 1;
+    double speed = 2; // 0.5, 1.0, 1.5, 2.0, etc.
+}
+
+message ChangeSpeedResponse {
+    PlaybackState playback_state = 1;
+}
+
+message SwitchMediaRequest {
+    string room_id = 1;
+    string media_id = 2;
+}
+
+message SwitchMediaResponse {
+    PlaybackState playback_state = 1;
+}
+
+message GetPlaybackStateRequest {
+    string room_id = 1;
+}
+
+message GetPlaybackStateResponse {
+    PlaybackState playback_state = 1;
+}
+
+// Real-time Messaging
+message ClientMessage {
+    oneof message {
+        ChatMessageSend chat = 1;
+        DanmakuMessageSend danmaku = 2;
+        HeartbeatMessage heartbeat = 3;
+    }
+}
+
+message ServerMessage {
+    oneof message {
+        ChatMessageReceive chat = 1;
+        DanmakuMessageReceive danmaku = 2;
+        PlaybackStateChanged playback_state = 3;
+        UserJoinedRoom user_joined = 4;
+        UserLeftRoom user_left = 5;
+        RoomSettingsChanged room_settings = 6;
+        HeartbeatAck heartbeat_ack = 7;
+        ErrorMessage error = 8;
+    }
+}
+
+message ChatMessageSend {
+    string room_id = 1;
+    string content = 2;
+}
+
+message ChatMessageReceive {
+    string id = 1;
+    string room_id = 2;
+    string user_id = 3;
+    string username = 4;
+    string content = 5;
+    int64 timestamp = 6;
+}
+
+message DanmakuMessageSend {
+    string room_id = 1;
+    string content = 2;
+    string color = 3; // hex color
+    int32 position = 4; // 0=top, 1=bottom, 2=scroll
+}
+
+message DanmakuMessageReceive {
+    string room_id = 1;
+    string user_id = 2;
+    string content = 3;
+    string color = 4;
+    int32 position = 5;
+    int64 timestamp = 6;
+}
+
+message HeartbeatMessage {
+    int64 timestamp = 1;
+}
+
+message HeartbeatAck {
+    int64 timestamp = 1;
+}
+
+message PlaybackStateChanged {
+    string room_id = 1;
+    PlaybackState state = 2;
+}
+
+message UserJoinedRoom {
+    string room_id = 1;
+    RoomMember member = 2;
+}
+
+message UserLeftRoom {
+    string room_id = 1;
+    string user_id = 2;
+}
+
+message RoomSettingsChanged {
+    string room_id = 1;
+    bytes settings = 2; // JSON settings
+}
+
+message ErrorMessage {
+    string code = 1;
+    string message = 2;
+}
+
+// Chat History
+message GetChatHistoryRequest {
+    string room_id = 1;
+    int32 limit = 2; // Max 500
+    int64 before = 3; // Timestamp for pagination
+}
+
+message GetChatHistoryResponse {
+    repeated ChatMessageReceive messages = 1;
+}

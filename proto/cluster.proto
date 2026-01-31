@@ -1,0 +1,225 @@
+syntax = "proto3";
+
+package synctv.cluster;
+
+// Cluster coordination service for multi-replica deployment
+service ClusterService {
+    // Node registration and health
+    rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+    rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+    rpc GetNodes(GetNodesRequest) returns (GetNodesResponse);
+    rpc DeregisterNode(DeregisterNodeRequest) returns (DeregisterNodeResponse);
+
+    // State synchronization
+    rpc SyncRoomState(SyncRoomStateRequest) returns (SyncRoomStateResponse);
+    rpc BroadcastEvent(BroadcastEventRequest) returns (BroadcastEventResponse);
+
+    // User connection tracking
+    rpc GetUserOnlineStatus(GetUserOnlineStatusRequest) returns (GetUserOnlineStatusResponse);
+    rpc GetRoomConnections(GetRoomConnectionsRequest) returns (GetRoomConnectionsResponse);
+}
+
+// Node information
+message NodeInfo {
+    string node_id = 1;
+    string address = 2; // gRPC address (host:port)
+    string region = 3; // Optional region/zone info
+    NodeStatus status = 4;
+    int64 registered_at = 5;
+    int64 last_heartbeat = 6;
+    NodeMetrics metrics = 7;
+}
+
+enum NodeStatus {
+    NODE_STATUS_UNKNOWN = 0;
+    NODE_STATUS_ACTIVE = 1;
+    NODE_STATUS_DRAINING = 2;
+    NODE_STATUS_OFFLINE = 3;
+}
+
+message NodeMetrics {
+    int32 active_connections = 1;
+    int32 active_streams = 2;
+    int32 active_rooms = 3;
+    double cpu_usage = 4;
+    double memory_usage_mb = 5;
+    double network_bandwidth_mbps = 6;
+}
+
+// Node registration
+message RegisterNodeRequest {
+    string node_id = 1;
+    string address = 2;
+    string region = 3;
+}
+
+message RegisterNodeResponse {
+    NodeInfo node = 1;
+    repeated NodeInfo peers = 2; // Other active nodes
+}
+
+message HeartbeatRequest {
+    string node_id = 1;
+    NodeMetrics metrics = 2;
+}
+
+message HeartbeatResponse {
+    bool success = 1;
+    int64 timestamp = 2;
+}
+
+message GetNodesRequest {
+    NodeStatus status_filter = 1; // Optional filter
+}
+
+message GetNodesResponse {
+    repeated NodeInfo nodes = 1;
+}
+
+message DeregisterNodeRequest {
+    string node_id = 1;
+    string reason = 2; // shutdown, upgrade, failure, etc.
+}
+
+message DeregisterNodeResponse {
+    bool success = 1;
+}
+
+// State synchronization
+message SyncRoomStateRequest {
+    string room_id = 1;
+}
+
+message SyncRoomStateResponse {
+    RoomState state = 1;
+}
+
+message RoomState {
+    string room_id = 1;
+    PlaybackState playback = 2;
+    repeated string online_users = 3;
+    bytes settings = 4; // JSON settings
+    int32 version = 5;
+}
+
+message PlaybackState {
+    string current_movie_id = 1;
+    double position = 2;
+    double speed = 3;
+    bool is_playing = 4;
+    int64 updated_at = 5;
+}
+
+// Event broadcasting
+message BroadcastEventRequest {
+    ClusterEvent event = 1;
+}
+
+message BroadcastEventResponse {
+    bool success = 1;
+    int32 nodes_reached = 2;
+}
+
+message ClusterEvent {
+    string event_id = 1; // UUID for deduplication
+    string node_id = 2; // Origin node
+    int64 timestamp = 3;
+    int32 sequence = 4; // Sequence number for ordering
+
+    oneof event {
+        PlaybackStateChangedEvent playback_state_changed = 10;
+        UserJoinedRoomEvent user_joined_room = 11;
+        UserLeftRoomEvent user_left_room = 12;
+        RoomCreatedEvent room_created = 13;
+        RoomDeletedEvent room_deleted = 14;
+        RoomSettingsChangedEvent room_settings_changed = 15;
+        ChatMessageEvent chat_message = 16;
+        DanmakuMessageEvent danmaku_message = 17;
+        CacheInvalidateEvent cache_invalidate = 18;
+    }
+}
+
+message PlaybackStateChangedEvent {
+    string room_id = 1;
+    PlaybackState state = 2;
+}
+
+message UserJoinedRoomEvent {
+    string room_id = 1;
+    string user_id = 2;
+    string username = 3;
+    int64 permissions = 4;
+}
+
+message UserLeftRoomEvent {
+    string room_id = 1;
+    string user_id = 2;
+}
+
+message RoomCreatedEvent {
+    string room_id = 1;
+    string name = 2;
+    string created_by = 3;
+}
+
+message RoomDeletedEvent {
+    string room_id = 1;
+}
+
+message RoomSettingsChangedEvent {
+    string room_id = 1;
+    bytes settings = 2; // JSON settings
+}
+
+message ChatMessageEvent {
+    string room_id = 1;
+    string user_id = 2;
+    string username = 3;
+    string content = 4;
+    int64 timestamp = 5;
+}
+
+message DanmakuMessageEvent {
+    string room_id = 1;
+    string user_id = 2;
+    string content = 3;
+    string color = 4;
+    int32 position = 5;
+    int64 timestamp = 6;
+}
+
+message CacheInvalidateEvent {
+    repeated string keys = 1; // Cache keys to invalidate
+    string pattern = 2; // Optional pattern (e.g., "room:123:*")
+}
+
+// User connection tracking
+message GetUserOnlineStatusRequest {
+    repeated string user_ids = 1;
+}
+
+message GetUserOnlineStatusResponse {
+    repeated UserOnlineStatus statuses = 1;
+}
+
+message UserOnlineStatus {
+    string user_id = 1;
+    bool is_online = 2;
+    repeated string room_ids = 3; // Rooms user is currently in
+    string node_id = 4; // Node where user is connected
+}
+
+message GetRoomConnectionsRequest {
+    string room_id = 1;
+}
+
+message GetRoomConnectionsResponse {
+    repeated RoomConnection connections = 1;
+}
+
+message RoomConnection {
+    string user_id = 1;
+    string node_id = 2;
+    int64 connected_at = 3;
+    int64 last_activity = 4;
+}

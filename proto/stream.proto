@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package synctv.stream;
+
+// Stream relay service for cross-node RTMP streaming
+service StreamRelayService {
+    // Query which node has the publisher for a stream
+    rpc GetPublisher(GetPublisherRequest) returns (GetPublisherResponse);
+
+    // Pull RTMP stream from publisher node (server streaming)
+    rpc PullRtmpStream(PullRtmpStreamRequest) returns (stream RtmpPacket);
+
+    // Register as publisher for a stream
+    rpc RegisterPublisher(RegisterPublisherRequest) returns (RegisterPublisherResponse);
+
+    // Unregister publisher
+    rpc UnregisterPublisher(UnregisterPublisherRequest) returns (UnregisterPublisherResponse);
+
+    // Get stream statistics
+    rpc GetStreamStats(GetStreamStatsRequest) returns (GetStreamStatsResponse);
+
+    // List active streams
+    rpc ListStreams(ListStreamsRequest) returns (ListStreamsResponse);
+}
+
+// Publisher information
+message PublisherInfo {
+    string room_id = 1;
+    string node_id = 2; // Node hosting the publisher
+    string stream_key = 3;
+    StreamMetadata metadata = 4;
+    int64 started_at = 5;
+    StreamStats stats = 6;
+}
+
+message StreamMetadata {
+    string codec_video = 1; // h264, h265, etc.
+    string codec_audio = 2; // aac, opus, etc.
+    int32 width = 3;
+    int32 height = 4;
+    int32 fps = 5;
+    int32 bitrate_video = 6;
+    int32 bitrate_audio = 7;
+}
+
+message StreamStats {
+    int64 bytes_sent = 1;
+    int64 bytes_received = 2;
+    int32 viewer_count = 3;
+    double bitrate_kbps = 4;
+    int32 frame_count = 5;
+    int32 dropped_frames = 6;
+    double latency_ms = 7;
+}
+
+// Get publisher
+message GetPublisherRequest {
+    string room_id = 1;
+}
+
+message GetPublisherResponse {
+    PublisherInfo publisher = 1;
+    bool exists = 2;
+}
+
+// Pull RTMP stream
+message PullRtmpStreamRequest {
+    string room_id = 1;
+    string stream_key = 2;
+}
+
+message RtmpPacket {
+    PacketType type = 1;
+    int64 timestamp = 2; // DTS (decode timestamp)
+    int64 pts = 3; // PTS (presentation timestamp)
+    bytes payload = 4;
+    bool is_keyframe = 5;
+
+    enum PacketType {
+        PACKET_TYPE_UNKNOWN = 0;
+        PACKET_TYPE_VIDEO = 1;
+        PACKET_TYPE_AUDIO = 2;
+        PACKET_TYPE_METADATA = 3;
+        PACKET_TYPE_SCRIPT_DATA = 4;
+    }
+}
+
+// Register publisher
+message RegisterPublisherRequest {
+    string room_id = 1;
+    string node_id = 2;
+    string stream_key = 3;
+    StreamMetadata metadata = 4;
+}
+
+message RegisterPublisherResponse {
+    bool success = 1;
+    PublisherInfo publisher = 2;
+    string error = 3; // Error message if registration failed
+}
+
+// Unregister publisher
+message UnregisterPublisherRequest {
+    string room_id = 1;
+    string node_id = 2;
+}
+
+message UnregisterPublisherResponse {
+    bool success = 1;
+}
+
+// Get stream stats
+message GetStreamStatsRequest {
+    string room_id = 1;
+}
+
+message GetStreamStatsResponse {
+    StreamStats stats = 1;
+    bool exists = 2;
+}
+
+// List active streams
+message ListStreamsRequest {
+    string node_id = 1; // Optional: filter by node
+    int32 page = 2;
+    int32 page_size = 3;
+}
+
+message ListStreamsResponse {
+    repeated PublisherInfo streams = 1;
+    int32 total = 2;
+}
+
+// GOP cache messages (for fast start)
+message GopCacheRequest {
+    string room_id = 1;
+}
+
+message GopCacheResponse {
+    repeated RtmpPacket packets = 1; // Last 2 GOPs
+    bool exists = 2;
+}

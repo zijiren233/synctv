@@ -1,0 +1,54 @@
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum StreamError {
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Redis error: {0}")]
+    RedisError(String),
+
+    #[error("gRPC error: {0}")]
+    GrpcError(String),
+
+    #[error("Invalid address: {0}")]
+    InvalidAddress(String),
+
+    #[error("Stream not found: {0}")]
+    StreamNotFound(String),
+
+    #[error("No publisher found for room: {0}")]
+    NoPublisher(String),
+
+    #[error("Already publishing: {0}")]
+    AlreadyPublishing(String),
+
+    #[error("Registry error: {0}")]
+    RegistryError(String),
+
+    #[error("Stream hub error: {0}")]
+    StreamHubError(String),
+
+    #[error("Invalid stream key: {0}")]
+    InvalidStreamKey(String),
+
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
+}
+
+pub type StreamResult<T> = Result<T, StreamError>;
+
+impl From<redis::RedisError> for StreamError {
+    fn from(err: redis::RedisError) -> Self {
+        StreamError::RedisError(err.to_string())
+    }
+}
+
+impl From<tonic::transport::Error> for StreamError {
+    fn from(err: tonic::transport::Error) -> Self {
+        StreamError::GrpcError(err.to_string())
+    }
+}

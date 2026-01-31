@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+package api.emby;
+
+
+service Emby {
+  rpc Login(LoginReq) returns (LoginResp);
+  rpc Me(MeReq) returns (MeResp);
+  rpc GetItems(GetItemsReq) returns (GetItemsResp);
+  rpc GetItem(GetItemReq) returns (Item);
+  rpc GetSystemInfo(SystemInfoReq) returns (SystemInfoResp);
+  rpc FsList(FsListReq) returns (FsListResp);
+  rpc Logout(LogoutReq) returns (Empty);
+  rpc PlaybackInfo(PlaybackInfoReq) returns (PlaybackInfoResp);
+  rpc DeleteActiveEncodeings(DeleteActiveEncodeingsReq) returns (Empty);
+}
+
+message LoginReq {
+  string host = 1;
+  string username = 2;
+  string password = 3;
+}
+
+message LoginResp {
+  string token = 1;
+  string userId = 2;
+  string serverId = 3;
+}
+
+message MeReq {
+  string host = 1;
+  string token = 2;
+  string userId = 3;
+}
+
+message MeResp {
+  string id = 1;
+  string name = 2;
+  string serverId = 3;
+}
+
+message GetItemsReq {
+  string host = 1;
+  string token = 2;
+  string parentId = 3;
+  string searchTerm = 4;
+  string userId = 5;
+}
+
+message MediaStreamInfo {
+  string codec = 1;
+  string language = 2;
+  string type = 3;
+  string title = 4;
+  string displayTitle = 5;
+  string displayLanguage = 6;
+  bool isDefault = 7;
+  uint64 index = 8;
+  string protocol = 9;
+}
+
+message MediaSourceInfo {
+  string id = 1;
+  string name = 2;
+  string path = 3;
+  string container = 4;
+  string protocol = 5;
+  int64 defaultSubtitleStreamIndex = 6;
+  int64 defaultAudioStreamIndex = 7;
+  repeated MediaStreamInfo mediaStreamInfo = 8;
+  string directPlayUrl = 9;
+  string transcodingUrl = 10;
+}
+
+message Item {
+  string name = 1;
+  string id = 2;
+  string type = 3;
+  string parentId = 4;
+  string seriesName = 5;
+  string seriesId = 6;
+  string seasonName = 7;
+  string seasonId = 8;
+  bool isFolder = 9;
+  repeated MediaSourceInfo mediaSourceInfo = 10;
+  string collectionType = 11;
+}
+
+message GetItemsResp {
+  repeated Item items = 1;
+  uint64 totalRecordCount = 2;
+}
+
+message GetItemReq {
+  string host = 1;
+  string token = 2;
+  string itemId = 3;
+}
+
+message SystemInfoReq {
+  string host = 1;
+  string token = 2;
+}
+
+message SystemInfoResp {
+  string systemUpdateLevel = 1;
+  string operatingSystemDisplayName = 2;
+  string packageName = 3;
+  bool hasPendingRestart = 4;
+  bool isShuttingDown = 5;
+  bool supportsLibraryMonitor = 6;
+  int32 webSocketPortNumber = 7;
+  bool canSelfRestart = 8;
+  bool canSelfUpdate = 9;
+  bool canLaunchWebBrowser = 10;
+  string programDataPath = 11;
+  string itemsByNamePath = 12;
+  string cachePath = 13;
+  string logPath = 14;
+  string internalMetadataPath = 15;
+  string transcodingTempPath = 16;
+  int32 httpServerPortNumber = 17;
+  bool supportsHttps = 18;
+  int32 httpsPortNumber = 19;
+  bool hasUpdateAvailable = 20;
+  bool supportsAutoRunAtStartup = 21;
+  bool hardwareAccelerationRequiresPremiere = 22;
+  string localAddress = 23;
+  string wanAddress = 24;
+  string serverName = 25;
+  string version = 26;
+  string operatingSystem = 27;
+  string id = 28;
+}
+
+message FsListReq {
+  string host = 1;
+  string token = 2;
+  string path = 3;
+  uint64 startIndex = 4;
+  uint64 limit = 5;
+  string searchTerm = 6;
+  string userId = 7;
+}
+
+message Path {
+  string name = 1;
+  string path = 2;
+}
+
+message FsListResp {
+  repeated Path paths = 1;
+  repeated Item items = 2;
+  uint64 total = 3;
+}
+
+message LogoutReq {
+  string host = 1;
+  string token = 2;
+}
+
+message Empty {}
+
+message PlaybackInfoReq {
+  string host = 1;
+  string token = 2;
+  string userId = 3;
+  string itemId = 4;
+  string mediaSourceId = 5;
+  int32 audioStreamIndex = 6;
+  int32 subtitleStreamIndex = 7;
+  int64 maxStreamingBitrate = 8;
+}
+
+message PlaybackInfoResp {
+  string playSessionID = 1;
+  repeated MediaSourceInfo mediaSourceInfo = 2;
+}
+
+message DeleteActiveEncodeingsReq {
+  string host = 1;
+  string token = 2;
+  string playSessionId = 3;
+}

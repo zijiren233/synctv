@@ -1,0 +1,49 @@
+[package]
+name = "synctv-cluster"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Internal
+synctv-core.workspace = true
+
+# Async
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# gRPC
+tonic.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+
+# Redis
+redis.workspace = true
+
+# Caching
+dashmap.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Utilities
+anyhow.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+once_cell.workspace = true
+
+# Logging
+tracing.workspace = true
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+mockall.workspace = true
