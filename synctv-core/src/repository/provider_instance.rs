@@ -213,7 +213,7 @@ impl UserProviderCredentialRepository {
         .bind(&credential.server_id)
         .bind(&credential.provider_instance_name)
         .bind(&credential.credential_data)
-        .bind(&credential.expires_at)
+        .bind(credential.expires_at)
         .execute(&self.pool)
         .await?;
 
@@ -232,7 +232,7 @@ impl UserProviderCredentialRepository {
         .bind(&credential.id)
         .bind(&credential.provider_instance_name)
         .bind(&credential.credential_data)
-        .bind(&credential.expires_at)
+        .bind(credential.expires_at)
         .execute(&self.pool)
         .await?;
 

@@ -6,16 +6,13 @@ use super::id::{RoomId, UserId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum RoomStatus {
+    #[default]
     Active,
     Closed,
 }
 
-impl Default for RoomStatus {
-    fn default() -> Self {
-        Self::Active
-    }
-}
 
 impl RoomStatus {
     pub fn as_str(&self) -> &'static str {

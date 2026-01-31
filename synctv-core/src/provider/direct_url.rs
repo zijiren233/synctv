@@ -116,7 +116,7 @@ impl MediaProvider for DirectUrlProvider {
         metadata.insert("proxy".to_string(), json!(config.proxy));
 
         // Extract filename from URL
-        if let Some(filename) = config.url.split('/').last() {
+        if let Some(filename) = config.url.split('/').next_back() {
             metadata.insert("filename".to_string(), json!(filename));
         }
 

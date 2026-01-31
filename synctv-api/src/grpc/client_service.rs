@@ -48,12 +48,23 @@ impl ClientServiceImpl {
         }
     }
 
-    /// Extract user_id from request metadata (TODO: from JWT interceptor)
-    /// For now, returns error - will be populated by auth interceptor
-    #[allow(dead_code)]
-    fn get_user_id(&self, _request: &Request<impl std::fmt::Debug>) -> Result<UserId, Status> {
-        // TODO: Extract from JWT in request extensions (set by auth interceptor)
-        Err(Status::unauthenticated("Authentication required"))
+    /// Extract user_id from request extensions (injected by auth interceptor)
+    fn get_user_id(&self, request: &Request<impl std::fmt::Debug>) -> Result<UserId, Status> {
+        let auth_context = request
+            .extensions()
+            .get::<super::interceptors::AuthContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+
+        Ok(UserId::from_string(auth_context.user_id.clone()))
+    }
+
+    /// Extract auth context from request extensions
+    fn get_auth_context(&self, request: &Request<impl std::fmt::Debug>) -> Result<super::interceptors::AuthContext, Status> {
+        request
+            .extensions()
+            .get::<super::interceptors::AuthContext>()
+            .cloned()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))
     }
 
     /// Handle incoming client message from bidirectional stream
@@ -471,21 +482,35 @@ impl ClientService for ClientServiceImpl {
 
     async fn get_current_user(
         &self,
-        _request: Request<GetCurrentUserRequest>,
+        request: Request<GetCurrentUserRequest>,
     ) -> Result<Response<GetCurrentUserResponse>, Status> {
-        // TODO: Extract user_id from JWT (via interceptor)
-        // For now, return unimplemented
-        Err(Status::unimplemented("GetCurrentUser not yet implemented"))
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
+
+        // Get user from service
+        let user = self.user_service
+            .get_user(&user_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get user: {}", e)))?;
+
+        Ok(Response::new(GetCurrentUserResponse {
+            user: Some(User {
+                id: user.id.to_string(),
+                username: user.username,
+                email: user.email,
+                permissions: user.permissions.0,
+                created_at: user.created_at.timestamp(),
+            }),
+        }))
     }
 
     async fn create_room(
         &self,
         request: Request<CreateRoomRequest>,
     ) -> Result<Response<CreateRoomResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
 
         // Validate input
         if req.name.is_empty() {
@@ -587,10 +612,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<JoinRoomRequest>,
     ) -> Result<Response<JoinRoomResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
 
         // Join room
@@ -662,10 +686,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<LeaveRoomRequest>,
     ) -> Result<Response<LeaveRoomResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
 
         // Leave room
@@ -691,10 +714,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<DeleteRoomRequest>,
     ) -> Result<Response<DeleteRoomResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
 
         // Delete room
@@ -742,10 +764,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<AddMediaRequest>,
     ) -> Result<Response<AddMediaResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
 
         // Parse provider
@@ -786,10 +807,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<RemoveMediaRequest>,
     ) -> Result<Response<RemoveMediaResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
         let media_id = MediaId::from_string(req.media_id);
 
@@ -850,10 +870,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<PlayRequest>,
     ) -> Result<Response<PlayResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
 
         // Play
@@ -891,10 +910,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<PauseRequest>,
     ) -> Result<Response<PauseResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
 
         // Pause
@@ -932,10 +950,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<SeekRequest>,
     ) -> Result<Response<SeekResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
 
         // Seek
@@ -973,10 +990,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<ChangeSpeedRequest>,
     ) -> Result<Response<ChangeSpeedResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
 
         // Change rate
@@ -1014,10 +1030,9 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<SwitchMediaRequest>,
     ) -> Result<Response<SwitchMediaResponse>, Status> {
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-
-        // For now, hardcode a test user ID (TODO: extract from JWT)
-        let user_id = UserId::from_string("test_user_123".to_string());
         let room_id = RoomId::from_string(req.room_id);
         let media_id = MediaId::from_string(req.media_id);
 
@@ -1094,9 +1109,15 @@ impl ClientService for ClientServiceImpl {
         use tokio::sync::mpsc;
         use nanoid::nanoid;
 
-        // TODO: Extract user from JWT interceptor
-        let user_id = UserId::from_string("test_user_123".to_string());
-        let username = "test_user".to_string(); // TODO: Get from user service
+        // Extract user_id from JWT token
+        let user_id = self.get_user_id(&request)?;
+
+        // Get user details from service
+        let user = self.user_service
+            .get_user(&user_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get user: {}", e)))?;
+        let username = user.username.clone();
 
         // Generate unique connection ID
         let connection_id = nanoid!(16);

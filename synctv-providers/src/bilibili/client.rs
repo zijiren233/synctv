@@ -777,7 +777,7 @@ impl BilibiliClient {
                             for codec in codec_list {
                                 let quality = codec["current_qn"].as_u64().unwrap_or(0) as u32;
                                 let desc = codec["accept_qn"].as_array()
-                                    .and_then(|arr| arr.get(0))
+                                    .and_then(|arr| arr.first())
                                     .and_then(|v| v.as_u64())
                                     .map(|q| format!("{}P", q))
                                     .unwrap_or_else(|| "Unknown".to_string());

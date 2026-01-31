@@ -186,13 +186,34 @@ impl UserService {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_validate_username() {
+    // Helper to create a test service with dummy keys
+    fn create_test_service() -> UserService {
         let pool = PgPool::connect_lazy("postgresql://fake").unwrap();
-        let jwt = JwtService::new(&[], &[]).unwrap_or_else(|_| {
-            panic!("This won't run in tests without proper keys")
-        });
-        let service = UserService::new(pool, jwt);
+
+        // Generate test RSA keys
+        use rsa::RsaPrivateKey;
+        use rand::rngs::OsRng;
+        let mut rng = OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+
+        // Encode to PEM
+        use rsa::pkcs8::EncodePrivateKey;
+        let private_pem = private_key.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF).unwrap();
+        let private_bytes = private_pem.as_bytes();
+
+        use rsa::RsaPublicKey;
+        use rsa::pkcs8::EncodePublicKey;
+        let public_key = RsaPublicKey::from(&private_key);
+        let public_pem = public_key.to_public_key_pem(rsa::pkcs8::LineEnding::LF).unwrap();
+        let public_bytes = public_pem.as_bytes();
+
+        let jwt = JwtService::new(private_bytes, public_bytes).unwrap();
+        UserService::new(pool, jwt)
+    }
+
+    #[tokio::test]
+    async fn test_validate_username() {
+        let service = create_test_service();
 
         assert!(service.validate_username("abc").is_ok());
         assert!(service.validate_username("user123").is_ok());
@@ -204,13 +225,9 @@ mod tests {
         assert!(service.validate_username("user@name").is_err()); // Invalid char
     }
 
-    #[test]
-    fn test_validate_password() {
-        let pool = PgPool::connect_lazy("postgresql://fake").unwrap();
-        let jwt = JwtService::new(&[], &[]).unwrap_or_else(|_| {
-            panic!("This won't run in tests without proper keys")
-        });
-        let service = UserService::new(pool, jwt);
+    #[tokio::test]
+    async fn test_validate_password() {
+        let service = create_test_service();
 
         assert!(service.validate_password("password123").is_ok());
         assert!(service.validate_password("Pass123!").is_ok());
