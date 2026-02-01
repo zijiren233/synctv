@@ -1,4 +1,4 @@
-//! Bilibili Vendor Client Error Types
+//! Bilibili Provider Client Error Types
 
 use thiserror::Error;
 

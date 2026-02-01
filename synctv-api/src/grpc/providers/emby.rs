@@ -24,8 +24,8 @@ use proto::{
 
 /// Emby Provider gRPC Service
 ///
-/// This service wraps the internal Emby vendor client and provides
-/// a client-facing gRPC API with remote/local backend selection support.
+/// This service wraps the internal Emby provider client and provides
+/// a client-facing gRPC API with remote/local instance selection support.
 #[derive(Debug, Clone)]
 pub struct EmbyProviderGrpcService {
     app_state: Arc<AppState>,
@@ -36,24 +36,24 @@ impl EmbyProviderGrpcService {
         Self { app_state }
     }
 
-    /// Get Emby client (remote or local) based on backend parameter
-    fn get_client(&self, backend: &str) -> Arc<dyn synctv_providers::emby::EmbyInterface> {
-        if backend.is_empty() {
+    /// Get Emby client (remote or local) based on instance_name parameter
+    fn get_client(&self, instance_name: &str) -> Arc<dyn synctv_providers::emby::EmbyInterface> {
+        if instance_name.is_empty() {
             return load_local_emby_client();
         }
 
         // Try to get remote instance
         let channel = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(
-                self.app_state.provider_instance_manager.get(backend)
+                self.app_state.provider_instance_manager.get(instance_name)
             )
         });
 
         if let Some(channel) = channel {
-            tracing::debug!("Using remote Emby instance: {}", backend);
+            tracing::debug!("Using remote Emby instance: {}", instance_name);
             create_remote_emby_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", backend);
+            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
             load_local_emby_client()
         }
     }
@@ -65,7 +65,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Emby login request: host={}", req.host);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         // Validate API key by getting user info
         let me_req = synctv_providers::grpc::emby::MeReq {
@@ -88,7 +88,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Emby list request: host={}, path={}", req.host, req.path);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let list_req = synctv_providers::grpc::emby::FsListReq {
             host: req.host,
@@ -124,7 +124,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Emby me request: host={}", req.host);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let me_req = synctv_providers::grpc::emby::MeReq {
             host: req.host,

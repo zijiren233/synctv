@@ -1,4 +1,4 @@
-//! Bilibili Vendor Client
+//! Bilibili Provider Client
 //!
 //! Pure HTTP client for Bilibili API, independent of MediaProvider.
 //!

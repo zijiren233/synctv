@@ -11,7 +11,7 @@ pub mod provider_instance;
 pub use id::{generate_id, MediaId, RoomId, UserId};
 pub use permission::{PermissionBits, Role};
 pub use user::{CreateUserRequest, UpdateUserRequest, User, UserListQuery};
-pub use room::{CreateRoomRequest, Room, RoomListQuery, RoomSettings, RoomStatus, UpdateRoomRequest};
+pub use room::{CreateRoomRequest, Room, RoomListQuery, RoomSettings, RoomStatus, RoomWithCount, UpdateRoomRequest};
 pub use room_member::{RoomMember, RoomMemberWithUser};
 pub use media::{AddMediaRequest, Media, MediaMetadata, ProviderType};
 pub use playback::{

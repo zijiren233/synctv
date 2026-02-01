@@ -9,12 +9,14 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 
 -- Create indexes
-CREATE INDEX idx_chat_messages_room_id ON chat_messages(room_id, created_at DESC)
-    WHERE deleted_at IS NULL;
 CREATE INDEX idx_chat_messages_user_id ON chat_messages(user_id);
 CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
 CREATE INDEX idx_chat_messages_deleted_at ON chat_messages(deleted_at)
     WHERE deleted_at IS NOT NULL;
+
+-- Performance optimization: covering index for chat pagination (includes user_id for JOIN avoidance)
+CREATE INDEX idx_chat_messages_room_pagination ON chat_messages(room_id, created_at DESC, user_id)
+    WHERE deleted_at IS NULL;
 
 -- Comments
 COMMENT ON TABLE chat_messages IS 'Persistent chat messages (last 500 per room kept)';

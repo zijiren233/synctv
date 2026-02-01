@@ -173,6 +173,84 @@ impl RoomMemberRepository {
         Ok((room_ids, count))
     }
 
+    /// Get rooms where a user is a member with full room details and member count (optimized)
+    /// Returns (room, user_permissions, member_count) tuples
+    pub async fn list_by_user_with_details(
+        &self,
+        user_id: &UserId,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<(crate::models::Room, PermissionBits, i32)>, i64)> {
+        let offset = (page - 1) * page_size;
+
+        // Get total count
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) as count
+             FROM room_members rm
+             JOIN rooms r ON rm.room_id = r.id
+             WHERE rm.user_id = $1 AND rm.left_at IS NULL AND r.deleted_at IS NULL"
+        )
+        .bind(user_id.as_str())
+        .fetch_one(&self.pool)
+        .await?;
+
+        // Get rooms with user permissions and member count in single query
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                r.id, r.name, r.created_by, r.status, r.settings,
+                r.created_at, r.updated_at, r.deleted_at,
+                rm.permissions as user_permissions,
+                (
+                    SELECT COUNT(*)::int
+                    FROM room_members rm2
+                    WHERE rm2.room_id = r.id AND rm2.left_at IS NULL
+                ) as member_count
+            FROM room_members rm
+            JOIN rooms r ON rm.room_id = r.id
+            WHERE rm.user_id = $1 AND rm.left_at IS NULL AND r.deleted_at IS NULL
+            ORDER BY rm.joined_at DESC
+            LIMIT $2 OFFSET $3
+            "#
+        )
+        .bind(user_id.as_str())
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let results: Result<Vec<(crate::models::Room, PermissionBits, i32)>> = rows
+            .into_iter()
+            .map(|row| {
+                let settings_json: serde_json::Value = row.try_get("settings")?;
+                let status_str: String = row.try_get("status")?;
+                let status = match status_str.as_str() {
+                    "active" => crate::models::RoomStatus::Active,
+                    "closed" => crate::models::RoomStatus::Closed,
+                    _ => crate::models::RoomStatus::Active,
+                };
+
+                let room = crate::models::Room {
+                    id: RoomId::from_string(row.try_get("id")?),
+                    name: row.try_get("name")?,
+                    created_by: UserId::from_string(row.try_get("created_by")?),
+                    status,
+                    settings: settings_json,
+                    created_at: row.try_get("created_at")?,
+                    updated_at: row.try_get("updated_at")?,
+                    deleted_at: row.try_get("deleted_at")?,
+                };
+
+                let permissions = PermissionBits::new(row.try_get("user_permissions")?);
+                let member_count: i32 = row.try_get("member_count")?;
+
+                Ok((room, permissions, member_count))
+            })
+            .collect();
+
+        Ok((results?, count))
+    }
+
     /// Convert database row to RoomMember
     fn row_to_member(&self, row: PgRow) -> Result<RoomMember> {
         Ok(RoomMember {

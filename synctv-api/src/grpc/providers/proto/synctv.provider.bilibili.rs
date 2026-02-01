@@ -9,9 +9,9 @@ pub struct ParseRequest {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "3")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// Parse video URL response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -42,9 +42,9 @@ pub struct VideoInfo {
 /// QR code login request
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoginQrRequest {
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "1")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// QR code response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -59,9 +59,9 @@ pub struct QrCodeResponse {
 pub struct CheckQrRequest {
     #[prost(string, tag = "1")]
     pub key: ::prost::alloc::string::String,
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "2")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// QR status response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -78,9 +78,9 @@ pub struct QrStatusResponse {
 /// Get captcha request
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetCaptchaRequest {
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "1")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// Captcha response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -103,9 +103,9 @@ pub struct SendSmsRequest {
     pub challenge: ::prost::alloc::string::String,
     #[prost(string, tag = "4")]
     pub validate: ::prost::alloc::string::String,
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "5")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// Send SMS response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -122,9 +122,9 @@ pub struct LoginSmsRequest {
     pub code: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub captcha_key: ::prost::alloc::string::String,
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "4")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// Login with SMS response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -143,9 +143,9 @@ pub struct UserInfoRequest {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "2")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// User info response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -162,9 +162,9 @@ pub struct UserInfoResponse {
 /// Logout request
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LogoutRequest {
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "1")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// Logout response
 #[derive(Clone, PartialEq, ::prost::Message)]

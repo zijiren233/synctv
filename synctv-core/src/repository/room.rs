@@ -97,33 +97,34 @@ impl RoomRepository {
         let offset = (query.page - 1) * query.page_size;
 
         // Build filter conditions
-        let mut conditions = vec!["deleted_at IS NULL"];
-        let mut params: Vec<String> = vec![];
+        let mut conditions = vec!["r.deleted_at IS NULL"];
+        let mut bind_values: Vec<&str> = vec![];
 
+        let status_str;
         if let Some(status) = &query.status {
-            conditions.push("status = $");
-            params.push(self.status_to_str(status).to_string());
+            status_str = self.status_to_str(status);
+            conditions.push("r.status = $");
+            bind_values.push(status_str);
         }
 
-        if let Some(search) = &query.search {
-            conditions.push("name ILIKE $");
-            params.push(format!("%{}%", search));
+        if let Some(_search) = &query.search {
+            conditions.push("r.name ILIKE $");
         }
 
         let where_clause = conditions.join(" AND ");
 
         // Get total count
-        let count_query = format!("SELECT COUNT(*) as count FROM rooms WHERE {}", where_clause);
+        let count_query = format!("SELECT COUNT(*) as count FROM rooms r WHERE {}", where_clause);
         let count: i64 = sqlx::query_scalar(&count_query)
             .fetch_one(&self.pool)
             .await?;
 
         // Get rooms
         let list_query = format!(
-            "SELECT id, name, created_by, status, settings, created_at, updated_at, deleted_at
-             FROM rooms
+            "SELECT r.id, r.name, r.created_by, r.status, r.settings, r.created_at, r.updated_at, r.deleted_at
+             FROM rooms r
              WHERE {}
-             ORDER BY created_at DESC
+             ORDER BY r.created_at DESC
              LIMIT $1 OFFSET $2",
             where_clause
         );
@@ -137,6 +138,97 @@ impl RoomRepository {
         let rooms: Result<Vec<Room>> = rows.into_iter().map(|row| self.row_to_room(row)).collect();
 
         Ok((rooms?, count))
+    }
+
+    /// List rooms with member count (optimized with JOIN)
+    pub async fn list_with_count(&self, query: &RoomListQuery) -> Result<(Vec<crate::models::RoomWithCount>, i64)> {
+        let offset = (query.page - 1) * query.page_size;
+
+        // Build WHERE conditions
+        let mut where_conditions = vec!["r.deleted_at IS NULL"];
+
+        // Dynamic query building for status filter
+        let status_filter = match &query.status {
+            Some(RoomStatus::Active) => "r.status = 'active'",
+            Some(RoomStatus::Closed) => "r.status = 'closed'",
+            None => "",
+        };
+        if !status_filter.is_empty() {
+            where_conditions.push(status_filter);
+        }
+
+        // Search filter
+        let has_search = query.search.is_some();
+        if has_search {
+            where_conditions.push("r.name ILIKE $3");
+        }
+
+        let where_clause = where_conditions.join(" AND ");
+
+        // Get total count
+        let count_query = format!(
+            "SELECT COUNT(DISTINCT r.id) FROM rooms r WHERE {}",
+            where_clause
+        );
+
+        let count: i64 = if has_search {
+            let search_pattern = format!("%{}%", query.search.as_ref().unwrap());
+            sqlx::query_scalar(&count_query)
+                .bind(&search_pattern)
+                .fetch_one(&self.pool)
+                .await?
+        } else {
+            sqlx::query_scalar(&count_query)
+                .fetch_one(&self.pool)
+                .await?
+        };
+
+        // Get rooms with member count using LEFT JOIN
+        let list_query = format!(
+            r#"
+            SELECT
+                r.id, r.name, r.created_by, r.status, r.settings,
+                r.created_at, r.updated_at, r.deleted_at,
+                COALESCE(COUNT(rm.user_id) FILTER (WHERE rm.left_at IS NULL), 0)::int as member_count
+            FROM rooms r
+            LEFT JOIN room_members rm ON r.id = rm.room_id
+            WHERE {}
+            GROUP BY r.id, r.name, r.created_by, r.status, r.settings, r.created_at, r.updated_at, r.deleted_at
+            ORDER BY r.created_at DESC
+            LIMIT $1 OFFSET $2
+            "#,
+            where_clause
+        );
+
+        let rows = if has_search {
+            let search_pattern = format!("%{}%", query.search.as_ref().unwrap());
+            sqlx::query(&list_query)
+                .bind(query.page_size)
+                .bind(offset)
+                .bind(&search_pattern)
+                .fetch_all(&self.pool)
+                .await?
+        } else {
+            sqlx::query(&list_query)
+                .bind(query.page_size)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await?
+        };
+
+        let rooms_with_count: Result<Vec<crate::models::RoomWithCount>> = rows
+            .into_iter()
+            .map(|row| {
+                let member_count: i32 = row.try_get("member_count")?;
+                let room = self.row_to_room(row)?;
+                Ok(crate::models::RoomWithCount {
+                    room,
+                    member_count,
+                })
+            })
+            .collect();
+
+        Ok((rooms_with_count?, count))
     }
 
     /// Check if room exists and is active
@@ -198,6 +290,61 @@ impl RoomRepository {
         let rooms: Result<Vec<Room>> = rows.into_iter().map(|row| self.row_to_room(row)).collect();
 
         Ok((rooms?, count))
+    }
+
+    /// Get rooms created by a specific user with member count (optimized)
+    pub async fn list_by_creator_with_count(
+        &self,
+        creator_id: &UserId,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<crate::models::RoomWithCount>, i64)> {
+        let offset = (page - 1) * page_size;
+
+        // Get total count
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) as count
+             FROM rooms
+             WHERE created_by = $1 AND deleted_at IS NULL"
+        )
+        .bind(creator_id.as_str())
+        .fetch_one(&self.pool)
+        .await?;
+
+        // Get rooms with member count using LEFT JOIN
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                r.id, r.name, r.created_by, r.status, r.settings,
+                r.created_at, r.updated_at, r.deleted_at,
+                COALESCE(COUNT(rm.user_id) FILTER (WHERE rm.left_at IS NULL), 0)::int as member_count
+            FROM rooms r
+            LEFT JOIN room_members rm ON r.id = rm.room_id
+            WHERE r.created_by = $1 AND r.deleted_at IS NULL
+            GROUP BY r.id, r.name, r.created_by, r.status, r.settings, r.created_at, r.updated_at, r.deleted_at
+            ORDER BY r.created_at DESC
+            LIMIT $2 OFFSET $3
+            "#
+        )
+        .bind(creator_id.as_str())
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let rooms_with_count: Result<Vec<crate::models::RoomWithCount>> = rows
+            .into_iter()
+            .map(|row| {
+                let member_count: i32 = row.try_get("member_count")?;
+                let room = self.row_to_room(row)?;
+                Ok(crate::models::RoomWithCount {
+                    room,
+                    member_count,
+                })
+            })
+            .collect();
+
+        Ok((rooms_with_count?, count))
     }
 
     /// Convert database row to Room model

@@ -1,7 +1,7 @@
 //! Alist MediaProvider Adapter
 //!
-//! Adapter that calls AlistVendorClient to implement MediaProvider trait.
-//! VendorClient abstracts local/remote implementation, so MediaProvider doesn't need to know.
+//! Adapter that calls AlistProviderClient to implement MediaProvider trait.
+//! ProviderClient abstracts local/remote implementation, so MediaProvider doesn't need to know.
 
 use super::{
     provider_client::{

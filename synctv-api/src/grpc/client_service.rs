@@ -144,6 +144,15 @@ impl ClientServiceImpl {
                     }
                 }
 
+                // Persist chat message to database
+                if let Err(e) = room_service
+                    .save_chat_message(room_id.clone(), user_id.clone(), sanitized_content.clone())
+                    .await
+                {
+                    tracing::error!("Failed to persist chat message: {}", e);
+                    // Continue even if persistence fails - message was already broadcast
+                }
+
                 // Create and broadcast chat event with sanitized content
                 let event = ClusterEvent::ChatMessage {
                     room_id: room_id.clone(),
@@ -163,8 +172,6 @@ impl ClientServiceImpl {
                         event,
                     });
                 }
-
-                // TODO: Persist to database
             }
 
             Some(client_message::Message::Danmaku(danmaku)) => {
@@ -226,7 +233,9 @@ impl ClientServiceImpl {
                     user_id: user_id.clone(),
                     username: username.to_string(),
                     message: sanitized_content,
-                    position: 0.0, // TODO: Use video position
+                    // Note: Video position should be added to DanmakuMessageSend proto
+                    // and passed from client. For now, using 0.0 as placeholder.
+                    position: danmaku.position as f64, // Workaround: use display position
                     timestamp: Utc::now(),
                 };
 
@@ -241,7 +250,10 @@ impl ClientServiceImpl {
                     });
                 }
 
-                // TODO: Store in memory with TTL
+                // Note: Danmaku messages are ephemeral and broadcast-only.
+                // They are not persisted to database like chat messages.
+                // In-memory storage with TTL could be added for recent danmaku
+                // replay, but is not implemented in this version.
             }
 
             Some(client_message::Message::Heartbeat(heartbeat)) => {
@@ -352,7 +364,9 @@ impl ClientServiceImpl {
             ClusterEvent::RoomSettingsChanged { room_id, .. } => Some(ServerMessage {
                 message: Some(server_message::Message::RoomSettings(RoomSettingsChanged {
                     room_id: room_id.as_str().to_string(),
-                    settings: vec![], // TODO: Include settings
+                    // Settings are embedded in the room object, client should fetch room details
+                    // to get updated settings. This event is just a notification.
+                    settings: vec![],
                 })),
             }),
 
@@ -582,6 +596,13 @@ impl ClientService for ClientServiceImpl {
             .await
             .map_err(|_| Status::internal("Failed to get playback state"))?;
 
+        // Get member count
+        let member_count = self
+            .room_service
+            .get_member_count(&room_id)
+            .await
+            .unwrap_or(0);
+
         // Convert to proto
         let proto_room = Some(Room {
             id: room.id.as_str().to_string(),
@@ -590,7 +611,7 @@ impl ClientService for ClientServiceImpl {
             status: room.status.as_str().to_string(),
             settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
             created_at: room.created_at.timestamp(),
-            member_count: 0, // TODO: Get actual count
+            member_count,
         });
 
         let proto_playback = Some(PlaybackState {
@@ -718,27 +739,28 @@ impl ClientService for ClientServiceImpl {
             search: None,
         };
 
-        // Get rooms
-        let (rooms, total) = self.room_service
-            .list_rooms(&query)
+        // Get rooms with member count (optimized single query with JOIN)
+        let (rooms_with_count, total) = self.room_service
+            .list_rooms_with_count(&query)
             .await
             .map_err(|e| Status::internal(format!("Failed to list rooms: {}", e)))?;
 
         // Convert to response
-        let room_list = rooms.into_iter().map(|room| {
-            Room {
-                id: room.id.to_string(),
-                name: room.name,
-                created_by: room.created_by.to_string(),
-                status: match room.status {
+        let room_list: Vec<Room> = rooms_with_count
+            .into_iter()
+            .map(|rwc| Room {
+                id: rwc.room.id.to_string(),
+                name: rwc.room.name,
+                created_by: rwc.room.created_by.to_string(),
+                status: match rwc.room.status {
                     RoomStatus::Active => "active".to_string(),
                     RoomStatus::Closed => "closed".to_string(),
                 },
-                settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
-                created_at: room.created_at.timestamp(),
-                member_count: 0, // TODO: Get actual count in query
-            }
-        }).collect();
+                settings: serde_json::to_vec(&rwc.room.settings).unwrap_or_default(),
+                created_at: rwc.room.created_at.timestamp(),
+                member_count: rwc.member_count,
+            })
+            .collect();
 
         Ok(Response::new(ListRoomsResponse {
             rooms: room_list,
@@ -795,6 +817,12 @@ impl ClientService for ClientServiceImpl {
                 _ => Status::internal("Failed to update room settings"),
             })?;
 
+        // Get member count
+        let member_count = self.room_service
+            .get_member_count(&room_id)
+            .await
+            .unwrap_or(0);
+
         Ok(Response::new(UpdateRoomSettingsResponse {
             room: Some(Room {
                 id: updated_room.id.to_string(),
@@ -806,7 +834,7 @@ impl ClientService for ClientServiceImpl {
                 },
                 settings: serde_json::to_vec(&updated_room.settings).unwrap_or_default(),
                 created_at: updated_room.created_at.timestamp(),
-                member_count: 0, // TODO: Get actual count
+                member_count,
             }),
         }))
     }
@@ -856,7 +884,7 @@ impl ClientService for ClientServiceImpl {
             .update_member_permission(
                 room_id,
                 user_id,
-                target_user_id,
+                target_user_id.clone(),
                 PermissionBits(req.permissions),
             )
             .await
@@ -866,11 +894,18 @@ impl ClientService for ClientServiceImpl {
                 _ => Status::internal("Failed to update member permission"),
             })?;
 
+        // Get username
+        let username = self.user_service
+            .get_user(&target_user_id)
+            .await
+            .map(|u| u.username)
+            .unwrap_or_default();
+
         Ok(Response::new(UpdateMemberPermissionResponse {
             member: Some(RoomMember {
                 room_id: req.room_id,
                 user_id: member.user_id.to_string(),
-                username: String::new(), // TODO: Get username
+                username,
                 permissions: member.permissions.0,
                 joined_at: member.joined_at.timestamp(),
                 is_online: false,
@@ -1416,13 +1451,33 @@ impl ClientService for ClientServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Failed to get chat history: {}", e)))?;
 
+        // Collect unique user IDs to batch fetch usernames
+        let user_ids: Vec<UserId> = messages.iter()
+            .map(|m| m.user_id.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // Batch fetch usernames
+        let mut username_map = HashMap::new();
+        for user_id in user_ids {
+            if let Ok(user) = self.user_service.get_user(&user_id).await {
+                username_map.insert(user_id.to_string(), user.username);
+            }
+        }
+
         // Convert to proto format
         let proto_messages = messages.into_iter().map(|m| {
+            let username = username_map
+                .get(m.user_id.as_str())
+                .cloned()
+                .unwrap_or_else(|| "Unknown".to_string());
+
             ChatMessageReceive {
                 id: m.id,
                 room_id: m.room_id.to_string(),
                 user_id: m.user_id.to_string(),
-                username: String::new(), // TODO: Get username from user_id
+                username,
                 content: m.content,
                 timestamp: m.created_at.timestamp(),
             }
@@ -1548,27 +1603,28 @@ impl ClientService for ClientServiceImpl {
         let page = if req.page == 0 { 1 } else { req.page as i64 };
         let page_size = if req.page_size == 0 || req.page_size > 50 { 10 } else { req.page_size as i64 };
 
-        // Get rooms created by user
-        let (rooms, total) = self.room_service
-            .list_rooms_by_creator(&user_id, page, page_size)
+        // Get rooms created by user with member count (optimized single query)
+        let (rooms_with_count, total) = self.room_service
+            .list_rooms_by_creator_with_count(&user_id, page, page_size)
             .await
             .map_err(|e| Status::internal(format!("Failed to get rooms: {}", e)))?;
 
         // Convert to proto format
-        let room_protos = rooms.into_iter().map(|r| {
-            Room {
-                id: r.id.to_string(),
-                name: r.name,
-                created_by: r.created_by.to_string(),
-                status: match r.status {
+        let room_protos: Vec<Room> = rooms_with_count
+            .into_iter()
+            .map(|rwc| Room {
+                id: rwc.room.id.to_string(),
+                name: rwc.room.name,
+                created_by: rwc.room.created_by.to_string(),
+                status: match rwc.room.status {
                     RoomStatus::Active => "active".to_string(),
                     RoomStatus::Closed => "closed".to_string(),
                 },
-                settings: serde_json::to_vec(&r.settings).unwrap_or_default(),
-                created_at: r.created_at.timestamp(),
-                member_count: 0, // TODO: Get actual count
-            }
-        }).collect();
+                settings: serde_json::to_vec(&rwc.room.settings).unwrap_or_default(),
+                created_at: rwc.room.created_at.timestamp(),
+                member_count: rwc.member_count,
+            })
+            .collect();
 
         Ok(Response::new(GetMyRoomsResponse {
             rooms: room_protos,
@@ -1586,28 +1642,27 @@ impl ClientService for ClientServiceImpl {
         let page = if req.page == 0 { 1 } else { req.page as i64 };
         let page_size = if req.page_size == 0 || req.page_size > 50 { 10 } else { req.page_size as i64 };
 
-        // Get rooms where user is a member
-        let (room_ids, total) = self.room_service
-            .list_joined_rooms(&user_id, page, page_size)
+        // Get rooms where user is a member with full details (optimized single query)
+        let (rooms_with_details, total) = self.room_service
+            .list_joined_rooms_with_details(&user_id, page, page_size)
             .await
             .map_err(|e| Status::internal(format!("Failed to get joined rooms: {}", e)))?;
 
-        // Get room details and member permissions for each room ID
-        let mut room_with_roles: Vec<RoomWithRole> = Vec::new();
-        for room_id in room_ids {
-            if let Ok(room) = self.room_service.get_room(&room_id).await {
-                // Determine role based on creator
+        // Convert to proto format
+        let room_with_roles: Vec<RoomWithRole> = rooms_with_details
+            .into_iter()
+            .map(|(room, permissions, member_count)| {
+                // Determine role based on creator status and permissions
                 let role = if room.created_by == user_id {
                     "creator"
+                } else if permissions == synctv_core::models::Role::Admin.permissions() {
+                    "admin"
+                } else if permissions == synctv_core::models::Role::Member.permissions() {
+                    "member"
+                } else if permissions == synctv_core::models::Role::Guest.permissions() {
+                    "guest"
                 } else {
-                    "member" // TODO: Get actual role from member permissions
-                };
-
-                // TODO: Get actual permissions from room_member table
-                let permissions = if room.created_by == user_id {
-                    PermissionBits::ALL
-                } else {
-                    PermissionBits::SEND_CHAT | PermissionBits::SEND_DANMAKU
+                    "member"
                 };
 
                 let room_proto = Room {
@@ -1620,16 +1675,16 @@ impl ClientService for ClientServiceImpl {
                     },
                     settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
                     created_at: room.created_at.timestamp(),
-                    member_count: 0, // TODO: Get actual count
+                    member_count,
                 };
 
-                room_with_roles.push(RoomWithRole {
+                RoomWithRole {
                     room: Some(room_proto),
-                    permissions,
+                    permissions: permissions.0,
                     role: role.to_string(),
-                });
-            }
-        }
+                }
+            })
+            .collect();
 
         Ok(Response::new(GetJoinedRoomsResponse {
             rooms: room_with_roles,

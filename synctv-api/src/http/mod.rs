@@ -97,7 +97,7 @@ pub fn create_router(
 /// - /api/providers/bilibili/* - Bilibili routes (self-registered)
 /// - /api/providers/alist/* - Alist routes (self-registered)
 /// - /api/providers/emby/* - Emby routes (self-registered)
-/// - /api/providers/backends/:vendor - Common route
+/// - /api/providers/instances - List all provider instances
 fn build_provider_routes(_state: &AppState) -> Router<AppState> {
     // Initialize all provider route modules (triggers self-registration)
     providers::bilibili::init();

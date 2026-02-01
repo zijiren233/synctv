@@ -2,7 +2,7 @@
 //
 // Three-tier architecture:
 //
-// Tier 1: synctv-providers (Pure vendor HTTP clients)
+// Tier 1: synctv-providers (Pure provider HTTP clients)
 //   - alist::AlistClient, bilibili::BilibiliClient, emby::EmbyClient
 //   - Independent libraries with no MediaProvider dependency
 //   - Can be used as provider_instances

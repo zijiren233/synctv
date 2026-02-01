@@ -13,10 +13,13 @@ CREATE TABLE IF NOT EXISTS media (
 );
 
 -- Create indexes
-CREATE INDEX idx_media_room_id ON media(room_id, position) WHERE deleted_at IS NULL;
 CREATE INDEX idx_media_added_by ON media(added_by);
 CREATE INDEX idx_media_added_at ON media(added_at);
 CREATE INDEX idx_media_deleted_at ON media(deleted_at) WHERE deleted_at IS NOT NULL;
+
+-- Performance optimization: covering index for playlist queries (includes commonly accessed columns)
+CREATE INDEX idx_media_playlist_covering ON media(room_id, position, provider, title)
+    WHERE deleted_at IS NULL;
 
 -- Add check constraint for provider
 ALTER TABLE media ADD CONSTRAINT media_provider_check

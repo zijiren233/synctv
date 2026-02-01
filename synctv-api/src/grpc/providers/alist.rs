@@ -24,8 +24,8 @@ use proto::{
 
 /// Alist Provider gRPC Service
 ///
-/// This service wraps the internal Alist vendor client and provides
-/// a client-facing gRPC API with remote/local backend selection support.
+/// This service wraps the internal Alist provider client and provides
+/// a client-facing gRPC API with remote/local instance selection support.
 #[derive(Debug, Clone)]
 pub struct AlistProviderGrpcService {
     app_state: Arc<AppState>,
@@ -36,24 +36,24 @@ impl AlistProviderGrpcService {
         Self { app_state }
     }
 
-    /// Get Alist client (remote or local) based on backend parameter
-    fn get_client(&self, backend: &str) -> Arc<dyn synctv_providers::alist::AlistInterface> {
-        if backend.is_empty() {
+    /// Get Alist client (remote or local) based on instance_name parameter
+    fn get_client(&self, instance_name: &str) -> Arc<dyn synctv_providers::alist::AlistInterface> {
+        if instance_name.is_empty() {
             return load_local_alist_client();
         }
 
         // Try to get remote instance
         let channel = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(
-                self.app_state.provider_instance_manager.get(backend)
+                self.app_state.provider_instance_manager.get(instance_name)
             )
         });
 
         if let Some(channel) = channel {
-            tracing::debug!("Using remote Alist instance: {}", backend);
+            tracing::debug!("Using remote Alist instance: {}", instance_name);
             create_remote_alist_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", backend);
+            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
             load_local_alist_client()
         }
     }
@@ -65,7 +65,7 @@ impl AlistProviderService for AlistProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Alist login request: host={}, username={}", req.host, req.username);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         // Determine password (use hashed if provided, otherwise plain)
         let (password, is_hashed) = if !req.hashed_password.is_empty() {
@@ -91,7 +91,7 @@ impl AlistProviderService for AlistProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Alist list request: host={}, path={}", req.host, req.path);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let list_req = synctv_providers::grpc::alist::FsListReq {
             host: req.host,
@@ -127,7 +127,7 @@ impl AlistProviderService for AlistProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Alist me request: host={}", req.host);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let me_req = synctv_providers::grpc::alist::MeReq {
             host: req.host,

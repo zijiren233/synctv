@@ -1,4 +1,4 @@
-//! Emby/Jellyfin Vendor Client
+//! Emby/Jellyfin Provider Client
 //!
 //! Pure HTTP client for Emby/Jellyfin API, independent of MediaProvider.
 //!

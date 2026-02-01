@@ -60,6 +60,8 @@ pub struct UserListQuery {
     pub page: i32,
     pub page_size: i32,
     pub search: Option<String>,
+    pub status: Option<String>, // "active", "banned", etc.
+    pub role: Option<String>,   // "user", "admin", "root"
 }
 
 impl Default for UserListQuery {
@@ -68,6 +70,8 @@ impl Default for UserListQuery {
             page: 1,
             page_size: 20,
             search: None,
+            status: None,
+            role: None,
         }
     }
 }

@@ -16,21 +16,20 @@ use super::AppState;
 /// Register common provider routes
 ///
 /// Routes:
-/// - GET /backends/:vendor - List available backend instances for a vendor
+/// - GET /instances - List all available provider instances
 pub fn register_common_routes() -> Router<AppState> {
     Router::new()
-        .route("/backends/:vendor", get(list_backends))
+        .route("/instances", get(list_instances))
 }
 
-/// List available backend instances for a vendor
-async fn list_backends(
+/// List all available provider instances
+async fn list_instances(
     State(state): State<AppState>,
-    Path(_vendor): Path<String>,
 ) -> impl IntoResponse {
-    let backends = state.provider_instance_manager.list().await;
+    let instances = state.provider_instance_manager.list().await;
 
     Json(json!({
-        "backends": backends
+        "instances": instances
     }))
 }
 

@@ -1,4 +1,4 @@
-//! Alist Vendor Client
+//! Alist Provider Client
 //!
 //! Pure HTTP client for Alist API, independent of MediaProvider.
 //! Can be used as a standalone library or as a provider_instance.

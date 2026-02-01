@@ -16,7 +16,7 @@ CREATE TABLE provider_instances (
     tls BOOLEAN NOT NULL DEFAULT false,
     insecure_tls BOOLEAN NOT NULL DEFAULT false,  -- Skip TLS verification (unsafe, dev/test only)
 
-    -- Provider Support (which providers can use this backend)
+    -- Provider Support (which providers can use this instance)
     providers TEXT[] NOT NULL DEFAULT '{}',  -- e.g., {'bilibili', 'alist', 'emby'}
 
     -- Status

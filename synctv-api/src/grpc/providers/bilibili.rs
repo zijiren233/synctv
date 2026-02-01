@@ -24,8 +24,8 @@ use proto::{
 
 /// Bilibili Provider gRPC Service
 ///
-/// This service wraps the internal Bilibili vendor client and provides
-/// a client-facing gRPC API with remote/local backend selection support.
+/// This service wraps the internal Bilibili provider client and provides
+/// a client-facing gRPC API with remote/local instance selection support.
 #[derive(Debug, Clone)]
 pub struct BilibiliProviderGrpcService {
     app_state: Arc<AppState>,
@@ -36,24 +36,24 @@ impl BilibiliProviderGrpcService {
         Self { app_state }
     }
 
-    /// Get Bilibili client (remote or local) based on backend parameter
-    fn get_client(&self, backend: &str) -> Arc<dyn synctv_providers::bilibili::BilibiliInterface> {
-        if backend.is_empty() {
+    /// Get Bilibili client (remote or local) based on instance_name parameter
+    fn get_client(&self, instance_name: &str) -> Arc<dyn synctv_providers::bilibili::BilibiliInterface> {
+        if instance_name.is_empty() {
             return load_local_bilibili_client();
         }
 
         // Try to get remote instance
         let channel = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(
-                self.app_state.provider_instance_manager.get(backend)
+                self.app_state.provider_instance_manager.get(instance_name)
             )
         });
 
         if let Some(channel) = channel {
-            tracing::debug!("Using remote Bilibili instance: {}", backend);
+            tracing::debug!("Using remote Bilibili instance: {}", instance_name);
             create_remote_bilibili_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", backend);
+            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
             load_local_bilibili_client()
         }
     }
@@ -65,7 +65,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili parse request: url={}", req.url);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         // Step 1: Match URL
         let match_req = synctv_providers::grpc::bilibili::MatchReq {
@@ -140,7 +140,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili login QR request");
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let resp = client.new_qr_code(synctv_providers::grpc::bilibili::Empty {}).await
             .map_err(|e| Status::internal(format!("Failed to generate QR code: {}", e)))?;
@@ -155,7 +155,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili check QR: {}", req.key);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let check_req = synctv_providers::grpc::bilibili::LoginWithQrCodeReq {
             key: req.key,
@@ -174,7 +174,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili get captcha request");
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let resp = client.new_captcha(synctv_providers::grpc::bilibili::Empty {}).await
             .map_err(|e| Status::internal(format!("Failed to get captcha: {}", e)))?;
@@ -190,7 +190,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili send SMS: phone={}", req.phone);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let sms_req = synctv_providers::grpc::bilibili::NewSmsReq {
             phone: req.phone,
@@ -211,7 +211,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili login SMS: phone={}", req.phone);
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let login_req = synctv_providers::grpc::bilibili::LoginWithSmsReq {
             phone: req.phone,
@@ -231,7 +231,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili user info request");
 
-        let client = self.get_client(&req.backend);
+        let client = self.get_client(&req.instance_name);
 
         let info_req = synctv_providers::grpc::bilibili::UserInfoReq {
             cookies: req.cookies,

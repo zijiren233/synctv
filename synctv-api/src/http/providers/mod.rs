@@ -58,10 +58,6 @@ pub fn build_provider_routes() -> Router<AppState> {
     router
 }
 
-// Common provider endpoints
-mod common;
-pub use common::backends;
-
 // Provider-specific implementations
 // Each module will self-register when loaded
 pub mod bilibili;

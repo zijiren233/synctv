@@ -1,4 +1,4 @@
-//! Emby/Jellyfin Vendor Client Error Types
+//! Emby/Jellyfin Provider Client Error Types
 
 use thiserror::Error;
 

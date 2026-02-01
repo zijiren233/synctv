@@ -70,12 +70,12 @@ pub struct BilibiliUserInfoRequest {
     pub cookies: HashMap<String, String>,
 }
 
-/// Backend query parameter
+/// Instance query parameter
 #[derive(Debug, Deserialize)]
-pub struct BackendQuery {
-    /// Optional backend instance name for remote provider
+pub struct InstanceQuery {
+    /// Optional provider instance name for remote provider
     #[serde(default)]
-    pub backend: Option<String>,
+    pub instance_name: Option<String>,
 }
 
 /// Build Bilibili HTTP routes
@@ -105,18 +105,18 @@ pub fn init() {
 /// Parse Bilibili URL
 async fn parse(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<BilibiliParseRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili parse request: url={}", req.url);
 
     // Determine which client to use (remote or local)
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
-            tracing::debug!("Using remote Bilibili instance: {}", backend_name);
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
+            tracing::debug!("Using remote Bilibili instance: {}", instance_name);
             create_remote_bilibili_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", backend_name);
+            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
             load_local_bilibili_client()
         }
     } else {
@@ -247,17 +247,17 @@ async fn parse(
 /// Generate Bilibili QR code for login
 async fn login_qr(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili login QR request");
 
     // Determine which client to use (remote or local)
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
-            tracing::debug!("Using remote Bilibili instance: {}", backend_name);
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
+            tracing::debug!("Using remote Bilibili instance: {}", instance_name);
             create_remote_bilibili_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", backend_name);
+            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
             load_local_bilibili_client()
         }
     } else {
@@ -293,18 +293,18 @@ async fn login_qr(
 /// Check Bilibili QR code login status
 async fn qr_check(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<BilibiliQRLoginRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili QR check: {}", req.key);
 
     // Determine which client to use (remote or local)
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
-            tracing::debug!("Using remote Bilibili instance: {}", backend_name);
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
+            tracing::debug!("Using remote Bilibili instance: {}", instance_name);
             create_remote_bilibili_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", backend_name);
+            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
             load_local_bilibili_client()
         }
     } else {
@@ -345,12 +345,12 @@ async fn qr_check(
 /// Get captcha for SMS login
 async fn new_captcha(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili new captcha request");
 
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
             create_remote_bilibili_client(channel)
         } else {
             load_local_bilibili_client()
@@ -386,13 +386,13 @@ async fn new_captcha(
 /// Send SMS verification code
 async fn sms_send(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<BilibiliSMSSendRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili SMS send request: phone={}", req.phone);
 
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
             create_remote_bilibili_client(channel)
         } else {
             load_local_bilibili_client()
@@ -433,13 +433,13 @@ async fn sms_send(
 /// Login with SMS code
 async fn sms_login(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<BilibiliSMSLoginRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili SMS login request: phone={}", req.phone);
 
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
             create_remote_bilibili_client(channel)
         } else {
             load_local_bilibili_client()
@@ -479,13 +479,13 @@ async fn sms_login(
 /// Get Bilibili user info
 async fn user_info(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<BilibiliUserInfoRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili user info request");
 
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
             create_remote_bilibili_client(channel)
         } else {
             load_local_bilibili_client()

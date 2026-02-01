@@ -14,6 +14,12 @@ CREATE INDEX idx_room_members_joined_at ON room_members(joined_at);
 CREATE INDEX idx_room_members_active ON room_members(room_id, user_id)
     WHERE left_at IS NULL;
 
+-- Performance optimization indexes (covering indexes to avoid table lookups)
+CREATE INDEX idx_room_members_user_active ON room_members(user_id, room_id, permissions, joined_at DESC)
+    WHERE left_at IS NULL;
+CREATE INDEX idx_room_members_room_count ON room_members(room_id)
+    WHERE left_at IS NULL;
+
 -- Comments
 COMMENT ON TABLE room_members IS 'Room membership and permissions';
 COMMENT ON COLUMN room_members.permissions IS '64-bit permission bitmask for this room';

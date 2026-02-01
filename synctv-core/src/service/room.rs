@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     models::{
-        Room, RoomId, RoomMember, RoomMemberWithUser, RoomSettings, RoomStatus, UserId,
+        Room, RoomId, RoomMember, RoomMemberWithUser, RoomSettings, RoomStatus, RoomWithCount, UserId,
         PermissionBits, Role, RoomPlaybackState, Media, MediaId, ProviderType,
         RoomListQuery, ChatMessage,
     },
@@ -353,14 +353,40 @@ impl RoomService {
         self.room_repo.list(query).await
     }
 
+    /// List all rooms with member count (optimized, single query)
+    pub async fn list_rooms_with_count(&self, query: &RoomListQuery) -> Result<(Vec<RoomWithCount>, i64)> {
+        self.room_repo.list_with_count(query).await
+    }
+
     /// List rooms created by a specific user
     pub async fn list_rooms_by_creator(&self, creator_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<Room>, i64)> {
         self.room_repo.list_by_creator(creator_id, page, page_size).await
     }
 
+    /// List rooms created by a specific user with member count (optimized)
+    pub async fn list_rooms_by_creator_with_count(
+        &self,
+        creator_id: &UserId,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<RoomWithCount>, i64)> {
+        self.room_repo.list_by_creator_with_count(creator_id, page, page_size).await
+    }
+
     /// List rooms where a user is a member
     pub async fn list_joined_rooms(&self, user_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<RoomId>, i64)> {
         self.member_repo.list_by_user(user_id, page, page_size).await
+    }
+
+    /// List rooms where a user is a member with full details (optimized)
+    /// Returns (room, user_permissions, member_count) tuples
+    pub async fn list_joined_rooms_with_details(
+        &self,
+        user_id: &UserId,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<(Room, PermissionBits, i32)>, i64)> {
+        self.member_repo.list_by_user_with_details(user_id, page, page_size).await
     }
 
     /// Get room members with user info
@@ -444,6 +470,24 @@ impl RoomService {
         self.chat_repo.list_by_room(room_id, before, limit).await
     }
 
+    /// Save a chat message to the database
+    pub async fn save_chat_message(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        content: String,
+    ) -> Result<ChatMessage> {
+        let message = ChatMessage {
+            id: nanoid::nanoid!(12),
+            room_id,
+            user_id,
+            content,
+            created_at: Utc::now(),
+            deleted_at: None,
+        };
+        self.chat_repo.create(&message).await
+    }
+
     /// Check if user is a member of the room
     pub async fn check_membership(
         &self,
@@ -455,6 +499,11 @@ impl RoomService {
         } else {
             Err(Error::PermissionDenied("Not a member of this room".to_string()))
         }
+    }
+
+    /// Update room directly (admin use, bypasses permission checks)
+    pub async fn admin_update_room(&self, room: &Room) -> Result<Room> {
+        self.room_repo.update(room).await
     }
 }
 

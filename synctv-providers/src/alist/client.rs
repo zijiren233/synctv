@@ -1,6 +1,6 @@
 //! Alist HTTP Client
 //!
-//! Pure vendor client for Alist API, no dependency on MediaProvider
+//! Pure HTTP client for Alist API, no dependency on MediaProvider
 
 use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT}};
 use serde_json::json;
@@ -175,7 +175,7 @@ impl AlistClient {
         Ok(resp.data)
     }
 
-    /// Get video preview information (for backends supporting transcoding)
+    /// Get video preview information (for instances supporting transcoding)
     ///
     /// # Arguments
     /// * `path` - File path

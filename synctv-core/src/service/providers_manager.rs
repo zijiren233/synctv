@@ -1,7 +1,7 @@
 //! Providers Manager
 //!
 //! Manages all MediaProvider instances with factory pattern.
-//! Integrates with ProviderInstanceManager for local/remote vendor client dispatch.
+//! Integrates with ProviderInstanceManager for local/remote provider client dispatch.
 
 use crate::provider::{
     AlistProvider, BilibiliProvider, DirectUrlProvider, EmbyProvider, MediaProvider,
@@ -21,7 +21,7 @@ pub type ProviderFactory =
 /// Providers Manager
 ///
 /// Manages all MediaProvider instances using factory pattern.
-/// Works with ProviderInstanceManager to dispatch calls to local or remote vendor clients.
+/// Works with ProviderInstanceManager to dispatch calls to local or remote provider clients.
 ///
 /// # Architecture
 /// ```text

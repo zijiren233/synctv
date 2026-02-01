@@ -32,7 +32,7 @@ message LoginRequest {
   string username = 2;
   string password = 3; // Plain password
   string hashed_password = 4; // Hashed password (if provided, password is ignored)
-  string backend = 5; // Optional backend instance name
+  string instance_name = 5; // Optional provider instance name
 }
 
 // Login response
@@ -49,7 +49,7 @@ message ListRequest {
   uint64 page = 5;
   uint64 per_page = 6;
   bool refresh = 7;
-  string backend = 8; // Optional backend instance name
+  string instance_name = 8; // Optional provider instance name
 }
 
 // List directory response
@@ -73,7 +73,7 @@ message FileItem {
 message GetMeRequest {
   string host = 1;
   string token = 2;
-  string backend = 3; // Optional backend instance name
+  string instance_name = 3; // Optional provider instance name
 }
 
 // Get user info response
@@ -84,7 +84,7 @@ message GetMeResponse {
 
 // Logout request
 message LogoutRequest {
-  string backend = 1; // Optional backend instance name
+  string instance_name = 1; // Optional provider instance name
 }
 
 // Logout response
@@ -94,7 +94,7 @@ message LogoutResponse {
 
 // Get binds request
 message GetBindsRequest {
-  string backend = 1; // Optional backend instance name
+  string instance_name = 1; // Optional provider instance name
 }
 
 // Get binds response

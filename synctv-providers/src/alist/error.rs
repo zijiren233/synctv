@@ -1,6 +1,6 @@
-//! Alist Vendor Client Error Types
+//! Alist Provider Client Error Types
 //!
-//! Pure vendor errors, no dependency on ProviderError
+//! Pure provider errors, no dependency on ProviderError
 
 use thiserror::Error;
 

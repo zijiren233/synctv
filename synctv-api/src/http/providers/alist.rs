@@ -54,12 +54,12 @@ pub struct AlistMeRequest {
     pub token: String,
 }
 
-/// Backend query parameter
+/// Instance query parameter
 #[derive(Debug, Deserialize)]
-pub struct BackendQuery {
-    /// Optional backend instance name for remote provider
+pub struct InstanceQuery {
+    /// Optional provider instance name for remote provider
     #[serde(default)]
-    pub backend: Option<String>,
+    pub instance_name: Option<String>,
 }
 
 /// Build Alist HTTP routes
@@ -86,19 +86,19 @@ pub fn init() {
 /// Authenticates with Alist server and returns a token.
 async fn login(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<AlistLoginRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Alist login request: host={}, username={}", req.host, req.username);
 
     // Determine which client to use (remote or local)
-    let client = if let Some(backend_name) = query.backend {
+    let client = if let Some(instance_name) = query.instance_name {
         // Try to get remote instance
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
-            tracing::debug!("Using remote Alist instance: {}", backend_name);
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
+            tracing::debug!("Using remote Alist instance: {}", instance_name);
             create_remote_alist_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", backend_name);
+            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
             load_local_alist_client()
         }
     } else {
@@ -147,13 +147,13 @@ async fn login(
 /// List Alist directory
 async fn list(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<AlistListRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Alist list request: host={}, path={}", req.host, req.path);
 
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
             create_remote_alist_client(channel)
         } else {
             load_local_alist_client()
@@ -211,13 +211,13 @@ async fn list(
 /// Get Alist user info
 async fn me(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<AlistMeRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Alist me request: host={}", req.host);
 
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
             create_remote_alist_client(channel)
         } else {
             load_local_alist_client()

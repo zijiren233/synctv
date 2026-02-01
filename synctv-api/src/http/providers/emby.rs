@@ -53,12 +53,12 @@ pub struct EmbyMeRequest {
     pub token: String,
 }
 
-/// Backend query parameter
+/// Instance query parameter
 #[derive(Debug, Deserialize)]
-pub struct BackendQuery {
-    /// Optional backend instance name for remote provider
+pub struct InstanceQuery {
+    /// Optional provider instance name for remote provider
     #[serde(default)]
-    pub backend: Option<String>,
+    pub instance_name: Option<String>,
 }
 
 /// Build Emby HTTP routes
@@ -83,18 +83,18 @@ pub fn init() {
 /// Login to Emby/Jellyfin (validate API key)
 async fn login(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<EmbyLoginRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Emby login request: host={}", req.host);
 
     // Determine which client to use (remote or local)
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
-            tracing::debug!("Using remote Emby instance: {}", backend_name);
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
+            tracing::debug!("Using remote Emby instance: {}", instance_name);
             create_remote_emby_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", backend_name);
+            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
             load_local_emby_client()
         }
     } else {
@@ -141,13 +141,13 @@ async fn login(
 /// List Emby library items
 async fn list(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<EmbyListRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Emby list request: host={}, path={}", req.host, req.path);
 
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
             create_remote_emby_client(channel)
         } else {
             load_local_emby_client()
@@ -205,13 +205,13 @@ async fn list(
 /// Get Emby user info
 async fn me(
     State(state): State<AppState>,
-    Query(query): Query<BackendQuery>,
+    Query(query): Query<InstanceQuery>,
     Json(req): Json<EmbyMeRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Emby me request: host={}", req.host);
 
-    let client = if let Some(backend_name) = query.backend {
-        if let Some(channel) = state.provider_instance_manager.get(&backend_name).await {
+    let client = if let Some(instance_name) = query.instance_name {
+        if let Some(channel) = state.provider_instance_manager.get(&instance_name).await {
             create_remote_emby_client(channel)
         } else {
             load_local_emby_client()

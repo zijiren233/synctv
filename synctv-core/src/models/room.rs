@@ -105,3 +105,11 @@ pub struct RoomSettings {
     pub chat_enabled: bool,
     pub danmaku_enabled: bool,
 }
+
+/// Room with member count (for efficient queries with JOIN)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomWithCount {
+    #[serde(flatten)]
+    pub room: Room,
+    pub member_count: i32,
+}

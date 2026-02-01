@@ -12,9 +12,9 @@ pub struct LoginRequest {
     /// Hashed password (if provided, password is ignored)
     #[prost(string, tag = "4")]
     pub hashed_password: ::prost::alloc::string::String,
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "5")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// Login response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -40,9 +40,9 @@ pub struct ListRequest {
     pub per_page: u64,
     #[prost(bool, tag = "7")]
     pub refresh: bool,
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "8")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// List directory response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -77,9 +77,9 @@ pub struct GetMeRequest {
     pub host: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub token: ::prost::alloc::string::String,
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "3")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// Get user info response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -92,9 +92,9 @@ pub struct GetMeResponse {
 /// Logout request
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LogoutRequest {
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "1")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// Logout response
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -105,9 +105,9 @@ pub struct LogoutResponse {
 /// Get binds request
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetBindsRequest {
-    /// Optional backend instance name
+    /// Optional provider instance name
     #[prost(string, tag = "1")]
-    pub backend: ::prost::alloc::string::String,
+    pub instance_name: ::prost::alloc::string::String,
 }
 /// Get binds response
 #[derive(Clone, PartialEq, ::prost::Message)]

@@ -139,6 +139,11 @@ impl UserService {
         self.repository.update(user).await
     }
 
+    /// List users with query (admin function)
+    pub async fn list_users(&self, query: &crate::models::UserListQuery) -> Result<(Vec<User>, i64)> {
+        self.repository.list(query).await
+    }
+
     /// Logout user by blacklisting the access token
     pub async fn logout(&self, access_token: &str) -> Result<()> {
         // Decode token to get expiration time
