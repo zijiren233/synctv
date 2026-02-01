@@ -151,15 +151,45 @@ impl AlistProviderService for AlistProviderGrpcService {
         }))
     }
 
-    async fn get_binds(&self, _request: Request<GetBindsRequest>) -> Result<Response<GetBindsResponse>, Status> {
-        tracing::info!("gRPC Alist get binds request");
+    async fn get_binds(&self, request: Request<GetBindsRequest>) -> Result<Response<GetBindsResponse>, Status> {
+        // Extract authenticated user from request extensions
+        let auth_context = request.extensions().get::<crate::grpc::interceptors::AuthContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
 
-        // TODO: Implement getting saved Alist credentials from database
-        // This would query UserProviderCredential table
+        tracing::info!("gRPC Alist get binds request for user: {}", auth_context.user_id);
 
-        Ok(Response::new(GetBindsResponse {
-            binds: vec![],
-        }))
+        // Query saved Alist credentials for current user
+        let credentials = self.app_state.credential_repository
+            .get_by_user(&auth_context.user_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to query credentials: {}", e)))?;
+
+        // Filter for Alist provider only and convert to BindInfo
+        let binds: Vec<BindInfo> = credentials
+            .into_iter()
+            .filter(|c| c.provider == "alist")
+            .map(|c| {
+                // Parse credential data to extract host and username
+                let host = c.credential_data.get("host")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                let username = c.credential_data.get("username")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                BindInfo {
+                    id: c.id,
+                    host,
+                    username,
+                    created_at: c.created_at.to_rfc3339(),
+                }
+            })
+            .collect();
+
+        Ok(Response::new(GetBindsResponse { binds }))
     }
 }
 

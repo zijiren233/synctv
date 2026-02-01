@@ -67,24 +67,38 @@ async fn main() -> Result<()> {
     let jwt_service = load_jwt_service(&config)?;
     info!("JWT service initialized");
 
+    // Initialize rate limiter and token blacklist (both use Redis)
+    let redis_url = if !config.redis.url.is_empty() {
+        Some(config.redis.url.clone())
+    } else {
+        None
+    };
+
+    // Initialize token blacklist service
+    let token_blacklist = synctv_core::service::TokenBlacklistService::new(redis_url.clone())?;
+    if token_blacklist.is_enabled() {
+        info!("Token blacklist service initialized with Redis");
+    } else {
+        info!("Token blacklist service disabled (Redis not configured)");
+    }
+
     // Initialize UserService
-    let user_service = UserService::new(pool.clone(), jwt_service);
+    let user_service = UserService::new(pool.clone(), jwt_service, token_blacklist);
     info!("UserService initialized");
 
     // Initialize RoomService
     let room_service = synctv_core::service::RoomService::new(pool.clone());
     info!("RoomService initialized");
 
+    // Initialize UserProviderCredentialRepository
+    let credential_repository = synctv_core::repository::UserProviderCredentialRepository::new(pool.clone());
+    info!("UserProviderCredentialRepository initialized");
+
     // Initialize RoomMessageHub for real-time messaging
     let message_hub = std::sync::Arc::new(synctv_cluster::sync::RoomMessageHub::new());
     info!("RoomMessageHub initialized");
 
-    // Initialize rate limiter
-    let redis_url = if !config.redis.url.is_empty() {
-        Some(config.redis.url.clone())
-    } else {
-        None
-    };
+    // Initialize rate limiter (uses the same redis_url)
     let rate_limiter = RateLimiter::new(redis_url.clone(), config.redis.key_prefix.clone())?;
     let rate_limit_config = RateLimitConfig::default();
     info!(
@@ -153,10 +167,25 @@ async fn main() -> Result<()> {
     // Wrap services in Arc for sharing between gRPC and HTTP servers
     let user_service = std::sync::Arc::new(user_service);
     let room_service = std::sync::Arc::new(room_service);
+    let credential_repository = std::sync::Arc::new(credential_repository);
+
+    // Initialize ProvidersManager before spawning servers
+    info!("Initializing ProvidersManager...");
+    let providers_manager = std::sync::Arc::new(synctv_core::service::ProvidersManager::new(
+        provider_instance_manager.clone()
+    ));
+    info!("ProvidersManager initialized");
+
+    // Clone Arc for gRPC server
+    let user_service_grpc = user_service.clone();
+    let room_service_grpc = room_service.clone();
+    let credential_repository_grpc = credential_repository.clone();
+    let providers_manager_grpc = providers_manager.clone();
 
     // Clone Arc for HTTP server
     let user_service_http = user_service.clone();
     let room_service_http = room_service.clone();
+    let credential_repository_http = credential_repository.clone();
     let provider_instance_manager_http = provider_instance_manager.clone();
 
     // Start gRPC server in background task
@@ -165,26 +194,20 @@ async fn main() -> Result<()> {
     let grpc_handle = tokio::spawn(async move {
         if let Err(e) = grpc::serve(
             &grpc_config,
-            user_service,
-            room_service,
+            user_service_grpc,
+            room_service_grpc,
             message_hub,
             redis_publish_tx,
             rate_limiter,
             rate_limit_config,
             content_filter,
             connection_manager,
-            None, // TODO: Initialize and pass ProvidersManager
+            Some(providers_manager_grpc),
+            credential_repository_grpc,
         ).await {
             error!("gRPC server error: {}", e);
         }
     });
-
-    // Initialize ProvidersManager
-    info!("Initializing ProvidersManager...");
-    let providers_manager = std::sync::Arc::new(synctv_core::service::ProvidersManager::new(
-        provider_instance_manager.clone()
-    ));
-    info!("ProvidersManager initialized");
 
     let providers_manager_http = providers_manager.clone();
 
@@ -196,6 +219,7 @@ async fn main() -> Result<()> {
         room_service_http,
         provider_instance_manager_http,
         providers_manager_http,
+        credential_repository_http,
     );
 
     let http_handle = tokio::spawn(async move {

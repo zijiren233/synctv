@@ -267,17 +267,55 @@ async fn logout() -> impl IntoResponse {
 
 /// Get Alist binds (saved credentials)
 async fn binds(
-    State(_state): State<AppState>,
+    auth: crate::http::middleware::AuthUser,
+    State(state): State<AppState>,
 ) -> impl IntoResponse {
-    tracing::info!("Alist binds request");
-    
-    // TODO: Implement getting saved Alist credentials from database
-    // This would query UserProviderCredential table
-    
-    (
-        StatusCode::OK,
-        Json(json!({
-            "binds": []
-        }))
-    ).into_response()
+    tracing::info!("Alist binds request for user: {}", auth.user_id);
+
+    // Query saved Alist credentials for current user
+    match state.credential_repository.get_by_user(&auth.user_id.to_string()).await {
+        Ok(credentials) => {
+            // Filter for Alist provider only
+            let alist_binds: Vec<_> = credentials
+                .into_iter()
+                .filter(|c| c.provider == "alist")
+                .map(|c| {
+                    // Parse credential data to extract host
+                    let host = c.credential_data.get("host")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    let username = c.credential_data.get("username")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    json!({
+                        "id": c.id,
+                        "host": host,
+                        "username": username,
+                        "created_at": c.created_at.to_rfc3339(),
+                    })
+                })
+                .collect();
+
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "binds": alist_binds
+                }))
+            ).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to query credentials: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "Failed to query credentials",
+                    "message": e.to_string()
+                }))
+            ).into_response()
+        }
+    }
 }

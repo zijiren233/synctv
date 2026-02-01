@@ -1391,21 +1391,71 @@ impl ClientService for ClientServiceImpl {
         &self,
         request: Request<GetChatHistoryRequest>,
     ) -> Result<Response<GetChatHistoryResponse>, Status> {
+        let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
-        let _room_id = RoomId::from_string(req.room_id);
+        let room_id = RoomId::from_string(req.room_id);
 
-        // TODO: Implement ChatRepository and chat history retrieval
-        // For now, return empty history
+        // Check if user has access to the room (is a member)
+        self.room_service
+            .check_membership(&room_id, &user_id)
+            .await
+            .map_err(|e| Status::permission_denied(format!("Not a member of the room: {}", e)))?;
+
+        // Get chat history from database
+        let limit = if req.limit == 0 || req.limit > 100 { 50 } else { req.limit };
+
+        // Parse before timestamp if provided
+        let before = if req.before > 0 {
+            Some(chrono::DateTime::from_timestamp(req.before, 0).unwrap_or_else(chrono::Utc::now))
+        } else {
+            None
+        };
+
+        let messages = self.room_service
+            .get_chat_history(&room_id, before, limit)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get chat history: {}", e)))?;
+
+        // Convert to proto format
+        let proto_messages = messages.into_iter().map(|m| {
+            ChatMessageReceive {
+                id: m.id,
+                room_id: m.room_id.to_string(),
+                user_id: m.user_id.to_string(),
+                username: String::new(), // TODO: Get username from user_id
+                content: m.content,
+                timestamp: m.created_at.timestamp(),
+            }
+        }).collect();
+
         Ok(Response::new(GetChatHistoryResponse {
-            messages: vec![],
+            messages: proto_messages,
         }))
     }
 
     async fn logout(
         &self,
-        _request: Request<LogoutRequest>,
+        request: Request<LogoutRequest>,
     ) -> Result<Response<LogoutResponse>, Status> {
-        // TODO: Implement token blacklist
+        // Extract token from Authorization header in metadata
+        let token = request.metadata()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| {
+                if s.starts_with("Bearer ") || s.starts_with("bearer ") {
+                    Some(&s[7..])
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Status::unauthenticated("Missing or invalid authorization header"))?;
+
+        // Blacklist the token
+        self.user_service
+            .logout(token)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to logout: {}", e)))?;
+
         Ok(Response::new(LogoutResponse { success: true }))
     }
 
@@ -1416,8 +1466,36 @@ impl ClientService for ClientServiceImpl {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
-        // TODO: Implement username update
-        Err(Status::unimplemented("UpdateUsername not yet implemented"))
+        // Validate new username
+        if req.new_username.is_empty() {
+            return Err(Status::invalid_argument("Username cannot be empty"));
+        }
+
+        if req.new_username.len() < 3 || req.new_username.len() > 32 {
+            return Err(Status::invalid_argument("Username must be between 3 and 32 characters"));
+        }
+
+        // Get current user
+        let mut user = self.user_service.get_user(&user_id).await
+            .map_err(|e| Status::internal(format!("Failed to get user: {}", e)))?;
+
+        // Update username
+        user.username = req.new_username;
+
+        // Save to database
+        let updated_user = self.user_service.update_user(&user).await
+            .map_err(|e| Status::internal(format!("Failed to update username: {}", e)))?;
+
+        // Convert to proto format
+        let proto_user = User {
+            id: updated_user.id.to_string(),
+            username: updated_user.username,
+            email: updated_user.email,
+            permissions: updated_user.permissions.0,
+            created_at: updated_user.created_at.timestamp(),
+        };
+
+        Ok(Response::new(UpdateUsernameResponse { user: Some(proto_user) }))
     }
 
     async fn update_password(
@@ -1427,8 +1505,37 @@ impl ClientService for ClientServiceImpl {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
-        // TODO: Implement password update with old password verification
-        Err(Status::unimplemented("UpdatePassword not yet implemented"))
+        // Validate new password
+        if req.new_password.is_empty() {
+            return Err(Status::invalid_argument("New password cannot be empty"));
+        }
+
+        if req.new_password.len() < 6 {
+            return Err(Status::invalid_argument("Password must be at least 6 characters"));
+        }
+
+        // Get current user
+        let mut user = self.user_service.get_user(&user_id).await
+            .map_err(|e| Status::internal(format!("Failed to get user: {}", e)))?;
+
+        // Verify old password
+        if !synctv_core::service::auth::password::verify_password(&req.old_password, &user.password_hash).await
+            .map_err(|e| Status::internal(format!("Failed to verify password: {}", e)))? {
+            return Err(Status::permission_denied("Invalid old password"));
+        }
+
+        // Hash new password
+        let new_hash = synctv_core::service::auth::password::hash_password(&req.new_password).await
+            .map_err(|e| Status::internal(format!("Failed to hash password: {}", e)))?;
+
+        // Update password
+        user.password_hash = new_hash;
+
+        // Save to database
+        self.user_service.update_user(&user).await
+            .map_err(|e| Status::internal(format!("Failed to update password: {}", e)))?;
+
+        Ok(Response::new(UpdatePasswordResponse { success: true }))
     }
 
     async fn get_my_rooms(
@@ -1438,10 +1545,34 @@ impl ClientService for ClientServiceImpl {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
-        // TODO: Implement get my rooms (rooms created by user)
+        let page = if req.page == 0 { 1 } else { req.page as i64 };
+        let page_size = if req.page_size == 0 || req.page_size > 50 { 10 } else { req.page_size as i64 };
+
+        // Get rooms created by user
+        let (rooms, total) = self.room_service
+            .list_rooms_by_creator(&user_id, page, page_size)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get rooms: {}", e)))?;
+
+        // Convert to proto format
+        let room_protos = rooms.into_iter().map(|r| {
+            Room {
+                id: r.id.to_string(),
+                name: r.name,
+                created_by: r.created_by.to_string(),
+                status: match r.status {
+                    RoomStatus::Active => "active".to_string(),
+                    RoomStatus::Closed => "closed".to_string(),
+                },
+                settings: serde_json::to_vec(&r.settings).unwrap_or_default(),
+                created_at: r.created_at.timestamp(),
+                member_count: 0, // TODO: Get actual count
+            }
+        }).collect();
+
         Ok(Response::new(GetMyRoomsResponse {
-            rooms: vec![],
-            total: 0,
+            rooms: room_protos,
+            total: total as i32,
         }))
     }
 
@@ -1452,10 +1583,57 @@ impl ClientService for ClientServiceImpl {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
-        // TODO: Implement get joined rooms
+        let page = if req.page == 0 { 1 } else { req.page as i64 };
+        let page_size = if req.page_size == 0 || req.page_size > 50 { 10 } else { req.page_size as i64 };
+
+        // Get rooms where user is a member
+        let (room_ids, total) = self.room_service
+            .list_joined_rooms(&user_id, page, page_size)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get joined rooms: {}", e)))?;
+
+        // Get room details and member permissions for each room ID
+        let mut room_with_roles: Vec<RoomWithRole> = Vec::new();
+        for room_id in room_ids {
+            if let Ok(room) = self.room_service.get_room(&room_id).await {
+                // Determine role based on creator
+                let role = if room.created_by == user_id {
+                    "creator"
+                } else {
+                    "member" // TODO: Get actual role from member permissions
+                };
+
+                // TODO: Get actual permissions from room_member table
+                let permissions = if room.created_by == user_id {
+                    PermissionBits::ALL
+                } else {
+                    PermissionBits::SEND_CHAT | PermissionBits::SEND_DANMAKU
+                };
+
+                let room_proto = Room {
+                    id: room.id.to_string(),
+                    name: room.name,
+                    created_by: room.created_by.to_string(),
+                    status: match room.status {
+                        RoomStatus::Active => "active".to_string(),
+                        RoomStatus::Closed => "closed".to_string(),
+                    },
+                    settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
+                    created_at: room.created_at.timestamp(),
+                    member_count: 0, // TODO: Get actual count
+                };
+
+                room_with_roles.push(RoomWithRole {
+                    room: Some(room_proto),
+                    permissions,
+                    role: role.to_string(),
+                });
+            }
+        }
+
         Ok(Response::new(GetJoinedRoomsResponse {
-            rooms: vec![],
-            total: 0,
+            rooms: room_with_roles,
+            total: total as i32,
         }))
     }
 
@@ -1494,11 +1672,67 @@ impl ClientService for ClientServiceImpl {
         request: Request<GetHotRoomsRequest>,
     ) -> Result<Response<GetHotRoomsResponse>, Status> {
         let req = request.into_inner();
-        let limit = if req.limit == 0 || req.limit > 50 { 10 } else { req.limit };
+        let limit = if req.limit == 0 || req.limit > 50 { 10 } else { req.limit as i64 };
 
-        // TODO: Implement hot rooms with online count sorting
+        // Get active rooms
+        let query = RoomListQuery {
+            page: 1,
+            page_size: 100, // Get more rooms for filtering by online count
+            search: None,
+            status: Some(RoomStatus::Active),
+        };
+
+        let (rooms, _total) = self.room_service
+            .list_rooms(&query)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to list rooms: {}", e)))?;
+
+        // Get online count for each room and create room stats
+        let mut room_stats: Vec<(synctv_core::models::Room, i32, i32)> = Vec::new();
+        for room in rooms {
+            // Get online count from connection manager
+            let online_count = self.connection_manager.room_connection_count(&room.id);
+
+            // Get total member count
+            let member_count = self.room_service
+                .get_member_count(&room.id)
+                .await
+                .unwrap_or(0);
+
+            room_stats.push((room, online_count as i32, member_count));
+        }
+
+        // Sort by online count (descending)
+        room_stats.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Take top N rooms
+        let hot_rooms: Vec<RoomWithStats> = room_stats
+            .into_iter()
+            .take(limit as usize)
+            .map(|(room, online_count, member_count)| {
+                let room_proto = Room {
+                    id: room.id.to_string(),
+                    name: room.name,
+                    created_by: room.created_by.to_string(),
+                    status: match room.status {
+                        RoomStatus::Active => "active".to_string(),
+                        RoomStatus::Closed => "closed".to_string(),
+                    },
+                    settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
+                    created_at: room.created_at.timestamp(),
+                    member_count,
+                };
+
+                RoomWithStats {
+                    room: Some(room_proto),
+                    online_count,
+                    total_members: member_count,
+                }
+            })
+            .collect();
+
         Ok(Response::new(GetHotRoomsResponse {
-            rooms: vec![],
+            rooms: hot_rooms,
         }))
     }
 }

@@ -149,6 +149,14 @@ pub struct UserProviderCredentialRepository {
     pool: PgPool,
 }
 
+impl std::fmt::Debug for UserProviderCredentialRepository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserProviderCredentialRepository")
+            .field("pool", &"PgPool")
+            .finish()
+    }
+}
+
 impl UserProviderCredentialRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }

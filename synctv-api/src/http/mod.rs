@@ -18,6 +18,7 @@ use tower_http::cors::{CorsLayer, Any};
 use tower_http::trace::TraceLayer;
 use std::sync::Arc;
 use synctv_core::service::{UserService, RoomService, ProviderInstanceManager, ProvidersManager};
+use synctv_core::repository::UserProviderCredentialRepository;
 
 pub use error::{AppError, AppResult};
 
@@ -28,6 +29,7 @@ pub struct AppState {
     pub room_service: Arc<RoomService>,
     pub provider_instance_manager: Arc<ProviderInstanceManager>,
     pub providers_manager: Arc<ProvidersManager>,
+    pub credential_repository: Arc<UserProviderCredentialRepository>,
 }
 
 /// Create the HTTP router with all routes
@@ -36,12 +38,14 @@ pub fn create_router(
     room_service: Arc<RoomService>,
     provider_instance_manager: Arc<ProviderInstanceManager>,
     providers_manager: Arc<ProvidersManager>,
+    credential_repository: Arc<UserProviderCredentialRepository>,
 ) -> Router {
     let state = AppState {
         user_service,
         room_service,
         provider_instance_manager: provider_instance_manager.clone(),
         providers_manager: providers_manager.clone(),
+        credential_repository,
     };
 
     Router::new()

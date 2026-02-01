@@ -1,13 +1,14 @@
 use sqlx::PgPool;
 use serde_json::json;
+use chrono::{DateTime, Utc};
 
 use crate::{
     models::{
         Room, RoomId, RoomMember, RoomMemberWithUser, RoomSettings, RoomStatus, UserId,
         PermissionBits, Role, RoomPlaybackState, Media, MediaId, ProviderType,
-        RoomListQuery,
+        RoomListQuery, ChatMessage,
     },
-    repository::{RoomRepository, RoomMemberRepository, MediaRepository, RoomPlaybackStateRepository},
+    repository::{RoomRepository, RoomMemberRepository, MediaRepository, RoomPlaybackStateRepository, ChatRepository},
     service::auth::password::{hash_password, verify_password},
     Error, Result,
 };
@@ -19,6 +20,7 @@ pub struct RoomService {
     member_repo: RoomMemberRepository,
     media_repo: MediaRepository,
     playback_repo: RoomPlaybackStateRepository,
+    chat_repo: ChatRepository,
 }
 
 impl std::fmt::Debug for RoomService {
@@ -33,7 +35,8 @@ impl RoomService {
             room_repo: RoomRepository::new(pool.clone()),
             member_repo: RoomMemberRepository::new(pool.clone()),
             media_repo: MediaRepository::new(pool.clone()),
-            playback_repo: RoomPlaybackStateRepository::new(pool),
+            playback_repo: RoomPlaybackStateRepository::new(pool.clone()),
+            chat_repo: ChatRepository::new(pool),
         }
     }
 
@@ -350,6 +353,16 @@ impl RoomService {
         self.room_repo.list(query).await
     }
 
+    /// List rooms created by a specific user
+    pub async fn list_rooms_by_creator(&self, creator_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<Room>, i64)> {
+        self.room_repo.list_by_creator(creator_id, page, page_size).await
+    }
+
+    /// List rooms where a user is a member
+    pub async fn list_joined_rooms(&self, user_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<RoomId>, i64)> {
+        self.member_repo.list_by_user(user_id, page, page_size).await
+    }
+
     /// Get room members with user info
     pub async fn get_room_members(&self, room_id: &RoomId) -> Result<Vec<RoomMemberWithUser>> {
         self.member_repo.list_by_room(room_id).await
@@ -419,6 +432,29 @@ impl RoomService {
 
         // Swap positions
         self.media_repo.swap_positions(&media_id1, &media_id2).await
+    }
+
+    /// Get chat history for a room
+    pub async fn get_chat_history(
+        &self,
+        room_id: &RoomId,
+        before: Option<DateTime<Utc>>,
+        limit: i32,
+    ) -> Result<Vec<ChatMessage>> {
+        self.chat_repo.list_by_room(room_id, before, limit).await
+    }
+
+    /// Check if user is a member of the room
+    pub async fn check_membership(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+    ) -> Result<()> {
+        if self.member_repo.is_member(room_id, user_id).await? {
+            Ok(())
+        } else {
+            Err(Error::PermissionDenied("Not a member of this room".to_string()))
+        }
     }
 }
 

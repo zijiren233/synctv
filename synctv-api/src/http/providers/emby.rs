@@ -262,17 +262,55 @@ async fn logout() -> impl IntoResponse {
 
 /// Get Emby binds (saved credentials)
 async fn binds(
-    State(_state): State<AppState>,
+    auth: crate::http::middleware::AuthUser,
+    State(state): State<AppState>,
 ) -> impl IntoResponse {
-    tracing::info!("Emby binds request");
+    tracing::info!("Emby binds request for user: {}", auth.user_id);
 
-    // TODO: Implement getting saved Emby credentials from database
-    // This would query UserProviderCredential table
+    // Query saved Emby credentials for current user
+    match state.credential_repository.get_by_user(&auth.user_id.to_string()).await {
+        Ok(credentials) => {
+            // Filter for Emby provider only
+            let emby_binds: Vec<_> = credentials
+                .into_iter()
+                .filter(|c| c.provider == "emby")
+                .map(|c| {
+                    // Parse credential data to extract host
+                    let host = c.credential_data.get("host")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
 
-    (
-        StatusCode::OK,
-        Json(json!({
-            "binds": []
-        }))
-    ).into_response()
+                    let emby_user_id = c.credential_data.get("emby_user_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    json!({
+                        "id": c.id,
+                        "host": host,
+                        "user_id": emby_user_id,
+                        "created_at": c.created_at.to_rfc3339(),
+                    })
+                })
+                .collect();
+
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "binds": emby_binds
+                }))
+            ).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to query credentials: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "Failed to query credentials",
+                    "message": e.to_string()
+                }))
+            ).into_response()
+        }
+    }
 }

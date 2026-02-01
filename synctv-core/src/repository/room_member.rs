@@ -138,6 +138,41 @@ impl RoomMemberRepository {
         Ok(count as i32)
     }
 
+    /// Get rooms where a user is a member
+    pub async fn list_by_user(&self, user_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<RoomId>, i64)> {
+        let offset = (page - 1) * page_size;
+
+        // Get total count
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) as count
+             FROM room_members rm
+             JOIN rooms r ON rm.room_id = r.id
+             WHERE rm.user_id = $1 AND rm.left_at IS NULL AND r.deleted_at IS NULL"
+        )
+        .bind(user_id.as_str())
+        .fetch_one(&self.pool)
+        .await?;
+
+        // Get room IDs
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT rm.room_id
+             FROM room_members rm
+             JOIN rooms r ON rm.room_id = r.id
+             WHERE rm.user_id = $1 AND rm.left_at IS NULL AND r.deleted_at IS NULL
+             ORDER BY rm.joined_at DESC
+             LIMIT $2 OFFSET $3"
+        )
+        .bind(user_id.as_str())
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let room_ids = rows.into_iter().map(RoomId::from_string).collect();
+
+        Ok((room_ids, count))
+    }
+
     /// Convert database row to RoomMember
     fn row_to_member(&self, row: PgRow) -> Result<RoomMember> {
         Ok(RoomMember {

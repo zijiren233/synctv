@@ -1,9 +1,11 @@
 use sqlx::PgPool;
+use chrono::Utc;
 
 use crate::{
     models::{User, UserId},
     repository::UserRepository,
     service::auth::{hash_password, verify_password, JwtService, TokenType},
+    service::TokenBlacklistService,
     Error, Result,
 };
 
@@ -12,6 +14,7 @@ use crate::{
 pub struct UserService {
     repository: UserRepository,
     jwt_service: JwtService,
+    blacklist_service: TokenBlacklistService,
 }
 
 impl std::fmt::Debug for UserService {
@@ -21,10 +24,11 @@ impl std::fmt::Debug for UserService {
 }
 
 impl UserService {
-    pub fn new(pool: PgPool, jwt_service: JwtService) -> Self {
+    pub fn new(pool: PgPool, jwt_service: JwtService, blacklist_service: TokenBlacklistService) -> Self {
         Self {
             repository: UserRepository::new(pool),
             jwt_service,
+            blacklist_service,
         }
     }
 
@@ -130,6 +134,41 @@ impl UserService {
             .ok_or_else(|| Error::NotFound("User not found".to_string()))
     }
 
+    /// Update user
+    pub async fn update_user(&self, user: &User) -> Result<User> {
+        self.repository.update(user).await
+    }
+
+    /// Logout user by blacklisting the access token
+    pub async fn logout(&self, access_token: &str) -> Result<()> {
+        // Decode token to get expiration time
+        let claims = self.jwt_service.verify_access_token(access_token)?;
+
+        // Calculate TTL (time until token expires)
+        let now = Utc::now().timestamp();
+        let ttl = claims.exp - now;
+
+        if ttl > 0 {
+            // Add token to blacklist with TTL
+            self.blacklist_service.blacklist_token(access_token, ttl).await?;
+
+            tracing::info!(
+                user_id = %claims.sub,
+                ttl_seconds = ttl,
+                "User logged out, token blacklisted"
+            );
+        } else {
+            tracing::debug!("Token already expired, no need to blacklist");
+        }
+
+        Ok(())
+    }
+
+    /// Check if a token is blacklisted
+    pub async fn is_token_blacklisted(&self, token: &str) -> Result<bool> {
+        self.blacklist_service.is_blacklisted(token).await
+    }
+
     /// Validate username
     fn validate_username(&self, username: &str) -> Result<()> {
         if username.len() < 3 {
@@ -208,7 +247,8 @@ mod tests {
         let public_bytes = public_pem.as_bytes();
 
         let jwt = JwtService::new(private_bytes, public_bytes).unwrap();
-        UserService::new(pool, jwt)
+        let blacklist = TokenBlacklistService::new(None).unwrap(); // Disabled for tests
+        UserService::new(pool, jwt, blacklist)
     }
 
     #[tokio::test]

@@ -149,15 +149,45 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         }))
     }
 
-    async fn get_binds(&self, _request: Request<GetBindsRequest>) -> Result<Response<GetBindsResponse>, Status> {
-        tracing::info!("gRPC Emby get binds request");
+    async fn get_binds(&self, request: Request<GetBindsRequest>) -> Result<Response<GetBindsResponse>, Status> {
+        // Extract authenticated user from request extensions
+        let auth_context = request.extensions().get::<crate::grpc::interceptors::AuthContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
 
-        // TODO: Implement getting saved Emby credentials from database
-        // This would query UserProviderCredential table
+        tracing::info!("gRPC Emby get binds request for user: {}", auth_context.user_id);
 
-        Ok(Response::new(GetBindsResponse {
-            binds: vec![],
-        }))
+        // Query saved Emby credentials for current user
+        let credentials = self.app_state.credential_repository
+            .get_by_user(&auth_context.user_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to query credentials: {}", e)))?;
+
+        // Filter for Emby provider only and convert to BindInfo
+        let binds: Vec<BindInfo> = credentials
+            .into_iter()
+            .filter(|c| c.provider == "emby")
+            .map(|c| {
+                // Parse credential data to extract host and emby_user_id
+                let host = c.credential_data.get("host")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                let emby_user_id = c.credential_data.get("emby_user_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                BindInfo {
+                    id: c.id,
+                    host,
+                    user_id: emby_user_id,
+                    created_at: c.created_at.to_rfc3339(),
+                }
+            })
+            .collect();
+
+        Ok(Response::new(GetBindsResponse { binds }))
     }
 }
 

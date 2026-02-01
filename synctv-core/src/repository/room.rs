@@ -167,6 +167,39 @@ impl RoomRepository {
         Ok(count as i32)
     }
 
+    /// Get rooms created by a specific user
+    pub async fn list_by_creator(&self, creator_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<Room>, i64)> {
+        let offset = (page - 1) * page_size;
+
+        // Get total count
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) as count
+             FROM rooms
+             WHERE created_by = $1 AND deleted_at IS NULL"
+        )
+        .bind(creator_id.as_str())
+        .fetch_one(&self.pool)
+        .await?;
+
+        // Get rooms
+        let rows = sqlx::query(
+            "SELECT id, name, created_by, status, settings, created_at, updated_at, deleted_at
+             FROM rooms
+             WHERE created_by = $1 AND deleted_at IS NULL
+             ORDER BY created_at DESC
+             LIMIT $2 OFFSET $3"
+        )
+        .bind(creator_id.as_str())
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let rooms: Result<Vec<Room>> = rows.into_iter().map(|row| self.row_to_room(row)).collect();
+
+        Ok((rooms?, count))
+    }
+
     /// Convert database row to Room model
     fn row_to_room(&self, row: PgRow) -> Result<Room> {
         let settings_json: JsonValue = row.try_get("settings")?;

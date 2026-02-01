@@ -33,6 +33,7 @@ use tonic::transport::Server;
 use tonic_reflection::server::Builder as ReflectionBuilder;
 
 use synctv_core::service::{UserService, RoomService, RateLimiter, RateLimitConfig, ContentFilter, ProvidersManager};
+use synctv_core::repository::UserProviderCredentialRepository;
 use synctv_core::Config;
 use synctv_cluster::sync::{RoomMessageHub, PublishRequest, ConnectionManager};
 use std::sync::Arc;
@@ -49,6 +50,7 @@ pub async fn serve(
     content_filter: ContentFilter,
     connection_manager: ConnectionManager,
     providers_manager: Option<Arc<ProvidersManager>>,
+    credential_repository: Arc<UserProviderCredentialRepository>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
 
@@ -121,6 +123,7 @@ pub async fn serve(
             room_service: room_service_for_provider,
             provider_instance_manager: providers_mgr.instance_manager().clone(),
             providers_manager: providers_mgr,
+            credential_repository,
         });
 
         // Initialize all provider modules (triggers self-registration)
