@@ -30,8 +30,7 @@ where
             .ok_or_else(|| AppError::unauthorized("Missing Authorization header"))?;
 
         // Parse Bearer token
-        let token = extract_bearer_token(auth_header)
-            .map_err(|e| AppError::unauthorized(e))?;
+        let token = extract_bearer_token(auth_header).map_err(|e| AppError::unauthorized(e))?;
 
         // Extract user_id from token
         let user_id_str = extract_user_id_from_token(token)
@@ -70,7 +69,8 @@ fn extract_user_id_from_token(token: &str) -> Result<String, String> {
 
     // Decode payload (second part)
     let payload = parts[1];
-    let decoded = BASE64_URL_SAFE_NO_PAD.decode(payload)
+    let decoded = BASE64_URL_SAFE_NO_PAD
+        .decode(payload)
         .map_err(|e| format!("Failed to decode token: {}", e))?;
 
     // Parse JSON
@@ -78,7 +78,8 @@ fn extract_user_id_from_token(token: &str) -> Result<String, String> {
         .map_err(|e| format!("Failed to parse token JSON: {}", e))?;
 
     // Extract sub (subject) claim
-    let user_id = json.get("sub")
+    let user_id = json
+        .get("sub")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing sub claim".to_string())?;
 

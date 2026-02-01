@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+use tonic_health::pb::{health_client::HealthClient, HealthCheckRequest};
 
 /// Provider Instance Manager
 ///
@@ -253,17 +254,56 @@ impl ProviderInstanceManager {
     /// Health check all remote instances
     ///
     /// Returns a map of instance name to health status.
+    /// Uses gRPC Health Check protocol with 5-second timeout per instance.
     pub async fn health_check(&self) -> HashMap<String, bool> {
         let instances = self.instances.read().await;
         let mut results = HashMap::new();
 
-        for (name, _channel) in instances.iter() {
-            // For now, assume healthy if channel exists
-            // TODO: Implement actual health check RPC
-            let is_healthy = true;
+        for (name, channel) in instances.iter() {
+            let is_healthy = self.check_instance_health(name, channel.clone()).await;
             results.insert(name.clone(), is_healthy);
         }
 
         results
+    }
+
+    /// Check health of a single remote instance
+    ///
+    /// Calls gRPC Health Check RPC with 5-second timeout.
+    async fn check_instance_health(&self, name: &str, channel: Channel) -> bool {
+        // Create health check client
+        let mut client = HealthClient::new(channel);
+
+        // Create health check request (empty service name checks overall health)
+        let request = tonic::Request::new(HealthCheckRequest {
+            service: String::new(), // Empty string = overall server health
+        });
+
+        // Set timeout for health check (5 seconds)
+        let timeout = Duration::from_secs(5);
+
+        match tokio::time::timeout(timeout, client.check(request)).await {
+            Ok(Ok(response)) => {
+                // Check if status is SERVING (1)
+                let status = response.into_inner().status;
+                let is_serving = status == 1; // tonic_health::ServingStatus::Serving
+
+                if is_serving {
+                    tracing::debug!("Provider instance '{}' is healthy", name);
+                } else {
+                    tracing::warn!("Provider instance '{}' is not serving (status: {})", name, status);
+                }
+
+                is_serving
+            }
+            Ok(Err(e)) => {
+                tracing::error!("Health check failed for instance '{}': {}", name, e);
+                false
+            }
+            Err(_) => {
+                tracing::error!("Health check timeout for instance '{}' (5s)", name);
+                false
+            }
+        }
     }
 }

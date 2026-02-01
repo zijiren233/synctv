@@ -1,16 +1,15 @@
 //! Emby Provider HTTP Routes
 
 use axum::{
-    Router,
-    routing::{post, get},
     extract::{Query, State},
-    response::IntoResponse,
     http::StatusCode,
-    Json,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use synctv_core::provider::provider_client::{load_local_emby_client, create_remote_emby_client};
+use synctv_core::provider::provider_client::{create_remote_emby_client, load_local_emby_client};
 
 use crate::http::AppState;
 
@@ -73,9 +72,7 @@ fn emby_routes() -> Router<AppState> {
 
 /// Self-register Emby routes on module load
 pub fn init() {
-    super::register_route_builder(|| {
-        ("emby".to_string(), emby_routes())
-    });
+    super::register_route_builder(|| ("emby".to_string(), emby_routes()));
 }
 
 // Handlers
@@ -94,7 +91,10 @@ async fn login(
             tracing::debug!("Using remote Emby instance: {}", instance_name);
             create_remote_emby_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
+            tracing::warn!(
+                "Remote instance '{}' not found, falling back to local",
+                instance_name
+            );
             load_local_emby_client()
         }
     } else {
@@ -122,8 +122,9 @@ async fn login(
                     // Note: MeResp doesn't include policy info, set to false for now
                     // TODO: Add a separate call to check if user is admin if needed
                     is_admin: false,
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Emby login failed: {}", e);
@@ -132,8 +133,9 @@ async fn login(
                 Json(json!({
                     "error": "Login failed",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -169,25 +171,30 @@ async fn list(
     match client.fs_list(list_req).await {
         Ok(resp) => {
             // Convert items to JSON
-            let items: Vec<_> = resp.items.into_iter().map(|item| {
-                json!({
-                    "id": item.id,
-                    "name": item.name,
-                    "type": item.r#type,
-                    "parent_id": item.parent_id,
-                    "series_name": item.series_name,
-                    "series_id": item.series_id,
-                    "season_name": item.season_name,
+            let items: Vec<_> = resp
+                .items
+                .into_iter()
+                .map(|item| {
+                    json!({
+                        "id": item.id,
+                        "name": item.name,
+                        "type": item.r#type,
+                        "parent_id": item.parent_id,
+                        "series_name": item.series_name,
+                        "series_id": item.series_id,
+                        "season_name": item.season_name,
+                    })
                 })
-            }).collect();
+                .collect();
 
             (
                 StatusCode::OK,
                 Json(json!({
                     "items": items,
                     "total": resp.total,
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Emby list failed: {}", e);
@@ -196,8 +203,9 @@ async fn list(
                 Json(json!({
                     "error": "List failed",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -227,15 +235,14 @@ async fn me(
     };
 
     match client.me(me_req).await {
-        Ok(resp) => {
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "id": resp.id,
-                    "name": resp.name,
-                }))
-            ).into_response()
-        }
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(json!({
+                "id": resp.id,
+                "name": resp.name,
+            })),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Emby me failed: {}", e);
             (
@@ -243,8 +250,9 @@ async fn me(
                 Json(json!({
                     "error": "Get user info failed",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -256,8 +264,9 @@ async fn logout() -> impl IntoResponse {
         StatusCode::OK,
         Json(json!({
             "message": "Logout successful"
-        }))
-    ).into_response()
+        })),
+    )
+        .into_response()
 }
 
 /// Get Emby binds (saved credentials)
@@ -268,7 +277,11 @@ async fn binds(
     tracing::info!("Emby binds request for user: {}", auth.user_id);
 
     // Query saved Emby credentials for current user
-    match state.credential_repository.get_by_user(&auth.user_id.to_string()).await {
+    match state
+        .credential_repository
+        .get_by_user(&auth.user_id.to_string())
+        .await
+    {
         Ok(credentials) => {
             // Filter for Emby provider only
             let emby_binds: Vec<_> = credentials
@@ -276,12 +289,16 @@ async fn binds(
                 .filter(|c| c.provider == "emby")
                 .map(|c| {
                     // Parse credential data to extract host
-                    let host = c.credential_data.get("host")
+                    let host = c
+                        .credential_data
+                        .get("host")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
 
-                    let emby_user_id = c.credential_data.get("emby_user_id")
+                    let emby_user_id = c
+                        .credential_data
+                        .get("emby_user_id")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
@@ -299,8 +316,9 @@ async fn binds(
                 StatusCode::OK,
                 Json(json!({
                     "binds": emby_binds
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to query credentials: {}", e);
@@ -309,8 +327,9 @@ async fn binds(
                 Json(json!({
                     "error": "Failed to query credentials",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }

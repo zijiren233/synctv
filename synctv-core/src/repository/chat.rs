@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, postgres::PgRow, Row};
+use sqlx::{postgres::PgRow, PgPool, Row};
 
 use crate::{
     models::{ChatMessage, RoomId, UserId},
@@ -24,7 +24,7 @@ impl ChatRepository {
             INSERT INTO chat_messages (id, room_id, user_id, content, created_at)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id, room_id, user_id, content, created_at, deleted_at
-            "#
+            "#,
         )
         .bind(&message.id)
         .bind(message.room_id.as_str())
@@ -55,7 +55,7 @@ impl ChatRepository {
                 WHERE room_id = $1 AND created_at < $2 AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $3
-                "#
+                "#,
             )
             .bind(room_id.as_str())
             .bind(before_time)
@@ -70,7 +70,7 @@ impl ChatRepository {
                 WHERE room_id = $1 AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $2
-                "#
+                "#,
             )
             .bind(room_id.as_str())
             .bind(limit)
@@ -90,7 +90,7 @@ impl ChatRepository {
             SELECT id, room_id, user_id, content, created_at, deleted_at
             FROM chat_messages
             WHERE id = $1 AND deleted_at IS NULL
-            "#
+            "#,
         )
         .bind(message_id)
         .fetch_optional(&self.pool)
@@ -109,7 +109,7 @@ impl ChatRepository {
             UPDATE chat_messages
             SET deleted_at = $2
             WHERE id = $1 AND deleted_at IS NULL
-            "#
+            "#,
         )
         .bind(message_id)
         .bind(Utc::now())
@@ -126,7 +126,7 @@ impl ChatRepository {
             SELECT COUNT(*) as count
             FROM chat_messages
             WHERE room_id = $1 AND deleted_at IS NULL
-            "#
+            "#,
         )
         .bind(room_id.as_str())
         .fetch_one(&self.pool)
@@ -147,7 +147,7 @@ impl ChatRepository {
                 ORDER BY created_at DESC
                 LIMIT $2
             )
-            "#
+            "#,
         )
         .bind(room_id.as_str())
         .bind(keep_count)

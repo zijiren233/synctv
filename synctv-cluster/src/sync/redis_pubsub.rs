@@ -26,8 +26,7 @@ pub struct RedisPubSub {
 impl RedisPubSub {
     /// Create a new RedisPubSub service
     pub fn new(redis_url: &str, message_hub: Arc<RoomMessageHub>, node_id: String) -> Result<Self> {
-        let redis_client = RedisClient::open(redis_url)
-            .context("Failed to create Redis client")?;
+        let redis_client = RedisClient::open(redis_url).context("Failed to create Redis client")?;
 
         Ok(Self {
             redis_client,
@@ -105,11 +104,16 @@ impl RedisPubSub {
     /// Run the subscriber task
     /// This subscribes to room:* pattern and forwards events to RoomMessageHub
     async fn run_subscriber(&self) -> Result<()> {
-        let mut pubsub = self.redis_client.get_async_pubsub().await
+        let mut pubsub = self
+            .redis_client
+            .get_async_pubsub()
+            .await
             .context("Failed to get Redis Pub/Sub connection")?;
 
         // Subscribe to all room channels using pattern
-        pubsub.psubscribe("room:*").await
+        pubsub
+            .psubscribe("room:*")
+            .await
             .context("Failed to subscribe to room:* pattern")?;
 
         info!("Redis subscriber connected, listening to room:* channels");
@@ -184,7 +188,8 @@ impl RedisPubSub {
         node_id: &str,
         event: ClusterEvent,
     ) -> Result<usize> {
-        let room_id = event.room_id()
+        let room_id = event
+            .room_id()
             .context("Cannot publish event without room_id")?;
 
         let channel = format!("room:{}", room_id.as_str());
@@ -195,11 +200,13 @@ impl RedisPubSub {
             event,
         };
 
-        let payload = serde_json::to_string(&envelope)
-            .context("Failed to serialize event envelope")?;
+        let payload =
+            serde_json::to_string(&envelope).context("Failed to serialize event envelope")?;
 
         // Publish to Redis
-        let subscribers: usize = conn.publish(&channel, payload).await
+        let subscribers: usize = conn
+            .publish(&channel, payload)
+            .await
             .context("Failed to publish to Redis")?;
 
         Ok(subscribers)
@@ -260,8 +267,12 @@ mod tests {
         let message_hub = Arc::new(RoomMessageHub::new());
 
         // Create two PubSub instances simulating different nodes
-        let pubsub1 = Arc::new(RedisPubSub::new(redis_url, message_hub.clone(), "node1".to_string()).unwrap());
-        let pubsub2 = Arc::new(RedisPubSub::new(redis_url, message_hub.clone(), "node2".to_string()).unwrap());
+        let pubsub1 = Arc::new(
+            RedisPubSub::new(redis_url, message_hub.clone(), "node1".to_string()).unwrap(),
+        );
+        let pubsub2 = Arc::new(
+            RedisPubSub::new(redis_url, message_hub.clone(), "node2".to_string()).unwrap(),
+        );
 
         // Start both
         let publish_tx1 = pubsub1.start().await.unwrap();
@@ -284,19 +295,21 @@ mod tests {
             timestamp: Utc::now(),
         };
 
-        publish_tx1.send(PublishRequest {
-            room_id: room_id.clone(),
-            event,
-        }).unwrap();
+        publish_tx1
+            .send(PublishRequest {
+                room_id: room_id.clone(),
+                event,
+            })
+            .unwrap();
 
         // Wait for event propagation
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         // Client should receive the event
-        let received = tokio::time::timeout(
-            tokio::time::Duration::from_secs(2),
-            rx.recv()
-        ).await.unwrap().unwrap();
+        let received = tokio::time::timeout(tokio::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
 
         assert_eq!(received.event_type(), "chat_message");
     }

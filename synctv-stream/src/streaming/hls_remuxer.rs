@@ -8,16 +8,12 @@
 //
 // Based on xiu's implementation but with storage abstraction
 
-use crate::{
-    storage::HlsStorage,
-    streaming::segment_manager::SegmentManager,
-};
+use crate::streaming::segment_manager::SegmentManager;
 use bytes::BytesMut;
 use dashmap::DashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
-use nanoid::nanoid;
 use streamhub::{
     define::{
         BroadcastEvent, BroadcastEventReceiver, FrameData, FrameDataReceiver,

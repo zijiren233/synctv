@@ -2,9 +2,7 @@
 //!
 //! Provides direct playback for HTTP(S) URLs
 
-use super::{
-    MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError,
-};
+use super::{MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -59,8 +57,9 @@ impl TryFrom<&Value> for DirectUrlSourceConfig {
     type Error = ProviderError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(value.clone())
-            .map_err(|e| ProviderError::InvalidConfig(format!("Failed to parse DirectUrl source config: {}", e)))
+        serde_json::from_value(value.clone()).map_err(|e| {
+            ProviderError::InvalidConfig(format!("Failed to parse DirectUrl source config: {}", e))
+        })
     }
 }
 
@@ -123,9 +122,21 @@ mod tests {
 
     #[test]
     fn test_detect_format() {
-        assert_eq!(DirectUrlProvider::detect_format("http://example.com/video.mp4"), "mp4");
-        assert_eq!(DirectUrlProvider::detect_format("http://example.com/stream.m3u8"), "m3u8");
-        assert_eq!(DirectUrlProvider::detect_format("http://example.com/stream.flv"), "flv");
-        assert_eq!(DirectUrlProvider::detect_format("http://example.com/video"), "video");
+        assert_eq!(
+            DirectUrlProvider::detect_format("http://example.com/video.mp4"),
+            "mp4"
+        );
+        assert_eq!(
+            DirectUrlProvider::detect_format("http://example.com/stream.m3u8"),
+            "m3u8"
+        );
+        assert_eq!(
+            DirectUrlProvider::detect_format("http://example.com/stream.flv"),
+            "flv"
+        );
+        assert_eq!(
+            DirectUrlProvider::detect_format("http://example.com/video"),
+            "video"
+        );
     }
 }

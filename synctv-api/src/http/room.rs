@@ -6,13 +6,13 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use synctv_core::models::{
-    id::{RoomId, MediaId},
-    room::RoomSettings,
-    permission::PermissionBits,
+    id::{MediaId, RoomId},
     media::ProviderType,
+    permission::PermissionBits,
+    room::RoomSettings,
 };
 
-use super::{AppState, AppResult, middleware::AuthUser};
+use super::{middleware::AuthUser, AppResult, AppState};
 
 /// Create room request
 #[derive(Debug, Deserialize)]
@@ -121,12 +121,10 @@ pub async fn create_room(
     };
 
     // Create room
-    let (room, _member) = state.room_service.create_room(
-        req.name,
-        auth.user_id.clone(),
-        req.password,
-        Some(settings),
-    ).await?;
+    let (room, _member) = state
+        .room_service
+        .create_room(req.name, auth.user_id.clone(), req.password, Some(settings))
+        .await?;
 
     Ok(Json(RoomResponse {
         id: room.id.as_str().to_string(),
@@ -147,7 +145,10 @@ pub async fn get_room(
     let room_id = RoomId::from_string(room_id);
 
     // Check if user is a member (will fail if not)
-    state.room_service.check_permission(&room_id, &auth.user_id, PermissionBits::SEND_CHAT).await?;
+    state
+        .room_service
+        .check_permission(&room_id, &auth.user_id, PermissionBits::SEND_CHAT)
+        .await?;
 
     // Get room
     let room = state.room_service.get_room(&room_id).await?;
@@ -172,7 +173,10 @@ pub async fn join_room(
     let room_id = RoomId::from_string(room_id);
 
     // Join room
-    state.room_service.join_room(room_id, auth.user_id, req.password).await?;
+    state
+        .room_service
+        .join_room(room_id, auth.user_id, req.password)
+        .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -206,7 +210,10 @@ pub async fn delete_room(
     let room_id = RoomId::from_string(room_id);
 
     // Delete room (only creator can delete)
-    state.room_service.delete_room(room_id, auth.user_id).await?;
+    state
+        .room_service
+        .delete_room(room_id, auth.user_id)
+        .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -224,17 +231,15 @@ pub async fn add_media(
     let room_id = RoomId::from_string(room_id);
 
     // Parse provider type
-    let provider = ProviderType::from_str(&req.provider)
-        .ok_or_else(|| super::AppError::bad_request(format!("Invalid provider: {}", req.provider)))?;
+    let provider = ProviderType::from_str(&req.provider).ok_or_else(|| {
+        super::AppError::bad_request(format!("Invalid provider: {}", req.provider))
+    })?;
 
     // Add media (permission check is done inside service)
-    let media = state.room_service.add_media(
-        room_id,
-        auth.user_id,
-        req.url,
-        provider,
-        req.title,
-    ).await?;
+    let media = state
+        .room_service
+        .add_media(room_id, auth.user_id, req.url, provider, req.title)
+        .await?;
 
     Ok(Json(MediaResponse {
         id: media.id.as_str().to_string(),
@@ -258,7 +263,10 @@ pub async fn remove_media(
     let media_id = MediaId::from_string(media_id);
 
     // Remove media (permission check is done inside service)
-    state.room_service.remove_media(room_id, auth.user_id, media_id).await?;
+    state
+        .room_service
+        .remove_media(room_id, auth.user_id, media_id)
+        .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -275,21 +283,27 @@ pub async fn get_playlist(
     let room_id = RoomId::from_string(room_id);
 
     // Check if user is a member
-    state.room_service.check_permission(&room_id, &auth.user_id, PermissionBits::SEND_CHAT).await?;
+    state
+        .room_service
+        .check_permission(&room_id, &auth.user_id, PermissionBits::SEND_CHAT)
+        .await?;
 
     // Get playlist
     let media = state.room_service.get_playlist(room_id).await?;
 
-    let response = media.into_iter().map(|m| MediaResponse {
-        id: m.id.as_str().to_string(),
-        title: m.title,
-        url: m.url,
-        provider: m.provider.as_str().to_string(),
-        position: m.position,
-        metadata: m.metadata.clone(),
-        added_at: m.added_at.to_rfc3339(),
-        added_by: m.added_by.as_str().to_string(),
-    }).collect();
+    let response = media
+        .into_iter()
+        .map(|m| MediaResponse {
+            id: m.id.as_str().to_string(),
+            title: m.title,
+            url: m.url,
+            provider: m.provider.as_str().to_string(),
+            position: m.position,
+            metadata: m.metadata.clone(),
+            added_at: m.added_at.to_rfc3339(),
+            added_by: m.added_by.as_str().to_string(),
+        })
+        .collect();
 
     Ok(Json(response))
 }
@@ -304,19 +318,25 @@ pub async fn play(
     let room_id = RoomId::from_string(room_id);
 
     // Update playback state
-    let media_id_opt = req.media_id.as_ref().map(|s| MediaId::from_string(s.clone()));
+    let media_id_opt = req
+        .media_id
+        .as_ref()
+        .map(|s| MediaId::from_string(s.clone()));
 
-    state.room_service.update_playback(
-        room_id,
-        auth.user_id,
-        |state| {
-            if let Some(mid) = media_id_opt {
-                state.switch_media(mid);
-            }
-            state.play();
-        },
-        PermissionBits::PLAY_PAUSE,
-    ).await?;
+    state
+        .room_service
+        .update_playback(
+            room_id,
+            auth.user_id,
+            |state| {
+                if let Some(mid) = media_id_opt {
+                    state.switch_media(mid);
+                }
+                state.play();
+            },
+            PermissionBits::PLAY_PAUSE,
+        )
+        .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -333,12 +353,15 @@ pub async fn pause(
     let room_id = RoomId::from_string(room_id);
 
     // Update playback state
-    state.room_service.update_playback(
-        room_id,
-        auth.user_id,
-        |state| state.pause(),
-        PermissionBits::PLAY_PAUSE,
-    ).await?;
+    state
+        .room_service
+        .update_playback(
+            room_id,
+            auth.user_id,
+            |state| state.pause(),
+            PermissionBits::PLAY_PAUSE,
+        )
+        .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -357,12 +380,15 @@ pub async fn seek(
 
     // Update playback state
     let position = req.position;
-    state.room_service.update_playback(
-        room_id,
-        auth.user_id,
-        move |state| state.seek(position),
-        PermissionBits::SEEK,
-    ).await?;
+    state
+        .room_service
+        .update_playback(
+            room_id,
+            auth.user_id,
+            move |state| state.seek(position),
+            PermissionBits::SEEK,
+        )
+        .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -381,12 +407,15 @@ pub async fn change_speed(
 
     // Update playback state
     let speed = req.speed;
-    state.room_service.update_playback(
-        room_id,
-        auth.user_id,
-        move |state| state.change_speed(speed),
-        PermissionBits::CHANGE_SPEED,
-    ).await?;
+    state
+        .room_service
+        .update_playback(
+            room_id,
+            auth.user_id,
+            move |state| state.change_speed(speed),
+            PermissionBits::CHANGE_SPEED,
+        )
+        .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -405,12 +434,15 @@ pub async fn switch_media(
     let media_id = MediaId::from_string(req.media_id);
 
     // Update playback state
-    state.room_service.update_playback(
-        room_id,
-        auth.user_id,
-        move |state| state.switch_media(media_id),
-        PermissionBits::SWITCH_MEDIA,
-    ).await?;
+    state
+        .room_service
+        .update_playback(
+            room_id,
+            auth.user_id,
+            move |state| state.switch_media(media_id),
+            PermissionBits::SWITCH_MEDIA,
+        )
+        .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -427,14 +459,19 @@ pub async fn get_playback_state(
     let room_id = RoomId::from_string(room_id);
 
     // Check if user is a member
-    state.room_service.check_permission(&room_id, &auth.user_id, PermissionBits::SEND_CHAT).await?;
+    state
+        .room_service
+        .check_permission(&room_id, &auth.user_id, PermissionBits::SEND_CHAT)
+        .await?;
 
     // Get playback state
     let state_data = state.room_service.get_playback_state(&room_id).await?;
 
     Ok(Json(PlaybackStateResponse {
         is_playing: state_data.is_playing,
-        current_media_id: state_data.current_media_id.map(|id| id.as_str().to_string()),
+        current_media_id: state_data
+            .current_media_id
+            .map(|id| id.as_str().to_string()),
         position: state_data.position,
         speed: state_data.speed,
         updated_at: state_data.updated_at.to_rfc3339(),

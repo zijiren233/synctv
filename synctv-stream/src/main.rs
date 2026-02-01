@@ -2,7 +2,7 @@ use synctv_stream::{
     cache::gop_cache::{GopCache, GopCacheConfig},
     relay::registry::StreamRegistry,
     streaming::server::StreamingServer,
-    storage::{StorageBackend, FileStorage, MemoryStorage, OssStorage, OssConfig, HlsStorage},
+    storage::StorageBackend,
 };
 
 use anyhow::Result;
@@ -145,13 +145,13 @@ async fn main() -> Result<()> {
             // Validate OSS configuration
             let endpoint = args.oss_endpoint
                 .ok_or_else(|| anyhow::anyhow!("OSS endpoint required when storage_backend=oss"))?;
-            let access_key_id = args.oss_access_key_id
+            let _access_key_id = args.oss_access_key_id
                 .ok_or_else(|| anyhow::anyhow!("OSS access key ID required when storage_backend=oss"))?;
-            let secret_access_key = args.oss_secret_access_key
+            let _secret_access_key = args.oss_secret_access_key
                 .ok_or_else(|| anyhow::anyhow!("OSS secret access key required when storage_backend=oss"))?;
             let bucket = args.oss_bucket
                 .ok_or_else(|| anyhow::anyhow!("OSS bucket required when storage_backend=oss"))?;
-            let public_url = args.oss_public_url
+            let _public_url = args.oss_public_url
                 .ok_or_else(|| anyhow::anyhow!("OSS public URL required when storage_backend=oss"))?;
 
             info!("Using OSS storage backend: bucket={}, endpoint={}", bucket, endpoint);

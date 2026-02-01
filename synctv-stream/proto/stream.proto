@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package synctv.stream;
+
+// Stream relay service for cross-node RTMP streaming
+// Only contains cross-node gRPC calls. Other operations (register/unregister/query)
+// are handled directly via Redis.
+service StreamRelayService {
+    // Pull RTMP stream from publisher node (server streaming)
+    // This is the only cross-node RPC - used by Puller to pull stream from Publisher
+    rpc PullRtmpStream(PullRtmpStreamRequest) returns (stream RtmpPacket);
+}
+
+// Pull RTMP stream from publisher node
+// Service-to-service internal call, no need for stream_key
+message PullRtmpStreamRequest {
+    string room_id = 1;
+    string media_id = 2;
+}
+
+// RTMP packet with timestamp
+message RtmpPacket {
+    bytes data = 1;       // Raw RTMP packet data (audio/video/metadata payload)
+    uint32 timestamp = 2; // Timestamp in milliseconds
+    FrameType frame_type = 3; // Frame type
+}
+
+enum FrameType {
+    FRAME_TYPE_UNSPECIFIED = 0;
+    FRAME_TYPE_VIDEO = 1;
+    FRAME_TYPE_AUDIO = 2;
+    FRAME_TYPE_METADATA = 3;
+}
+

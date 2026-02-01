@@ -2,13 +2,7 @@
 //!
 //! Shared functionality across all provider routes
 
-use axum::{
-    Router,
-    routing::get,
-    extract::{Path, State},
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};
 use serde_json::json;
 
 use super::AppState;
@@ -18,14 +12,11 @@ use super::AppState;
 /// Routes:
 /// - GET /instances - List all available provider instances
 pub fn register_common_routes() -> Router<AppState> {
-    Router::new()
-        .route("/instances", get(list_instances))
+    Router::new().route("/instances", get(list_instances))
 }
 
 /// List all available provider instances
-async fn list_instances(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn list_instances(State(state): State<AppState>) -> impl IntoResponse {
     let instances = state.provider_instance_manager.list().await;
 
     Json(json!({

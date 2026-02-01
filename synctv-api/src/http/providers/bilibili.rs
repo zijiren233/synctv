@@ -1,17 +1,18 @@
 //! Bilibili Provider HTTP Routes
 
 use axum::{
-    Router,
-    routing::{post, get},
     extract::{Query, State},
-    response::IntoResponse,
     http::StatusCode,
-    Json,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use synctv_core::provider::provider_client::{load_local_bilibili_client, create_remote_bilibili_client};
+use synctv_core::provider::provider_client::{
+    create_remote_bilibili_client, load_local_bilibili_client,
+};
 
 use crate::http::AppState;
 
@@ -95,9 +96,7 @@ fn bilibili_routes() -> Router<AppState> {
 ///
 /// This runs automatically when the module is loaded, no manual registration needed!
 pub fn init() {
-    super::register_route_builder(|| {
-        ("bilibili".to_string(), bilibili_routes())
-    });
+    super::register_route_builder(|| ("bilibili".to_string(), bilibili_routes()));
 }
 
 // Handlers
@@ -116,7 +115,10 @@ async fn parse(
             tracing::debug!("Using remote Bilibili instance: {}", instance_name);
             create_remote_bilibili_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
+            tracing::warn!(
+                "Remote instance '{}' not found, falling back to local",
+                instance_name
+            );
             load_local_bilibili_client()
         }
     } else {
@@ -138,12 +140,17 @@ async fn parse(
                 Json(json!({
                     "error": "Failed to parse URL",
                     "message": e.to_string()
-                }))
-            ).into_response();
+                })),
+            )
+                .into_response();
         }
     };
 
-    tracing::debug!("URL matched: type={}, id={}", match_resp.r#type, match_resp.id);
+    tracing::debug!(
+        "URL matched: type={}, id={}",
+        match_resp.r#type,
+        match_resp.id
+    );
 
     // Step 2: Parse based on type
     let page_info = match match_resp.r#type.as_str() {
@@ -151,8 +158,16 @@ async fn parse(
             // Parse video page (bvid or aid)
             let parse_req = synctv_providers::grpc::bilibili::ParseVideoPageReq {
                 cookies: req.cookies,
-                bvid: if match_resp.r#type == "bv" { match_resp.id.clone() } else { String::new() },
-                aid: if match_resp.r#type == "av" { match_resp.id.parse().unwrap_or(0) } else { 0 },
+                bvid: if match_resp.r#type == "bv" {
+                    match_resp.id.clone()
+                } else {
+                    String::new()
+                },
+                aid: if match_resp.r#type == "av" {
+                    match_resp.id.parse().unwrap_or(0)
+                } else {
+                    0
+                },
                 sections: false,
             };
 
@@ -165,8 +180,9 @@ async fn parse(
                         Json(json!({
                             "error": "Failed to parse video page",
                             "message": e.to_string()
-                        }))
-                    ).into_response();
+                        })),
+                    )
+                        .into_response();
                 }
             }
         }
@@ -174,8 +190,16 @@ async fn parse(
             // Parse PGC (anime/bangumi) page
             let parse_req = synctv_providers::grpc::bilibili::ParsePgcPageReq {
                 cookies: req.cookies,
-                epid: if match_resp.r#type == "ep" { match_resp.id.parse().unwrap_or(0) } else { 0 },
-                ssid: if match_resp.r#type == "ss" { match_resp.id.parse().unwrap_or(0) } else { 0 },
+                epid: if match_resp.r#type == "ep" {
+                    match_resp.id.parse().unwrap_or(0)
+                } else {
+                    0
+                },
+                ssid: if match_resp.r#type == "ss" {
+                    match_resp.id.parse().unwrap_or(0)
+                } else {
+                    0
+                },
             };
 
             match client.parse_pgc_page(parse_req).await {
@@ -187,8 +211,9 @@ async fn parse(
                         Json(json!({
                             "error": "Failed to parse PGC page",
                             "message": e.to_string()
-                        }))
-                    ).into_response();
+                        })),
+                    )
+                        .into_response();
                 }
             }
         }
@@ -208,8 +233,9 @@ async fn parse(
                         Json(json!({
                             "error": "Failed to parse live page",
                             "message": e.to_string()
-                        }))
-                    ).into_response();
+                        })),
+                    )
+                        .into_response();
                 }
             }
         }
@@ -220,8 +246,9 @@ async fn parse(
                 Json(json!({
                     "error": "Unsupported URL type",
                     "type": match_resp.r#type
-                }))
-            ).into_response();
+                })),
+            )
+                .into_response();
         }
     };
 
@@ -240,8 +267,9 @@ async fn parse(
                 "cover": v.cover_image,
                 "is_live": v.live,
             })).collect::<Vec<_>>(),
-        }))
-    ).into_response()
+        })),
+    )
+        .into_response()
 }
 
 /// Generate Bilibili QR code for login
@@ -257,7 +285,10 @@ async fn login_qr(
             tracing::debug!("Using remote Bilibili instance: {}", instance_name);
             create_remote_bilibili_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
+            tracing::warn!(
+                "Remote instance '{}' not found, falling back to local",
+                instance_name
+            );
             load_local_bilibili_client()
         }
     } else {
@@ -266,7 +297,10 @@ async fn login_qr(
     };
 
     // Call new_qr_code
-    match client.new_qr_code(synctv_providers::grpc::bilibili::Empty {}).await {
+    match client
+        .new_qr_code(synctv_providers::grpc::bilibili::Empty {})
+        .await
+    {
         Ok(resp) => {
             tracing::info!("QR code generated successfully");
             (
@@ -274,8 +308,9 @@ async fn login_qr(
                 Json(QrCodeResponse {
                     url: resp.url,
                     key: resp.key,
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to generate QR code: {}", e);
@@ -284,8 +319,9 @@ async fn login_qr(
                 Json(json!({
                     "error": "Failed to generate QR code",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -304,7 +340,10 @@ async fn qr_check(
             tracing::debug!("Using remote Bilibili instance: {}", instance_name);
             create_remote_bilibili_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
+            tracing::warn!(
+                "Remote instance '{}' not found, falling back to local",
+                instance_name
+            );
             load_local_bilibili_client()
         }
     } else {
@@ -313,9 +352,7 @@ async fn qr_check(
     };
 
     // Build proto request
-    let check_req = synctv_providers::grpc::bilibili::LoginWithQrCodeReq {
-        key: req.key,
-    };
+    let check_req = synctv_providers::grpc::bilibili::LoginWithQrCodeReq { key: req.key };
 
     // Call login_with_qr_code
     match client.login_with_qr_code(check_req).await {
@@ -326,8 +363,9 @@ async fn qr_check(
                 Json(QrStatusResponse {
                     status: resp.status,
                     cookies: resp.cookies,
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to check QR status: {}", e);
@@ -336,8 +374,9 @@ async fn qr_check(
                 Json(json!({
                     "error": "Failed to check QR status",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -359,17 +398,19 @@ async fn new_captcha(
         load_local_bilibili_client()
     };
 
-    match client.new_captcha(synctv_providers::grpc::bilibili::Empty {}).await {
-        Ok(resp) => {
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "token": resp.token,
-                    "gt": resp.gt,
-                    "challenge": resp.challenge,
-                }))
-            ).into_response()
-        }
+    match client
+        .new_captcha(synctv_providers::grpc::bilibili::Empty {})
+        .await
+    {
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(json!({
+                "token": resp.token,
+                "gt": resp.gt,
+                "challenge": resp.challenge,
+            })),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Failed to get captcha: {}", e);
             (
@@ -377,8 +418,9 @@ async fn new_captcha(
                 Json(json!({
                     "error": "Failed to get captcha",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -409,14 +451,13 @@ async fn sms_send(
     };
 
     match client.new_sms(sms_req).await {
-        Ok(resp) => {
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "captcha_key": resp.captcha_key,
-                }))
-            ).into_response()
-        }
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(json!({
+                "captcha_key": resp.captcha_key,
+            })),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Failed to send SMS: {}", e);
             (
@@ -424,8 +465,9 @@ async fn sms_send(
                 Json(json!({
                     "error": "Failed to send SMS",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -455,14 +497,13 @@ async fn sms_login(
     };
 
     match client.login_with_sms(login_req).await {
-        Ok(resp) => {
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "cookies": resp.cookies,
-                }))
-            ).into_response()
-        }
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(json!({
+                "cookies": resp.cookies,
+            })),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Failed to login with SMS: {}", e);
             (
@@ -470,8 +511,9 @@ async fn sms_login(
                 Json(json!({
                     "error": "Login failed",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -499,17 +541,16 @@ async fn user_info(
     };
 
     match client.user_info(info_req).await {
-        Ok(resp) => {
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "is_login": resp.is_login,
-                    "username": resp.username,
-                    "face": resp.face,
-                    "is_vip": resp.is_vip,
-                }))
-            ).into_response()
-        }
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(json!({
+                "is_login": resp.is_login,
+                "username": resp.username,
+                "face": resp.face,
+                "is_vip": resp.is_vip,
+            })),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Failed to get user info: {}", e);
             (
@@ -517,8 +558,9 @@ async fn user_info(
                 Json(json!({
                     "error": "Failed to get user info",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -530,6 +572,7 @@ async fn logout() -> impl IntoResponse {
         StatusCode::OK,
         Json(json!({
             "message": "Logout successful"
-        }))
-    ).into_response()
+        })),
+    )
+        .into_response()
 }

@@ -8,9 +8,9 @@
 // Based on design doc 17-数据流设计.md § 11.1
 
 use super::registry::StreamRegistry;
-use anyhow::{Result, anyhow};
+use anyhow::anyhow;
 use streamhub::{
-    define::{StreamHubEvent, BroadcastEventReceiver},
+    define::BroadcastEventReceiver,
     stream::StreamIdentifier,
 };
 use std::sync::Arc;
@@ -22,7 +22,8 @@ use dashmap::DashMap;
 pub struct PublisherManager {
     registry: StreamRegistry,
     local_node_id: String,
-    /// Active publishers (stream_key -> room_id)
+    /// Active publishers (stream_key -> media_id)
+    /// Live streaming is media-level, not room-level
     active_publishers: Arc<DashMap<String, String>>,
 }
 
@@ -96,32 +97,38 @@ impl PublisherManager {
             stream_name
         );
 
-        // Parse room_id from stream_name (expected format: "room_123")
-        let room_id = if stream_name.starts_with("room_") {
-            stream_name.strip_prefix("room_").unwrap().to_string()
+        // Parse room_id and media_id from stream_name
+        // Expected format: "{room_id}/{media_id}" (e.g., "room123/media456")
+        // Live streaming granularity is media-level within a room context
+        let (room_id, media_id) = if let Some((r, m)) = stream_name.split_once('/') {
+            (r.to_string(), m.to_string())
         } else {
-            stream_name.clone()
+            log::error!("Invalid stream_name format, expected 'room_id/media_id': {}", stream_name);
+            return Err(anyhow!("Invalid stream_name format, expected 'room_id/media_id'"));
         };
 
         // Try to register as publisher (atomic HSETNX)
-        match self.registry.try_register_publisher(&room_id, &self.local_node_id).await {
+        match self.registry.try_register_publisher(&room_id, &media_id, &self.local_node_id).await {
             Ok(true) => {
                 log::info!(
-                    "Successfully registered as publisher for room {} (stream: {})",
+                    "Successfully registered as publisher for room {} / media {} (stream: {})",
                     room_id,
+                    media_id,
                     stream_name
                 );
-                // Track active publisher
-                self.active_publishers.insert(stream_name.clone(), room_id);
+                // Track active publisher with composite key
+                let publisher_key = format!("{}:{}", room_id, media_id);
+                self.active_publishers.insert(stream_name.clone(), publisher_key);
             }
             Ok(false) => {
                 log::warn!(
-                    "Publisher already exists for room {} (stream: {})",
+                    "Publisher already exists for room {} / media {} (stream: {})",
                     room_id,
+                    media_id,
                     stream_name
                 );
                 // Another node is already publisher, reject this push
-                return Err(anyhow!("Publisher already exists for room {}", room_id));
+                return Err(anyhow!("Publisher already exists for room {} / media {}", room_id, media_id));
             }
             Err(e) => {
                 log::error!("Failed to register publisher: {}", e);
@@ -147,13 +154,16 @@ impl PublisherManager {
             stream_name
         );
 
-        // Get room_id from active publishers
-        if let Some((_, room_id)) = self.active_publishers.remove(&stream_name) {
-            // Unregister from Redis
-            if let Err(e) = self.registry.unregister_publisher_immut(&room_id).await {
-                log::error!("Failed to unregister publisher for room {}: {}", room_id, e);
-            } else {
-                log::info!("Unregistered publisher for room {}", room_id);
+        // Get composite key (room_id:media_id) from active publishers
+        if let Some((_, publisher_key)) = self.active_publishers.remove(&stream_name) {
+            // Parse room_id and media_id from the composite key
+            if let Some((room_id, media_id)) = publisher_key.split_once(':') {
+                // Unregister from Redis
+                if let Err(e) = self.registry.unregister_publisher_immut(room_id, media_id).await {
+                    log::error!("Failed to unregister publisher for room {} / media {}: {}", room_id, media_id, e);
+                } else {
+                    log::info!("Unregistered publisher for room {} / media {}", room_id, media_id);
+                }
             }
         }
 
@@ -168,10 +178,13 @@ impl PublisherManager {
             heartbeat_interval.tick().await;
 
             for entry in self.active_publishers.iter() {
-                let room_id = entry.value();
+                let publisher_key = entry.value();
 
-                if let Err(e) = self.registry.refresh_publisher_ttl(room_id).await {
-                    log::error!("Failed to refresh TTL for room {}: {}", room_id, e);
+                // Parse room_id and media_id from the composite key
+                if let Some((room_id, media_id)) = publisher_key.split_once(':') {
+                    if let Err(e) = self.registry.refresh_publisher_ttl(room_id, media_id).await {
+                        log::error!("Failed to refresh TTL for room {} / media {}: {}", room_id, media_id, e);
+                    }
                 }
             }
 

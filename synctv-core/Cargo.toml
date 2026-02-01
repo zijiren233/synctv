@@ -17,6 +17,7 @@ futures.workspace = true
 
 # gRPC
 tonic.workspace = true
+tonic-health.workspace = true
 
 # Database
 sqlx.workspace = true

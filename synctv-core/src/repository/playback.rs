@@ -1,7 +1,7 @@
-use sqlx::{PgPool, postgres::PgRow, Row};
+use sqlx::{postgres::PgRow, PgPool, Row};
 
 use crate::{
-    models::{RoomPlaybackState, RoomId, MediaId},
+    models::{MediaId, RoomId, RoomPlaybackState},
     Error, Result,
 };
 
@@ -43,7 +43,10 @@ impl RoomPlaybackStateRepository {
 
         match row {
             Some(row) => self.row_to_state(row),
-            None => self.get(room_id).await?.ok_or_else(|| Error::Internal("Failed to create playback state".to_string())),
+            None => self
+                .get(room_id)
+                .await?
+                .ok_or_else(|| Error::Internal("Failed to create playback state".to_string())),
         }
     }
 
@@ -52,7 +55,7 @@ impl RoomPlaybackStateRepository {
         let row = sqlx::query(
             "SELECT room_id, current_media_id, position, speed, is_playing, updated_at, version
              FROM room_playback_state
-             WHERE room_id = $1"
+             WHERE room_id = $1",
         )
         .bind(room_id.as_str())
         .fetch_optional(&self.pool)
@@ -73,7 +76,7 @@ impl RoomPlaybackStateRepository {
              SET current_media_id = $2, position = $3, speed = $4, is_playing = $5,
                  updated_at = $6, version = version + 1
              WHERE room_id = $1 AND version = $7
-             RETURNING room_id, current_media_id, position, speed, is_playing, updated_at, version"
+             RETURNING room_id, current_media_id, position, speed, is_playing, updated_at, version",
         )
         .bind(state.room_id.as_str())
         .bind(movie_id_str)
@@ -88,7 +91,8 @@ impl RoomPlaybackStateRepository {
         match row {
             Some(row) => self.row_to_state(row),
             None => Err(Error::Internal(
-                "Playback state was modified by another request (optimistic lock failure)".to_string()
+                "Playback state was modified by another request (optimistic lock failure)"
+                    .to_string(),
             )),
         }
     }

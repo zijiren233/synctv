@@ -17,29 +17,29 @@
 //   - Integration with ProviderInstanceManager
 
 // Core traits and types
-pub mod traits;
-pub mod registry;
+pub mod config;
 pub mod context;
 pub mod error;
-pub mod config;
 pub mod provider_client;
+pub mod registry;
+pub mod traits;
 
 // MediaProvider implementations (adapters)
 pub mod alist;
 pub mod bilibili;
+pub mod direct_url;
 pub mod emby;
 pub mod rtmp;
-pub mod direct_url;
 
-pub use traits::*;
-pub use registry::*;
+pub use config::*;
 pub use context::*;
 pub use error::*;
-pub use config::*;
+pub use registry::*;
+pub use traits::*;
 
 // Re-export providers
 pub use alist::AlistProvider;
 pub use bilibili::BilibiliProvider;
+pub use direct_url::DirectUrlProvider;
 pub use emby::EmbyProvider;
 pub use rtmp::RtmpProvider;
-pub use direct_url::DirectUrlProvider;

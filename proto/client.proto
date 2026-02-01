@@ -2,44 +2,63 @@ syntax = "proto3";
 
 package synctv.client;
 
-// Client-Server API for SyncTV
-service ClientService {
-    // Authentication & User Profile
+// ==================== Auth Service ====================
+// Authentication: None (public access)
+// Routes: /api/auth/*
+service AuthService {
     rpc Register(RegisterRequest) returns (RegisterResponse);
     rpc Login(LoginRequest) returns (LoginResponse);
     rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+}
+
+// ==================== User Service ====================
+// Authentication: JWT Authorization header (user_id)
+// Routes: /api/user/*
+service UserService {
+    // Profile Management
     rpc Logout(LogoutRequest) returns (LogoutResponse);
     rpc GetCurrentUser(GetCurrentUserRequest) returns (GetCurrentUserResponse);
     rpc UpdateUsername(UpdateUsernameRequest) returns (UpdateUsernameResponse);
     rpc UpdatePassword(UpdatePasswordRequest) returns (UpdatePasswordResponse);
 
-    // User Rooms
+    // User's Rooms
     rpc GetMyRooms(GetMyRoomsRequest) returns (GetMyRoomsResponse); // Rooms created by user
     rpc GetJoinedRooms(GetJoinedRoomsRequest) returns (GetJoinedRoomsResponse); // Rooms user joined
+}
 
-    // Room Management
-    rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse);
-    rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
-    rpc CheckRoom(CheckRoomRequest) returns (CheckRoomResponse);
-    rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
-    rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
-    rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
-    rpc GetHotRooms(GetHotRoomsRequest) returns (GetHotRoomsResponse);
-    rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
-    rpc UpdateRoomSettings(UpdateRoomSettingsRequest) returns (UpdateRoomSettingsResponse);
+// ==================== Room Service ====================
+// Authentication: JWT Authorization header (user_id) + x-room-id metadata (room context)
+// Routes: /api/room/*
+service RoomService {
+    // Room Management (resource-targeted operations)
+    rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse); // Create new room
+    rpc GetRoom(GetRoomRequest) returns (GetRoomResponse); // Get specific room
+    rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse); // Join specific room
+    rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse); // Leave specific room
+    rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse); // Delete specific room
+    rpc UpdateRoomSettings(UpdateRoomSettingsRequest) returns (UpdateRoomSettingsResponse); // Update specific room
 
-    // Room Members
+    // Member Management (room-scoped operations, use x-room-id)
     rpc GetRoomMembers(GetRoomMembersRequest) returns (GetRoomMembersResponse);
     rpc UpdateMemberPermission(UpdateMemberPermissionRequest) returns (UpdateMemberPermissionResponse);
     rpc KickMember(KickMemberRequest) returns (KickMemberResponse);
 
-    // Playlist Management
+    // Real-time Messaging (room-scoped, use x-room-id)
+    rpc MessageStream(stream ClientMessage) returns (stream ServerMessage);
+    rpc GetChatHistory(GetChatHistoryRequest) returns (GetChatHistoryResponse);
+}
+
+// ==================== Media Service ====================
+// Authentication: JWT Authorization header (user_id) + x-room-id metadata (room context)
+// Routes: /api/room/media/*
+service MediaService {
+    // Playlist Management (room-scoped operations, use x-room-id)
     rpc AddMedia(AddMediaRequest) returns (AddMediaResponse);
     rpc RemoveMedia(RemoveMediaRequest) returns (RemoveMediaResponse);
     rpc GetPlaylist(GetPlaylistRequest) returns (GetPlaylistResponse);
     rpc SwapMedia(SwapMediaRequest) returns (SwapMediaResponse);
 
-    // Playback Control
+    // Playback Control (room-scoped operations, use x-room-id)
     rpc Play(PlayRequest) returns (PlayResponse);
     rpc Pause(PauseRequest) returns (PauseResponse);
     rpc Seek(SeekRequest) returns (SeekResponse);
@@ -47,11 +66,17 @@ service ClientService {
     rpc SwitchMedia(SwitchMediaRequest) returns (SwitchMediaResponse);
     rpc GetPlaybackState(GetPlaybackStateRequest) returns (GetPlaybackStateResponse);
 
-    // Real-time Messaging (bidirectional streaming)
-    rpc MessageStream(stream ClientMessage) returns (stream ServerMessage);
+    // Live Streaming (room-scoped, use x-room-id)
+    rpc NewPublishKey(NewPublishKeyRequest) returns (NewPublishKeyResponse);
+}
 
-    // Chat
-    rpc GetChatHistory(GetChatHistoryRequest) returns (GetChatHistoryResponse);
+// ==================== Public Service ====================
+// Authentication: None (public access)
+// Routes: /api/public/*
+service PublicService {
+    rpc CheckRoom(CheckRoomRequest) returns (CheckRoomResponse);
+    rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+    rpc GetHotRooms(GetHotRoomsRequest) returns (GetHotRoomsResponse);
 }
 
 // Common Types
@@ -210,18 +235,16 @@ message UpdateRoomSettingsResponse {
 }
 
 // Room Members Messages
-message GetRoomMembersRequest {
-    string room_id = 1;
-}
+// Note: room_id extracted from x-room-id metadata
+message GetRoomMembersRequest {}
 
 message GetRoomMembersResponse {
     repeated RoomMember members = 1;
 }
 
 message UpdateMemberPermissionRequest {
-    string room_id = 1;
-    string user_id = 2;
-    int64 permissions = 3;
+    string user_id = 1;        // Target user
+    int64 permissions = 2;      // New permissions
 }
 
 message UpdateMemberPermissionResponse {
@@ -229,8 +252,7 @@ message UpdateMemberPermissionResponse {
 }
 
 message KickMemberRequest {
-    string room_id = 1;
-    string user_id = 2;
+    string user_id = 1;  // Target user to kick
 }
 
 message KickMemberResponse {
@@ -238,10 +260,10 @@ message KickMemberResponse {
 }
 
 // Playlist Messages
+// Note: room_id extracted from x-room-id metadata
 message AddMediaRequest {
-    string room_id = 1;
-    string url = 2;
-    string provider = 3; // Optional, auto-detect if empty
+    string url = 1;
+    string provider = 2; // Optional, auto-detect if empty
 }
 
 message AddMediaResponse {
@@ -249,26 +271,22 @@ message AddMediaResponse {
 }
 
 message RemoveMediaRequest {
-    string room_id = 1;
-    string media_id = 2;
+    string media_id = 1;
 }
 
 message RemoveMediaResponse {
     bool success = 1;
 }
 
-message GetPlaylistRequest {
-    string room_id = 1;
-}
+message GetPlaylistRequest {}
 
 message GetPlaylistResponse {
     repeated Media media = 1;
 }
 
 message SwapMediaRequest {
-    string room_id = 1;
-    string media_id1 = 2;
-    string media_id2 = 3;
+    string media_id1 = 1;
+    string media_id2 = 2;
 }
 
 message SwapMediaResponse {
@@ -276,25 +294,21 @@ message SwapMediaResponse {
 }
 
 // Playback Control Messages
-message PlayRequest {
-    string room_id = 1;
-}
+// Note: room_id extracted from x-room-id metadata
+message PlayRequest {}
 
 message PlayResponse {
     PlaybackState playback_state = 1;
 }
 
-message PauseRequest {
-    string room_id = 1;
-}
+message PauseRequest {}
 
 message PauseResponse {
     PlaybackState playback_state = 1;
 }
 
 message SeekRequest {
-    string room_id = 1;
-    double position = 2; // seconds
+    double position = 1; // seconds
 }
 
 message SeekResponse {
@@ -302,8 +316,7 @@ message SeekResponse {
 }
 
 message ChangeSpeedRequest {
-    string room_id = 1;
-    double speed = 2; // 0.5, 1.0, 1.5, 2.0, etc.
+    double speed = 1; // 0.5, 1.0, 1.5, 2.0, etc.
 }
 
 message ChangeSpeedResponse {
@@ -311,17 +324,14 @@ message ChangeSpeedResponse {
 }
 
 message SwitchMediaRequest {
-    string room_id = 1;
-    string media_id = 2;
+    string media_id = 1;
 }
 
 message SwitchMediaResponse {
     PlaybackState playback_state = 1;
 }
 
-message GetPlaybackStateRequest {
-    string room_id = 1;
-}
+message GetPlaybackStateRequest {}
 
 message GetPlaybackStateResponse {
     PlaybackState playback_state = 1;
@@ -349,9 +359,9 @@ message ServerMessage {
     }
 }
 
+// Note: room_id extracted from x-room-id metadata in MessageStream context
 message ChatMessageSend {
-    string room_id = 1;
-    string content = 2;
+    string content = 1;
 }
 
 message ChatMessageReceive {
@@ -363,11 +373,11 @@ message ChatMessageReceive {
     int64 timestamp = 6;
 }
 
+// Note: room_id extracted from x-room-id metadata in MessageStream context
 message DanmakuMessageSend {
-    string room_id = 1;
-    string content = 2;
-    string color = 3; // hex color
-    int32 position = 4; // 0=top, 1=bottom, 2=scroll
+    string content = 1;
+    string color = 2; // hex color
+    int32 position = 3; // 0=top, 1=bottom, 2=scroll
 }
 
 message DanmakuMessageReceive {
@@ -413,10 +423,10 @@ message ErrorMessage {
 }
 
 // Chat History
+// Note: room_id extracted from x-room-id metadata
 message GetChatHistoryRequest {
-    string room_id = 1;
-    int32 limit = 2; // Max 500
-    int64 before = 3; // Timestamp for pagination
+    int32 limit = 1; // Max 500
+    int64 before = 2; // Timestamp for pagination
 }
 
 message GetChatHistoryResponse {
@@ -496,4 +506,20 @@ message RoomWithStats {
     Room room = 1;
     int32 online_count = 2; // Current online users
     int32 total_members = 3;
+}
+
+// ==================== Live Streaming ====================
+
+// NewPublishKey - Generate RTMP publish key for live streaming
+// Note: room_id should be extracted from metadata/context by interceptor
+// Note: user_id should be extracted from JWT Authorization header
+message NewPublishKeyRequest {
+    string id = 1;  // Media ID to publish (matches Go's IDReq pattern)
+}
+
+message NewPublishKeyResponse {
+    string publish_key = 1;  // JWT token for RTMP authentication
+    string rtmp_url = 2;     // Full RTMP URL (rtmp://host:port/live)
+    string stream_key = 3;   // Stream key (room_id/media_id)
+    int64 expires_at = 4;    // Token expiration timestamp
 }

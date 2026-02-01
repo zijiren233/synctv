@@ -1,11 +1,11 @@
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use crate::relay::{StreamRegistry, PublisherInfo};
 
 /// Puller node - pulls stream from Publisher and serves to local viewers
 pub struct Puller {
     room_id: String,
+    media_id: String,
     node_id: String,
     registry: StreamRegistry,
     publisher_info: Option<PublisherInfo>,
@@ -13,9 +13,10 @@ pub struct Puller {
 
 impl Puller {
     /// Create a new Puller
-    pub fn new(room_id: String, node_id: String, registry: StreamRegistry) -> Self {
+    pub fn new(room_id: String, media_id: String, node_id: String, registry: StreamRegistry) -> Self {
         Self {
             room_id,
+            media_id,
             node_id,
             registry,
             publisher_info: None,
@@ -26,6 +27,7 @@ impl Puller {
     pub async fn start(&mut self) -> Result<()> {
         info!(
             room_id = self.room_id,
+            media_id = self.media_id,
             node_id = self.node_id,
             "Puller starting"
         );
@@ -33,12 +35,13 @@ impl Puller {
         // Get Publisher info from Redis
         let publisher_info = self
             .registry
-            .get_publisher(&self.room_id)
+            .get_publisher(&self.room_id, &self.media_id)
             .await?
-            .ok_or_else(|| anyhow!("No active publisher for room {}", self.room_id))?;
+            .ok_or_else(|| anyhow!("No active publisher for room {} / media {}", self.room_id, self.media_id))?;
 
         info!(
             room_id = self.room_id,
+            media_id = self.media_id,
             publisher_node = publisher_info.node_id,
             "Found publisher, establishing gRPC connection"
         );
@@ -51,9 +54,6 @@ impl Puller {
         // TODO: Transcode to HLS/FLV
         // TODO: Serve to local viewers
 
-        // Increment viewer count
-        self.registry.increment_viewers(&self.room_id).await?;
-
         Ok(())
     }
 
@@ -61,17 +61,9 @@ impl Puller {
     pub async fn stop(&mut self) -> Result<()> {
         info!(
             room_id = self.room_id,
+            media_id = self.media_id,
             node_id = self.node_id,
             "Puller stopping"
-        );
-
-        // Decrement viewer count
-        let viewer_count = self.registry.decrement_viewers(&self.room_id).await?;
-
-        info!(
-            room_id = self.room_id,
-            remaining_viewers = viewer_count,
-            "Viewer disconnected"
         );
 
         // TODO: Close gRPC connection to Publisher
@@ -87,7 +79,7 @@ impl Puller {
 
     /// Check if still pulling from Publisher
     pub async fn is_active(&mut self) -> Result<bool> {
-        self.registry.is_stream_active(&self.room_id).await
+        self.registry.is_stream_active(&self.room_id, &self.media_id).await
     }
 }
 
@@ -95,6 +87,7 @@ impl Drop for Puller {
     fn drop(&mut self) {
         warn!(
             room_id = self.room_id,
+            media_id = self.media_id,
             "Puller dropped - may need manual cleanup"
         );
     }

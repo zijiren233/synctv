@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 
 pub struct RtmpServer {
     address: String,
-    gop_cache: Arc<GopCache>,
+    _gop_cache: Arc<GopCache>,
     registry: StreamRegistry,
     node_id: String,
     gop_num: usize,
@@ -43,7 +43,7 @@ impl RtmpServer {
 
         Self {
             address,
-            gop_cache,
+            _gop_cache: gop_cache,
             registry,
             node_id,
             gop_num,

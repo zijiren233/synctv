@@ -14,6 +14,7 @@ path = "src/main.rs"
 synctv-core.workspace = true
 synctv-cluster.workspace = true
 synctv-providers.workspace = true
+synctv-stream.workspace = true
 
 # Async
 tokio.workspace = true
@@ -42,6 +43,9 @@ serde_json.workspace = true
 
 # Database
 sqlx.workspace = true
+
+# Redis
+redis.workspace = true
 
 # OpenAPI
 utoipa.workspace = true

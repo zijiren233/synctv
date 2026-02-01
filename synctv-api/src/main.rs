@@ -6,11 +6,15 @@ use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 use synctv_core::{
-    Config, logging,
-    service::{JwtService, UserService, RateLimiter, RateLimitConfig, ContentFilter, ProviderInstanceManager},
+    logging,
     repository::ProviderInstanceRepository,
+    service::{
+        ContentFilter, JwtService, ProviderInstanceManager, RateLimitConfig, RateLimiter,
+        UserService,
+    },
+    Config,
 };
-use tracing::{info, error};
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -65,6 +69,7 @@ async fn main() -> Result<()> {
     // Initialize JWT service
     info!("Loading JWT keys...");
     let jwt_service = load_jwt_service(&config)?;
+    let jwt_service_for_grpc = jwt_service.clone();
     info!("JWT service initialized");
 
     // Initialize rate limiter and token blacklist (both use Redis)
@@ -91,7 +96,8 @@ async fn main() -> Result<()> {
     info!("RoomService initialized");
 
     // Initialize UserProviderCredentialRepository
-    let credential_repository = synctv_core::repository::UserProviderCredentialRepository::new(pool.clone());
+    let credential_repository =
+        synctv_core::repository::UserProviderCredentialRepository::new(pool.clone());
     info!("UserProviderCredentialRepository initialized");
 
     // Initialize RoomMessageHub for real-time messaging
@@ -103,22 +109,21 @@ async fn main() -> Result<()> {
     let rate_limit_config = RateLimitConfig::default();
     info!(
         "Rate limiter initialized (chat: {}/s, danmaku: {}/s)",
-        rate_limit_config.chat_per_second,
-        rate_limit_config.danmaku_per_second
+        rate_limit_config.chat_per_second, rate_limit_config.danmaku_per_second
     );
 
     // Initialize content filter
     let content_filter = ContentFilter::new();
     info!(
         "Content filter initialized (max chat: {} chars, max danmaku: {} chars)",
-        content_filter.max_chat_length,
-        content_filter.max_danmaku_length
+        content_filter.max_chat_length, content_filter.max_danmaku_length
     );
 
     // Initialize ProviderInstanceManager
     info!("Initializing ProviderInstanceManager...");
     let provider_instance_repo = std::sync::Arc::new(ProviderInstanceRepository::new(pool.clone()));
-    let provider_instance_manager = std::sync::Arc::new(ProviderInstanceManager::new(provider_instance_repo));
+    let provider_instance_manager =
+        std::sync::Arc::new(ProviderInstanceManager::new(provider_instance_repo));
 
     // Load all enabled provider instances from database
     if let Err(e) = provider_instance_manager.init().await {
@@ -172,7 +177,7 @@ async fn main() -> Result<()> {
     // Initialize ProvidersManager before spawning servers
     info!("Initializing ProvidersManager...");
     let providers_manager = std::sync::Arc::new(synctv_core::service::ProvidersManager::new(
-        provider_instance_manager.clone()
+        provider_instance_manager.clone(),
     ));
     info!("ProvidersManager initialized");
 
@@ -189,12 +194,67 @@ async fn main() -> Result<()> {
     let credential_repository_http = credential_repository.clone();
     let provider_instance_manager_http = provider_instance_manager.clone();
 
+    // Initialize streaming components for unified HTTP server
+    let streaming_state = if !config.redis.url.is_empty() {
+        info!("Initializing streaming components...");
+
+        // Create Redis connection manager for StreamRegistry
+        match redis::Client::open(config.redis.url.clone()) {
+            Ok(redis_client) => {
+                match redis_client.get_connection_manager().await {
+                    Ok(redis_conn) => {
+                        // Create StreamRegistry
+                        let registry = synctv_stream::relay::StreamRegistry::new(redis_conn);
+
+                        // Create GOP cache for pull streams
+                        let gop_cache_config = synctv_stream::cache::GopCacheConfig::default();
+                        let gop_cache = std::sync::Arc::new(synctv_stream::cache::GopCache::new(
+                            gop_cache_config,
+                        ));
+
+                        // Create PullStreamManager
+                        let pull_manager =
+                            std::sync::Arc::new(synctv_stream::streaming::PullStreamManager::new(
+                                gop_cache,
+                                registry.clone(),
+                                generate_node_id(),
+                            ));
+
+                        info!("Streaming components initialized successfully");
+
+                        Some(synctv_stream::streaming::StreamingHttpState {
+                            registry,
+                            pull_manager,
+                        })
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to create Redis connection manager for streaming: {}",
+                            e
+                        );
+                        info!("Streaming routes disabled");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to create Redis client for streaming: {}", e);
+                info!("Streaming routes disabled");
+                None
+            }
+        }
+    } else {
+        info!("Redis not configured, streaming routes disabled");
+        None
+    };
+
     // Start gRPC server in background task
     info!("Starting gRPC server on {}...", config.grpc_address());
     let grpc_config = config.clone();
     let grpc_handle = tokio::spawn(async move {
         if let Err(e) = grpc::serve(
             &grpc_config,
+            jwt_service_for_grpc,
             user_service_grpc,
             room_service_grpc,
             message_hub,
@@ -206,12 +266,12 @@ async fn main() -> Result<()> {
             Some(providers_manager_grpc),
             provider_instance_manager_grpc,
             credential_repository_grpc,
-        ).await {
+        )
+        .await
+        {
             error!("gRPC server error: {}", e);
         }
     });
-
-    let providers_manager_http = providers_manager.clone();
 
     // Start HTTP/REST server
     let http_address = config.http_address();
@@ -220,13 +280,12 @@ async fn main() -> Result<()> {
         user_service_http,
         room_service_http,
         provider_instance_manager_http,
-        providers_manager_http,
         credential_repository_http,
+        streaming_state,
     );
 
     let http_handle = tokio::spawn(async move {
-        let http_addr: std::net::SocketAddr = http_address.parse()
-            .expect("Invalid HTTP address");
+        let http_addr: std::net::SocketAddr = http_address.parse().expect("Invalid HTTP address");
 
         let listener = tokio::net::TcpListener::bind(http_addr)
             .await

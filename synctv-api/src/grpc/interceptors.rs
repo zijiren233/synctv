@@ -1,53 +1,32 @@
-use tonic::{Request, Status, metadata::MetadataMap};
-use synctv_core::service::auth::{JwtService, Claims};
+use synctv_core::service::auth::JwtService;
+use tonic::{metadata::MetadataMap, Request, Status};
 
-/// Authenticated user context
+/// User context - contains user_id extracted from JWT
+/// Used by UserService and AdminService methods
 #[derive(Debug, Clone)]
-pub struct AuthContext {
+pub struct UserContext {
     pub user_id: String,
-    pub permissions: i64,
 }
 
-impl From<Claims> for AuthContext {
-    fn from(claims: Claims) -> Self {
-        Self {
-            user_id: claims.sub,
-            permissions: claims.permissions,
-        }
-    }
+/// Room context - contains UserContext and room_id
+/// Used by RoomService and MediaService methods
+#[derive(Debug, Clone)]
+pub struct RoomContext {
+    pub user_ctx: UserContext,
+    pub room_id: String,
 }
 
-/// Authentication interceptor
+/// Simple JWT auth interceptor (synchronous, compatible with tonic::service::Interceptor)
+/// Only validates JWT and extracts user_id into AuthContext
+/// Service methods should call helper functions to load entities from database
 #[derive(Clone)]
 pub struct AuthInterceptor {
     jwt_service: JwtService,
-    /// Paths that don't require authentication
-    skip_auth_paths: Vec<&'static str>,
 }
 
 impl AuthInterceptor {
     pub fn new(jwt_service: JwtService) -> Self {
-        Self {
-            jwt_service,
-            skip_auth_paths: vec![
-                "/bilibili.BilibiliService/Login",
-                "/bilibili.BilibiliService/Register",
-                "/bilibili.BilibiliService/NewQRCode",
-                "/bilibili.BilibiliService/LoginWithQRCode",
-                "/bilibili.BilibiliService/NewCaptcha",
-                "/bilibili.BilibiliService/NewSMS",
-                "/bilibili.BilibiliService/LoginWithSMS",
-                "/bilibili.BilibiliService/Match",
-                "/alist.AlistService/Login",
-                "/emby.EmbyService/Login",
-                "/grpc.health.v1.Health/Check",
-            ],
-        }
-    }
-
-    /// Check if the request path should skip authentication
-    fn should_skip_auth(&self, uri: &str) -> bool {
-        self.skip_auth_paths.iter().any(|path| uri.contains(path))
+        Self { jwt_service }
     }
 
     /// Extract Bearer token from Authorization header
@@ -58,33 +37,69 @@ impl AuthInterceptor {
             .to_str()
             .map_err(|_| Status::unauthenticated("Invalid authorization header format"))?;
 
-        // Check if it starts with "Bearer "
         if !auth_header.starts_with("Bearer ") && !auth_header.starts_with("bearer ") {
-            return Err(Status::unauthenticated("Invalid authorization header format"));
+            return Err(Status::unauthenticated(
+                "Invalid authorization header format",
+            ));
         }
 
-        // Extract token (skip "Bearer " prefix)
         Ok(auth_header[7..].to_string())
     }
 
-    pub fn intercept<T>(&self, mut request: Request<T>, uri: &str) -> Result<Request<T>, Status> {
-        // Skip authentication for certain endpoints
-        if self.should_skip_auth(uri) {
-            return Ok(request);
-        }
-
-        // Extract token from metadata
+    /// Inject UserContext - validates JWT and extracts user_id
+    /// Used for UserService and AdminService
+    pub fn inject_user<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
+        // Extract and verify JWT (synchronous)
         let token = self.extract_token(request.metadata())?;
 
-        // Verify JWT and extract claims
         let claims = self
             .jwt_service
             .verify_access_token(&token)
             .map_err(|e| Status::unauthenticated(format!("Token verification failed: {}", e)))?;
 
-        // Create auth context and inject into request extensions
-        let auth_context = AuthContext::from(claims);
-        request.extensions_mut().insert(auth_context);
+        // Inject UserContext with user_id
+        let user_context = UserContext {
+            user_id: claims.sub,
+        };
+        request.extensions_mut().insert(user_context);
+
+        Ok(request)
+    }
+
+    /// Inject RoomContext - validates JWT, extracts user_id and room_id from x-room-id header
+    /// Used for RoomService and MediaService
+    pub fn inject_room<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
+        // Extract and verify JWT (synchronous)
+        let token = self.extract_token(request.metadata())?;
+
+        let claims = self
+            .jwt_service
+            .verify_access_token(&token)
+            .map_err(|e| Status::unauthenticated(format!("Token verification failed: {}", e)))?;
+
+        // Extract room_id from x-room-id header
+        let room_id = request
+            .metadata()
+            .get("x-room-id")
+            .ok_or_else(|| Status::invalid_argument("Missing x-room-id header"))?
+            .to_str()
+            .map_err(|_| Status::invalid_argument("Invalid x-room-id header"))?
+            .to_string();
+
+        // Inject UserContext (for nested structure)
+        let user_context = UserContext {
+            user_id: claims.sub.clone(),
+        };
+        request.extensions_mut().insert(user_context);
+
+        // Inject RoomContext
+        let room_context = RoomContext {
+            user_ctx: UserContext {
+                user_id: claims.sub,
+            },
+            room_id,
+        };
+        request.extensions_mut().insert(room_context);
 
         Ok(request)
     }
@@ -92,32 +107,6 @@ impl AuthInterceptor {
 
 impl std::fmt::Debug for AuthInterceptor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthInterceptor")
-            .field("skip_auth_paths", &self.skip_auth_paths)
-            .finish()
-    }
-}
-
-
-/// Logging interceptor for request/response logging
-#[derive(Debug, Clone)]
-pub struct LoggingInterceptor {}
-
-impl LoggingInterceptor {
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    pub fn intercept<T>(&self, request: Request<T>) -> Result<Request<T>, Status> {
-        // Log incoming request
-        tracing::debug!("gRPC request received");
-
-        Ok(request)
-    }
-}
-
-impl Default for LoggingInterceptor {
-    fn default() -> Self {
-        Self::new()
+        f.debug_struct("AuthInterceptor").finish()
     }
 }

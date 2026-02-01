@@ -153,7 +153,7 @@ impl AlistProviderService for AlistProviderGrpcService {
 
     async fn get_binds(&self, request: Request<GetBindsRequest>) -> Result<Response<GetBindsResponse>, Status> {
         // Extract authenticated user from request extensions
-        let auth_context = request.extensions().get::<crate::grpc::interceptors::AuthContext>()
+        let auth_context = request.extensions().get::<crate::grpc::interceptors::UserContext>()
             .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
 
         tracing::info!("gRPC Alist get binds request for user: {}", auth_context.user_id);

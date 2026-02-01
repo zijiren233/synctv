@@ -1,16 +1,15 @@
 //! Alist Provider HTTP Routes
 
 use axum::{
-    Router,
-    routing::{post, get},
     extract::{Query, State},
-    response::IntoResponse,
     http::StatusCode,
-    Json,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use synctv_core::provider::provider_client::{load_local_alist_client, create_remote_alist_client};
+use synctv_core::provider::provider_client::{create_remote_alist_client, load_local_alist_client};
 
 use crate::http::AppState;
 
@@ -74,9 +73,7 @@ fn alist_routes() -> Router<AppState> {
 
 /// Self-register Alist routes on module load
 pub fn init() {
-    super::register_route_builder(|| {
-        ("alist".to_string(), alist_routes())
-    });
+    super::register_route_builder(|| ("alist".to_string(), alist_routes()));
 }
 
 // Handlers
@@ -89,7 +86,11 @@ async fn login(
     Query(query): Query<InstanceQuery>,
     Json(req): Json<AlistLoginRequest>,
 ) -> impl IntoResponse {
-    tracing::info!("Alist login request: host={}, username={}", req.host, req.username);
+    tracing::info!(
+        "Alist login request: host={}, username={}",
+        req.host,
+        req.username
+    );
 
     // Determine which client to use (remote or local)
     let client = if let Some(instance_name) = query.instance_name {
@@ -98,7 +99,10 @@ async fn login(
             tracing::debug!("Using remote Alist instance: {}", instance_name);
             create_remote_alist_client(channel)
         } else {
-            tracing::warn!("Remote instance '{}' not found, falling back to local", instance_name);
+            tracing::warn!(
+                "Remote instance '{}' not found, falling back to local",
+                instance_name
+            );
             load_local_alist_client()
         }
     } else {
@@ -126,10 +130,7 @@ async fn login(
     match client.login(login_req).await {
         Ok(token) => {
             tracing::info!("Alist login successful");
-            (
-                StatusCode::OK,
-                Json(AlistLoginResponse { token })
-            ).into_response()
+            (StatusCode::OK, Json(AlistLoginResponse { token })).into_response()
         }
         Err(e) => {
             tracing::error!("Alist login failed: {}", e);
@@ -138,8 +139,9 @@ async fn login(
                 Json(json!({
                     "error": "Login failed",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -175,25 +177,30 @@ async fn list(
     match client.fs_list(list_req).await {
         Ok(resp) => {
             // Convert FsListContent items to JSON
-            let content: Vec<_> = resp.content.into_iter().map(|item| {
-                json!({
-                    "name": item.name,
-                    "size": item.size,
-                    "is_dir": item.is_dir,
-                    "modified": item.modified,
-                    "sign": item.sign,
-                    "thumb": item.thumb,
-                    "type": item.r#type,
+            let content: Vec<_> = resp
+                .content
+                .into_iter()
+                .map(|item| {
+                    json!({
+                        "name": item.name,
+                        "size": item.size,
+                        "is_dir": item.is_dir,
+                        "modified": item.modified,
+                        "sign": item.sign,
+                        "thumb": item.thumb,
+                        "type": item.r#type,
+                    })
                 })
-            }).collect();
+                .collect();
 
             (
                 StatusCode::OK,
                 Json(json!({
                     "content": content,
                     "total": resp.total,
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Alist list failed: {}", e);
@@ -202,8 +209,9 @@ async fn list(
                 Json(json!({
                     "error": "List failed",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -232,15 +240,14 @@ async fn me(
     };
 
     match client.me(me_req).await {
-        Ok(resp) => {
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "username": resp.username,
-                    "base_path": resp.base_path,
-                }))
-            ).into_response()
-        }
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(json!({
+                "username": resp.username,
+                "base_path": resp.base_path,
+            })),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Alist me failed: {}", e);
             (
@@ -248,8 +255,9 @@ async fn me(
                 Json(json!({
                     "error": "Get user info failed",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -261,8 +269,9 @@ async fn logout() -> impl IntoResponse {
         StatusCode::OK,
         Json(json!({
             "message": "Logout successful"
-        }))
-    ).into_response()
+        })),
+    )
+        .into_response()
 }
 
 /// Get Alist binds (saved credentials)
@@ -273,7 +282,11 @@ async fn binds(
     tracing::info!("Alist binds request for user: {}", auth.user_id);
 
     // Query saved Alist credentials for current user
-    match state.credential_repository.get_by_user(&auth.user_id.to_string()).await {
+    match state
+        .credential_repository
+        .get_by_user(&auth.user_id.to_string())
+        .await
+    {
         Ok(credentials) => {
             // Filter for Alist provider only
             let alist_binds: Vec<_> = credentials
@@ -281,12 +294,16 @@ async fn binds(
                 .filter(|c| c.provider == "alist")
                 .map(|c| {
                     // Parse credential data to extract host
-                    let host = c.credential_data.get("host")
+                    let host = c
+                        .credential_data
+                        .get("host")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
 
-                    let username = c.credential_data.get("username")
+                    let username = c
+                        .credential_data
+                        .get("username")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
@@ -304,8 +321,9 @@ async fn binds(
                 StatusCode::OK,
                 Json(json!({
                     "binds": alist_binds
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to query credentials: {}", e);
@@ -314,8 +332,9 @@ async fn binds(
                 Json(json!({
                     "error": "Failed to query credentials",
                     "message": e.to_string()
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }

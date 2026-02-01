@@ -105,11 +105,7 @@ impl ConnectionManager {
     /// Register a new connection
     ///
     /// Returns Ok(()) if connection is allowed, or Err with reason if rejected
-    pub fn register(
-        &self,
-        connection_id: String,
-        user_id: UserId,
-    ) -> Result<(), String> {
+    pub fn register(&self, connection_id: String, user_id: UserId) -> Result<(), String> {
         // Check total limit
         if self.connections.len() >= self.limits.max_total {
             return Err(format!(
@@ -377,8 +373,12 @@ mod tests {
         let user_id = UserId::from_string("user1".to_string());
 
         // First two should succeed
-        assert!(manager.register("conn1".to_string(), user_id.clone()).is_ok());
-        assert!(manager.register("conn2".to_string(), user_id.clone()).is_ok());
+        assert!(manager
+            .register("conn1".to_string(), user_id.clone())
+            .is_ok());
+        assert!(manager
+            .register("conn2".to_string(), user_id.clone())
+            .is_ok());
 
         // Third should fail
         let result = manager.register("conn3".to_string(), user_id.clone());
@@ -392,7 +392,9 @@ mod tests {
         let user_id = UserId::from_string("user1".to_string());
         let room_id = RoomId::from_string("room1".to_string());
 
-        manager.register("conn1".to_string(), user_id.clone()).unwrap();
+        manager
+            .register("conn1".to_string(), user_id.clone())
+            .unwrap();
 
         let result = manager.join_room("conn1", room_id.clone());
         assert!(result.is_ok());
@@ -449,7 +451,9 @@ mod tests {
         let user_id = UserId::from_string("user1".to_string());
         let room_id = RoomId::from_string("room1".to_string());
 
-        manager.register("conn1".to_string(), user_id.clone()).unwrap();
+        manager
+            .register("conn1".to_string(), user_id.clone())
+            .unwrap();
         manager.join_room("conn1", room_id.clone()).unwrap();
 
         assert_eq!(manager.connection_count(), 1);

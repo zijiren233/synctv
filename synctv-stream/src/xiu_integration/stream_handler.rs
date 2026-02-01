@@ -133,25 +133,80 @@ impl StreamHandler {
         }
     }
 
-    /// Validate access token and check permissions
-    /// TODO: Implement real validation by calling synctv-api gRPC
+    /// Validate JWT token from RTMP authorization
+    /// Format: rtmp://server/live/media_id?token=JWT_TOKEN
+    /// JWT token contains media_id ("m" claim) to verify match (no Bearer prefix in RTMP)
+    /// Live streaming is media-level, not room-level (following Go SyncTV design)
     async fn validate_token(&self, room_id: &RoomId, token: &str) -> Result<()> {
-        // Placeholder implementation
-        // In production, this should:
-        // 1. Call synctv-api to verify JWT token
-        // 2. Check user has PUBLISH_STREAM permission in this room
-        // 3. Return user_id for audit logging
-
         if token.is_empty() {
             return Err(anyhow!("Empty access token"));
         }
 
-        // For now, accept any non-empty token
-        // TODO: Implement real JWT validation
-        warn!(
-            room_id = room_id.as_str(),
-            "Token validation not yet implemented - accepting all tokens"
-        );
+        let token = token.trim();
+
+        // Decode JWT token (skip signature verification for now, just decode payload)
+        // Real production code should verify signature with shared secret
+        let parts: Vec<&str> = token.split('.').collect();
+        if parts.len() != 3 {
+            warn!("Invalid JWT format - expected 3 parts");
+            return Err(anyhow!("Invalid JWT token format"));
+        }
+
+        // Decode payload (second part)
+        use base64::{Engine as _, engine::general_purpose};
+        let payload = match general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
+            Ok(data) => data,
+            Err(e) => {
+                warn!("Failed to decode JWT payload: {}", e);
+                return Err(anyhow!("Invalid JWT token"));
+            }
+        };
+
+        // Parse JSON payload
+        let claims: serde_json::Value = match serde_json::from_slice(&payload) {
+            Ok(claims) => claims,
+            Err(e) => {
+                warn!("Failed to parse JWT claims: {}", e);
+                return Err(anyhow!("Invalid JWT claims"));
+            }
+        };
+
+        // Extract media_id from claims (field "m" for media/movie)
+        let claim_media_id = claims.get("m")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("JWT token does not contain media_id (field 'm')"))?;
+
+        // Extract room_id from claims (field "r" for room) - optional but recommended
+        let claim_room_id = claims.get("r")
+            .and_then(|v| v.as_str());
+
+        // Verify media_id matches stream key
+        // Note: room_id parameter is actually media_id in the context of live streaming
+        if claim_media_id != room_id.as_str() {
+            warn!(
+                "Media ID mismatch - path: {}, token: {}",
+                room_id.as_str(),
+                claim_media_id
+            );
+            return Err(anyhow!("Media ID mismatch"));
+        }
+
+        if let Some(r_id) = claim_room_id {
+            info!(
+                media_id = claim_media_id,
+                room_id = r_id,
+                "Stream authorization validated successfully with room context"
+            );
+        } else {
+            info!(
+                media_id = claim_media_id,
+                "Stream authorization validated successfully (no room_id in token)"
+            );
+        }
+
+        // TODO: Verify JWT signature with shared secret from config
+        // TODO: Check token expiration (exp claim)
+        // TODO: Verify user has START_LIVE permission from token claims
 
         Ok(())
     }

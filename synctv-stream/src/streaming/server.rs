@@ -13,12 +13,12 @@
 use crate::{
     cache::gop_cache::GopCache,
     relay::registry::StreamRegistry,
-    storage::{HlsStorage, StorageBackend, FileStorage, MemoryStorage, OssStorage, OssConfig},
+    storage::{HlsStorage, StorageBackend, FileStorage, MemoryStorage},
     streaming::{
         pull_manager::PullStreamManager,
         segment_manager::{SegmentManager, CleanupConfig},
         rtmp::RtmpServer,
-        httpflv::HttpFlvServer,
+        // httpflv::HttpFlvServer, // Now integrated into synctv-api as router
         hls::HlsServer,
     },
     error::StreamResult,
@@ -31,7 +31,6 @@ use streamhub::StreamsHub;
 pub struct StreamingServer {
     // Configuration
     rtmp_address: String,
-    httpflv_address: String,
     hls_address: String,
     hls_storage_path: String,
     storage_backend: StorageBackend,
@@ -47,7 +46,6 @@ pub struct StreamingServer {
 impl StreamingServer {
     pub fn new(
         rtmp_address: String,
-        httpflv_address: String,
         hls_address: String,
         hls_storage_path: String,
         storage_backend: StorageBackend,
@@ -64,7 +62,6 @@ impl StreamingServer {
 
         Self {
             rtmp_address,
-            httpflv_address,
             hls_address,
             hls_storage_path,
             storage_backend,
@@ -113,8 +110,8 @@ impl StreamingServer {
         // Start RTMP server (creates its own StreamHub internally)
         self.start_rtmp_server().await?;
 
-        // Start HTTP-FLV server
-        self.start_httpflv_server(Arc::clone(&stream_hub)).await?;
+        // Note: HTTP-FLV is now integrated into synctv-api as a router
+        // It will be registered via create_live_router() in synctv-api
 
         // Start HLS server
         self.start_hls_server(Arc::clone(&stream_hub), segment_manager).await?;
@@ -141,23 +138,6 @@ impl StreamingServer {
         tokio::spawn(async move {
             if let Err(e) = rtmp_server.start().await {
                 log::error!("RTMP server error: {}", e);
-            }
-        });
-
-        Ok(())
-    }
-
-    async fn start_httpflv_server(&self, stream_hub: Arc<Mutex<StreamsHub>>) -> StreamResult<()> {
-        let httpflv_server = HttpFlvServer::new(
-            self.httpflv_address.clone(),
-            Arc::clone(&self.pull_manager),
-            self.registry.clone(),
-            stream_hub,
-        );
-
-        tokio::spawn(async move {
-            if let Err(e) = httpflv_server.start().await {
-                log::error!("HTTP-FLV server error: {}", e);
             }
         });
 

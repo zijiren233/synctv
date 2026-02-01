@@ -19,7 +19,6 @@ pub struct ProviderContext<'a> {
 
     /// Cache key prefix (e.g., "synctv")
     pub key_prefix: &'a str,
-
     // TODO: Add database and Redis pools when implementing
     // pub db: &'a PgPool,
     // pub redis: &'a Pool,

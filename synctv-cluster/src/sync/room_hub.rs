@@ -155,7 +155,12 @@ impl RoomMessageHub {
     }
 
     /// Broadcast an event to a specific user in a room
-    pub fn broadcast_to_user(&self, room_id: &RoomId, user_id: &UserId, event: ClusterEvent) -> usize {
+    pub fn broadcast_to_user(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        event: ClusterEvent,
+    ) -> usize {
         let mut sent_count = 0;
         let mut failed_connections = Vec::new();
 
@@ -340,19 +345,20 @@ mod tests {
         assert_eq!(sent_count, 1);
 
         // Only user1 should receive
-        let received1 = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            rx1.recv()
-        ).await.unwrap().unwrap();
+        let received1 = tokio::time::timeout(std::time::Duration::from_millis(100), rx1.recv())
+            .await
+            .unwrap()
+            .unwrap();
 
         assert_eq!(received1.event_type(), "system_notification");
 
         // User2 should not receive
-        let received2 = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            rx2.recv()
-        ).await;
+        let received2 =
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx2.recv()).await;
 
-        assert!(received2.is_err(), "User2 should not have received the message");
+        assert!(
+            received2.is_err(),
+            "User2 should not have received the message"
+        );
     }
 }

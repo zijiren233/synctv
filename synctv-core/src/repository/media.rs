@@ -1,8 +1,8 @@
-use sqlx::{PgPool, postgres::PgRow, Row};
 use serde_json::Value as JsonValue;
+use sqlx::{postgres::PgRow, PgPool, Row};
 
 use crate::{
-    models::{Media, MediaId, RoomId, UserId, ProviderType},
+    models::{Media, MediaId, ProviderType, RoomId, UserId},
     Result,
 };
 
@@ -70,9 +70,7 @@ impl MediaRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter()
-            .map(|row| self.row_to_media(row))
-            .collect()
+        rows.into_iter().map(|row| self.row_to_media(row)).collect()
     }
 
     /// Delete media from playlist
@@ -80,7 +78,7 @@ impl MediaRepository {
         let result = sqlx::query(
             "UPDATE media
              SET deleted_at = $2
-             WHERE id = $1 AND deleted_at IS NULL"
+             WHERE id = $1 AND deleted_at IS NULL",
         )
         .bind(media_id.as_str())
         .bind(chrono::Utc::now())
@@ -91,11 +89,7 @@ impl MediaRepository {
     }
 
     /// Swap positions of two media
-    pub async fn swap_positions(
-        &self,
-        media_id1: &MediaId,
-        media_id2: &MediaId,
-    ) -> Result<()> {
+    pub async fn swap_positions(&self, media_id1: &MediaId, media_id2: &MediaId) -> Result<()> {
         // Get current positions
         let pos1: i32 = sqlx::query_scalar("SELECT position FROM media WHERE id = $1")
             .bind(media_id1.as_str())
@@ -130,7 +124,7 @@ impl MediaRepository {
     /// Get next available position in playlist
     pub async fn get_next_position(&self, room_id: &RoomId) -> Result<i32> {
         let max_pos: Option<i32> = sqlx::query_scalar(
-            "SELECT MAX(position) FROM media WHERE room_id = $1 AND deleted_at IS NULL"
+            "SELECT MAX(position) FROM media WHERE room_id = $1 AND deleted_at IS NULL",
         )
         .bind(room_id.as_str())
         .fetch_one(&self.pool)

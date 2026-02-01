@@ -140,3 +140,4 @@ wiremock = "0.6"
 synctv-core = { path = "synctv-core" }
 synctv-cluster = { path = "synctv-cluster" }
 synctv-providers = { path = "synctv-providers" }
+synctv-stream = { path = "synctv-stream" }

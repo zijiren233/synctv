@@ -18,8 +18,8 @@ pub struct PullStreamManager {
     // stream_key -> PullStream
     streams: Arc<DashMap<String, Arc<PullStream>>>,
     gop_cache: Arc<GopCache>,
-    registry: StreamRegistry,
-    local_node_id: String,
+    _registry: StreamRegistry,
+    _local_node_id: String,
 }
 
 impl PullStreamManager {
@@ -31,8 +31,8 @@ impl PullStreamManager {
         Self {
             streams: Arc::new(DashMap::new()),
             gop_cache,
-            registry,
-            local_node_id,
+            _registry: registry,
+            _local_node_id: local_node_id,
         }
     }
 
@@ -130,9 +130,9 @@ impl PullStreamManager {
 /// Pull stream instance (pulls RTMP from publisher, serves FLV to local clients)
 pub struct PullStream {
     room_id: String,
-    gop_cache: Arc<GopCache>,
-    subscriber_count: Arc<RwLock<usize>>,
-    last_active: Arc<RwLock<Instant>>,
+    _gop_cache: Arc<GopCache>,
+    _subscriber_count: Arc<RwLock<usize>>,
+    _last_active: Arc<RwLock<Instant>>,
     is_running: Arc<RwLock<bool>>,
 }
 
@@ -140,9 +140,9 @@ impl PullStream {
     pub fn new(room_id: String, gop_cache: Arc<GopCache>) -> Self {
         Self {
             room_id,
-            gop_cache,
-            subscriber_count: Arc::new(RwLock::new(0)),
-            last_active: Arc::new(RwLock::new(Instant::now())),
+            _gop_cache: gop_cache,
+            _subscriber_count: Arc::new(RwLock::new(0)),
+            _last_active: Arc::new(RwLock::new(Instant::now())),
             is_running: Arc::new(RwLock::new(false)),
         }
     }

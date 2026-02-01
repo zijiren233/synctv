@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use redis::aio::ConnectionManager as RedisConnectionManager;
-use redis::{AsyncCommands, Commands};
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
@@ -13,9 +13,6 @@ pub struct PublisherInfo {
     pub app_name: String,
     /// When the stream started
     pub started_at: DateTime<Utc>,
-    /// Number of active viewers
-    #[serde(default)]
-    pub viewer_count: u32,
 }
 
 /// Stream registry for tracking active publishers
@@ -30,20 +27,20 @@ impl StreamRegistry {
         Self { redis }
     }
 
-    /// Register a publisher for a room (atomic operation)
+    /// Register a publisher for a media in a room (atomic operation)
     /// Returns true if registered successfully, false if already exists
     pub async fn register_publisher(
         &mut self,
         room_id: &str,
+        media_id: &str,
         node_id: &str,
         app_name: &str,
     ) -> anyhow::Result<bool> {
-        let key = format!("stream:{}", room_id);
+        let key = format!("stream:publisher:{}:{}", room_id, media_id);
         let info = PublisherInfo {
             node_id: node_id.to_string(),
             app_name: app_name.to_string(),
             started_at: Utc::now(),
-            viewer_count: 0,
         };
 
         let info_json = serde_json::to_string(&info)?;
@@ -66,9 +63,10 @@ impl StreamRegistry {
     pub async fn try_register_publisher(
         &self,
         room_id: &str,
+        media_id: &str,
         node_id: &str,
     ) -> anyhow::Result<bool> {
-        let key = format!("stream:{}", room_id);
+        let key = format!("stream:publisher:{}:{}", room_id, media_id);
         let mut conn = self.redis.clone();
 
         // Use HSETNX for atomic set-if-not-exists
@@ -94,8 +92,8 @@ impl StreamRegistry {
     }
 
     /// Refresh TTL for a publisher (called by heartbeat)
-    pub async fn refresh_publisher_ttl(&self, room_id: &str) -> Result<()> {
-        let key = format!("stream:{}", room_id);
+    pub async fn refresh_publisher_ttl(&self, room_id: &str, media_id: &str) -> Result<()> {
+        let key = format!("stream:publisher:{}:{}", room_id, media_id);
         let mut conn = self.redis.clone();
 
         // Refresh TTL to 300 seconds
@@ -110,15 +108,15 @@ impl StreamRegistry {
     }
 
     /// Unregister a publisher
-    pub async fn unregister_publisher(&mut self, room_id: &str) -> Result<()> {
-        let key = format!("stream:{}", room_id);
+    pub async fn unregister_publisher(&mut self, room_id: &str, media_id: &str) -> Result<()> {
+        let key = format!("stream:publisher:{}:{}", room_id, media_id);
         let _: () = self.redis.hdel(&key, "publisher").await?;
         Ok(())
     }
 
     /// Unregister a publisher (non-mut version for PublisherManager)
-    pub async fn unregister_publisher_immut(&self, room_id: &str) -> Result<()> {
-        let key = format!("stream:{}", room_id);
+    pub async fn unregister_publisher_immut(&self, room_id: &str, media_id: &str) -> Result<()> {
+        let key = format!("stream:publisher:{}:{}", room_id, media_id);
         let mut conn = self.redis.clone();
 
         let _: () = redis::cmd("HDEL")
@@ -131,9 +129,9 @@ impl StreamRegistry {
         Ok(())
     }
 
-    /// Get publisher info for a room
-    pub async fn get_publisher(&mut self, room_id: &str) -> Result<Option<PublisherInfo>> {
-        let key = format!("stream:{}", room_id);
+    /// Get publisher info for a media in a room
+    pub async fn get_publisher(&mut self, room_id: &str, media_id: &str) -> Result<Option<PublisherInfo>> {
+        let key = format!("stream:publisher:{}:{}", room_id, media_id);
         let info_json: Option<String> = self.redis.hget(&key, "publisher").await?;
 
         match info_json {
@@ -145,42 +143,32 @@ impl StreamRegistry {
         }
     }
 
-    /// Increment viewer count for a stream
-    pub async fn increment_viewers(&mut self, room_id: &str) -> Result<u32> {
-        let key = format!("stream:{}", room_id);
-        let count: u32 = self.redis.hincr(&key, "viewers", 1).await?;
-        Ok(count)
-    }
-
-    /// Decrement viewer count for a stream
-    pub async fn decrement_viewers(&mut self, room_id: &str) -> Result<u32> {
-        let key = format!("stream:{}", room_id);
-        let count: i32 = self.redis.hincr(&key, "viewers", -1).await?;
-        Ok(count.max(0) as u32)
-    }
-
-    /// Get viewer count for a stream
-    pub async fn get_viewer_count(&mut self, room_id: &str) -> Result<u32> {
-        let key = format!("stream:{}", room_id);
-        let count: Option<u32> = self.redis.hget(&key, "viewers").await?;
-        Ok(count.unwrap_or(0))
-    }
 
     /// Check if a stream is active (has a publisher)
-    pub async fn is_stream_active(&mut self, room_id: &str) -> anyhow::Result<bool> {
-        let key = format!("stream:{}", room_id);
+    pub async fn is_stream_active(&mut self, room_id: &str, media_id: &str) -> anyhow::Result<bool> {
+        let key = format!("stream:publisher:{}:{}", room_id, media_id);
         let exists: bool = self.redis.hexists(&key, "publisher").await?;
         Ok(exists)
     }
 
-    /// List all active streams
-    pub async fn list_active_streams(&mut self) -> Result<Vec<String>> {
-        let keys: Vec<String> = self.redis.keys("stream:*").await?;
-        let room_ids: Vec<String> = keys
+    /// List all active streams (returns tuples of (room_id, media_id))
+    pub async fn list_active_streams(&mut self) -> Result<Vec<(String, String)>> {
+        let keys: Vec<String> = self.redis.keys("stream:publisher:*").await?;
+        let streams: Vec<(String, String)> = keys
             .into_iter()
-            .filter_map(|k| k.strip_prefix("stream:").map(|s| s.to_string()))
+            .filter_map(|k| {
+                k.strip_prefix("stream:publisher:")
+                    .and_then(|s| {
+                        let parts: Vec<&str> = s.split(':').collect();
+                        if parts.len() == 2 {
+                            Some((parts[0].to_string(), parts[1].to_string()))
+                        } else {
+                            None
+                        }
+                    })
+            })
             .collect();
-        Ok(room_ids)
+        Ok(streams)
     }
 }
 
@@ -197,20 +185,20 @@ mod tests {
 
         // First registration should succeed
         let registered = registry
-            .register_publisher("room123", "node1", "live")
+            .register_publisher("room123", "media456", "node1", "live")
             .await
             .unwrap();
         assert!(registered);
 
         // Second registration should fail (already exists)
         let registered = registry
-            .register_publisher("room123", "node2", "live")
+            .register_publisher("room123", "media456", "node2", "live")
             .await
             .unwrap();
         assert!(!registered);
 
         // Cleanup
-        registry.unregister_publisher("room123").await.unwrap();
+        registry.unregister_publisher("room123", "media456").await.unwrap();
     }
 
     #[tokio::test]
@@ -221,22 +209,22 @@ mod tests {
         let mut registry = StreamRegistry::new(redis);
 
         registry
-            .register_publisher("room456", "node1", "live")
+            .register_publisher("room789", "media101", "node1", "live")
             .await
             .unwrap();
 
         // Increment viewers
-        let count = registry.increment_viewers("room456").await.unwrap();
+        let count = registry.increment_viewers("room789", "media101").await.unwrap();
         assert_eq!(count, 1);
 
-        let count = registry.increment_viewers("room456").await.unwrap();
+        let count = registry.increment_viewers("room789", "media101").await.unwrap();
         assert_eq!(count, 2);
 
         // Decrement viewers
-        let count = registry.decrement_viewers("room456").await.unwrap();
+        let count = registry.decrement_viewers("room789", "media101").await.unwrap();
         assert_eq!(count, 1);
 
         // Cleanup
-        registry.unregister_publisher("room456").await.unwrap();
+        registry.unregister_publisher("room789", "media101").await.unwrap();
     }
 }

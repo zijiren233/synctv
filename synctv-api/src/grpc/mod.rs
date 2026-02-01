@@ -16,33 +16,42 @@ pub mod proto {
     }
 }
 
-pub mod client_service;
 pub mod admin_service;
+pub mod client_service;
 pub mod interceptors;
 
 // Provider gRPC service extensions (decoupled via trait)
 pub mod providers;
 
-pub use client_service::ClientServiceImpl;
 pub use admin_service::AdminServiceImpl;
-// pub use interceptors::{AuthInterceptor, LoggingInterceptor};
+pub use client_service::ClientServiceImpl;
+pub use interceptors::AuthInterceptor;
 
-use proto::client::client_service_server::ClientServiceServer;
 use proto::admin::admin_service_server::AdminServiceServer;
+use proto::client::{
+    auth_service_server::AuthServiceServer, media_service_server::MediaServiceServer,
+    public_service_server::PublicServiceServer, room_service_server::RoomServiceServer,
+    user_service_server::UserServiceServer,
+};
 use tonic::transport::Server;
 use tonic_reflection::server::Builder as ReflectionBuilder;
 
-use synctv_core::service::{UserService, RoomService, RateLimiter, RateLimitConfig, ContentFilter, ProvidersManager, ProviderInstanceManager};
-use synctv_core::repository::UserProviderCredentialRepository;
-use synctv_core::Config;
-use synctv_cluster::sync::{RoomMessageHub, PublishRequest, ConnectionManager};
 use std::sync::Arc;
+use synctv_cluster::sync::{ConnectionManager, PublishRequest, RoomMessageHub};
+use synctv_core::repository::UserProviderCredentialRepository;
+use synctv_core::service::auth::JwtService;
+use synctv_core::service::{
+    ContentFilter, ProviderInstanceManager, ProvidersManager, RateLimitConfig, RateLimiter,
+    RoomService as CoreRoomService, UserService as CoreUserService,
+};
+use synctv_core::Config;
 
 /// Build and start the gRPC server
 pub async fn serve(
     config: &Config,
-    user_service: Arc<UserService>,
-    room_service: Arc<RoomService>,
+    jwt_service: JwtService,
+    user_service: Arc<CoreUserService>,
+    room_service: Arc<CoreRoomService>,
     message_hub: Arc<RoomMessageHub>,
     redis_publish_tx: Option<tokio::sync::mpsc::UnboundedSender<PublishRequest>>,
     rate_limiter: RateLimiter,
@@ -67,8 +76,10 @@ pub async fn serve(
     let room_service_for_provider = room_service.clone();
 
     // Create service instances
-    let user_service_clone = Arc::try_unwrap(user_service_for_client).unwrap_or_else(|arc| (*arc).clone());
-    let room_service_clone = Arc::try_unwrap(room_service_for_client).unwrap_or_else(|arc| (*arc).clone());
+    let user_service_clone =
+        Arc::try_unwrap(user_service_for_client).unwrap_or_else(|arc| (*arc).clone());
+    let room_service_clone =
+        Arc::try_unwrap(room_service_for_client).unwrap_or_else(|arc| (*arc).clone());
 
     let client_service = ClientServiceImpl::new(
         user_service_clone,
@@ -105,10 +116,46 @@ pub async fn serve(
         None
     };
 
-    // Build router
+    // Create auth interceptor for authenticated services
+    let auth_interceptor = AuthInterceptor::new(jwt_service);
+
+    // Clone interceptors for different services
+    let user_interceptor = auth_interceptor.clone();
+    let admin_interceptor = auth_interceptor.clone();
+    let room_interceptor1 = auth_interceptor.clone();
+    let room_interceptor2 = auth_interceptor.clone();
+
+    // Build router - register all 5 client services with appropriate interceptors
+    let client_service_clone1 = client_service.clone();
+    let client_service_clone2 = client_service.clone();
+    let client_service_clone3 = client_service.clone();
+    let client_service_clone4 = client_service.clone();
+
     let mut router = server_builder
-        .add_service(ClientServiceServer::new(client_service))
-        .add_service(AdminServiceServer::new(admin_service));
+        // AuthService - no authentication required (public: register, login, refresh_token)
+        .add_service(AuthServiceServer::new(client_service))
+        // UserService - requires JWT authentication (inject UserContext)
+        .add_service(UserServiceServer::with_interceptor(
+            client_service_clone1,
+            move |req| user_interceptor.inject_user(req),
+        ))
+        // RoomService - requires JWT + room_id (inject RoomContext)
+        .add_service(RoomServiceServer::with_interceptor(
+            client_service_clone2,
+            move |req| room_interceptor1.inject_room(req),
+        ))
+        // MediaService - requires JWT + room_id (inject RoomContext)
+        .add_service(MediaServiceServer::with_interceptor(
+            client_service_clone3,
+            move |req| room_interceptor2.inject_room(req),
+        ))
+        // PublicService - no authentication required (public room discovery)
+        .add_service(PublicServiceServer::new(client_service_clone4))
+        // AdminService - requires JWT authentication (inject UserContext)
+        .add_service(AdminServiceServer::with_interceptor(
+            admin_service,
+            move |req| admin_interceptor.inject_user(req),
+        ));
 
     if let Some(reflection) = reflection_service {
         router = router.add_service(reflection);
@@ -124,7 +171,6 @@ pub async fn serve(
             user_service: user_service_for_provider,
             room_service: room_service_for_provider,
             provider_instance_manager: providers_mgr.instance_manager().clone(),
-            providers_manager: providers_mgr,
             credential_repository,
         });
 

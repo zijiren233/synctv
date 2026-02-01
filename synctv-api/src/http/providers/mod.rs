@@ -5,10 +5,10 @@
 //! - No central code needs to know about specific provider types
 //! - Adding new providers requires zero changes to common code
 
-use axum::Router;
 use crate::http::AppState;
-use std::sync::OnceLock;
+use axum::Router;
 use parking_lot::RwLock;
+use std::sync::OnceLock;
 
 /// Type for route builder functions
 type RouteBuilder = Box<dyn Fn() -> (String, Router<AppState>) + Send + Sync>;
@@ -60,6 +60,6 @@ pub fn build_provider_routes() -> Router<AppState> {
 
 // Provider-specific implementations
 // Each module will self-register when loaded
-pub mod bilibili;
 pub mod alist;
+pub mod bilibili;
 pub mod emby;

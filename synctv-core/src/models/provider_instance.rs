@@ -137,9 +137,7 @@ impl UserProviderCredential {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProviderCredential {
     /// Bilibili credentials (cookies)
-    Bilibili {
-        cookies: HashMap<String, String>,
-    },
+    Bilibili { cookies: HashMap<String, String> },
 
     /// Alist credentials (username/password)
     Alist {

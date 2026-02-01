@@ -1,13 +1,10 @@
 // Authentication HTTP handlers
 
-use axum::{
-    extract::State,
-    Json,
-};
+use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use synctv_core::models::id::UserId;
 
-use super::{AppState, AppResult};
+use super::{AppResult, AppState};
 
 /// Register request
 #[derive(Debug, Deserialize)]
@@ -50,13 +47,18 @@ pub async fn register(
         return Err(super::AppError::bad_request("Username cannot be empty"));
     }
     if req.password.len() < 6 {
-        return Err(super::AppError::bad_request("Password must be at least 6 characters"));
+        return Err(super::AppError::bad_request(
+            "Password must be at least 6 characters",
+        ));
     }
 
-    let email = req.email.unwrap_or_else(|| format!("{}@temp.local", req.username));
+    let email = req
+        .email
+        .unwrap_or_else(|| format!("{}@temp.local", req.username));
 
     // Register user (returns tuple: (User, access_token, refresh_token))
-    let (user, access_token, refresh_token) = state.user_service
+    let (user, access_token, refresh_token) = state
+        .user_service
         .register(req.username, email, req.password)
         .await?;
 
@@ -75,9 +77,8 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> AppResult<Json<AuthResponse>> {
     // Login user (returns tuple: (User, access_token, refresh_token))
-    let (user, access_token, refresh_token) = state.user_service
-        .login(req.username, req.password)
-        .await?;
+    let (user, access_token, refresh_token) =
+        state.user_service.login(req.username, req.password).await?;
 
     Ok(Json(AuthResponse {
         user_id: user.id.as_str().to_string(),
@@ -94,19 +95,16 @@ pub async fn refresh_token(
     Json(req): Json<RefreshTokenRequest>,
 ) -> AppResult<Json<AuthResponse>> {
     // Refresh tokens (returns tuple: (new_access_token, new_refresh_token))
-    let (access_token, refresh_token) = state.user_service
-        .refresh_token(req.refresh_token)
-        .await?;
+    let (access_token, refresh_token) = state.user_service.refresh_token(req.refresh_token).await?;
 
     // Extract user_id from new access token to get user info
-    let user_id_str = extract_user_id_from_token(&access_token)
-        .map_err(|e| super::AppError::internal_server_error(format!("Failed to extract user_id: {}", e)))?;
+    let user_id_str = extract_user_id_from_token(&access_token).map_err(|e| {
+        super::AppError::internal_server_error(format!("Failed to extract user_id: {}", e))
+    })?;
     let user_id = UserId::from_string(user_id_str);
 
     // Get user info
-    let user = state.user_service
-        .get_user(&user_id)
-        .await?;
+    let user = state.user_service.get_user(&user_id).await?;
 
     Ok(Json(AuthResponse {
         user_id: user.id.as_str().to_string(),
@@ -127,13 +125,15 @@ fn extract_user_id_from_token(token: &str) -> Result<String, String> {
     }
 
     let payload = parts[1];
-    let decoded = BASE64_URL_SAFE_NO_PAD.decode(payload)
+    let decoded = BASE64_URL_SAFE_NO_PAD
+        .decode(payload)
         .map_err(|e| format!("Failed to decode token: {}", e))?;
 
     let json: serde_json::Value = serde_json::from_slice(&decoded)
         .map_err(|e| format!("Failed to parse token JSON: {}", e))?;
 
-    let user_id = json.get("sub")
+    let user_id = json
+        .get("sub")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing sub claim".to_string())?;
 

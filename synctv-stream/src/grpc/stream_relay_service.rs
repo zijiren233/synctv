@@ -1,22 +1,28 @@
 use std::pin::Pin;
 use std::sync::Arc;
-use tonic::{Request, Response, Status};
-use tokio::sync::mpsc;
+use streamhub::{
+    define::{NotifyInfo, StreamHubEvent, StreamHubEventSender, SubscribeType, SubscriberInfo},
+    stream::StreamIdentifier,
+    utils::{RandomDigitCount, Uuid},
+};
+use tokio::sync::{mpsc, Mutex};
 use tokio_stream::{wrappers::ReceiverStream, Stream};
-use tracing::{info, warn, error};
+use tonic::{Request, Response, Status};
+use tracing::{info, warn};
 
-use crate::cache::{GopCache, FrameType};
-use crate::relay::StreamRegistry;
 use super::proto::*;
+use crate::cache::GopCache;
+use crate::relay::StreamRegistry;
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<RtmpPacket, Status>> + Send>>;
 
 /// StreamRelayService implementation
-/// Publisher nodes use this to serve RTMP packets to Puller nodes
+/// Publisher nodes use this to serve RTMP packets to Puller nodes via subscription
 pub struct StreamRelayServiceImpl {
     gop_cache: Arc<GopCache>,
     registry: Arc<StreamRegistry>,
     node_id: String,
+    stream_hub_event_sender: Arc<Mutex<StreamHubEventSender>>,
 }
 
 impl StreamRelayServiceImpl {
@@ -24,57 +30,21 @@ impl StreamRelayServiceImpl {
         gop_cache: Arc<GopCache>,
         registry: Arc<StreamRegistry>,
         node_id: String,
+        stream_hub_event_sender: StreamHubEventSender,
     ) -> Self {
         Self {
             gop_cache,
             registry,
             node_id,
+            stream_hub_event_sender: Arc::new(Mutex::new(stream_hub_event_sender)),
         }
     }
 }
 
 #[tonic::async_trait]
 impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl {
-    /// Get publisher information for a room
-    async fn get_publisher(
-        &self,
-        request: Request<GetPublisherRequest>,
-    ) -> Result<Response<GetPublisherResponse>, Status> {
-        let req = request.into_inner();
-        info!(room_id = req.room_id, "GetPublisher request");
-
-        // Query Redis for publisher info
-        let mut registry = self.registry.as_ref().clone();
-        match registry.get_publisher(&req.room_id).await {
-            Ok(Some(pub_info)) => {
-                let response = GetPublisherResponse {
-                    publisher: Some(PublisherInfo {
-                        room_id: req.room_id.clone(),
-                        node_id: pub_info.node_id.clone(),
-                        stream_key: format!("{}?token=xxx", req.room_id),
-                        metadata: None, // TODO: Parse from metadata JSON
-                        started_at: pub_info.started_at.timestamp(),
-                        stats: None, // TODO: Get live stats
-                    }),
-                    exists: true,
-                };
-                Ok(Response::new(response))
-            }
-            Ok(None) => {
-                let response = GetPublisherResponse {
-                    publisher: None,
-                    exists: false,
-                };
-                Ok(Response::new(response))
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to get publisher");
-                Err(Status::internal(format!("Failed to get publisher: {}", e)))
-            }
-        }
-    }
-
     /// Pull RTMP stream from publisher node (server streaming)
+    /// Similar to FLV/HLS: subscribe to StreamHub and forward data
     type PullRtmpStreamStream = ResponseStream;
 
     async fn pull_rtmp_stream(
@@ -84,17 +54,17 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         let req = request.into_inner();
         info!(
             room_id = req.room_id,
-            stream_key = req.stream_key,
-            "PullRtmpStream request"
+            media_id = req.media_id,
+            "PullRtmpStream request (service-to-service internal call)"
         );
 
         // Check if this node is the publisher
         let mut registry = (*self.registry).clone();
         let publisher_info = registry
-            .get_publisher(&req.room_id)
+            .get_publisher(&req.room_id, &req.media_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to get publisher: {}", e)))?
-            .ok_or_else(|| Status::not_found("No active publisher for this room"))?;
+            .ok_or_else(|| Status::not_found("No active publisher for this media"))?;
 
         if publisher_info.node_id != self.node_id {
             return Err(Status::failed_precondition(format!(
@@ -103,41 +73,124 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
             )));
         }
 
-        // Get GOP cache frames
-        let cached_frames = self.gop_cache.get_frames(&req.room_id);
+        // Get GOP cache frames for fast start
+        let stream_key = format!("{}:{}", req.room_id, req.media_id);
+        let cached_frames = self.gop_cache.get_frames(&stream_key);
         info!(
             room_id = req.room_id,
+            media_id = req.media_id,
             cached_frame_count = cached_frames.len(),
-            "Sending cached frames to puller"
+            "Sending cached frames + live subscription to puller"
         );
+
+        // Subscribe to StreamHub for live data
+        let subscriber_id = Uuid::new(RandomDigitCount::Four);
+        let sub_info = SubscriberInfo {
+            id: subscriber_id,
+            sub_type: SubscribeType::RtmpPull,
+            sub_data_type: streamhub::define::SubDataType::Frame,
+            notify_info: NotifyInfo {
+                request_url: String::new(),
+                remote_addr: String::new(),
+            },
+        };
+
+        // Stream name format: room_id/media_id
+        let stream_name = format!("{}/{}", req.room_id, req.media_id);
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name: stream_name.clone(),
+        };
+
+        let (event_result_sender, event_result_receiver) = tokio::sync::oneshot::channel();
+        let subscribe_event = StreamHubEvent::Subscribe {
+            identifier,
+            info: sub_info,
+            result_sender: event_result_sender,
+        };
+
+        // Send subscribe event
+        let event_sender = self.stream_hub_event_sender.lock().await;
+        event_sender
+            .send(subscribe_event)
+            .map_err(|_| Status::internal("Failed to send subscribe event"))?;
+        drop(event_sender);
+
+        // Wait for subscription result
+        let subscribe_result = event_result_receiver
+            .await
+            .map_err(|_| Status::internal("Subscribe result channel closed"))?
+            .map_err(|e| Status::internal(format!("Subscribe failed: {}", e)))?;
+
+        let mut frame_receiver = subscribe_result
+            .0
+            .frame_receiver
+            .ok_or_else(|| Status::internal("No frame receiver from subscription"))?;
 
         // Create a channel for streaming packets
         let (tx, rx) = mpsc::channel(128);
 
-        // Send cached frames first (for fast start)
-        let tx_clone = tx.clone();
+        // Spawn task to forward frames
+        let stream_name_clone = stream_name.clone();
+        let event_sender_clone = Arc::clone(&self.stream_hub_event_sender);
         tokio::spawn(async move {
+            // 1. Send GOP cache first (fast start)
             for frame in cached_frames {
-                let packet = RtmpPacket {
-                    r#type: match frame.frame_type {
-                        FrameType::Video => rtmp_packet::PacketType::Video,
-                        FrameType::Audio => rtmp_packet::PacketType::Audio,
-                    } as i32,
-                    timestamp: frame.timestamp as i64,
-                    pts: frame.timestamp as i64,
-                    payload: frame.data.to_vec(),
-                    is_keyframe: frame.is_keyframe,
+                let frame_type = match frame.frame_type {
+                    crate::cache::gop_cache::FrameType::Video => FrameType::Video as i32,
+                    crate::cache::gop_cache::FrameType::Audio => FrameType::Audio as i32,
                 };
 
-                if tx_clone.send(Ok(packet)).await.is_err() {
+                let packet = RtmpPacket {
+                    data: frame.data.to_vec(),
+                    timestamp: frame.timestamp,
+                    frame_type,
+                };
+
+                if tx.send(Ok(packet)).await.is_err() {
                     warn!("Client disconnected while sending cached frames");
+                    // Unsubscribe
+                    Self::unsubscribe_from_hub(
+                        event_sender_clone,
+                        subscriber_id,
+                        stream_name_clone,
+                    )
+                    .await;
+                    return;
+                }
+            }
+
+            // 2. Stream live data from StreamHub subscription
+            info!("GOP cache sent, now streaming live data");
+            while let Some(frame_data) = frame_receiver.recv().await {
+                // Extract data, timestamp, and frame_type from FrameData enum
+                let (data, timestamp, frame_type) = match frame_data {
+                    streamhub::define::FrameData::Video { data, timestamp } => {
+                        (data, timestamp, FrameType::Video as i32)
+                    }
+                    streamhub::define::FrameData::Audio { data, timestamp } => {
+                        (data, timestamp, FrameType::Audio as i32)
+                    }
+                    streamhub::define::FrameData::MetaData { data, timestamp } => {
+                        (data, timestamp, FrameType::Metadata as i32)
+                    }
+                    _ => continue,
+                };
+
+                let packet = RtmpPacket {
+                    data: data.to_vec(),
+                    timestamp,
+                    frame_type,
+                };
+
+                if tx.send(Ok(packet)).await.is_err() {
+                    warn!("Client disconnected during live streaming");
                     break;
                 }
             }
 
-            // TODO: Subscribe to live frame updates and continue streaming
-            // For now, close the stream after sending cached frames
-            info!("Cached frames sent, ending stream (live streaming not yet implemented)");
+            info!("Stream ended, unsubscribing");
+            Self::unsubscribe_from_hub(event_sender_clone, subscriber_id, stream_name_clone).await;
         });
 
         let output_stream = ReceiverStream::new(rx);
@@ -145,159 +198,39 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
             Box::pin(output_stream) as Self::PullRtmpStreamStream
         ))
     }
+}
 
-    /// Register as publisher for a stream
-    async fn register_publisher(
-        &self,
-        request: Request<RegisterPublisherRequest>,
-    ) -> Result<Response<RegisterPublisherResponse>, Status> {
-        let req = request.into_inner();
-        info!(
-            room_id = req.room_id,
-            node_id = req.node_id,
-            "RegisterPublisher request"
-        );
-
-        // Attempt atomic registration
-        let mut registry = (*self.registry).clone();
-        match registry
-            .register_publisher(&req.room_id, &req.node_id, "live")
-            .await
-        {
-            Ok(true) => {
-                // Registration successful
-                let response = RegisterPublisherResponse {
-                    success: true,
-                    publisher: Some(PublisherInfo {
-                        room_id: req.room_id.clone(),
-                        node_id: req.node_id.clone(),
-                        stream_key: req.stream_key.clone(),
-                        metadata: req.metadata,
-                        started_at: chrono::Utc::now().timestamp(),
-                        stats: None,
-                    }),
-                    error: String::new(),
-                };
-                Ok(Response::new(response))
-            }
-            Ok(false) => {
-                // Already registered by another node
-                let response = RegisterPublisherResponse {
-                    success: false,
-                    publisher: None,
-                    error: "Stream already being published by another node".to_string(),
-                };
-                Ok(Response::new(response))
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to register publisher");
-                Err(Status::internal(format!("Failed to register publisher: {}", e)))
-            }
-        }
-    }
-
-    /// Unregister publisher
-    async fn unregister_publisher(
-        &self,
-        request: Request<UnregisterPublisherRequest>,
-    ) -> Result<Response<UnregisterPublisherResponse>, Status> {
-        let req = request.into_inner();
-        info!(room_id = req.room_id, node_id = req.node_id, "UnregisterPublisher request");
-
-        let mut registry = (*self.registry).clone();
-        match registry.unregister_publisher(&req.room_id).await {
-            Ok(_) => {
-                let response = UnregisterPublisherResponse { success: true };
-                Ok(Response::new(response))
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to unregister publisher");
-                Err(Status::internal(format!("Failed to unregister publisher: {}", e)))
-            }
-        }
-    }
-
-    /// Get stream statistics
-    async fn get_stream_stats(
-        &self,
-        request: Request<GetStreamStatsRequest>,
-    ) -> Result<Response<GetStreamStatsResponse>, Status> {
-        let req = request.into_inner();
-
-        let mut registry = (*self.registry).clone();
-        let viewer_count = registry
-            .get_viewer_count(&req.room_id)
-            .await
-            .unwrap_or(0);
-
-        let cache_stats = self.gop_cache.get_stats(&req.room_id);
-
-        if cache_stats.is_some() {
-            let stats = StreamStats {
-                bytes_sent: 0, // TODO: Track in Publisher
-                bytes_received: 0,
-                viewer_count: viewer_count as i32,
-                bitrate_kbps: 0.0, // TODO: Calculate
-                frame_count: cache_stats.as_ref().map(|s| s.total_frames as i32).unwrap_or(0),
-                dropped_frames: 0,
-                latency_ms: 0.0,
-            };
-
-            let response = GetStreamStatsResponse {
-                stats: Some(stats),
-                exists: true,
-            };
-            Ok(Response::new(response))
-        } else {
-            let response = GetStreamStatsResponse {
-                stats: None,
-                exists: false,
-            };
-            Ok(Response::new(response))
-        }
-    }
-
-    /// List active streams
-    async fn list_streams(
-        &self,
-        request: Request<ListStreamsRequest>,
-    ) -> Result<Response<ListStreamsResponse>, Status> {
-        let req = request.into_inner();
-        info!(node_filter = req.node_id, "ListStreams request");
-
-        let mut registry = (*self.registry).clone();
-        let stream_ids = registry
-            .list_active_streams()
-            .await
-            .map_err(|e| Status::internal(format!("Failed to list streams: {}", e)))?;
-
-        // Build publisher info for each stream
-        let mut streams = Vec::new();
-        for room_id in stream_ids {
-            if let Ok(Some(pub_info)) = registry.get_publisher(&room_id).await {
-                // Filter by node if requested
-                if !req.node_id.is_empty() && pub_info.node_id != req.node_id {
-                    continue;
-                }
-
-                streams.push(PublisherInfo {
-                    room_id: room_id.clone(),
-                    node_id: pub_info.node_id,
-                    stream_key: format!("{}?token=xxx", room_id),
-                    metadata: None,
-                    started_at: pub_info.started_at.timestamp(),
-                    stats: None,
-                });
-            }
-        }
-
-        let total = streams.len() as i32;
-        let response = ListStreamsResponse {
-            streams,
-            total,
+impl StreamRelayServiceImpl {
+    /// Unsubscribe from StreamHub
+    async fn unsubscribe_from_hub(
+        event_sender: Arc<Mutex<StreamHubEventSender>>,
+        subscriber_id: Uuid,
+        stream_name: String,
+    ) {
+        let sub_info = SubscriberInfo {
+            id: subscriber_id,
+            sub_type: SubscribeType::RtmpPull,
+            sub_data_type: streamhub::define::SubDataType::Frame,
+            notify_info: NotifyInfo {
+                request_url: String::new(),
+                remote_addr: String::new(),
+            },
         };
 
-        Ok(Response::new(response))
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name,
+        };
+
+        let unsubscribe_event = StreamHubEvent::UnSubscribe {
+            identifier,
+            info: sub_info,
+        };
+
+        let sender = event_sender.lock().await;
+        if let Err(e) = sender.send(unsubscribe_event) {
+            warn!("Failed to send unsubscribe event: {}", e);
+        }
     }
 }
 

@@ -13,7 +13,6 @@ pub enum RoomStatus {
     Closed,
 }
 
-
 impl RoomStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
