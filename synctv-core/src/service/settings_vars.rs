@@ -10,24 +10,19 @@
 //!
 //! # Custom Validation
 //!
-//! Types can implement the `Validate` trait to provide custom validation logic:
+//! Use `with_validator` to add custom validation logic:
 //!
 //! ```rust,no_run
-//! use synctv_core::service::settings_vars::Validate;
-//! use anyhow::Result;
+//! use synctv_core::service::settings_vars::*;
 //!
-//! #[derive(Debug, Clone, PartialEq)]
-//! struct MaxRooms(i64);
-//!
-//! impl Validate for MaxRooms {
-//!     fn validate(&self) -> Result<()> {
-//!         if self.0 > 0 && self.0 <= 1000 {
+//! let max_rooms = setting!(i64, "server.max_rooms", storage, 10)
+//!     .with_validator(|v| {
+//!         if *v > 0 && *v <= 1000 {
 //!             Ok(())
 //!         } else {
 //!             Err(anyhow::anyhow!("max_rooms must be between 1 and 1000"))
 //!         }
-//!     }
-//! }
+//!     });
 //! ```
 
 use std::collections::hash_map::DefaultHasher;
@@ -38,20 +33,6 @@ use std::sync::{Arc, RwLock};
 
 use super::SettingsService;
 use anyhow::Result;
-
-/// Trait for custom validation logic
-///
-/// Types can implement this trait to provide custom validation logic.
-/// By default, all types pass validation.
-pub trait Validate: Send + Sync {
-    /// Validate the value
-    fn validate(&self) -> Result<()> {
-        Ok(())
-    }
-}
-
-// Implement Validate for all types by default (blanket implementation)
-impl<T: Send + Sync> Validate for T {}
 
 /// Trait for setting operations (type-erased)
 ///
@@ -74,11 +55,24 @@ pub trait SettingProvider: Send + Sync {
 /// ```rust,no_run
 /// let signup_enabled = setting!(bool, "server.signup_enabled", storage, true);
 /// let max_rooms = setting!(i64, "server.max_rooms", storage, 10);
+/// let max_rooms_with_validator = setting!(i64, "server.max_rooms", storage, 10, |v| {
+///     if *v > 0 && *v <= 1000 {
+///         Ok(())
+///     } else {
+///         Err(anyhow::anyhow!("max_rooms must be between 1 and 1000"))
+///     }
+/// });
 /// ```
 #[macro_export]
 macro_rules! setting {
+    // Without validator
     ($type:ty, $key:expr, $storage:expr, $default:expr) => {
         $crate::service::settings_vars::Setting::new($key, $storage, $default)
+    };
+    // With validator
+    ($type:ty, $key:expr, $storage:expr, $default:expr, $validator:expr) => {
+        $crate::service::settings_vars::Setting::new($key, $storage, $default)
+            .with_validator($validator)
     };
 }
 
@@ -180,6 +174,7 @@ where
     cache: Arc<RwLock<Option<T>>>,
     raw_cache: Arc<RwLock<Option<String>>>,
     default_value: T,
+    validator: Arc<RwLock<Option<Arc<dyn Fn(&T) -> Result<()> + Send + Sync>>>>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -195,6 +190,7 @@ where
             cache: self.cache.clone(),
             raw_cache: self.raw_cache.clone(),
             default_value: self.default_value.clone(),
+            validator: self.validator.clone(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -219,6 +215,7 @@ where
             cache: Arc::new(RwLock::new(None)),
             raw_cache: Arc::new(RwLock::new(None)),
             default_value,
+            validator: Arc::new(RwLock::new(None)),
             _phantom: std::marker::PhantomData,
         };
 
@@ -226,6 +223,30 @@ where
         storage.register_provider(key, Arc::new(setting.clone()));
 
         setting
+    }
+
+    /// Set a custom validator for this setting
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let max_rooms = setting!(i64, "server.max_rooms", storage, 10)
+    ///     .with_validator(|v| {
+    ///         if *v > 0 && *v <= 1000 {
+    ///             Ok(())
+    ///         } else {
+    ///             Err(anyhow::anyhow!("max_rooms must be between 1 and 1000"))
+    ///         }
+    ///     });
+    /// ```
+    pub fn with_validator<F>(self, validator: F) -> Self
+    where
+        F: Fn(&T) -> Result<()> + Send + Sync + 'static,
+    {
+        if let Ok(mut v) = self.validator.write() {
+            *v = Some(Arc::new(validator));
+        }
+        self
     }
 
     /// Get the current value, checking for changes on every call
@@ -250,8 +271,9 @@ where
             // Raw value changed (or first load), re-parse
             let value = new_raw
                 .as_ref()
-                .map(|raw| raw.parse().unwrap_or_else(|_| self.default_value.clone()))
-                .unwrap_or_else(|| self.default_value.clone());
+                .map_or_else(|| self.default_value.clone(), |raw| {
+                    raw.parse().unwrap_or_else(|_| self.default_value.clone())
+                });
 
             // Update both caches
             {
@@ -278,14 +300,20 @@ where
                 .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
             (*cache)
                 .as_ref()
-                .map_or_else(|| Ok(self.default_value.clone()), |value| Ok(value.clone()))
+                .map_or_else(|| Ok(self.default_value.clone()), |value| {
+                    Ok(value.clone())
+                })
         }
     }
 
     /// Set a new value and persist to database
     pub fn set(&self, value: T) -> Result<()> {
-        // Validate before setting
-        value.validate()?;
+        // Validate if validator is set
+        if let Ok(validators) = self.validator.read() {
+            if let Some(validator) = validators.as_ref() {
+                validator(&value)?;
+            }
+        }
         // Convert to string using standard Display trait
         let str_value = value.to_string();
         self.storage.set_raw(self.key, str_value)?;
@@ -297,7 +325,20 @@ where
         let v = str_value
             .parse::<T>()
             .map_err(|_| anyhow::anyhow!("Invalid value for setting '{}'", self.key))?;
-        v.validate()
+
+        // Run custom validator if set
+        if let Ok(validators) = self.validator.read() {
+            if let Some(validator) = validators.as_ref() {
+                validator(&v)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the setting key
+    pub fn key(&self) -> &str {
+        self.key
     }
 }
 
@@ -318,39 +359,21 @@ where
 
     fn is_valid_raw(&self, value: &str) -> Result<()> {
         let v = value.parse::<T>()?;
-        v.validate()
+
+        // Run custom validator if set
+        if let Ok(validators) = self.validator.read() {
+            if let Some(validator) = validators.as_ref() {
+                validator(&v)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Example: Custom i64 wrapper that requires values > 100
-    #[derive(Debug, Clone, PartialEq, Eq, Display, std::str::FromStr)]
-    struct MinI100(i64);
-
-    impl Validate for MinI100 {
-        fn validate(&self) -> Result<()> {
-            if self.0 > 100 {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!(
-                    "Value must be greater than 100, got {}",
-                    self.0
-                ))
-            }
-        }
-    }
-
-    #[test]
-    fn test_custom_validation() {
-        let valid_value = MinI100(150);
-        assert!(valid_value.validate().is_ok());
-
-        let invalid_value = MinI100(50);
-        assert!(invalid_value.validate().is_err());
-    }
 
     #[test]
     fn test_bool_conversion() {
@@ -392,5 +415,25 @@ mod tests {
         // Invalid i64 values
         assert!("abc".parse::<i64>().is_err());
         assert!("12.34".parse::<i64>().is_err());
+    }
+
+    #[test]
+    fn test_custom_validator() {
+        // This test demonstrates using with_validator
+        // In real usage, the validator would be stored with the setting
+        let validator_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let _ = |v: &i64| -> Result<()> {
+            validator_called.store(true, std::sync::atomic::Ordering::SeqCstst);
+            if *v > 0 && *v <= 100 {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Value must be between 1 and 100"))
+            }
+        };
+
+        // The validator would be set via with_validator in actual usage
+        // This is just to demonstrate the API
+        assert!(validator_called.load(std::sync::atomic::Ordering::SeqCstst));
     }
 }

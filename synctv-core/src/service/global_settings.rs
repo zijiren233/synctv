@@ -65,8 +65,24 @@ impl SettingsRegistry {
             // Each setting auto-registers its provider to storage
             signup_enabled: setting!(bool, "server.signup_enabled", storage.clone(), true),
             allow_room_creation: setting!(bool, "server.allow_room_creation", storage.clone(), true),
-            max_rooms_per_user: setting!(i64, "server.max_rooms_per_user", storage.clone(), 10),
-            max_members_per_room: setting!(i64, "server.max_members_per_room", storage.clone(), 100),
+            max_rooms_per_user: setting!(i64, "server.max_rooms_per_user", storage.clone(), 10,
+                |v: &i64| -> anyhow::Result<()> {
+                    if *v > 0 && *v <= 1000 {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!("max_rooms_per_user must be between 1 and 1000"))
+                    }
+                }
+            ),
+            max_members_per_room: setting!(i64, "server.max_members_per_room", storage.clone(), 100,
+                |v: &i64| -> anyhow::Result<()> {
+                    if *v > 0 && *v <= 10000 {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!("max_members_per_room must be between 1 and 10000"))
+                    }
+                }
+            ),
             server_start_time: setting!(i64, "server.server_start_time", storage, 0),
         }
     }
