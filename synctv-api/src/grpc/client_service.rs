@@ -1426,7 +1426,7 @@ impl MediaService for ClientServiceImpl {
 
         let media_list = self
             .room_service
-            .get_playlist(room_id)
+            .get_playlist(&room_id)
             .await
             .map_err(|_| Status::internal("Failed to get playlist"))?;
 

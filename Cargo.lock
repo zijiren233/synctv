@@ -5341,6 +5341,7 @@ dependencies = [
  "parking_lot",
  "prost",
  "prost-types",
+ "rand 0.8.5",
  "redis",
  "serde",
  "serde_json",

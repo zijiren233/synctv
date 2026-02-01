@@ -26,7 +26,7 @@ pub mod providers;
 
 pub use admin_service::AdminServiceImpl;
 pub use client_service::ClientServiceImpl;
-pub use interceptors::AuthInterceptor;
+pub use interceptors::{AuthInterceptor, LoggingInterceptor, ValidationInterceptor, TimeoutInterceptor};
 pub use message_handler::{MessageHandler, cluster_event_to_server_message};
 
 use proto::admin::admin_service_server::AdminServiceServer;

@@ -289,7 +289,7 @@ pub async fn get_playlist(
         .await?;
 
     // Get playlist
-    let media = state.room_service.get_playlist(room_id).await?;
+    let media = state.room_service.get_playlist(&room_id).await?;
 
     let response = media
         .into_iter()

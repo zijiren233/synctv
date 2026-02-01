@@ -1,5 +1,6 @@
 use synctv_core::service::auth::JwtService;
 use tonic::{metadata::MetadataMap, Request, Status};
+use tracing::{debug, info, warn, instrument, Instrument};
 
 /// User context - contains user_id extracted from JWT
 /// Used by UserService and AdminService methods
@@ -109,5 +110,144 @@ impl AuthInterceptor {
 impl std::fmt::Debug for AuthInterceptor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthInterceptor").finish()
+    }
+}
+
+/// Logging interceptor for gRPC requests
+///
+/// Logs incoming requests with method name, timing, and status.
+#[derive(Clone)]
+pub struct LoggingInterceptor;
+
+impl LoggingInterceptor {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Log request with method name and timing
+    #[instrument(skip(self, request))]
+    pub fn log<T>(&self, method: &'static str, request: Request<T>) -> Request<T> {
+        let metadata = request.metadata();
+        let user_agent = metadata
+            .get("user-agent")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("unknown");
+
+        debug!(
+            method = method,
+            user_agent = user_agent,
+            "Incoming gRPC request"
+        );
+
+        request
+    }
+}
+
+impl Default for LoggingInterceptor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for LoggingInterceptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoggingInterceptor").finish()
+    }
+}
+
+/// Request validation interceptor
+///
+/// Validates common request constraints like size limits.
+#[derive(Clone)]
+pub struct ValidationInterceptor {
+    max_request_size_mb: usize,
+}
+
+impl ValidationInterceptor {
+    pub fn new(max_request_size_mb: usize) -> Self {
+        Self {
+            max_request_size_mb,
+        }
+    }
+
+    /// Validate request size
+    pub fn validate<T>(&self, method: &'static str, request: &Request<T>) -> Result<(), Status> {
+        // Get content-length if available
+        if let Some(content_length) = request.metadata().get("content-length") {
+            let length_str = content_length
+                .to_str()
+                .map_err(|_| Status::invalid_argument("Invalid content-length header"))?;
+
+            if let Ok(size_bytes) = length_str.parse::<usize>() {
+                let max_bytes = self.max_request_size_mb * 1024 * 1024;
+                if size_bytes > max_bytes {
+                    warn!(
+                        method = method,
+                        size_bytes = size_bytes,
+                        max_bytes = max_bytes,
+                        "Request too large"
+                    );
+                    return Err(Status::resource_exhausted(format!(
+                        "Request too large: {} bytes (max {} MB)",
+                        size_bytes, self.max_request_size_mb
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Debug for ValidationInterceptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ValidationInterceptor")
+            .field("max_request_size_mb", &self.max_request_size_mb)
+            .finish()
+    }
+}
+
+/// Timeout/deadline enforcement interceptor
+///
+/// Ensures requests have appropriate timeout deadlines.
+#[derive(Clone)]
+pub struct TimeoutInterceptor {
+    default_timeout_secs: u64,
+}
+
+impl TimeoutInterceptor {
+    pub fn new(default_timeout_secs: u64) -> Self {
+        Self {
+            default_timeout_secs,
+        }
+    }
+
+    /// Ensure request has a deadline
+    pub fn enforce_timeout<T>(&self, request: &mut Request<T>) {
+        // If no deadline is set, add a default one
+        if request.deadline().is_err() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(self.default_timeout_secs);
+            request.set_timeout(deadline);
+        }
+    }
+}
+
+impl Debug for TimeoutInterceptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimeoutInterceptor")
+            .field("default_timeout_secs", &self.default_timeout_secs)
+            .finish()
+    }
+}
+
+// Helper to set deadline on tonic request
+trait RequestTimeoutExt {
+    fn set_timeout(&mut self, deadline: std::time::Instant);
+}
+
+impl<T> RequestTimeoutExt for Request<T> {
+    fn set_timeout(&mut self, deadline: std::time::Instant) {
+        self.metadata_mut()
+            .insert("grpc-timeout", format!("{}S", deadline.elapsed().as_secs()).parse().unwrap());
     }
 }

@@ -1,26 +1,46 @@
+//! Room management service
+//!
+//! Handles core room CRUD operations and coordinates with domain services.
+
 use sqlx::PgPool;
 use serde_json::json;
 use chrono::{DateTime, Utc};
 
 use crate::{
     models::{
-        Room, RoomId, RoomMember, RoomMemberWithUser, RoomSettings, RoomStatus, RoomWithCount, UserId,
-        PermissionBits, Role, RoomPlaybackState, Media, MediaId, ProviderType,
+        Room, RoomId, RoomMember, RoomSettings, RoomStatus, RoomWithCount, UserId,
+        PermissionBits, Role, RoomPlaybackState, Media, MediaId,
         RoomListQuery, ChatMessage,
     },
     repository::{RoomRepository, RoomMemberRepository, MediaRepository, RoomPlaybackStateRepository, ChatRepository},
-    service::auth::password::{hash_password, verify_password},
+    service::{
+        auth::password::{hash_password, verify_password},
+        permission::PermissionService,
+        member::MemberService,
+        media::MediaService,
+        playback::PlaybackService,
+        notification::NotificationService,
+    },
     Error, Result,
 };
 
 /// Room service for business logic
+///
+/// This is the main service that coordinates between domain services.
+/// Core room operations are handled here, while specific domains are delegated.
 #[derive(Clone)]
 pub struct RoomService {
+    // Core repositories
     room_repo: RoomRepository,
-    member_repo: RoomMemberRepository,
-    media_repo: MediaRepository,
     playback_repo: RoomPlaybackStateRepository,
     chat_repo: ChatRepository,
+
+    // Domain services
+    member_service: MemberService,
+    permission_service: PermissionService,
+    media_service: MediaService,
+    playback_service: PlaybackService,
+    notification_service: NotificationService,
 }
 
 impl std::fmt::Debug for RoomService {
@@ -31,14 +51,35 @@ impl std::fmt::Debug for RoomService {
 
 impl RoomService {
     pub fn new(pool: PgPool) -> Self {
+        // Initialize repositories
+        let room_repo = RoomRepository::new(pool.clone());
+        let member_repo = RoomMemberRepository::new(pool.clone());
+        let media_repo = MediaRepository::new(pool.clone());
+        let playback_repo = RoomPlaybackStateRepository::new(pool.clone());
+        let chat_repo = ChatRepository::new(pool);
+
+        // Initialize permission service with caching
+        let permission_service = PermissionService::new(member_repo.clone(), 10000, 300);
+
+        // Initialize domain services
+        let member_service = MemberService::new(member_repo.clone(), room_repo.clone(), permission_service.clone());
+        let media_service = MediaService::new(media_repo, permission_service.clone());
+        let playback_service = PlaybackService::new(playback_repo.clone(), permission_service.clone(), media_service.clone());
+        let notification_service = NotificationService::new();
+
         Self {
-            room_repo: RoomRepository::new(pool.clone()),
-            member_repo: RoomMemberRepository::new(pool.clone()),
-            media_repo: MediaRepository::new(pool.clone()),
-            playback_repo: RoomPlaybackStateRepository::new(pool.clone()),
-            chat_repo: ChatRepository::new(pool),
+            room_repo,
+            playback_repo,
+            chat_repo,
+            member_service,
+            permission_service,
+            media_service,
+            playback_service,
+            notification_service,
         }
     }
+
+    // ========== Core Room Operations ==========
 
     /// Create a new room
     pub async fn create_room(
@@ -89,7 +130,11 @@ impl RoomService {
             created_by,
             Role::Creator.permissions(),
         );
-        let created_member = self.member_repo.add(&member).await?;
+        let created_member = self.member_service.add_member(
+            created_room.id.clone(),
+            member.user_id.clone(),
+            Role::Creator,
+        ).await?;
 
         // Initialize playback state
         self.playback_repo.create_or_get(&created_room.id).await?;
@@ -127,38 +172,26 @@ impl RoomService {
             }
         }
 
-        // Check if already a member
-        if self.member_repo.is_member(&room_id, &user_id).await? {
-            return Err(Error::InvalidInput("Already a member of this room".to_string()));
-        }
-
-        // Check max members
-        if let Some(max_members) = room.settings.get("max_members").and_then(|v| v.as_i64()) {
-            let current_count = self.member_repo.count_by_room(&room_id).await?;
-            if current_count >= max_members as i32 {
-                return Err(Error::InvalidInput("Room is full".to_string()));
-            }
-        }
-
-        // Add as member with default member permissions
-        let member = RoomMember::new(room_id.clone(), user_id, Role::Member.permissions());
-        let created_member = self.member_repo.add(&member).await?;
+        // Add member (will check if already member and max members)
+        let created_member = self.member_service.add_member(room_id.clone(), user_id.clone(), Role::Member).await?;
 
         // Get all members
-        let members = self.member_repo.list_by_room(&room_id).await?;
+        let members = self.member_service.list_members(&room_id).await?;
+
+        // Notify room members
+        // TODO: Get username from user service
+        let _ = self.notification_service.notify_user_joined(&room_id, &user_id, "user").await;
 
         Ok((room, created_member, members))
     }
 
     /// Leave a room
     pub async fn leave_room(&self, room_id: RoomId, user_id: UserId) -> Result<()> {
-        // Check if member
-        if !self.member_repo.is_member(&room_id, &user_id).await? {
-            return Err(Error::NotFound("Not a member of this room".to_string()));
-        }
+        self.member_service.remove_member(room_id.clone(), user_id.clone()).await?;
 
-        // Remove member
-        self.member_repo.remove(&room_id, &user_id).await?;
+        // Notify room members
+        // TODO: Get username from user service
+        let _ = self.notification_service.notify_user_left(&room_id, &user_id, "user").await;
 
         Ok(())
     }
@@ -166,7 +199,12 @@ impl RoomService {
     /// Delete a room (creator only)
     pub async fn delete_room(&self, room_id: RoomId, user_id: UserId) -> Result<()> {
         // Check permission
-        self.check_permission(&room_id, &user_id, PermissionBits::DELETE_ROOM).await?;
+        self.permission_service
+            .check_permission(&room_id, &user_id, PermissionBits::DELETE_ROOM)
+            .await?;
+
+        // Notify before deletion
+        let _ = self.notification_service.notify_room_deleted(&room_id).await;
 
         // Delete room
         self.room_repo.delete(&room_id).await?;
@@ -182,7 +220,9 @@ impl RoomService {
         settings: RoomSettings,
     ) -> Result<Room> {
         // Check permission
-        self.check_permission(&room_id, &user_id, PermissionBits::UPDATE_ROOM_SETTINGS).await?;
+        self.permission_service
+            .check_permission(&room_id, &user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
+            .await?;
 
         // Get room
         let mut room = self
@@ -205,106 +245,13 @@ impl RoomService {
         // Save
         let updated_room = self.room_repo.update(&room).await?;
 
+        // Notify room members
+        let _ = self.notification_service.notify_settings_updated(&room_id, room.settings).await;
+
         Ok(updated_room)
     }
 
-    /// Add media to playlist
-    pub async fn add_media(
-        &self,
-        room_id: RoomId,
-        user_id: UserId,
-        url: String,
-        provider: ProviderType,
-        title: String,
-    ) -> Result<Media> {
-        // Check permission
-        self.check_permission(&room_id, &user_id, PermissionBits::ADD_MEDIA).await?;
-
-        // Get next position
-        let position = self.media_repo.get_next_position(&room_id).await?;
-
-        // Create media
-        let media = Media::new(
-            room_id,
-            url,
-            provider,
-            title,
-            json!({}),
-            position,
-            user_id,
-        );
-
-        let created_media = self.media_repo.create(&media).await?;
-
-        Ok(created_media)
-    }
-
-    /// Remove media from playlist
-    pub async fn remove_media(
-        &self,
-        room_id: RoomId,
-        user_id: UserId,
-        media_id: MediaId,
-    ) -> Result<()> {
-        // Check permission
-        self.check_permission(&room_id, &user_id, PermissionBits::REMOVE_MEDIA).await?;
-
-        // Delete media
-        self.media_repo.delete(&media_id).await?;
-
-        Ok(())
-    }
-
-    /// Get playlist
-    pub async fn get_playlist(&self, room_id: RoomId) -> Result<Vec<Media>> {
-        self.media_repo.get_playlist(&room_id).await
-    }
-
-    /// Update playback state (play/pause/seek/etc)
-    pub async fn update_playback(
-        &self,
-        room_id: RoomId,
-        user_id: UserId,
-        update_fn: impl FnOnce(&mut RoomPlaybackState),
-        required_permission: i64,
-    ) -> Result<RoomPlaybackState> {
-        // Check permission
-        self.check_permission(&room_id, &user_id, required_permission).await?;
-
-        // Get current state
-        let mut state = self
-            .playback_repo
-            .create_or_get(&room_id)
-            .await?;
-
-        // Apply update
-        update_fn(&mut state);
-
-        // Save with optimistic locking
-        let updated_state = self.playback_repo.update(&state).await?;
-
-        Ok(updated_state)
-    }
-
-    /// Check if user has permission in room
-    pub async fn check_permission(
-        &self,
-        room_id: &RoomId,
-        user_id: &UserId,
-        permission: i64,
-    ) -> Result<()> {
-        let member = self
-            .member_repo
-            .get(room_id, user_id)
-            .await?
-            .ok_or_else(|| Error::Authorization("Not a member of this room".to_string()))?;
-
-        if !member.has_permission(permission) {
-            return Err(Error::Authorization("Permission denied".to_string()));
-        }
-
-        Ok(())
-    }
+    // ========== Query Operations ==========
 
     /// Get room with details
     pub async fn get_room(&self, room_id: &RoomId) -> Result<Room> {
@@ -312,40 +259,6 @@ impl RoomService {
             .get_by_id(room_id)
             .await?
             .ok_or_else(|| Error::NotFound("Room not found".to_string()))
-    }
-
-    /// Get playback state
-    pub async fn get_playback_state(&self, room_id: &RoomId) -> Result<RoomPlaybackState> {
-        self.playback_repo
-            .create_or_get(room_id)
-            .await
-    }
-
-    /// Grant permission to user
-    pub async fn grant_permission(
-        &self,
-        room_id: RoomId,
-        granter_id: UserId,
-        target_user_id: UserId,
-        permission: i64,
-    ) -> Result<RoomMember> {
-        // Check if granter has permission to grant
-        self.check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION).await?;
-
-        // Get target member
-        let mut member = self
-            .member_repo
-            .get(&room_id, &target_user_id)
-            .await?
-            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
-
-        // Grant permission
-        member.permissions.grant(permission);
-
-        // Update
-        self.member_repo
-            .update_permissions(&room_id, &target_user_id, member.permissions)
-            .await
     }
 
     /// List all rooms (paginated)
@@ -375,28 +288,30 @@ impl RoomService {
 
     /// List rooms where a user is a member
     pub async fn list_joined_rooms(&self, user_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<RoomId>, i64)> {
-        self.member_repo.list_by_user(user_id, page, page_size).await
+        self.member_service.list_user_rooms(user_id, page, page_size).await
     }
 
     /// List rooms where a user is a member with full details (optimized)
-    /// Returns (room, user_permissions, member_count) tuples
     pub async fn list_joined_rooms_with_details(
         &self,
         user_id: &UserId,
         page: i64,
         page_size: i64,
     ) -> Result<(Vec<(Room, PermissionBits, i32)>, i64)> {
-        self.member_repo.list_by_user_with_details(user_id, page, page_size).await
+        self.member_service.list_user_rooms_with_details(user_id, page, page_size).await
     }
 
-    /// Get room members with user info
-    pub async fn get_room_members(&self, room_id: &RoomId) -> Result<Vec<RoomMemberWithUser>> {
-        self.member_repo.list_by_room(room_id).await
-    }
+    // ========== Member Operations (delegated) ==========
 
-    /// Get member count for a room
-    pub async fn get_member_count(&self, room_id: &RoomId) -> Result<i32> {
-        self.member_repo.count_by_room(room_id).await
+    /// Grant permission to user
+    pub async fn grant_permission(
+        &self,
+        room_id: RoomId,
+        granter_id: UserId,
+        target_user_id: UserId,
+        permission: i64,
+    ) -> Result<crate::models::RoomMember> {
+        self.member_service.grant_permission(room_id, granter_id, target_user_id, permission).await
     }
 
     /// Update member permissions
@@ -406,19 +321,8 @@ impl RoomService {
         granter_id: UserId,
         target_user_id: UserId,
         permissions: PermissionBits,
-    ) -> Result<RoomMember> {
-        // Check if granter has permission to modify permissions
-        self.check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION).await?;
-
-        // Verify target is a member
-        if !self.member_repo.is_member(&room_id, &target_user_id).await? {
-            return Err(Error::NotFound("User is not a member of this room".to_string()));
-        }
-
-        // Update permissions
-        self.member_repo
-            .update_permissions(&room_id, &target_user_id, permissions)
-            .await
+    ) -> Result<crate::models::RoomMember> {
+        self.member_service.update_member_permissions(room_id, granter_id, target_user_id, permissions).await
     }
 
     /// Kick member from room
@@ -428,21 +332,59 @@ impl RoomService {
         kicker_id: UserId,
         target_user_id: UserId,
     ) -> Result<()> {
-        // Check if kicker has permission to kick
-        self.check_permission(&room_id, &kicker_id, PermissionBits::KICK_USER).await?;
+        self.member_service.kick_member(room_id, kicker_id, target_user_id).await
+    }
 
-        // Can't kick yourself
-        if kicker_id == target_user_id {
-            return Err(Error::InvalidInput("Cannot kick yourself".to_string()));
+    /// Get room members with user info
+    pub async fn get_room_members(&self, room_id: &RoomId) -> Result<Vec<crate::models::RoomMemberWithUser>> {
+        self.member_service.list_members(room_id).await
+    }
+
+    /// Get member count for a room
+    pub async fn get_member_count(&self, room_id: &RoomId) -> Result<i32> {
+        self.member_service.count_members(room_id).await
+    }
+
+    /// Check if user is a member of the room
+    pub async fn check_membership(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+    ) -> Result<()> {
+        if self.member_service.is_member(room_id, user_id).await? {
+            Ok(())
+        } else {
+            Err(Error::PermissionDenied("Not a member of this room".to_string()))
         }
+    }
 
-        // Remove member
-        let removed = self.member_repo.remove(&room_id, &target_user_id).await?;
-        if !removed {
-            return Err(Error::NotFound("User is not a member of this room".to_string()));
-        }
+    // ========== Media Operations (delegated) ==========
 
-        Ok(())
+    /// Add media to playlist
+    pub async fn add_media(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        url: String,
+        provider: crate::models::ProviderType,
+        title: String,
+    ) -> Result<Media> {
+        self.media_service.add_media(room_id, user_id, url, provider, title).await
+    }
+
+    /// Remove media from playlist
+    pub async fn remove_media(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        media_id: MediaId,
+    ) -> Result<()> {
+        self.media_service.remove_media(room_id, user_id, media_id).await
+    }
+
+    /// Get playlist
+    pub async fn get_playlist(&self, room_id: &RoomId) -> Result<Vec<Media>> {
+        self.media_service.get_playlist(room_id).await
     }
 
     /// Swap positions of two media items in playlist
@@ -453,12 +395,34 @@ impl RoomService {
         media_id1: MediaId,
         media_id2: MediaId,
     ) -> Result<()> {
-        // Check permission - swapping media requires ADD_MEDIA permission
-        self.check_permission(&room_id, &user_id, PermissionBits::ADD_MEDIA).await?;
-
-        // Swap positions
-        self.media_repo.swap_positions(&media_id1, &media_id2).await
+        self.media_service.swap_media(room_id, user_id, media_id1, media_id2).await
     }
+
+    // ========== Playback Operations (delegated) ==========
+
+    /// Update playback state (play/pause/seek/etc)
+    pub async fn update_playback(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        update_fn: impl FnOnce(&mut RoomPlaybackState),
+        required_permission: i64,
+    ) -> Result<RoomPlaybackState> {
+        // Check permission
+        self.permission_service
+            .check_permission(&room_id, &user_id, required_permission)
+            .await?;
+
+        // Get current state and apply update
+        self.playback_service.update_state(room_id, update_fn).await
+    }
+
+    /// Get playback state
+    pub async fn get_playback_state(&self, room_id: &RoomId) -> Result<RoomPlaybackState> {
+        self.playback_service.get_state(room_id).await
+    }
+
+    // ========== Chat Operations ==========
 
     /// Get chat history for a room
     pub async fn get_chat_history(
@@ -488,18 +452,19 @@ impl RoomService {
         self.chat_repo.create(&message).await
     }
 
-    /// Check if user is a member of the room
-    pub async fn check_membership(
+    // ========== Permission Operations (delegated) ==========
+
+    /// Check if user has permission in room
+    pub async fn check_permission(
         &self,
         room_id: &RoomId,
         user_id: &UserId,
+        permission: i64,
     ) -> Result<()> {
-        if self.member_repo.is_member(room_id, user_id).await? {
-            Ok(())
-        } else {
-            Err(Error::PermissionDenied("Not a member of this room".to_string()))
-        }
+        self.permission_service.check_permission(room_id, user_id, permission).await
     }
+
+    // ========== Admin Operations ==========
 
     /// Update room directly (admin use, bypasses permission checks)
     pub async fn admin_update_room(&self, room: &Room) -> Result<Room> {

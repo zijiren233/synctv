@@ -1,7 +1,9 @@
 pub mod sync;
 pub mod discovery;
 pub mod grpc;
+pub mod error;
 
-// Re-exports will be added as modules are implemented
-// pub use sync::*;
-// pub use discovery::*;
+pub use error::{Error, Result};
+pub use discovery::{NodeInfo, NodeRegistry, HealthMonitor, NodeHealth, LoadBalancer, LoadBalancingStrategy};
+pub use sync::{ConnectionManager, PublishRequest, RoomMessageHub};
+pub use grpc::{ClusterServer, ClusterServiceServer};

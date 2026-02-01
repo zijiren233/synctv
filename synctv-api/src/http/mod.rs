@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod error;
+pub mod health;
 pub mod middleware;
 pub mod oauth2;
 pub mod room;
@@ -64,8 +65,8 @@ pub fn create_router(
     };
 
     let mut router = Router::new()
-        // Health check
-        .route("/health", get(health_check))
+        // Health check endpoints
+        .merge(health::create_health_router())
         // Authentication routes
         .route("/api/auth/register", post(auth::register))
         .route("/api/auth/login", post(auth::login))
