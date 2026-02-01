@@ -208,7 +208,7 @@ impl RoomService {
         Ok(updated_room)
     }
 
-    /// Add movie to playlist
+    /// Add media to playlist
     pub async fn add_media(
         &self,
         room_id: RoomId,
@@ -223,8 +223,8 @@ impl RoomService {
         // Get next position
         let position = self.media_repo.get_next_position(&room_id).await?;
 
-        // Create movie
-        let movie = Media::new(
+        // Create media
+        let media = Media::new(
             room_id,
             url,
             provider,
@@ -234,12 +234,12 @@ impl RoomService {
             user_id,
         );
 
-        let created_movie = self.media_repo.create(&movie).await?;
+        let created_media = self.media_repo.create(&media).await?;
 
-        Ok(created_movie)
+        Ok(created_media)
     }
 
-    /// Remove movie from playlist
+    /// Remove media from playlist
     pub async fn remove_media(
         &self,
         room_id: RoomId,
@@ -249,7 +249,7 @@ impl RoomService {
         // Check permission
         self.check_permission(&room_id, &user_id, PermissionBits::REMOVE_MEDIA).await?;
 
-        // Delete movie
+        // Delete media
         self.media_repo.delete(&media_id).await?;
 
         Ok(())

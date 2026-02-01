@@ -918,31 +918,31 @@ impl ClientService for ClientServiceImpl {
             ProviderType::from_str(&req.provider).unwrap_or(ProviderType::DirectUrl)
         };
 
-        // Add movie
-        let movie = self
+        // Add media
+        let media = self
             .room_service
             .add_media(room_id, user_id, req.url.clone(), provider, req.url)
             .await
             .map_err(|e| match e {
                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
                 synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-                _ => Status::internal("Failed to add movie"),
+                _ => Status::internal("Failed to add media"),
             })?;
 
         // Convert to proto
-        let proto_movie = Some(Media {
-            id: movie.id.as_str().to_string(),
-            room_id: movie.room_id.as_str().to_string(),
-            url: movie.url,
-            provider: movie.provider.as_str().to_string(),
-            title: movie.title,
-            metadata: serde_json::to_vec(&movie.metadata).unwrap_or_default(),
-            position: movie.position,
-            added_at: movie.added_at.timestamp(),
-            added_by: movie.added_by.as_str().to_string(),
+        let proto_media = Some(Media {
+            id: media.id.as_str().to_string(),
+            room_id: media.room_id.as_str().to_string(),
+            url: media.url,
+            provider: media.provider.as_str().to_string(),
+            title: media.title,
+            metadata: serde_json::to_vec(&media.metadata).unwrap_or_default(),
+            position: media.position,
+            added_at: media.added_at.timestamp(),
+            added_by: media.added_by.as_str().to_string(),
         });
 
-        Ok(Response::new(AddMediaResponse { media: proto_movie }))
+        Ok(Response::new(AddMediaResponse { media: proto_media }))
     }
 
     async fn remove_media(
@@ -955,13 +955,13 @@ impl ClientService for ClientServiceImpl {
         let room_id = RoomId::from_string(req.room_id);
         let media_id = MediaId::from_string(req.media_id);
 
-        // Remove movie
+        // Remove media
         self.room_service
             .remove_media(room_id, user_id, media_id)
             .await
             .map_err(|e| match e {
                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
-                _ => Status::internal("Failed to remove movie"),
+                _ => Status::internal("Failed to remove media"),
             })?;
 
         Ok(Response::new(RemoveMediaResponse { success: true }))
@@ -976,14 +976,14 @@ impl ClientService for ClientServiceImpl {
         let room_id = RoomId::from_string(req.room_id);
 
         // Get playlist
-        let movies = self
+        let media_list = self
             .room_service
             .get_playlist(room_id)
             .await
             .map_err(|_| Status::internal("Failed to get playlist"))?;
 
         // Convert to proto
-        let proto_movies: Vec<Media> = movies
+        let proto_media: Vec<Media> = media_list
             .into_iter()
             .map(|m| Media {
                 id: m.id.as_str().to_string(),
@@ -998,7 +998,7 @@ impl ClientService for ClientServiceImpl {
             })
             .collect();
 
-        Ok(Response::new(GetPlaylistResponse { media: proto_movies }))
+        Ok(Response::new(GetPlaylistResponse { media: proto_media }))
     }
 
     async fn swap_media(
@@ -1154,7 +1154,7 @@ impl ClientService for ClientServiceImpl {
         let req = request.into_inner();
         let room_id = RoomId::from_string(req.room_id);
 
-        // Change rate
+        // Change speed
         let state = self
             .room_service
             .update_playback(
@@ -1166,7 +1166,7 @@ impl ClientService for ClientServiceImpl {
             .await
             .map_err(|e| match e {
                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
-                _ => Status::internal("Failed to change rate"),
+                _ => Status::internal("Failed to change speed"),
             })?;
 
         // Convert to proto
@@ -1195,7 +1195,7 @@ impl ClientService for ClientServiceImpl {
         let room_id = RoomId::from_string(req.room_id);
         let media_id = MediaId::from_string(req.media_id);
 
-        // Switch movie
+        // Switch media
         let state = self
             .room_service
             .update_playback(
@@ -1207,7 +1207,7 @@ impl ClientService for ClientServiceImpl {
             .await
             .map_err(|e| match e {
                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
-                _ => Status::internal("Failed to switch movie"),
+                _ => Status::internal("Failed to switch media"),
             })?;
 
         // Convert to proto

@@ -181,6 +181,7 @@ async fn main() -> Result<()> {
     let room_service_grpc = room_service.clone();
     let credential_repository_grpc = credential_repository.clone();
     let providers_manager_grpc = providers_manager.clone();
+    let provider_instance_manager_grpc = provider_instance_manager.clone();
 
     // Clone Arc for HTTP server
     let user_service_http = user_service.clone();
@@ -203,6 +204,7 @@ async fn main() -> Result<()> {
             content_filter,
             connection_manager,
             Some(providers_manager_grpc),
+            provider_instance_manager_grpc,
             credential_repository_grpc,
         ).await {
             error!("gRPC server error: {}", e);

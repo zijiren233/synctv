@@ -17,31 +17,31 @@ impl MediaRepository {
         Self { pool }
     }
 
-    /// Add movie to playlist
-    pub async fn create(&self, movie: &Media) -> Result<Media> {
-        let metadata_json = serde_json::to_value(&movie.metadata)?;
+    /// Add media to playlist
+    pub async fn create(&self, media: &Media) -> Result<Media> {
+        let metadata_json = serde_json::to_value(&media.metadata)?;
 
         let row = sqlx::query(
             "INSERT INTO media (id, room_id, url, provider, title, metadata, position, added_at, added_by)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              RETURNING id, room_id, url, provider, title, metadata, position, added_at, added_by, deleted_at"
         )
-        .bind(movie.id.as_str())
-        .bind(movie.room_id.as_str())
-        .bind(&movie.url)
-        .bind(movie.provider.as_str())
-        .bind(&movie.title)
+        .bind(media.id.as_str())
+        .bind(media.room_id.as_str())
+        .bind(&media.url)
+        .bind(media.provider.as_str())
+        .bind(&media.title)
         .bind(&metadata_json)
-        .bind(movie.position)
-        .bind(movie.added_at)
-        .bind(movie.added_by.as_str())
+        .bind(media.position)
+        .bind(media.added_at)
+        .bind(media.added_by.as_str())
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_movie(row)
+        self.row_to_media(row)
     }
 
-    /// Get movie by ID
+    /// Get media by ID
     pub async fn get_by_id(&self, media_id: &MediaId) -> Result<Option<Media>> {
         let row = sqlx::query(
             "SELECT id, room_id, url, provider, title, metadata, position, added_at, added_by, deleted_at
@@ -53,7 +53,7 @@ impl MediaRepository {
         .await?;
 
         match row {
-            Some(row) => Ok(Some(self.row_to_movie(row)?)),
+            Some(row) => Ok(Some(self.row_to_media(row)?)),
             None => Ok(None),
         }
     }
@@ -71,11 +71,11 @@ impl MediaRepository {
         .await?;
 
         rows.into_iter()
-            .map(|row| self.row_to_movie(row))
+            .map(|row| self.row_to_media(row))
             .collect()
     }
 
-    /// Delete movie from playlist
+    /// Delete media from playlist
     pub async fn delete(&self, media_id: &MediaId) -> Result<bool> {
         let result = sqlx::query(
             "UPDATE media
@@ -140,7 +140,7 @@ impl MediaRepository {
     }
 
     /// Convert database row to Media
-    fn row_to_movie(&self, row: PgRow) -> Result<Media> {
+    fn row_to_media(&self, row: PgRow) -> Result<Media> {
         let metadata_json: JsonValue = row.try_get("metadata")?;
         let provider_str: String = row.try_get("provider")?;
 
@@ -165,7 +165,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "Requires database"]
-    async fn test_create_movie() {
+    async fn test_create_media() {
         // Integration test placeholder
     }
 }

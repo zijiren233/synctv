@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use synctv_core::service::{UserService, RoomService};
-use synctv_core::models::{RoomId, UserId};
+use synctv_core::service::{UserService, RoomService, ProviderInstanceManager};
+use synctv_core::models::{RoomId, UserId, ProviderInstance};
 
 use super::proto::admin::{
     admin_service_server::AdminService,
@@ -14,13 +14,36 @@ use super::proto::admin::{
 pub struct AdminServiceImpl {
     user_service: Arc<UserService>,
     room_service: Arc<RoomService>,
+    provider_manager: Arc<ProviderInstanceManager>,
 }
 
 impl AdminServiceImpl {
-    pub fn new(user_service: UserService, room_service: RoomService) -> Self {
+    pub fn new(
+        user_service: UserService,
+        room_service: RoomService,
+        provider_manager: Arc<ProviderInstanceManager>,
+    ) -> Self {
         Self {
             user_service: Arc::new(user_service),
             room_service: Arc::new(room_service),
+            provider_manager,
+        }
+    }
+
+    /// Convert ProviderInstance to proto message
+    fn instance_to_proto(&self, instance: &ProviderInstance) -> super::proto::admin::ProviderInstance {
+        super::proto::admin::ProviderInstance {
+            name: instance.name.clone(),
+            endpoint: instance.endpoint.clone(),
+            comment: instance.comment.clone().unwrap_or_default(),
+            timeout: instance.timeout.clone(),
+            tls: instance.tls,
+            insecure_tls: instance.insecure_tls,
+            providers: instance.providers.clone(),
+            enabled: instance.enabled,
+            status: "connected".to_string(), // TODO: Implement actual health check
+            created_at: instance.created_at.timestamp(),
+            updated_at: instance.updated_at.timestamp(),
         }
     }
 
@@ -101,72 +124,295 @@ impl AdminService for AdminServiceImpl {
     }
 
     // =========================
-    // Provider Backend Management
+    // Provider Instance Management
     // =========================
 
-    async fn list_provider_backends(
+    async fn list_provider_instances(
         &self,
-        request: Request<ListProviderBackendsRequest>,
-    ) -> Result<Response<ListProviderBackendsResponse>, Status> {
+        request: Request<ListProviderInstancesRequest>,
+    ) -> Result<Response<ListProviderInstancesResponse>, Status> {
         self.check_admin(&request)?;
-        // TODO: Implement provider backend listing
-        Ok(Response::new(ListProviderBackendsResponse {
-            backends: vec![],
+        let req = request.into_inner();
+
+        // Get all instances from database
+        let instances = self.provider_manager
+            .get_all_instances()
+            .await
+            .map_err(|e| Status::internal(format!("Failed to list provider backends: {}", e)))?;
+
+        // Filter by provider_type if specified
+        let filtered_instances = if !req.provider_type.is_empty() {
+            instances
+                .into_iter()
+                .filter(|inst| inst.providers.contains(&req.provider_type))
+                .collect::<Vec<_>>()
+        } else {
+            instances
+        };
+
+        // Convert to proto format
+        let instances: Vec<super::proto::admin::ProviderInstance> = filtered_instances
+            .iter()
+            .map(|inst| self.instance_to_proto(inst))
+            .collect();
+
+        tracing::info!("Listed {} provider instances", instances.len());
+
+        Ok(Response::new(ListProviderInstancesResponse {
+            instances,
         }))
     }
 
-    async fn add_provider_backend(
+    async fn add_provider_instance(
         &self,
-        request: Request<AddProviderBackendRequest>,
-    ) -> Result<Response<AddProviderBackendResponse>, Status> {
+        request: Request<AddProviderInstanceRequest>,
+    ) -> Result<Response<AddProviderInstanceResponse>, Status> {
         self.check_admin(&request)?;
-        // TODO: Implement add provider backend
-        Err(Status::unimplemented("AddProviderBackend not yet implemented"))
+        let req = request.into_inner();
+
+        // Validate input
+        if req.name.trim().is_empty() {
+            return Err(Status::invalid_argument("Provider instance name cannot be empty"));
+        }
+        if req.endpoint.trim().is_empty() {
+            return Err(Status::invalid_argument("Endpoint cannot be empty"));
+        }
+        if req.providers.is_empty() {
+            return Err(Status::invalid_argument("At least one provider type must be specified"));
+        }
+
+        // Parse additional config from JSON if provided
+        let config: serde_json::Value = if req.config.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_slice(&req.config)
+                .map_err(|e| Status::invalid_argument(format!("Invalid config JSON: {}", e)))?
+        };
+
+        // Create ProviderInstance from request
+        let instance = ProviderInstance {
+            name: req.name.clone(),
+            endpoint: req.endpoint.clone(),
+            comment: if req.comment.is_empty() {
+                None
+            } else {
+                Some(req.comment.clone())
+            },
+            jwt_secret: config.get("jwt_secret")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            custom_ca: config.get("custom_ca")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            timeout: if req.timeout.is_empty() {
+                "10s".to_string()
+            } else {
+                req.timeout.clone()
+            },
+            tls: req.tls,
+            insecure_tls: req.insecure_tls,
+            providers: req.providers.clone(),
+            enabled: true, // New instances are enabled by default
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        // Add via ProviderInstanceManager (creates gRPC connection + saves to DB)
+        self.provider_manager
+            .add(instance.clone())
+            .await
+            .map_err(|e| Status::internal(format!("Failed to add provider instance: {}", e)))?;
+
+        tracing::info!("Added provider instance: {}", req.name);
+
+        Ok(Response::new(AddProviderInstanceResponse {
+            instance: Some(self.instance_to_proto(&instance)),
+        }))
     }
 
-    async fn update_provider_backend(
+    async fn update_provider_instance(
         &self,
-        request: Request<UpdateProviderBackendRequest>,
-    ) -> Result<Response<UpdateProviderBackendResponse>, Status> {
+        request: Request<UpdateProviderInstanceRequest>,
+    ) -> Result<Response<UpdateProviderInstanceResponse>, Status> {
         self.check_admin(&request)?;
-        // TODO: Implement update provider backend
-        Err(Status::unimplemented("UpdateProviderBackend not yet implemented"))
+        let req = request.into_inner();
+
+        // Get existing instance
+        let instances = self.provider_manager.get_all_instances().await
+            .map_err(|e| Status::internal(format!("Failed to get provider instances: {}", e)))?;
+
+        let existing = instances
+            .iter()
+            .find(|inst| inst.name == req.name)
+            .ok_or_else(|| Status::not_found(format!("Provider instance '{}' not found", req.name)))?;
+
+        // Parse additional config from JSON if provided
+        let config: Option<serde_json::Value> = if req.config.is_empty() {
+            None
+        } else {
+            Some(serde_json::from_slice(&req.config)
+                .map_err(|e| Status::invalid_argument(format!("Invalid config JSON: {}", e)))?)
+        };
+
+        // Build updated instance (use existing values if not provided)
+        let updated_instance = ProviderInstance {
+            name: existing.name.clone(), // Name (primary key) cannot be changed
+            endpoint: if req.endpoint.is_empty() {
+                existing.endpoint.clone()
+            } else {
+                req.endpoint.clone()
+            },
+            comment: if req.comment.is_empty() {
+                existing.comment.clone()
+            } else {
+                Some(req.comment.clone())
+            },
+            jwt_secret: config.as_ref()
+                .and_then(|c| c.get("jwt_secret"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| existing.jwt_secret.clone()),
+            custom_ca: config.as_ref()
+                .and_then(|c| c.get("custom_ca"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| existing.custom_ca.clone()),
+            timeout: if req.timeout.is_empty() {
+                existing.timeout.clone()
+            } else {
+                req.timeout.clone()
+            },
+            tls: req.tls,
+            insecure_tls: req.insecure_tls,
+            providers: if req.providers.is_empty() {
+                existing.providers.clone()
+            } else {
+                req.providers.clone()
+            },
+            enabled: existing.enabled, // Don't change enabled status here (use enable/disable methods)
+            created_at: existing.created_at,
+            updated_at: chrono::Utc::now(),
+        };
+
+        // Update via ProviderInstanceManager (recreates gRPC connection + updates DB)
+        self.provider_manager
+            .update(updated_instance.clone())
+            .await
+            .map_err(|e| Status::internal(format!("Failed to update provider instance: {}", e)))?;
+
+        tracing::info!("Updated provider instance: {}", req.name);
+
+        Ok(Response::new(UpdateProviderInstanceResponse {
+            instance: Some(self.instance_to_proto(&updated_instance)),
+        }))
     }
 
-    async fn delete_provider_backend(
+    async fn delete_provider_instance(
         &self,
-        request: Request<DeleteProviderBackendRequest>,
-    ) -> Result<Response<DeleteProviderBackendResponse>, Status> {
+        request: Request<DeleteProviderInstanceRequest>,
+    ) -> Result<Response<DeleteProviderInstanceResponse>, Status> {
         self.check_admin(&request)?;
-        // TODO: Implement delete provider backend
-        Err(Status::unimplemented("DeleteProviderBackend not yet implemented"))
+        let req = request.into_inner();
+
+        // Delete via ProviderInstanceManager (removes from DB + closes gRPC connection)
+        self.provider_manager
+            .delete(&req.name)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to delete provider instance: {}", e)))?;
+
+        tracing::info!("Deleted provider instance: {}", req.name);
+
+        Ok(Response::new(DeleteProviderInstanceResponse {
+            success: true,
+        }))
     }
 
-    async fn reconnect_provider_backend(
+    async fn reconnect_provider_instance(
         &self,
-        request: Request<ReconnectProviderBackendRequest>,
-    ) -> Result<Response<ReconnectProviderBackendResponse>, Status> {
+        request: Request<ReconnectProviderInstanceRequest>,
+    ) -> Result<Response<ReconnectProviderInstanceResponse>, Status> {
         self.check_admin(&request)?;
-        // TODO: Implement reconnect provider backend
-        Err(Status::unimplemented("ReconnectProviderBackend not yet implemented"))
+        let req = request.into_inner();
+
+        // Get existing instance
+        let instances = self.provider_manager.get_all_instances().await
+            .map_err(|e| Status::internal(format!("Failed to get provider instances: {}", e)))?;
+
+        let existing = instances
+            .iter()
+            .find(|inst| inst.name == req.name)
+            .ok_or_else(|| Status::not_found(format!("Provider instance '{}' not found", req.name)))?
+            .clone();
+
+        // Update with same config (forces reconnection)
+        self.provider_manager
+            .update(existing.clone())
+            .await
+            .map_err(|e| Status::internal(format!("Failed to reconnect provider instance: {}", e)))?;
+
+        tracing::info!("Reconnected provider instance: {}", req.name);
+
+        Ok(Response::new(ReconnectProviderInstanceResponse {
+            instance: Some(self.instance_to_proto(&existing)),
+        }))
     }
 
-    async fn enable_provider_backend(
+    async fn enable_provider_instance(
         &self,
-        request: Request<EnableProviderBackendRequest>,
-    ) -> Result<Response<EnableProviderBackendResponse>, Status> {
+        request: Request<EnableProviderInstanceRequest>,
+    ) -> Result<Response<EnableProviderInstanceResponse>, Status> {
         self.check_admin(&request)?;
-        // TODO: Implement enable provider backend
-        Err(Status::unimplemented("EnableProviderBackend not yet implemented"))
+        let req = request.into_inner();
+
+        // Enable via ProviderInstanceManager (updates DB + creates gRPC connection)
+        self.provider_manager
+            .enable(&req.name)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to enable provider instance: {}", e)))?;
+
+        // Get updated instance
+        let instances = self.provider_manager.get_all_instances().await
+            .map_err(|e| Status::internal(format!("Failed to get provider instances: {}", e)))?;
+
+        let updated = instances
+            .iter()
+            .find(|inst| inst.name == req.name)
+            .ok_or_else(|| Status::not_found(format!("Provider instance '{}' not found", req.name)))?;
+
+        tracing::info!("Enabled provider instance: {}", req.name);
+
+        Ok(Response::new(EnableProviderInstanceResponse {
+            instance: Some(self.instance_to_proto(updated)),
+        }))
     }
 
-    async fn disable_provider_backend(
+    async fn disable_provider_instance(
         &self,
-        request: Request<DisableProviderBackendRequest>,
-    ) -> Result<Response<DisableProviderBackendResponse>, Status> {
+        request: Request<DisableProviderInstanceRequest>,
+    ) -> Result<Response<DisableProviderInstanceResponse>, Status> {
         self.check_admin(&request)?;
-        // TODO: Implement disable provider backend
-        Err(Status::unimplemented("DisableProviderBackend not yet implemented"))
+        let req = request.into_inner();
+
+        // Disable via ProviderInstanceManager (updates DB + closes gRPC connection)
+        self.provider_manager
+            .disable(&req.name)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to disable provider instance: {}", e)))?;
+
+        // Get updated instance
+        let instances = self.provider_manager.get_all_instances().await
+            .map_err(|e| Status::internal(format!("Failed to get provider instances: {}", e)))?;
+
+        let updated = instances
+            .iter()
+            .find(|inst| inst.name == req.name)
+            .ok_or_else(|| Status::not_found(format!("Provider instance '{}' not found", req.name)))?;
+
+        tracing::info!("Disabled provider instance: {}", req.name);
+
+        Ok(Response::new(DisableProviderInstanceResponse {
+            instance: Some(self.instance_to_proto(updated)),
+        }))
     }
 
     // =========================
@@ -429,7 +675,7 @@ impl AdminService for AdminServiceImpl {
             active_rooms: 0,
             banned_rooms: 0,
             total_media: 0,
-            provider_backends: 0,
+            provider_instances: 0,
             uptime_seconds: 0,
             additional_stats: vec![],
         }))

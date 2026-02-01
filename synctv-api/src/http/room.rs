@@ -34,7 +34,7 @@ pub struct JoinRoomRequest {
     pub password: Option<String>,
 }
 
-/// Add movie request
+/// Add media request
 #[derive(Debug, Deserialize)]
 pub struct AddMediaRequest {
     pub title: String,
@@ -74,7 +74,7 @@ pub struct RoomResponse {
     pub created_at: String,
 }
 
-/// Movie response
+/// Media response
 #[derive(Debug, Serialize)]
 pub struct MediaResponse {
     pub id: String,
@@ -370,7 +370,7 @@ pub async fn seek(
     })))
 }
 
-/// Change playback rate
+/// Change playback speed
 pub async fn change_speed(
     auth: AuthUser,
     State(state): State<AppState>,

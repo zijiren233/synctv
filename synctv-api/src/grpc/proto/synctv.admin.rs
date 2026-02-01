@@ -43,29 +43,37 @@ pub struct AdminRoom {
     pub updated_at: i64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ProviderBackend {
+pub struct ProviderInstance {
+    /// Instance name (primary key)
     #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
-    /// User-defined name
-    #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
-    /// bilibili, alist, emby
-    #[prost(string, tag = "3")]
-    pub provider_type: ::prost::alloc::string::String,
-    /// Base URL or connection string
-    #[prost(string, tag = "4")]
+    /// gRPC service endpoint
+    #[prost(string, tag = "2")]
     pub endpoint: ::prost::alloc::string::String,
+    /// Human-readable description
+    #[prost(string, tag = "3")]
+    pub comment: ::prost::alloc::string::String,
+    /// Request timeout (e.g., "10s")
+    #[prost(string, tag = "4")]
+    pub timeout: ::prost::alloc::string::String,
+    /// Enable TLS
     #[prost(bool, tag = "5")]
+    pub tls: bool,
+    /// Skip TLS certificate verification (UNSAFE, dev/test only)
+    #[prost(bool, tag = "6")]
+    pub insecure_tls: bool,
+    /// Supported provider types (e.g., \["bilibili", "alist", "emby"\])
+    #[prost(string, repeated, tag = "7")]
+    pub providers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Whether this instance is enabled
+    #[prost(bool, tag = "8")]
     pub enabled: bool,
-    /// JSON config (credentials, etc.)
-    #[prost(bytes = "vec", tag = "6")]
-    pub config: ::prost::alloc::vec::Vec<u8>,
     /// connected, disconnected, error
-    #[prost(string, tag = "7")]
+    #[prost(string, tag = "9")]
     pub status: ::prost::alloc::string::String,
-    #[prost(int64, tag = "8")]
+    #[prost(int64, tag = "10")]
     pub created_at: i64,
-    #[prost(int64, tag = "9")]
+    #[prost(int64, tag = "11")]
     pub updated_at: i64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -120,92 +128,123 @@ pub struct SendTestEmailResponse {
     pub message: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ListProviderBackendsRequest {
-    /// Optional filter
+pub struct ListProviderInstancesRequest {
+    /// Optional filter by provider type
     #[prost(string, tag = "1")]
     pub provider_type: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ListProviderBackendsResponse {
+pub struct ListProviderInstancesResponse {
     #[prost(message, repeated, tag = "1")]
-    pub backends: ::prost::alloc::vec::Vec<ProviderBackend>,
+    pub instances: ::prost::alloc::vec::Vec<ProviderInstance>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AddProviderBackendRequest {
+pub struct AddProviderInstanceRequest {
+    /// Instance name (unique identifier)
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
-    /// bilibili, alist, emby
+    /// gRPC service endpoint
     #[prost(string, tag = "2")]
-    pub provider_type: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
     pub endpoint: ::prost::alloc::string::String,
-    /// JSON config
-    #[prost(bytes = "vec", tag = "4")]
+    /// Optional description
+    #[prost(string, tag = "3")]
+    pub comment: ::prost::alloc::string::String,
+    /// Request timeout (e.g., "10s")
+    #[prost(string, tag = "4")]
+    pub timeout: ::prost::alloc::string::String,
+    /// Enable TLS
+    #[prost(bool, tag = "5")]
+    pub tls: bool,
+    /// Skip TLS certificate verification
+    #[prost(bool, tag = "6")]
+    pub insecure_tls: bool,
+    /// Supported provider types
+    #[prost(string, repeated, tag = "7")]
+    pub providers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Additional JSON config (jwt_secret, custom_ca, etc.)
+    #[prost(bytes = "vec", tag = "8")]
     pub config: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AddProviderBackendResponse {
+pub struct AddProviderInstanceResponse {
     #[prost(message, optional, tag = "1")]
-    pub backend: ::core::option::Option<ProviderBackend>,
+    pub instance: ::core::option::Option<ProviderInstance>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateProviderBackendRequest {
+pub struct UpdateProviderInstanceRequest {
+    /// Instance name (cannot be changed)
     #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
-    /// Optional
-    #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
-    /// Optional
-    #[prost(string, tag = "3")]
+    /// Optional new endpoint
+    #[prost(string, tag = "2")]
     pub endpoint: ::prost::alloc::string::String,
-    /// Optional JSON config
-    #[prost(bytes = "vec", tag = "4")]
+    /// Optional new description
+    #[prost(string, tag = "3")]
+    pub comment: ::prost::alloc::string::String,
+    /// Optional new timeout
+    #[prost(string, tag = "4")]
+    pub timeout: ::prost::alloc::string::String,
+    /// Optional new TLS setting
+    #[prost(bool, tag = "5")]
+    pub tls: bool,
+    /// Optional new insecure_tls setting
+    #[prost(bool, tag = "6")]
+    pub insecure_tls: bool,
+    /// Optional new provider list
+    #[prost(string, repeated, tag = "7")]
+    pub providers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Optional additional config
+    #[prost(bytes = "vec", tag = "8")]
     pub config: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateProviderBackendResponse {
+pub struct UpdateProviderInstanceResponse {
     #[prost(message, optional, tag = "1")]
-    pub backend: ::core::option::Option<ProviderBackend>,
+    pub instance: ::core::option::Option<ProviderInstance>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DeleteProviderBackendRequest {
+pub struct DeleteProviderInstanceRequest {
+    /// Instance name
     #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
+    pub name: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct DeleteProviderBackendResponse {
+pub struct DeleteProviderInstanceResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ReconnectProviderBackendRequest {
+pub struct ReconnectProviderInstanceRequest {
+    /// Instance name
     #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
+    pub name: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ReconnectProviderBackendResponse {
+pub struct ReconnectProviderInstanceResponse {
     #[prost(message, optional, tag = "1")]
-    pub backend: ::core::option::Option<ProviderBackend>,
+    pub instance: ::core::option::Option<ProviderInstance>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct EnableProviderBackendRequest {
+pub struct EnableProviderInstanceRequest {
+    /// Instance name
     #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
+    pub name: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct EnableProviderBackendResponse {
+pub struct EnableProviderInstanceResponse {
     #[prost(message, optional, tag = "1")]
-    pub backend: ::core::option::Option<ProviderBackend>,
+    pub instance: ::core::option::Option<ProviderInstance>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DisableProviderBackendRequest {
+pub struct DisableProviderInstanceRequest {
+    /// Instance name
     #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
+    pub name: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DisableProviderBackendResponse {
+pub struct DisableProviderInstanceResponse {
     #[prost(message, optional, tag = "1")]
-    pub backend: ::core::option::Option<ProviderBackend>,
+    pub instance: ::core::option::Option<ProviderInstance>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateUserRequest {
@@ -507,7 +546,7 @@ pub struct GetSystemStatsResponse {
     #[prost(int32, tag = "7")]
     pub total_media: i32,
     #[prost(int32, tag = "8")]
-    pub provider_backends: i32,
+    pub provider_instances: i32,
     #[prost(int64, tag = "9")]
     pub uptime_seconds: i64,
     /// JSON for extensibility
@@ -708,13 +747,13 @@ pub mod admin_service_client {
             self.inner.unary(req, path, codec).await
         }
         /// =========================
-        /// Provider Backend Management
+        /// Provider Instance Management
         /// =========================
-        pub async fn list_provider_backends(
+        pub async fn list_provider_instances(
             &mut self,
-            request: impl tonic::IntoRequest<super::ListProviderBackendsRequest>,
+            request: impl tonic::IntoRequest<super::ListProviderInstancesRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::ListProviderBackendsResponse>,
+            tonic::Response<super::ListProviderInstancesResponse>,
             tonic::Status,
         > {
             self.inner
@@ -727,20 +766,20 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/ListProviderBackends",
+                "/synctv.admin.AdminService/ListProviderInstances",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new("synctv.admin.AdminService", "ListProviderBackends"),
+                    GrpcMethod::new("synctv.admin.AdminService", "ListProviderInstances"),
                 );
             self.inner.unary(req, path, codec).await
         }
-        pub async fn add_provider_backend(
+        pub async fn add_provider_instance(
             &mut self,
-            request: impl tonic::IntoRequest<super::AddProviderBackendRequest>,
+            request: impl tonic::IntoRequest<super::AddProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::AddProviderBackendResponse>,
+            tonic::Response<super::AddProviderInstanceResponse>,
             tonic::Status,
         > {
             self.inner
@@ -753,20 +792,20 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/AddProviderBackend",
+                "/synctv.admin.AdminService/AddProviderInstance",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new("synctv.admin.AdminService", "AddProviderBackend"),
+                    GrpcMethod::new("synctv.admin.AdminService", "AddProviderInstance"),
                 );
             self.inner.unary(req, path, codec).await
         }
-        pub async fn update_provider_backend(
+        pub async fn update_provider_instance(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateProviderBackendRequest>,
+            request: impl tonic::IntoRequest<super::UpdateProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateProviderBackendResponse>,
+            tonic::Response<super::UpdateProviderInstanceResponse>,
             tonic::Status,
         > {
             self.inner
@@ -779,75 +818,23 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/UpdateProviderBackend",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("synctv.admin.AdminService", "UpdateProviderBackend"),
-                );
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn delete_provider_backend(
-            &mut self,
-            request: impl tonic::IntoRequest<super::DeleteProviderBackendRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::DeleteProviderBackendResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/DeleteProviderBackend",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("synctv.admin.AdminService", "DeleteProviderBackend"),
-                );
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn reconnect_provider_backend(
-            &mut self,
-            request: impl tonic::IntoRequest<super::ReconnectProviderBackendRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::ReconnectProviderBackendResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/ReconnectProviderBackend",
+                "/synctv.admin.AdminService/UpdateProviderInstance",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
                     GrpcMethod::new(
                         "synctv.admin.AdminService",
-                        "ReconnectProviderBackend",
+                        "UpdateProviderInstance",
                     ),
                 );
             self.inner.unary(req, path, codec).await
         }
-        pub async fn enable_provider_backend(
+        pub async fn delete_provider_instance(
             &mut self,
-            request: impl tonic::IntoRequest<super::EnableProviderBackendRequest>,
+            request: impl tonic::IntoRequest<super::DeleteProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::EnableProviderBackendResponse>,
+            tonic::Response<super::DeleteProviderInstanceResponse>,
             tonic::Status,
         > {
             self.inner
@@ -860,40 +847,101 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/EnableProviderBackend",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("synctv.admin.AdminService", "EnableProviderBackend"),
-                );
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn disable_provider_backend(
-            &mut self,
-            request: impl tonic::IntoRequest<super::DisableProviderBackendRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::DisableProviderBackendResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/DisableProviderBackend",
+                "/synctv.admin.AdminService/DeleteProviderInstance",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
                     GrpcMethod::new(
                         "synctv.admin.AdminService",
-                        "DisableProviderBackend",
+                        "DeleteProviderInstance",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn reconnect_provider_instance(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ReconnectProviderInstanceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ReconnectProviderInstanceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.admin.AdminService/ReconnectProviderInstance",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "synctv.admin.AdminService",
+                        "ReconnectProviderInstance",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn enable_provider_instance(
+            &mut self,
+            request: impl tonic::IntoRequest<super::EnableProviderInstanceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::EnableProviderInstanceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.admin.AdminService/EnableProviderInstance",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "synctv.admin.AdminService",
+                        "EnableProviderInstance",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn disable_provider_instance(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DisableProviderInstanceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DisableProviderInstanceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.admin.AdminService/DisableProviderInstance",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "synctv.admin.AdminService",
+                        "DisableProviderInstance",
                     ),
                 );
             self.inner.unary(req, path, codec).await
@@ -1515,55 +1563,55 @@ pub mod admin_service_server {
             tonic::Status,
         >;
         /// =========================
-        /// Provider Backend Management
+        /// Provider Instance Management
         /// =========================
-        async fn list_provider_backends(
+        async fn list_provider_instances(
             &self,
-            request: tonic::Request<super::ListProviderBackendsRequest>,
+            request: tonic::Request<super::ListProviderInstancesRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::ListProviderBackendsResponse>,
+            tonic::Response<super::ListProviderInstancesResponse>,
             tonic::Status,
         >;
-        async fn add_provider_backend(
+        async fn add_provider_instance(
             &self,
-            request: tonic::Request<super::AddProviderBackendRequest>,
+            request: tonic::Request<super::AddProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::AddProviderBackendResponse>,
+            tonic::Response<super::AddProviderInstanceResponse>,
             tonic::Status,
         >;
-        async fn update_provider_backend(
+        async fn update_provider_instance(
             &self,
-            request: tonic::Request<super::UpdateProviderBackendRequest>,
+            request: tonic::Request<super::UpdateProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateProviderBackendResponse>,
+            tonic::Response<super::UpdateProviderInstanceResponse>,
             tonic::Status,
         >;
-        async fn delete_provider_backend(
+        async fn delete_provider_instance(
             &self,
-            request: tonic::Request<super::DeleteProviderBackendRequest>,
+            request: tonic::Request<super::DeleteProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::DeleteProviderBackendResponse>,
+            tonic::Response<super::DeleteProviderInstanceResponse>,
             tonic::Status,
         >;
-        async fn reconnect_provider_backend(
+        async fn reconnect_provider_instance(
             &self,
-            request: tonic::Request<super::ReconnectProviderBackendRequest>,
+            request: tonic::Request<super::ReconnectProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::ReconnectProviderBackendResponse>,
+            tonic::Response<super::ReconnectProviderInstanceResponse>,
             tonic::Status,
         >;
-        async fn enable_provider_backend(
+        async fn enable_provider_instance(
             &self,
-            request: tonic::Request<super::EnableProviderBackendRequest>,
+            request: tonic::Request<super::EnableProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::EnableProviderBackendResponse>,
+            tonic::Response<super::EnableProviderInstanceResponse>,
             tonic::Status,
         >;
-        async fn disable_provider_backend(
+        async fn disable_provider_instance(
             &self,
-            request: tonic::Request<super::DisableProviderBackendRequest>,
+            request: tonic::Request<super::DisableProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::DisableProviderBackendResponse>,
+            tonic::Response<super::DisableProviderInstanceResponse>,
             tonic::Status,
         >;
         /// =========================
@@ -1986,117 +2034,25 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/ListProviderBackends" => {
+                "/synctv.admin.AdminService/ListProviderInstances" => {
                     #[allow(non_camel_case_types)]
-                    struct ListProviderBackendsSvc<T: AdminService>(pub Arc<T>);
+                    struct ListProviderInstancesSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::ListProviderBackendsRequest>
-                    for ListProviderBackendsSvc<T> {
-                        type Response = super::ListProviderBackendsResponse;
+                    > tonic::server::UnaryService<super::ListProviderInstancesRequest>
+                    for ListProviderInstancesSvc<T> {
+                        type Response = super::ListProviderInstancesResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::ListProviderBackendsRequest>,
+                            request: tonic::Request<super::ListProviderInstancesRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::list_provider_backends(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = ListProviderBackendsSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/synctv.admin.AdminService/AddProviderBackend" => {
-                    #[allow(non_camel_case_types)]
-                    struct AddProviderBackendSvc<T: AdminService>(pub Arc<T>);
-                    impl<
-                        T: AdminService,
-                    > tonic::server::UnaryService<super::AddProviderBackendRequest>
-                    for AddProviderBackendSvc<T> {
-                        type Response = super::AddProviderBackendResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::AddProviderBackendRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as AdminService>::add_provider_backend(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = AddProviderBackendSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/synctv.admin.AdminService/UpdateProviderBackend" => {
-                    #[allow(non_camel_case_types)]
-                    struct UpdateProviderBackendSvc<T: AdminService>(pub Arc<T>);
-                    impl<
-                        T: AdminService,
-                    > tonic::server::UnaryService<super::UpdateProviderBackendRequest>
-                    for UpdateProviderBackendSvc<T> {
-                        type Response = super::UpdateProviderBackendResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::UpdateProviderBackendRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as AdminService>::update_provider_backend(
+                                <T as AdminService>::list_provider_instances(
                                         &inner,
                                         request,
                                     )
@@ -2111,7 +2067,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = UpdateProviderBackendSvc(inner);
+                        let method = ListProviderInstancesSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -2127,25 +2083,71 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/DeleteProviderBackend" => {
+                "/synctv.admin.AdminService/AddProviderInstance" => {
                     #[allow(non_camel_case_types)]
-                    struct DeleteProviderBackendSvc<T: AdminService>(pub Arc<T>);
+                    struct AddProviderInstanceSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::DeleteProviderBackendRequest>
-                    for DeleteProviderBackendSvc<T> {
-                        type Response = super::DeleteProviderBackendResponse;
+                    > tonic::server::UnaryService<super::AddProviderInstanceRequest>
+                    for AddProviderInstanceSvc<T> {
+                        type Response = super::AddProviderInstanceResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::DeleteProviderBackendRequest>,
+                            request: tonic::Request<super::AddProviderInstanceRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::delete_provider_backend(
+                                <T as AdminService>::add_provider_instance(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AddProviderInstanceSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.admin.AdminService/UpdateProviderInstance" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpdateProviderInstanceSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::UpdateProviderInstanceRequest>
+                    for UpdateProviderInstanceSvc<T> {
+                        type Response = super::UpdateProviderInstanceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpdateProviderInstanceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::update_provider_instance(
                                         &inner,
                                         request,
                                     )
@@ -2160,7 +2162,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = DeleteProviderBackendSvc(inner);
+                        let method = UpdateProviderInstanceSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -2176,14 +2178,64 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/ReconnectProviderBackend" => {
+                "/synctv.admin.AdminService/DeleteProviderInstance" => {
                     #[allow(non_camel_case_types)]
-                    struct ReconnectProviderBackendSvc<T: AdminService>(pub Arc<T>);
+                    struct DeleteProviderInstanceSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::ReconnectProviderBackendRequest>
-                    for ReconnectProviderBackendSvc<T> {
-                        type Response = super::ReconnectProviderBackendResponse;
+                    > tonic::server::UnaryService<super::DeleteProviderInstanceRequest>
+                    for DeleteProviderInstanceSvc<T> {
+                        type Response = super::DeleteProviderInstanceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteProviderInstanceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::delete_provider_instance(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteProviderInstanceSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.admin.AdminService/ReconnectProviderInstance" => {
+                    #[allow(non_camel_case_types)]
+                    struct ReconnectProviderInstanceSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<
+                        super::ReconnectProviderInstanceRequest,
+                    > for ReconnectProviderInstanceSvc<T> {
+                        type Response = super::ReconnectProviderInstanceResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
@@ -2191,12 +2243,12 @@ pub mod admin_service_server {
                         fn call(
                             &mut self,
                             request: tonic::Request<
-                                super::ReconnectProviderBackendRequest,
+                                super::ReconnectProviderInstanceRequest,
                             >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::reconnect_provider_backend(
+                                <T as AdminService>::reconnect_provider_instance(
                                         &inner,
                                         request,
                                     )
@@ -2211,7 +2263,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = ReconnectProviderBackendSvc(inner);
+                        let method = ReconnectProviderInstanceSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -2227,25 +2279,25 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/EnableProviderBackend" => {
+                "/synctv.admin.AdminService/EnableProviderInstance" => {
                     #[allow(non_camel_case_types)]
-                    struct EnableProviderBackendSvc<T: AdminService>(pub Arc<T>);
+                    struct EnableProviderInstanceSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::EnableProviderBackendRequest>
-                    for EnableProviderBackendSvc<T> {
-                        type Response = super::EnableProviderBackendResponse;
+                    > tonic::server::UnaryService<super::EnableProviderInstanceRequest>
+                    for EnableProviderInstanceSvc<T> {
+                        type Response = super::EnableProviderInstanceResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::EnableProviderBackendRequest>,
+                            request: tonic::Request<super::EnableProviderInstanceRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::enable_provider_backend(
+                                <T as AdminService>::enable_provider_instance(
                                         &inner,
                                         request,
                                     )
@@ -2260,7 +2312,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = EnableProviderBackendSvc(inner);
+                        let method = EnableProviderInstanceSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -2276,25 +2328,27 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/DisableProviderBackend" => {
+                "/synctv.admin.AdminService/DisableProviderInstance" => {
                     #[allow(non_camel_case_types)]
-                    struct DisableProviderBackendSvc<T: AdminService>(pub Arc<T>);
+                    struct DisableProviderInstanceSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::DisableProviderBackendRequest>
-                    for DisableProviderBackendSvc<T> {
-                        type Response = super::DisableProviderBackendResponse;
+                    > tonic::server::UnaryService<super::DisableProviderInstanceRequest>
+                    for DisableProviderInstanceSvc<T> {
+                        type Response = super::DisableProviderInstanceResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::DisableProviderBackendRequest>,
+                            request: tonic::Request<
+                                super::DisableProviderInstanceRequest,
+                            >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::disable_provider_backend(
+                                <T as AdminService>::disable_provider_instance(
                                         &inner,
                                         request,
                                     )
@@ -2309,7 +2363,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = DisableProviderBackendSvc(inner);
+                        let method = DisableProviderInstanceSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

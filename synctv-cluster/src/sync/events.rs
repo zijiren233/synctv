@@ -53,18 +53,18 @@ pub enum ClusterEvent {
         timestamp: DateTime<Utc>,
     },
 
-    /// Movie added to room playlist
-    MovieAdded {
+    /// Media added to room playlist
+    MediaAdded {
         room_id: RoomId,
         user_id: UserId,
         username: String,
         media_id: MediaId,
-        movie_title: String,
+        media_title: String,
         timestamp: DateTime<Utc>,
     },
 
-    /// Movie removed from room playlist
-    MovieRemoved {
+    /// Media removed from room playlist
+    MediaRemoved {
         room_id: RoomId,
         user_id: UserId,
         username: String,
@@ -124,8 +124,8 @@ impl ClusterEvent {
             | Self::PlaybackStateChanged { room_id, .. }
             | Self::UserJoined { room_id, .. }
             | Self::UserLeft { room_id, .. }
-            | Self::MovieAdded { room_id, .. }
-            | Self::MovieRemoved { room_id, .. }
+            | Self::MediaAdded { room_id, .. }
+            | Self::MediaRemoved { room_id, .. }
             | Self::PermissionChanged { room_id, .. }
             | Self::RoomSettingsChanged { room_id, .. }
             | Self::RoomClosed { room_id, .. } => Some(room_id),
@@ -141,8 +141,8 @@ impl ClusterEvent {
             | Self::PlaybackStateChanged { user_id, .. }
             | Self::UserJoined { user_id, .. }
             | Self::UserLeft { user_id, .. }
-            | Self::MovieAdded { user_id, .. }
-            | Self::MovieRemoved { user_id, .. }
+            | Self::MediaAdded { user_id, .. }
+            | Self::MediaRemoved { user_id, .. }
             | Self::RoomSettingsChanged { user_id, .. } => Some(user_id),
             Self::PermissionChanged { changed_by, .. } => Some(changed_by),
             Self::RoomClosed { closed_by, .. } => Some(closed_by),
@@ -158,8 +158,8 @@ impl ClusterEvent {
             | Self::PlaybackStateChanged { timestamp, .. }
             | Self::UserJoined { timestamp, .. }
             | Self::UserLeft { timestamp, .. }
-            | Self::MovieAdded { timestamp, .. }
-            | Self::MovieRemoved { timestamp, .. }
+            | Self::MediaAdded { timestamp, .. }
+            | Self::MediaRemoved { timestamp, .. }
             | Self::PermissionChanged { timestamp, .. }
             | Self::RoomSettingsChanged { timestamp, .. }
             | Self::RoomClosed { timestamp, .. }
@@ -175,8 +175,8 @@ impl ClusterEvent {
             Self::PlaybackStateChanged { .. } => "playback_state_changed",
             Self::UserJoined { .. } => "user_joined",
             Self::UserLeft { .. } => "user_left",
-            Self::MovieAdded { .. } => "movie_added",
-            Self::MovieRemoved { .. } => "movie_removed",
+            Self::MediaAdded { .. } => "media_added",
+            Self::MediaRemoved { .. } => "media_removed",
             Self::PermissionChanged { .. } => "permission_changed",
             Self::RoomSettingsChanged { .. } => "room_settings_changed",
             Self::RoomClosed { .. } => "room_closed",

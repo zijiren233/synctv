@@ -32,7 +32,7 @@ use proto::admin::admin_service_server::AdminServiceServer;
 use tonic::transport::Server;
 use tonic_reflection::server::Builder as ReflectionBuilder;
 
-use synctv_core::service::{UserService, RoomService, RateLimiter, RateLimitConfig, ContentFilter, ProvidersManager};
+use synctv_core::service::{UserService, RoomService, RateLimiter, RateLimitConfig, ContentFilter, ProvidersManager, ProviderInstanceManager};
 use synctv_core::repository::UserProviderCredentialRepository;
 use synctv_core::Config;
 use synctv_cluster::sync::{RoomMessageHub, PublishRequest, ConnectionManager};
@@ -50,6 +50,7 @@ pub async fn serve(
     content_filter: ContentFilter,
     connection_manager: ConnectionManager,
     providers_manager: Option<Arc<ProvidersManager>>,
+    provider_instance_manager: Arc<ProviderInstanceManager>,
     credential_repository: Arc<UserProviderCredentialRepository>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
@@ -83,6 +84,7 @@ pub async fn serve(
     let admin_service = AdminServiceImpl::new(
         Arc::try_unwrap(user_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
         Arc::try_unwrap(room_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
+        provider_instance_manager,
     );
 
     // Create server builder
