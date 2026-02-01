@@ -5267,10 +5267,12 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum 0.7.9",
+ "chrono",
  "hostname",
  "nanoid",
  "once_cell",
  "redis",
+ "serde_json",
  "sqlx",
  "synctv-api",
  "synctv-cluster",
@@ -5310,7 +5312,6 @@ dependencies = [
  "synctv-proto",
  "synctv-providers",
  "synctv-stream",
- "synctv-types",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
@@ -5392,7 +5393,6 @@ dependencies = [
  "sqlx",
  "synctv-proto",
  "synctv-providers",
- "synctv-types",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util 0.7.18",
@@ -5483,13 +5483,6 @@ dependencies = [
  "xflv",
  "xiu",
  "xmpegts",
-]
-
-[[package]]
-name = "synctv-types"
-version = "0.1.0"
-dependencies = [
- "synctv-proto",
 ]
 
 [[package]]

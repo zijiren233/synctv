@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use synctv_core::models::{ProviderInstance, RoomId, UserId, SettingsGroup as CoreSettingsGroup};
-use synctv_core::service::{ProviderInstanceManager, RoomService, UserService, SettingsService};
+use synctv_core::models::{ProviderInstance, RoomId, UserId, SettingsGroup as CoreSettingsGroup, settings::{groups, server}};
+use synctv_core::service::{ProviderInstanceManager, RoomService, UserService, SettingsService, SettingsRegistry};
 
 // Use synctv_proto for all gRPC types to avoid duplication
 use synctv_proto::admin_service_server::AdminService;
@@ -15,6 +15,7 @@ pub struct AdminServiceImpl {
     room_service: Arc<RoomService>,
     provider_manager: Arc<ProviderInstanceManager>,
     settings_service: Arc<SettingsService>,
+    settings_registry: Option<Arc<SettingsRegistry>>,
 }
 
 impl AdminServiceImpl {
@@ -23,12 +24,14 @@ impl AdminServiceImpl {
         room_service: RoomService,
         provider_manager: Arc<ProviderInstanceManager>,
         settings_service: Arc<SettingsService>,
+        settings_registry: Option<Arc<SettingsRegistry>>,
     ) -> Self {
         Self {
             user_service: Arc::new(user_service),
             room_service: Arc::new(room_service),
             provider_manager,
             settings_service,
+            settings_registry,
         }
     }
 
@@ -67,8 +70,8 @@ impl AdminServiceImpl {
         group: &CoreSettingsGroup,
     ) -> synctv_proto::admin::SettingsGroup {
         synctv_proto::admin::SettingsGroup {
-            name: group.group_name.clone(),
-            settings: group.to_proto_bytes().unwrap_or_default(),
+            name: group.key.clone(),
+            settings: group.value.clone().into_bytes(),
         }
     }
 
@@ -173,19 +176,35 @@ impl AdminService for AdminServiceImpl {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
-        // Parse JSON from bytes
-        let settings_json: serde_json::Value = serde_json::from_slice(&req.settings)
-            .map_err(|e| Status::invalid_argument(format!("Invalid JSON settings: {}", e)))?;
+        // Validate each setting value if registry is available
+        if let Some(ref registry) = self.settings_registry {
+            for (key, value) in &req.settings {
+                // Construct full key path (group.key)
+                let full_key = format!("{}.{}", req.group, key);
 
-        let group = self
-            .settings_service
-            .update(&req.group, settings_json)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to update settings: {}", e)))?;
+                // Validate the value using storage
+                if !registry.storage.validate(&full_key, value) {
+                    tracing::warn!("Invalid setting value: {} = {}", full_key, value);
+                    return Err(Status::invalid_argument(format!(
+                        "Invalid value '{}' for setting '{}'",
+                        value, full_key
+                    )));
+                }
+            }
+        }
 
-        tracing::info!("Updated settings group '{}'", req.group);
+        // Update each setting individually
+        for (key, value) in &req.settings {
+            let full_key = format!("{}.{}", req.group, key);
+            self.settings_service
+                .update(&full_key, value.clone())
+                .await
+                .map_err(|e| Status::internal(format!("Failed to update setting '{}': {}", full_key, e)))?;
+        }
+
+        tracing::info!("Updated {} settings in group '{}'", req.settings.len(), req.group);
         Ok(Response::new(UpdateSettingsResponse {
-            group: Some(self.settings_group_to_proto(&group)),
+            // Empty response
         }))
     }
 
@@ -557,7 +576,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .register(
                 req.username.clone(),
-                req.email.clone(),
+                Some(req.email.clone()),
                 req.password.clone(),
             )
             .await
@@ -584,7 +603,7 @@ impl AdminService for AdminServiceImpl {
         let admin_user = AdminUser {
             id: user.id.to_string(),
             username: user.username,
-            email: user.email,
+            email: user.email.unwrap_or_default(),
             permissions: user.permissions.0,
             role: req.role.clone(),
             status: "active".to_string(),
@@ -713,7 +732,7 @@ impl AdminService for AdminServiceImpl {
                 AdminUser {
                     id: u.id.to_string(),
                     username: u.username,
-                    email: u.email,
+                    email: u.email.unwrap_or_default(),
                     permissions: u.permissions.0,
                     role,
                     status,
@@ -764,7 +783,7 @@ impl AdminService for AdminServiceImpl {
         let admin_user = AdminUser {
             id: user.id.to_string(),
             username: user.username,
-            email: user.email,
+            email: user.email.unwrap_or_default(),
             permissions: user.permissions.0,
             role: role.to_string(),
             status: status.to_string(),
@@ -847,7 +866,7 @@ impl AdminService for AdminServiceImpl {
         let admin_user = AdminUser {
             id: updated_user.id.to_string(),
             username: updated_user.username,
-            email: updated_user.email,
+            email: updated_user.email.unwrap_or_default(),
             permissions: updated_user.permissions.0,
             role: if (updated_user.permissions.0 & (1 << 62)) != 0 {
                 "root".to_string()
@@ -914,7 +933,7 @@ impl AdminService for AdminServiceImpl {
         let admin_user = AdminUser {
             id: updated_user.id.to_string(),
             username: updated_user.username,
-            email: updated_user.email,
+            email: updated_user.email.unwrap_or_default(),
             permissions: updated_user.permissions.0,
             role: req.role.clone(),
             status: if updated_user.deleted_at.is_some() {
@@ -967,7 +986,7 @@ impl AdminService for AdminServiceImpl {
         let admin_user = AdminUser {
             id: updated_user.id.to_string(),
             username: updated_user.username,
-            email: updated_user.email,
+            email: updated_user.email.unwrap_or_default(),
             permissions: updated_user.permissions.0,
             role: if (updated_user.permissions.0 & (1 << 62)) != 0 {
                 "root".to_string()
@@ -1022,7 +1041,7 @@ impl AdminService for AdminServiceImpl {
         let admin_user = AdminUser {
             id: updated_user.id.to_string(),
             username: updated_user.username,
-            email: updated_user.email,
+            email: updated_user.email.unwrap_or_default(),
             permissions: updated_user.permissions.0,
             role: if (updated_user.permissions.0 & (1 << 62)) != 0 {
                 "root".to_string()
@@ -1151,7 +1170,7 @@ impl AdminService for AdminServiceImpl {
         let admin_user = AdminUser {
             id: user.id.to_string(),
             username: user.username,
-            email: user.email,
+            email: user.email.unwrap_or_default(),
             permissions: user.permissions.0,
             role: if (user.permissions.0 & (1 << 62)) != 0 {
                 "root".to_string()
@@ -1541,7 +1560,7 @@ impl AdminService for AdminServiceImpl {
         let admin_user = AdminUser {
             id: updated_user.id.to_string(),
             username: updated_user.username,
-            email: updated_user.email,
+            email: updated_user.email.unwrap_or_default(),
             permissions: updated_user.permissions.0,
             role: "admin".to_string(),
             status: if updated_user.deleted_at.is_some() {
@@ -1640,7 +1659,7 @@ impl AdminService for AdminServiceImpl {
                 AdminUser {
                     id: u.id.to_string(),
                     username: u.username,
-                    email: u.email,
+                    email: u.email.unwrap_or_default(),
                     permissions: u.permissions.0,
                     role,
                     status: if u.deleted_at.is_some() {
@@ -1756,8 +1775,34 @@ impl AdminService for AdminServiceImpl {
             .map(|instances| instances.len() as i64)
             .unwrap_or(0);
 
-        // Calculate uptime (placeholder - should be tracked from server start)
-        let uptime_seconds = 0; // TODO: Track server start time and calculate uptime
+        // Get server start time from settings and calculate uptime
+        let uptime_seconds = {
+            let settings = self
+                .settings_service
+                .get(groups::SERVER)
+                .await
+                .unwrap_or_else(|_| {
+                    // Create empty SettingsGroup with empty data
+                    synctv_core::models::SettingsGroup {
+                        key: groups::SERVER.to_string(),
+                        group: groups::SERVER.to_string(),
+                        value: "".to_string(),
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                    }
+                });
+            settings
+                .parse_json()
+                .ok()
+                .and_then(|json| json.get(server::SERVER_START_TIME).cloned())
+                .and_then(|v| v.as_i64())
+                .map(|start_time| {
+                    let now = chrono::Utc::now();
+                    let duration = now.timestamp() - start_time;
+                    duration.max(0) as i64
+                })
+                .unwrap_or(0)
+        };
 
         // Additional statistics can be added here
         let additional_stats = vec![];

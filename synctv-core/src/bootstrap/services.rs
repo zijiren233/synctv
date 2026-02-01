@@ -6,11 +6,12 @@ use sqlx::PgPool;
 use tracing::{error, info, warn};
 
 use crate::{
-    repository::{UserOAuthProviderRepository, ProviderInstanceRepository, SettingsRepository},
+    cache::UsernameCache,
+    repository::{UserOAuthProviderRepository, ProviderInstanceRepository, UserProviderCredentialRepository, SettingsRepository},
     service::{
         ContentFilter, JwtService, OAuth2Service, ProviderInstanceManager, RateLimitConfig,
         RateLimiter, TokenBlacklistService, UserService, RoomService, ProvidersManager,
-        SettingsService,
+        SettingsService, SettingsRegistry,
     },
     Config,
 };
@@ -36,12 +37,16 @@ pub struct Services {
     pub provider_instance_manager: Arc<ProviderInstanceManager>,
     /// Provider instances repository
     pub provider_instance_repo: Arc<ProviderInstanceRepository>,
+    /// User provider credential repository
+    pub user_provider_credential_repo: Arc<UserProviderCredentialRepository>,
     /// Providers manager
     pub providers_manager: Arc<ProvidersManager>,
     /// OAuth2 service (optional, requires configuration)
     pub oauth2_service: Option<Arc<OAuth2Service>>,
     /// Settings service
     pub settings_service: Arc<SettingsService>,
+    /// Settings registry with type-safe setting variables
+    pub settings_registry: Arc<SettingsRegistry>,
 }
 
 /// Initialize all core services
@@ -71,16 +76,29 @@ pub async fn init_services(
         info!("Token blacklist service disabled (Redis not configured)");
     }
 
+    // Initialize username cache
+    let username_cache = UsernameCache::new(
+        redis_url.clone(),
+        format!("{}username:", config.redis.key_prefix),
+        1000, // Cache up to 1000 usernames in memory
+        3600, // Cache for 1 hour in Redis
+    )?;
+    info!("Username cache initialized");
+
     // Initialize UserService
-    let user_service = UserService::new(pool.clone(), jwt_service.clone(), token_blacklist.clone());
+    let user_service = UserService::new(pool.clone(), jwt_service.clone(), token_blacklist.clone(), username_cache);
     info!("UserService initialized");
 
     // Initialize RoomService
-    let room_service = RoomService::new(pool.clone());
+    let room_service = RoomService::new(pool.clone(), user_service.clone());
     info!("RoomService initialized");
 
-    // Initialize UserProviderCredentialRepository
+    // Initialize ProviderInstanceRepository
     let provider_instance_repo = Arc::new(ProviderInstanceRepository::new(pool.clone()));
+    info!("ProviderInstanceRepository initialized");
+
+    // Initialize UserProviderCredentialRepository
+    let user_provider_credential_repo = Arc::new(UserProviderCredentialRepository::new(pool.clone()));
     info!("UserProviderCredentialRepository initialized");
 
     // Initialize rate limiter
@@ -139,6 +157,15 @@ pub async fn init_services(
         }
     });
 
+    // Wrap settings_service in Arc before creating registry
+    let settings_service = Arc::new(settings_service);
+
+    // Initialize Settings registry
+    info!("Initializing Settings registry...");
+    let settings_registry = SettingsRegistry::new(settings_service.clone());
+    settings_registry.init().await?;
+    info!("Settings registry initialized");
+
     Ok(Services {
         user_service: Arc::new(user_service),
         room_service: Arc::new(room_service),
@@ -149,9 +176,11 @@ pub async fn init_services(
         content_filter,
         provider_instance_manager,
         provider_instance_repo,
+        user_provider_credential_repo,
         providers_manager,
         oauth2_service,
-        settings_service: Arc::new(settings_service),
+        settings_service,
+        settings_registry: Arc::new(settings_registry),
     })
 }
 

@@ -45,24 +45,23 @@ impl SettingsService {
     pub async fn initialize(&self) -> Result<(), Error> {
         info!("Initializing settings service");
 
-        let groups = self.repository.get_all().await.map_err(|e| {
+        let settings = self.repository.get_all().await.map_err(|e| {
             Error::Internal(format!("Failed to load settings: {}", e))
         })?;
 
         let mut cache = self.cache.write().await;
         cache.clear();
 
-        for group in groups {
+        for setting in settings {
             debug!(
-                "Loaded settings group '{}' with {} keys",
-                group.group_name,
-                group.settings_json.as_object().map(|o| o.len()).unwrap_or(0)
+                "Loaded setting '{}.{}' = '{}'",
+                setting.group, setting.key, setting.value
             );
-            cache.insert(group.group_name.clone(), group);
+            cache.insert(setting.key.clone(), setting);
         }
 
         info!(
-            "Settings service initialized with {} groups",
+            "Settings service initialized with {} settings",
             cache.len()
         );
         Ok(())
@@ -72,138 +71,89 @@ impl SettingsService {
     pub async fn get_all(&self) -> Result<Vec<SettingsGroup>, Error> {
         let cache = self.cache.read().await;
         let mut groups: Vec<_> = cache.values().cloned().collect();
-        groups.sort_by(|a, b| a.group_name.cmp(&b.group_name));
+        groups.sort_by(|a, b| a.group.cmp(&b.group));
         Ok(groups)
     }
 
-    /// Get a specific settings group by name
-    pub async fn get(&self, group_name: &str) -> Result<SettingsGroup, Error> {
+    /// Get all settings as flat key-value pairs
+    pub async fn get_all_values(&self) -> Result<std::collections::HashMap<String, String>, Error> {
+        let settings = self.get_all().await?;
+        let mut result = std::collections::HashMap::new();
+
+        for setting in settings {
+            result.insert(setting.key.clone(), setting.value.clone());
+        }
+
+        Ok(result)
+    }
+
+    /// Get a specific setting by key
+    pub async fn get(&self, key: &str) -> Result<SettingsGroup, Error> {
         // Try cache first
         {
             let cache = self.cache.read().await;
-            if let Some(group) = cache.get(group_name) {
-                return Ok(group.clone());
+            if let Some(setting) = cache.get(key) {
+                return Ok(setting.clone());
             }
         }
 
         // Not in cache, load from database
         debug!(
-            "Settings group '{}' not in cache, loading from database",
-            group_name
+            "Setting '{}' not in cache, loading from database",
+            key
         );
 
-        let group = self
+        let setting = self
             .repository
-            .get_or_create(group_name)
+            .get(key)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get settings: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to get setting: {}", e)))?;
 
         // Update cache
         {
             let mut cache = self.cache.write().await;
-            cache.insert(group_name.to_string(), group.clone());
+            cache.insert(setting.key.clone(), setting.clone());
         }
 
-        Ok(group)
+        Ok(setting)
     }
 
-    /// Update a settings group
+    /// Update a setting value by key
     pub async fn update(
         &self,
-        group_name: &str,
-        settings_json: serde_json::Value,
+        key: &str,
+        value: String,
     ) -> Result<SettingsGroup, Error> {
-        debug!("Updating settings group '{}'", group_name);
-
-        // Validate JSON is an object
-        if !settings_json.is_object() {
-            return Err(Error::InvalidInput(
-                "Settings must be a JSON object".to_string(),
-            ));
-        }
+        debug!("Updating setting '{}'", key);
 
         // Update in database
-        let group = self
+        let setting = self
             .repository
-            .update(group_name, &settings_json)
+            .update(key, &value)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to update settings: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to update setting: {}", e)))?;
 
         // Update cache
         {
             let mut cache = self.cache.write().await;
-            cache.insert(group_name.to_string(), group.clone());
+            cache.insert(setting.key.clone(), setting.clone());
         }
 
         // Notify listeners
-        self.notify_listeners(group_name, &settings_json).await;
+        let json_value: serde_json::Value = value.parse().unwrap_or_else(|_| serde_json::json!(value));
+        self.notify_listeners(key, &json_value).await;
 
-        info!("Updated settings group '{}'", group_name);
-        Ok(group)
+        info!("Updated setting '{}'", setting.key);
+        Ok(setting)
     }
 
-    /// Reset a settings group to defaults
-    pub async fn reset_to_defaults(&self, group_name: &str) -> Result<SettingsGroup, Error> {
-        info!("Resetting settings group '{}' to defaults", group_name);
 
-        let group = self
-            .repository
-            .reset_to_defaults(group_name)
-            .await
-            .map_err(|e| {
-                Error::Internal(format!("Failed to reset settings: {}", e))
-            })?;
-
-        // Update cache
-        {
-            let mut cache = self.cache.write().await;
-            cache.insert(group_name.to_string(), group.clone());
-        }
-
-        // Notify listeners
-        self.notify_listeners(group_name, &group.settings_json).await;
-
-        info!("Reset settings group '{}' to defaults", group_name);
-        Ok(group)
+    /// Get a specific setting value by key (e.g., "server.allow_registration")
+    pub async fn get_value(&self, key: &str) -> Option<String> {
+        let setting = self.get(key).await.ok()?;
+        Some(setting.value)
     }
 
-    /// Get a specific setting value by key path (e.g., "server.allow_registration")
-    pub async fn get_value(&self, path: &str) -> Option<serde_json::Value> {
-        let parts: Vec<&str> = path.split('.').collect();
-        if parts.is_empty() {
-            return None;
-        }
-
-        let group_name = parts[0];
-        let group = self.get(group_name).await.ok()?;
-
-        let setting_path = parts[1..].join(".");
-        group.get(&setting_path).cloned()
-    }
-
-    /// Get a boolean setting value
-    pub async fn get_bool(&self, path: &str, default: bool) -> bool {
-        self.get_value(path)
-            .await
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default)
-    }
-
-    /// Get a string setting value
-    pub async fn get_str(&self, path: &str, default: &str) -> String {
-        match self.get_value(path).await {
-            Some(v) if v.is_string() => v.as_str().unwrap_or(default).to_string(),
-            _ => default.to_string(),
-        }
-    }
-
-    /// Get an integer setting value
-    pub async fn get_i64(&self, path: &str, default: i64) -> i64 {
-        self.get_value(path)
-            .await
-            .and_then(|v| v.as_i64())
-            .unwrap_or(default)
-    }
 
     /// Register a change listener
     pub async fn register_listener(&self, listener: SettingsChangeListener) {
@@ -213,7 +163,7 @@ impl SettingsService {
     }
 
     /// Notify all listeners of a settings change
-    async fn notify_listeners(&self, group_name: &str, settings_json: &serde_json::Value) {
+    async fn notify_listeners(&self, group: &str, settings_json: &serde_json::Value) {
         let listeners = self.listeners.read().await;
         if listeners.is_empty() {
             return;
@@ -222,58 +172,19 @@ impl SettingsService {
         debug!(
             "Notifying {} listeners of settings change in group '{}'",
             listeners.len(),
-            group_name
+            group
         );
 
         for listener in listeners.iter() {
-            listener(group_name, settings_json);
+            listener(group, settings_json);
         }
     }
 
-    /// Check if registration is allowed
-    pub async fn allow_registration(&self) -> bool {
-        self.get_bool("server.allow_registration", true).await
-    }
-
-    /// Check if room creation is allowed
-    pub async fn allow_room_creation(&self) -> bool {
-        self.get_bool("server.allow_room_creation", true).await
-    }
-
-    /// Get max rooms per user
-    pub async fn max_rooms_per_user(&self) -> i64 {
-        self.get_i64("server.max_rooms_per_user", 10).await
-    }
-
-    /// Get max members per room
-    pub async fn max_members_per_room(&self) -> i64 {
-        self.get_i64("server.max_members_per_room", 100).await
-    }
-
-    /// Check if email is enabled
-    pub async fn email_enabled(&self) -> bool {
-        self.get_bool("email.enabled", false).await
-    }
-
-    /// Check if rate limiting is enabled
-    pub async fn rate_limit_enabled(&self) -> bool {
-        self.get_bool("rate_limit.enabled", true).await
-    }
-
-    /// Get API rate limit
-    pub async fn api_rate_limit(&self) -> i64 {
-        self.get_i64("rate_limit.api_rate_limit", 100).await
-    }
-
-    /// Get API rate window (in seconds)
-    pub async fn api_rate_window(&self) -> i64 {
-        self.get_i64("rate_limit.api_rate_window", 60).await
-    }
 }
 
 /// Helper to get default settings for a group
-pub fn get_default_settings_json(group_name: &str) -> Option<serde_json::Value> {
-    get_default_settings(group_name)
+pub fn get_default_settings_json(group: &str) -> Option<serde_json::Value> {
+    get_default_settings(group)
 }
 
 #[cfg(test)]

@@ -115,16 +115,16 @@ pub struct GetSettingsGroupResponse {
 pub struct UpdateSettingsRequest {
     #[prost(string, tag = "1")]
     pub group: ::prost::alloc::string::String,
-    /// JSON settings
-    #[prost(bytes = "vec", tag = "2")]
-    pub settings: ::prost::alloc::vec::Vec<u8>,
+    #[prost(map = "string, string", tag = "2")]
+    pub settings: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
+/// Empty response - success is indicated by no error
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateSettingsResponse {
-    #[prost(message, optional, tag = "1")]
-    pub group: ::core::option::Option<SettingsGroup>,
-}
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct UpdateSettingsResponse {}
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SendTestEmailRequest {

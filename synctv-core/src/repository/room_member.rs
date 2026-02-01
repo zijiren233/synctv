@@ -2,7 +2,7 @@ use sqlx::{PgPool, postgres::PgRow, Row};
 
 use crate::{
     models::{RoomMember, RoomMemberWithUser, RoomId, UserId, PermissionBits},
-    Result,
+    Error, Result,
 };
 
 /// Room member repository for database operations
@@ -251,6 +251,57 @@ impl RoomMemberRepository {
         Ok((results?, count))
     }
 
+    /// List all members including inactive (left) (admin view)
+    pub async fn list_by_room_all(&self, room_id: &RoomId) -> Result<Vec<RoomMemberWithUser>> {
+        let rows = sqlx::query(
+            "SELECT rm.room_id, rm.user_id, rm.permissions, rm.joined_at, u.username,
+                   CASE WHEN rm.left_at IS NULL THEN true ELSE false END as is_active
+             FROM room_members rm
+             JOIN users u ON rm.user_id = u.id
+             WHERE rm.room_id = $1
+             ORDER BY rm.joined_at ASC"
+        )
+        .bind(room_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| self.row_to_member_with_user_all(row))
+            .collect()
+    }
+
+    /// Update member role
+    pub async fn update_role(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        role: crate::models::Role,
+    ) -> Result<RoomMember> {
+        // Get current member to preserve joined_at
+        let member = self.get(room_id, user_id).await?
+            .ok_or_else(|| Error::NotFound("Member not found".to_string()))?;
+
+        // Update with new role permissions
+        let updated_member = RoomMember {
+            room_id: room_id.clone(),
+            user_id: user_id.clone(),
+            permissions: role.permissions(),
+            joined_at: member.joined_at,
+            left_at: member.left_at,
+        };
+
+        // Delete and re-add member (simple way to update all fields)
+        sqlx::query(
+            "DELETE FROM room_members WHERE room_id = $1 AND user_id = $2"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        self.add(&updated_member).await
+    }
+
     /// Convert database row to RoomMember
     fn row_to_member(&self, row: PgRow) -> Result<RoomMember> {
         Ok(RoomMember {
@@ -271,6 +322,19 @@ impl RoomMemberRepository {
             permissions: PermissionBits::new(row.try_get("permissions")?),
             joined_at: row.try_get("joined_at")?,
             is_online: false, // Will be populated by connection tracking
+        })
+    }
+
+    /// Convert database row to RoomMemberWithUser (including inactive)
+    fn row_to_member_with_user_all(&self, row: PgRow) -> Result<RoomMemberWithUser> {
+        let is_active: bool = row.try_get("is_active")?;
+        Ok(RoomMemberWithUser {
+            room_id: RoomId::from_string(row.try_get("room_id")?),
+            user_id: UserId::from_string(row.try_get("user_id")?),
+            username: row.try_get("username")?,
+            permissions: PermissionBits::new(row.try_get("permissions")?),
+            joined_at: row.try_get("joined_at")?,
+            is_online: is_active, // Use is_active flag from query
         })
     }
 }

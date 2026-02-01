@@ -31,9 +31,11 @@ redis.workspace = true
 
 # Utilities
 anyhow.workspace = true
+chrono.workspace = true
 hostname.workspace = true
 nanoid.workspace = true
 once_cell.workspace = true
+serde_json.workspace = true
 
 # Logging
 tracing.workspace = true

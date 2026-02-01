@@ -129,11 +129,11 @@ message GetSettingsGroupResponse {
 
 message UpdateSettingsRequest {
     string group = 1;
-    bytes settings = 2; // JSON settings
+    map<string, string> settings = 2;
 }
 
 message UpdateSettingsResponse {
-    SettingsGroup group = 1;
+    // Empty response - success is indicated by no error
 }
 
 message SendTestEmailRequest {

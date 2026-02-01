@@ -20,6 +20,7 @@ use crate::{
         media::MediaService,
         playback::PlaybackService,
         notification::NotificationService,
+        user::UserService,
     },
     Error, Result,
 };
@@ -51,6 +52,7 @@ pub struct RoomService {
     media_service: MediaService,
     playback_service: PlaybackService,
     notification_service: NotificationService,
+    user_service: UserService,
 }
 
 impl std::fmt::Debug for RoomService {
@@ -60,7 +62,7 @@ impl std::fmt::Debug for RoomService {
 }
 
 impl RoomService {
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: PgPool, user_service: UserService) -> Self {
         // Initialize repositories
         let room_repo = RoomRepository::new(pool.clone());
         let member_repo = RoomMemberRepository::new(pool.clone());
@@ -86,6 +88,7 @@ impl RoomService {
             media_service,
             playback_service,
             notification_service,
+            user_service,
         }
     }
 
@@ -188,9 +191,9 @@ impl RoomService {
         // Get all members
         let members = self.member_service.list_members(&room_id).await?;
 
-        // Notify room members
-        // TODO: Get username from user service
-        let _ = self.notification_service.notify_user_joined(&room_id, &user_id, "user").await;
+        // Notify room members with username
+        let username = self.user_service.get_username(&user_id).await?.unwrap_or_else(|| "Unknown".to_string());
+        let _ = self.notification_service.notify_user_joined(&room_id, &user_id, &username).await;
 
         Ok((room, created_member, members))
     }
@@ -199,9 +202,9 @@ impl RoomService {
     pub async fn leave_room(&self, room_id: RoomId, user_id: UserId) -> Result<()> {
         self.member_service.remove_member(room_id.clone(), user_id.clone()).await?;
 
-        // Notify room members
-        // TODO: Get username from user service
-        let _ = self.notification_service.notify_user_left(&room_id, &user_id, "user").await;
+        // Notify room members with username
+        let username = self.user_service.get_username(&user_id).await?.unwrap_or_else(|| "Unknown".to_string());
+        let _ = self.notification_service.notify_user_left(&room_id, &user_id, &username).await;
 
         Ok(())
     }
@@ -541,8 +544,11 @@ impl RoomService {
         let member_count = self.get_member_count(&room_id).await?;
 
         // Get creator username
-        // TODO: Implement username lookup or cache
-        let creator_username = "user".to_string(); // Placeholder
+        let creator_username = self
+            .user_service
+            .get_username(&room.created_by)
+            .await?
+            .unwrap_or_else(|| "Unknown".to_string());
 
         // Convert settings to bytes (protobuf serialization)
         let settings_bytes = serde_json::to_vec(&room.settings)
@@ -597,16 +603,24 @@ impl RoomService {
             let creator_id = UserId::from_string(request.creator_id.clone());
             let (rooms, total) = self.list_rooms_by_creator_with_count(&creator_id, query.page as i64, query.page_size as i64).await?;
 
+            // Collect creator IDs for batch lookup
+            let creator_ids: Vec<UserId> = rooms.iter().map(|r| r.room.created_by.clone()).collect();
+            let usernames_map: std::collections::HashMap<UserId, String> = self.user_service.get_usernames(&creator_ids).await.unwrap_or_default();
+
             // Convert rooms to AdminRoom format
             let admin_rooms: Vec<AdminRoom> = rooms
                 .into_iter()
                 .map(|r| {
                     let settings_bytes = serde_json::to_vec(&r.room.settings).unwrap_or_default();
+                    let creator_username = usernames_map
+                        .get(&r.room.created_by)
+                        .cloned()
+                        .unwrap_or_else(|| "Unknown".to_string());
                     AdminRoom {
                         id: r.room.id.as_str().to_string(),
                         name: r.room.name,
                         creator_id: r.room.created_by.as_str().to_string(),
-                        creator_username: "user".to_string(), // TODO: Implement lookup
+                        creator_username,
                         status: r.room.status.as_str().to_string(),
                         settings: settings_bytes,
                         member_count: r.member_count,
@@ -624,16 +638,24 @@ impl RoomService {
 
         let (rooms, total) = self.list_rooms_with_count(&query).await?;
 
+        // Collect creator IDs for batch lookup
+        let creator_ids: Vec<UserId> = rooms.iter().map(|r| r.room.created_by.clone()).collect();
+        let usernames_map: std::collections::HashMap<UserId, String> = self.user_service.get_usernames(&creator_ids).await.unwrap_or_default();
+
         // Convert rooms to AdminRoom format
         let admin_rooms: Vec<AdminRoom> = rooms
             .into_iter()
             .map(|r| {
                 let settings_bytes = serde_json::to_vec(&r.room.settings).unwrap_or_default();
+                let creator_username = usernames_map
+                    .get(&r.room.created_by)
+                    .cloned()
+                    .unwrap_or_else(|| "Unknown".to_string());
                 AdminRoom {
                     id: r.room.id.as_str().to_string(),
                     name: r.room.name,
                     creator_id: r.room.created_by.as_str().to_string(),
-                    creator_username: "user".to_string(), // TODO: Implement lookup
+                    creator_username,
                     status: r.room.status.as_str().to_string(),
                     settings: settings_bytes,
                     member_count: r.member_count,
@@ -717,6 +739,28 @@ impl RoomService {
     /// Update room directly (admin use, bypasses permission checks)
     pub async fn admin_update_room(&self, room: &Room) -> Result<Room> {
         self.room_repo.update(room).await
+    }
+
+    // ========== Service Accessors ==========
+
+    /// Get reference to media service
+    pub fn media_service(&self) -> &MediaService {
+        &self.media_service
+    }
+
+    /// Get reference to playback service
+    pub fn playback_service(&self) -> &PlaybackService {
+        &self.playback_service
+    }
+
+    /// Get reference to member service
+    pub fn member_service(&self) -> &MemberService {
+        &self.member_service
+    }
+
+    /// Get reference to notification service
+    pub fn notification_service(&self) -> &NotificationService {
+        &self.notification_service
     }
 }
 

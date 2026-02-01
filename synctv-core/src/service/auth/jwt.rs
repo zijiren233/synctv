@@ -185,6 +185,68 @@ impl JwtService {
         }
         Ok(claims)
     }
+
+    /// Sign a custom JSON value as JWT
+    ///
+    /// This allows signing arbitrary claims (not just the standard Claims struct).
+    /// Useful for RTMP publish keys and other custom tokens.
+    ///
+    /// # Arguments
+    /// * `claims` - JSON value containing the claims
+    ///
+    /// # Returns
+    /// Signed JWT token string
+    pub async fn sign_custom(&self, claims: &serde_json::Value) -> Result<String> {
+        let now = Utc::now();
+
+        // Add standard JWT claims if not present
+        let mut claims_with_standard = claims.clone();
+        if let Some(obj) = claims_with_standard.as_object_mut() {
+            obj.entry("iat".to_string())
+                .or_insert_with(|| serde_json::Value::Number(now.timestamp().into()));
+
+            if !obj.contains_key("exp") {
+                obj.entry("exp".to_string())
+                    .or_insert_with(|| serde_json::Value::Number((now.timestamp() + 86400).into())); // Default 24h
+            }
+        }
+
+        let header = Header::new(self.algorithm);
+        encode(&header, &claims_with_standard, &self.encoding_key)
+            .map_err(|e| Error::Internal(format!("Failed to sign custom token: {}", e)))
+    }
+
+    /// Verify a custom JWT token
+    ///
+    /// This allows verifying tokens with arbitrary claims.
+    ///
+    /// # Arguments
+    /// * `token` - JWT token string
+    ///
+    /// # Returns
+    /// JSON value containing the claims
+    pub async fn verify_custom(&self, token: &str) -> Result<serde_json::Value> {
+        let mut validation = Validation::new(self.algorithm);
+        validation.validate_exp = true;
+        validation.validate_nbf = false;
+        validation.leeway = 60; // 60 seconds leeway for clock skew
+
+        let token_data = decode(token, &self.decoding_key, &validation)
+            .map_err(|e| match e.kind() {
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
+                    Error::Authentication("Token expired".to_string())
+                }
+                jsonwebtoken::errors::ErrorKind::InvalidToken => {
+                    Error::Authentication("Invalid token".to_string())
+                }
+                jsonwebtoken::errors::ErrorKind::InvalidSignature => {
+                    Error::Authentication("Invalid token signature".to_string())
+                }
+                _ => Error::Authentication(format!("Token verification failed: {}", e)),
+            })?;
+
+        Ok(token_data.claims)
+    }
 }
 
 #[cfg(test)]

@@ -14,7 +14,7 @@ use super::{middleware::AuthUser, AppResult, AppState};
 pub struct UserResponse {
     pub id: String,
     pub username: String,
-    pub email: String,
+    pub email: Option<String>,
     pub permissions: i64,
     pub created_at: String,
     pub updated_at: String,

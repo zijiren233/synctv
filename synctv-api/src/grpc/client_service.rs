@@ -208,7 +208,7 @@ impl AuthService for ClientServiceImpl {
         // Register user
         let (user, access_token, refresh_token) = self
             .user_service
-            .register(req.username, req.email, req.password)
+            .register(req.username, Some(req.email), req.password)
             .await
             .map_err(|e| match e {
                 synctv_core::Error::InvalidInput(msg) => Status::invalid_argument(msg),
@@ -223,7 +223,7 @@ impl AuthService for ClientServiceImpl {
         let proto_user = Some(User {
             id: user.id.as_str().to_string(),
             username: user.username,
-            email: user.email,
+            email: user.email.unwrap_or_default(),
             permissions: user.permissions.0,
             created_at: user.created_at.timestamp(),
         });
@@ -267,7 +267,7 @@ impl AuthService for ClientServiceImpl {
         let proto_user = Some(User {
             id: user.id.as_str().to_string(),
             username: user.username,
-            email: user.email,
+            email: user.email.unwrap_or_default(),
             permissions: user.permissions.0,
             created_at: user.created_at.timestamp(),
         });
@@ -355,7 +355,7 @@ impl UserService for ClientServiceImpl {
             user: Some(User {
                 id: user.id.to_string(),
                 username: user.username,
-                email: user.email,
+                email: user.email.unwrap_or_default(),
                 permissions: user.permissions.0,
                 created_at: user.created_at.timestamp(),
             }),
@@ -401,7 +401,7 @@ impl UserService for ClientServiceImpl {
         let proto_user = User {
             id: updated_user.id.to_string(),
             username: updated_user.username,
-            email: updated_user.email,
+            email: updated_user.email.unwrap_or_default(),
             permissions: updated_user.permissions.0,
             created_at: updated_user.created_at.timestamp(),
         };

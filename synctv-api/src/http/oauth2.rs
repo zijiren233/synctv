@@ -13,6 +13,7 @@ use synctv_core::models::{
     oauth2_client::OAuth2CallbackRequest,
     id::UserId,
     user::User,
+    settings::{groups, server},
 };
 use synctv_core::service::JwtService;
 
@@ -152,8 +153,23 @@ async fn handle_oauth2_callback(
                 );
                 uid
             } else {
-                // User doesn't exist - check if signup is enabled
-                // For now, we'll create a new user (TODO: check signup_enabled setting)
+                // User doesn't exist - check if signup is enabled via settings
+                let settings_service = state.settings_service.as_ref()
+                    .ok_or_else(|| super::AppError::internal_server_error("Settings service not available"))?;
+
+                let server_settings = settings_service.get(groups::SERVER).await
+                    .map_err(|_| super::AppError::internal_server_error("Failed to get settings"))?;
+
+                let signup_enabled = server_settings.parse_json()
+                    .ok()
+                    .and_then(|json| json.get(server::SIGNUP_ENABLED).cloned())
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true); // Default to true if not set
+
+                if !signup_enabled {
+                    return Err(super::AppError::bad_request("User registration is disabled"));
+                }
+
                 let new_user = state
                     .user_service
                     .create_or_load_by_oauth2(

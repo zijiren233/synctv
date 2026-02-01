@@ -60,7 +60,6 @@ pub fn build_provider_routes() -> Router<AppState> {
 
 // Provider-specific implementations
 // Each module will self-register when loaded
-// TODO: Re-enable when UserProviderCredentialRepository is properly implemented
-// pub mod alist;
-// pub mod bilibili;
-// pub mod emby;
+pub mod alist;
+pub mod bilibili;
+pub mod emby;

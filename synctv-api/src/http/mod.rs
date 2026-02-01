@@ -4,9 +4,11 @@
 pub mod auth;
 pub mod error;
 pub mod health;
+pub mod media;
 pub mod middleware;
 pub mod oauth2;
 pub mod room;
+pub mod room_extra;
 pub mod user;
 pub mod websocket;
 
@@ -19,7 +21,7 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
-use synctv_core::repository::ProviderInstanceRepository;
+use synctv_core::repository::{ProviderInstanceRepository, UserProviderCredentialRepository};
 use synctv_core::service::{ProviderInstanceManager, RoomService, UserService};
 use synctv_stream::streaming::{create_streaming_router, StreamingHttpState};
 use synctv_cluster::sync::PublishRequest;
@@ -36,10 +38,13 @@ pub struct AppState {
     pub room_service: Arc<RoomService>,
     pub provider_instance_manager: Arc<ProviderInstanceManager>,
     pub provider_instance_repository: Arc<ProviderInstanceRepository>,
+    pub user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
     pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
     pub jwt_service: synctv_core::service::JwtService,
     pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
+    pub settings_service: Option<Arc<synctv_core::service::SettingsService>>,
+    pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
 }
 
 /// Create the HTTP router with all routes
@@ -48,21 +53,27 @@ pub fn create_router(
     room_service: Arc<RoomService>,
     provider_instance_manager: Arc<ProviderInstanceManager>,
     provider_instance_repository: Arc<ProviderInstanceRepository>,
+    user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
     message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
     jwt_service: synctv_core::service::JwtService,
     redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
     streaming_state: Option<StreamingHttpState>,
     oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
-) -> Router {
+    settings_service: Option<Arc<synctv_core::service::SettingsService>>,
+    settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+) -> axum::Router {
     let state = AppState {
         user_service,
         room_service,
         provider_instance_manager: provider_instance_manager.clone(),
         provider_instance_repository,
+        user_provider_credential_repository,
         message_hub,
         jwt_service,
         redis_publish_tx,
         oauth2_service,
+        settings_service,
+        settings_registry,
     };
 
     let mut router = Router::new()
@@ -136,22 +147,24 @@ pub fn create_router(
         )
         // WebSocket endpoint for real-time messaging
         .route("/ws/rooms/:room_id", axum::routing::get(websocket::websocket_handler))
-        .with_state(state);
+        // Provider-specific HTTP routes (re-enabled with UserProviderCredentialRepository)
+        .merge(providers::build_provider_routes());
 
-    // Add streaming routes if streaming state is provided
-    // Routes: /live/:room_id/:media_id.flv, /hls/:room_id/:media_id.m3u8, /hls/:room_id/:media_id/:segment
-    if let Some(streaming_state) = streaming_state {
-        router = router.merge(create_streaming_router(streaming_state));
-    }
+    // Note: Streaming routes (/live, /hls) are not merged here because they use StreamingHttpState
+    // which is incompatible with our AppState. They should be run on a separate port or service.
 
-    router
+    // Apply layers before state
+    let router = router
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http());
+
+    // Apply state to all routes (must be last)
+    router.with_state(state)
 }
 
 // TODO: Re-enable provider routes when UserProviderCredentialRepository is properly implemented

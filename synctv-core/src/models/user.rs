@@ -8,7 +8,7 @@ use super::permission::PermissionBits;
 pub struct User {
     pub id: UserId,
     pub username: String,
-    pub email: String,
+    pub email: Option<String>,  // NULL allowed for OAuth2 users
     #[serde(skip_serializing)]
     pub password_hash: String,
     pub permissions: PermissionBits,
@@ -18,7 +18,7 @@ pub struct User {
 }
 
 impl User {
-    pub fn new(username: String, email: String, password_hash: String) -> Self {
+    pub fn new(username: String, email: Option<String>, password_hash: String) -> Self {
         let now = Utc::now();
         Self {
             id: UserId::new(),
@@ -44,14 +44,14 @@ impl User {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUserRequest {
     pub username: String,
-    pub email: String,
+    pub email: Option<String>,  // Optional email
     pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateUserRequest {
     pub username: Option<String>,
-    pub email: Option<String>,
+    pub email: Option<Option<String>>,  // Option<Option<String>>: Some(None) means set to NULL, None means don't update
     pub password: Option<String>,
 }
 

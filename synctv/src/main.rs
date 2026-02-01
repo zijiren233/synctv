@@ -4,6 +4,7 @@ mod server;
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{error, info};
+use chrono::Utc;
 
 use synctv_core::{
     logging,
@@ -194,8 +195,11 @@ async fn main() -> Result<()> {
         providers_manager: synctv_services.providers_manager.clone(),
         provider_instance_manager: synctv_services.provider_instance_manager.clone(),
         provider_instance_repository: synctv_services.provider_instance_repo.clone(),
+        user_provider_credential_repository: synctv_services.user_provider_credential_repo.clone(),
         oauth2_service: synctv_services.oauth2_service.clone(),
         settings_service: synctv_services.settings_service.clone(),
+        settings_registry: synctv_services.settings_registry.clone(),
+        server_start_time: Utc::now(),
     };
 
     let server = SyncTvServer::new(config, services, streaming_state);

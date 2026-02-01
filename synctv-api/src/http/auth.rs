@@ -59,7 +59,7 @@ pub async fn register(
     // Register user (returns tuple: (User, access_token, refresh_token))
     let (user, access_token, refresh_token) = state
         .user_service
-        .register(req.username, email, req.password)
+        .register(req.username, Some(email), req.password)
         .await?;
 
     Ok(Json(AuthResponse {

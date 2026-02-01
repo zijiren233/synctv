@@ -1,7 +1,9 @@
 use sqlx::PgPool;
 use chrono::Utc;
+use std::collections::HashMap;
 
 use crate::{
+    cache::UsernameCache,
     models::{User, UserId},
     models::oauth2_client::OAuth2Provider,
     repository::UserRepository,
@@ -16,20 +18,29 @@ pub struct UserService {
     repository: UserRepository,
     jwt_service: JwtService,
     blacklist_service: TokenBlacklistService,
+    username_cache: UsernameCache,
 }
 
 impl std::fmt::Debug for UserService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UserService").finish()
+        f.debug_struct("UserService")
+            .field("username_cache", &self.username_cache)
+            .finish()
     }
 }
 
 impl UserService {
-    pub fn new(pool: PgPool, jwt_service: JwtService, blacklist_service: TokenBlacklistService) -> Self {
+    pub fn new(
+        pool: PgPool,
+        jwt_service: JwtService,
+        blacklist_service: TokenBlacklistService,
+        username_cache: UsernameCache,
+    ) -> Self {
         Self {
             repository: UserRepository::new(pool),
             jwt_service,
             blacklist_service,
+            username_cache,
         }
     }
 
@@ -37,12 +48,14 @@ impl UserService {
     pub async fn register(
         &self,
         username: String,
-        email: String,
+        email: Option<String>,
         password: String,
     ) -> Result<(User, String, String)> {
         // Validate input
         self.validate_username(&username)?;
-        self.validate_email(&email)?;
+        if let Some(ref email) = email {
+            self.validate_email(email)?;
+        }
         self.validate_password(&password)?;
 
         // Check if username already exists
@@ -50,17 +63,22 @@ impl UserService {
             return Err(Error::InvalidInput("Username already exists".to_string()));
         }
 
-        // Check if email already exists
-        if self.repository.email_exists(&email).await? {
-            return Err(Error::InvalidInput("Email already exists".to_string()));
+        // Check if email already exists (only if provided)
+        if let Some(ref email) = email {
+            if self.repository.email_exists(email).await? {
+                return Err(Error::InvalidInput("Email already exists".to_string()));
+            }
         }
 
         // Hash password
         let password_hash = hash_password(&password).await?;
 
         // Create user
-        let user = User::new(username, email, password_hash);
+        let user = User::new(username.clone(), email.clone(), password_hash);
         let created_user = self.repository.create(&user).await?;
+
+        // Populate username cache
+        self.username_cache.set(&created_user.id, &username).await?;
 
         // Generate JWT tokens
         let access_token = self
@@ -186,7 +204,7 @@ impl UserService {
     pub async fn create_or_load_by_oauth2(
         &self,
         provider: &OAuth2Provider,
-        provider_user_id: &str,
+        _provider_user_id: &str,
         username: &str,
         email: Option<&str>,
     ) -> Result<User> {
@@ -202,15 +220,18 @@ impl UserService {
         // Generate a random password (OAuth2 users don't need password login)
         let random_password = nanoid::nanoid!(32);
 
-        // Use email if provided, otherwise use a placeholder
-        let email = email.unwrap_or(&format!("{}@{}.oauth.local", username, provider.as_str())).to_string();
+        // Use provided email, or None if not provided
+        let user_email = email.map(|e| e.to_string());
 
         // Hash password
         let password_hash = hash_password(&random_password).await?;
 
         // Create user
-        let user = User::new(username.to_string(), email, password_hash);
+        let user = User::new(username.to_string(), user_email, password_hash);
         let created_user = self.repository.create(&user).await?;
+
+        // Populate username cache
+        self.username_cache.set(&created_user.id, username).await?;
 
         tracing::info!(
             "Created new user {} via OAuth2 provider {}",
@@ -246,14 +267,25 @@ impl UserService {
 
     /// Validate email
     fn validate_email(&self, email: &str) -> Result<()> {
+        let email = email.trim();
+
+        // Check if empty after trim
+        if email.is_empty() {
+            return Err(Error::InvalidInput("Email cannot be empty or whitespace only".to_string()));
+        }
+
+        // Check for @ symbol
         if !email.contains('@') {
             return Err(Error::InvalidInput("Invalid email address".to_string()));
         }
+
+        // Check length
         if email.len() > 255 {
             return Err(Error::InvalidInput(
                 "Email must be at most 255 characters".to_string(),
             ));
         }
+
         Ok(())
     }
 
@@ -270,6 +302,60 @@ impl UserService {
             ));
         }
         Ok(())
+    }
+
+    /// Get username for a user ID (from cache or database)
+    ///
+    /// This method checks the cache first, then falls back to the database.
+    /// The cache is automatically populated on cache miss.
+    pub async fn get_username(&self, user_id: &UserId) -> Result<Option<String>> {
+        // Check cache first
+        if let Some(username) = self.username_cache.get(user_id).await? {
+            return Ok(Some(username));
+        }
+
+        // Cache miss - fetch from database
+        if let Some(user) = self.repository.get_by_id(user_id).await? {
+            // Populate cache
+            let username = user.username.clone();
+            self.username_cache.set(user_id, &username).await?;
+            Ok(Some(username))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get multiple usernames at once (more efficient)
+    ///
+    /// Returns a map of user_id -> username.
+    pub async fn get_usernames(&self, user_ids: &[UserId]) -> Result<HashMap<UserId, String>> {
+        // Try batch cache lookup first
+        let mut result = self.username_cache.get_batch(user_ids).await?;
+        let mut missing_ids: Vec<UserId> = user_ids
+            .iter()
+            .filter(|id| !result.contains_key(*id))
+            .cloned()
+            .collect();
+
+        // Fetch missing usernames from database
+        if !missing_ids.is_empty() {
+            for user_id in &missing_ids {
+                if let Some(user) = self.repository.get_by_id(user_id).await? {
+                    let username = user.username.clone();
+                    self.username_cache.set(user_id, &username).await?;
+                    result.insert(user_id.clone(), username);
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Invalidate username cache for a user
+    ///
+    /// This should be called when a user's username is changed.
+    pub async fn invalidate_username_cache(&self, user_id: &UserId) -> Result<()> {
+        self.username_cache.invalidate(user_id).await
     }
 }
 
@@ -300,7 +386,8 @@ mod tests {
 
         let jwt = JwtService::new(private_bytes, public_bytes).unwrap();
         let blacklist = TokenBlacklistService::new(None).unwrap(); // Disabled for tests
-        UserService::new(pool, jwt, blacklist)
+        let username_cache = UsernameCache::new(None, "test:".to_string(), 10, 0).unwrap();
+        UserService::new(pool, jwt, blacklist, username_cache)
     }
 
     #[tokio::test]

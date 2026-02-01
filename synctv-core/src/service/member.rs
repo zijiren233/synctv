@@ -256,6 +256,79 @@ impl MemberService {
             .list_by_user_with_details(user_id, page, page_size)
             .await
     }
+
+    /// Ban a member from a room
+    pub async fn ban_member(
+        &self,
+        room_id: RoomId,
+        admin_id: UserId,
+        target_user_id: UserId,
+    ) -> Result<()> {
+        // Check admin permission
+        self.permission_service
+            .check_permission(&room_id, &admin_id, PermissionBits::KICK_USER)
+            .await?;
+
+        // Remove member from room (this sets left_at)
+        self.remove_member(room_id, target_user_id).await?;
+
+        Ok(())
+    }
+
+    /// Set member role (member/admin)
+    pub async fn set_member_role(
+        &self,
+        room_id: RoomId,
+        creator_id: UserId,
+        target_user_id: UserId,
+        role: crate::models::Role,
+    ) -> Result<RoomMember> {
+        // Check if user is creator (only creator can change roles)
+        let room = self
+            .room_repo
+            .get_by_id(&room_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+
+        if room.created_by != creator_id {
+            return Err(Error::Authorization(
+                "Only room creator can change member roles".to_string(),
+            ));
+        }
+
+        // Verify target is a member
+        if !self.member_repo.is_member(&room_id, &target_user_id).await? {
+            return Err(Error::NotFound("User is not a member of this room".to_string()));
+        }
+
+        // Update role
+        let updated_member = self
+            .member_repo
+            .update_role(&room_id, &target_user_id, role)
+            .await?;
+
+        // Invalidate permission cache
+        self.permission_service
+            .invalidate_cache(&room_id, &target_user_id)
+            .await;
+
+        Ok(updated_member)
+    }
+
+    /// List all members including inactive (left) (admin view)
+    pub async fn list_members_all(
+        &self,
+        room_id: &RoomId,
+        admin_id: UserId,
+    ) -> Result<Vec<RoomMemberWithUser>> {
+        // Check admin permission
+        self.permission_service
+            .check_permission(&room_id, &admin_id, PermissionBits::KICK_USER)
+            .await?;
+
+        // Get all members regardless of left_at status
+        self.member_repo.list_by_room_all(room_id).await
+    }
 }
 
 #[cfg(test)]

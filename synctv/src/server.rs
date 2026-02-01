@@ -8,9 +8,12 @@
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
+use chrono::Utc;
 
 use synctv_core::{
     service::RoomService,
+    repository::UserProviderCredentialRepository,
+    models::settings::{groups, server},
     Config,
 };
 use synctv_stream::relay::StreamRegistry;
@@ -45,8 +48,11 @@ pub struct Services {
     pub providers_manager: Arc<synctv_core::service::ProvidersManager>,
     pub provider_instance_manager: Arc<synctv_core::service::ProviderInstanceManager>,
     pub provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
+    pub user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     pub settings_service: Arc<synctv_core::service::SettingsService>,
+    pub settings_registry: Arc<synctv_core::service::SettingsRegistry>,
+    pub server_start_time: chrono::DateTime<Utc>,
 }
 
 impl Services {
@@ -75,6 +81,12 @@ impl SyncTvServer {
     /// Start all servers
     pub async fn start(mut self) -> anyhow::Result<()> {
         info!("Starting SyncTV server...");
+
+        // Save server start time to settings for uptime tracking
+        let start_timestamp = self.services.server_start_time.timestamp();
+        let key = format!("{}.{}", groups::SERVER, server::SERVER_START_TIME);
+        let _ = self.services.settings_service.update(&key, start_timestamp.to_string()).await
+            .map_err(|e| tracing::warn!("Failed to save server start time: {}", e));
 
         // Start gRPC server
         let grpc_handle = self.start_grpc_server().await?;
@@ -117,7 +129,9 @@ impl SyncTvServer {
         let providers_manager = self.services.providers_manager.clone();
         let provider_instance_manager = self.services.provider_instance_manager.clone();
         let provider_instance_repository = self.services.provider_instance_repository.clone();
+        let user_provider_credential_repository = self.services.user_provider_credential_repository.clone();
         let settings_service = self.services.settings_service.clone();
+        let settings_registry = self.services.settings_registry.clone();
 
         let handle = tokio::spawn(async move {
             info!("Starting gRPC server on {}...", config.grpc_address());
@@ -134,7 +148,10 @@ impl SyncTvServer {
                 connection_manager,
                 Some(providers_manager),
                 provider_instance_manager,
+                provider_instance_repository,
+                user_provider_credential_repository,
                 settings_service,
+                Some(settings_registry),
             )
             .await
             {
@@ -152,10 +169,13 @@ impl SyncTvServer {
         let room_service = self.services.room_service.clone();
         let provider_instance_manager = self.services.provider_instance_manager.clone();
         let provider_instance_repository = self.services.provider_instance_repository.clone();
+        let user_provider_credential_repository = self.services.user_provider_credential_repository.clone();
         let message_hub = self.services.message_hub();
         let jwt_service = self.services.jwt_service.clone();
         let redis_publish_tx = self.services.redis_publish_tx.clone();
         let oauth2_service = self.services.oauth2_service.clone();
+        let settings_service = self.services.settings_service.clone();
+        let settings_registry = self.services.settings_registry.clone();
 
         // Convert streaming state to HTTP state
         let streaming_state = self.streaming_state.as_ref().map(|s| synctv_stream::streaming::StreamingHttpState {
@@ -168,11 +188,14 @@ impl SyncTvServer {
             room_service,
             provider_instance_manager,
             provider_instance_repository,
+            user_provider_credential_repository,
             message_hub,
             jwt_service,
             redis_publish_tx,
             streaming_state,
             oauth2_service,
+            Some(settings_service),
+            Some(settings_registry),
         );
 
         let handle = tokio::spawn(async move {

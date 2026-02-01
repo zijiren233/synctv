@@ -39,6 +39,7 @@ use synctv_core::service::auth::JwtService;
 use synctv_core::service::{
     ContentFilter, ProviderInstanceManager, ProvidersManager, RateLimitConfig, RateLimiter,
     RoomService as CoreRoomService, UserService as CoreUserService, SettingsService,
+    SettingsRegistry,
 };
 use synctv_core::Config;
 
@@ -56,7 +57,10 @@ pub async fn serve(
     connection_manager: ConnectionManager,
     providers_manager: Option<Arc<ProvidersManager>>,
     provider_instance_manager: Arc<ProviderInstanceManager>,
+    provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
+    user_provider_credential_repository: Arc<synctv_core::repository::UserProviderCredentialRepository>,
     settings_service: Arc<SettingsService>,
+    settings_registry: Option<Arc<SettingsRegistry>>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
 
@@ -65,11 +69,13 @@ pub async fn serve(
     // Clone services for all uses before unwrapping
     let user_service_for_client = user_service.clone();
     let user_service_for_admin = user_service.clone();
-    let _user_service_for_provider = user_service.clone();
+    let user_service_for_provider = user_service.clone();
 
     let room_service_for_client = room_service.clone();
     let room_service_for_admin = room_service.clone();
-    let _room_service_for_provider = room_service.clone();
+    let room_service_for_provider = room_service.clone();
+
+    let jwt_service_for_provider = jwt_service.clone();
 
     // Create service instances
     let user_service_clone =
@@ -81,7 +87,7 @@ pub async fn serve(
         user_service_clone,
         room_service_clone,
         (*message_hub).clone(),
-        redis_publish_tx,
+        redis_publish_tx.clone(),
         rate_limiter,
         rate_limit_config,
         content_filter,
@@ -92,7 +98,8 @@ pub async fn serve(
         Arc::try_unwrap(user_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
         Arc::try_unwrap(room_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
         provider_instance_manager,
-        settings_service,
+        settings_service.clone(),
+        settings_registry,
     );
 
     // Create server builder
@@ -160,20 +167,22 @@ pub async fn serve(
 
     // Register provider gRPC services via registry pattern
     // Each provider module self-registers, achieving complete decoupling!
-    if let Some(_providers_mgr) = providers_manager {
+    if let Some(providers_mgr) = providers_manager {
         tracing::info!("Initializing provider gRPC service modules");
 
-        // TODO: Re-implement provider gRPC services with proper dependency injection
-        // The provider services need a proper AppState with provider_instance_repository
-        // For now, provider services are disabled
-
-        /*
-        // Create AppState for provider extensions
+        // Create AppState for provider extensions with all required dependencies
         let app_state = Arc::new(crate::http::AppState {
             user_service: user_service_for_provider,
             room_service: room_service_for_provider,
             provider_instance_manager: providers_mgr.instance_manager().clone(),
-            provider_instance_repository: TODO,
+            provider_instance_repository: provider_instance_repository.clone(),
+            user_provider_credential_repository: user_provider_credential_repository.clone(),
+            message_hub: message_hub.clone(),
+            jwt_service: jwt_service_for_provider,
+            redis_publish_tx: redis_publish_tx.clone(),
+            oauth2_service: None, // Not used in gRPC provider services
+            settings_service: Some(settings_service.clone()),
+            settings_registry: None, // Not used in gRPC provider services
         });
 
         // Initialize all provider modules (triggers self-registration)
@@ -183,7 +192,6 @@ pub async fn serve(
 
         // Build services from registry (no knowledge of specific types!)
         router = providers::build_provider_services(app_state, router);
-        */
     }
 
     // Start server

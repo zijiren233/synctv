@@ -56,7 +56,6 @@ pub fn build_provider_services(app_state: Arc<AppState>, mut router: Router) -> 
 
 // Provider-specific implementations
 // Each module will self-register when loaded
-// TODO: Re-enable when UserProviderCredentialRepository is properly implemented
-// pub mod bilibili;
-// pub mod alist;
-// pub mod emby;
+pub mod bilibili;
+pub mod alist;
+pub mod emby;

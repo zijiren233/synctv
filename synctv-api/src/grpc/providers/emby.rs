@@ -163,7 +163,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         tracing::info!("gRPC Emby get binds request for user: {}", auth_context.user_id);
 
         // Query saved Emby credentials for current user
-        let credentials = self.app_state.provider_instance_repository
+        let credentials = self.app_state.user_provider_credential_repository
             .get_by_user(&auth_context.user_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to query credentials: {}", e)))?;

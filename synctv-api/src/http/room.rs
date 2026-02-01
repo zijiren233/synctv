@@ -670,15 +670,15 @@ pub async fn check_password(
 /// Get room members
 ///
 /// This handler now uses the gRPC-typed service method, making it a lightweight wrapper.
-/// The service layer uses synctv_types::GetRoomMembersRequest/Response from admin.proto
+/// The service layer uses synctv_proto::admin::GetRoomMembersRequest/Response from admin.proto
 /// which have complete request structures with room_id included.
 pub async fn get_room_members(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<synctv_types::GetRoomMembersResponse>> {
+) -> AppResult<Json<synctv_proto::admin::GetRoomMembersResponse>> {
     // Construct gRPC request with room_id from path parameter
-    let request = synctv_types::GetRoomMembersRequest { room_id };
+    let request = synctv_proto::admin::GetRoomMembersRequest { room_id };
 
     // Call service layer with gRPC types - returns gRPC response directly
     let response = state

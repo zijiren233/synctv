@@ -7,132 +7,99 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+/// Settings group names constants
+pub mod groups {
+    pub const SERVER: &str = "server";
+    pub const EMAIL: &str = "email";
+    pub const OAUTH: &str = "oauth";
+    pub const RATE_LIMIT: &str = "rate_limit";
+    pub const CONTENT_MODERATION: &str = "content_moderation";
+}
+
+/// Server settings key constants
+pub mod server {
+    pub const ALLOW_REGISTRATION: &str = "allow_registration";
+    pub const SIGNUP_ENABLED: &str = "signup_enabled";
+    pub const ALLOW_ROOM_CREATION: &str = "allow_room_creation";
+    pub const MAX_ROOMS_PER_USER: &str = "max_rooms_per_user";
+    pub const MAX_MEMBERS_PER_ROOM: &str = "max_members_per_room";
+    pub const SERVER_START_TIME: &str = "server_start_time";
+
+    pub const DEFAULT_ROOM_SETTINGS: &str = "default_room_settings";
+    pub const DEFAULT_ROOM_REQUIRE_PASSWORD: &str = "require_password";
+    pub const DEFAULT_ROOM_ALLOW_GUEST: &str = "allow_guest";
+}
+
+/// Email settings key constants
+pub mod email {
+    pub const ENABLED: &str = "enabled";
+    pub const SMTP_HOST: &str = "smtp_host";
+    pub const SMTP_PORT: &str = "smtp_port";
+    pub const SMTP_USERNAME: &str = "smtp_username";
+    pub const USE_TLS: &str = "use_tls";
+    pub const FROM_ADDRESS: &str = "from_address";
+    pub const FROM_NAME: &str = "from_name";
+}
+
+/// OAuth settings key constants
+pub mod oauth {
+    pub const GITHUB_ENABLED: &str = "github_enabled";
+    pub const GOOGLE_ENABLED: &str = "google_enabled";
+    pub const MICROSOFT_ENABLED: &str = "microsoft_enabled";
+    pub const DISCORD_ENABLED: &str = "discord_enabled";
+}
+
+/// Rate limit settings key constants
+pub mod rate_limit {
+    pub const ENABLED: &str = "enabled";
+    pub const API_RATE_LIMIT: &str = "api_rate_limit";
+    pub const API_RATE_WINDOW: &str = "api_rate_window";
+    pub const WS_RATE_LIMIT: &str = "ws_rate_limit";
+    pub const WS_RATE_WINDOW: &str = "ws_rate_window";
+}
+
+/// Content moderation settings key constants
+pub mod content_moderation {
+    pub const ENABLED: &str = "enabled";
+    pub const FILTER_PROFANITY: &str = "filter_profanity";
+    pub const MAX_MESSAGE_LENGTH: &str = "max_message_length";
+    pub const LINK_FILTER_ENABLED: &str = "link_filter_enabled";
+}
+
 /// System settings group
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsGroup {
-    pub id: i64,
-    pub group_name: String,
-    pub settings_json: JsonValue,
-    pub description: Option<String>,
+    pub key: String,
+    pub group: String,
+    pub value: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 impl SettingsGroup {
     /// Create a new settings group
-    pub fn new(group_name: String, settings_json: JsonValue, description: Option<String>) -> Self {
+    pub fn new(group: String, value: String) -> Self {
         Self {
-            id: 0, // Will be set by database
-            group_name,
-            settings_json,
-            description,
+            key: format!("{}.default", group),
+            group,
+            value,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
     }
 
-    /// Get a specific setting value by key path (e.g., "server.allow_registration")
-    pub fn get(&self, path: &str) -> Option<&JsonValue> {
-        let parts: Vec<&str> = path.split('.').collect();
-        let mut current = &self.settings_json;
-
-        for part in parts {
-            match current.get(part) {
-                Some(value) => current = value,
-                None => return None,
-            }
-        }
-
-        Some(current)
+    /// Parse value as JSON value
+    pub fn parse_json(&self) -> anyhow::Result<JsonValue> {
+        serde_json::from_str(&self.value)
+            .map_err(|e| anyhow::anyhow!("Failed to parse settings value: {}", e))
     }
 
-    /// Get a boolean setting value
-    pub fn get_bool(&self, path: &str) -> Option<bool> {
-        self.get(path).and_then(|v| v.as_bool())
-    }
-
-    /// Get a string setting value
-    pub fn get_str(&self, path: &str) -> Option<&str> {
-        self.get(path).and_then(|v| v.as_str())
-    }
-
-    /// Get an integer setting value
-    pub fn get_i64(&self, path: &str) -> Option<i64> {
-        self.get(path).and_then(|v| v.as_i64())
-    }
-
-    /// Get a nested object setting value
-    pub fn get_object(&self, path: &str) -> Option<&serde_json::Map<String, JsonValue>> {
-        self.get(path).and_then(|v| v.as_object())
-    }
-
-    /// Update a specific setting value by key path
-    pub fn set(&mut self, path: &str, value: JsonValue) -> Result<(), SettingsError> {
-        let parts: Vec<&str> = path.split('.').collect();
-        let current = &mut self.settings_json;
-
-        // Navigate to the parent object
-        let mut target = current;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last part - set the value
-                if let Some(obj) = target.as_object_mut() {
-                    obj.insert(part.to_string(), value);
-                    self.updated_at = Utc::now();
-                    return Ok(());
-                }
-                return Err(SettingsError::InvalidPath(path.to_string()));
-            }
-
-            // Navigate deeper
-            if !target.get(part).is_some() {
-                // Create missing object
-                if let Some(obj) = target.as_object_mut() {
-                    obj.insert(part.to_string(), JsonValue::Object(serde_json::Map::new()));
-                }
-            }
-
-            target = target.get_mut(part).ok_or_else(|| {
-                SettingsError::InvalidPath(format!("{}.{}", path, part))
-            })?;
-        }
-
-        Err(SettingsError::InvalidPath(path.to_string()))
-    }
-
-    /// Merge JSON settings into existing settings
-    pub fn merge(&mut self, new_settings: JsonValue) -> Result<(), SettingsError> {
-        if let Some(obj) = self.settings_json.as_object_mut() {
-            if let Some(new_obj) = new_settings.as_object() {
-                for (key, value) in new_obj {
-                    obj.insert(key.to_string(), value.clone());
-                }
-                self.updated_at = Utc::now();
-                return Ok(());
-            }
-        }
-        Err(SettingsError::MergeFailed)
-    }
-
-    /// Convert to protobuf bytes
-    pub fn to_proto_bytes(&self) -> Result<Vec<u8>, SettingsError> {
-        serde_json::to_vec(&self.settings_json)
-            .map_err(SettingsError::SerializationError)
-    }
-
-    /// Create from protobuf bytes
-    pub fn from_proto_bytes(group_name: String, bytes: &[u8]) -> Result<Self, SettingsError> {
-        let settings_json: JsonValue = serde_json::from_slice(bytes)
-            .map_err(SettingsError::DeserializationError)?;
-
-        Ok(Self {
-            id: 0,
-            group_name,
-            settings_json,
-            description: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        })
+    /// Get value as JSON object
+    pub fn as_object(&self) -> anyhow::Result<serde_json::Map<String, JsonValue>> {
+        self.parse_json()?
+            .as_object()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("settings value is not an object"))
     }
 }
 
@@ -220,58 +187,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_setting() {
+    fn test_get_default_settings() {
+        let server_settings = get_default_settings("server");
+        assert!(server_settings.is_some());
+        assert_eq!(server_settings.unwrap().get("allow_registration").cloned().unwrap_or(JsonValue::Null), JsonValue::Bool(true));
+    }
+
+    #[test]
+    fn test_parse_json() {
         let settings = SettingsGroup::new(
             "server".to_string(),
-            default_server_settings(),
-            Some("Server settings".to_string()),
+            serde_json::json!({"test": true}).to_string(),
         );
 
-        assert_eq!(settings.get_bool("server.allow_registration"), Some(true));
-        assert_eq!(settings.get_i64("server.max_rooms_per_user"), Some(10));
-        assert!(settings.get_object("server.default_room_settings").is_some());
+        let parsed = settings.parse_json().unwrap();
+        assert_eq!(parsed.get("test").cloned().unwrap(), JsonValue::Bool(true));
     }
 
     #[test]
-    fn test_set_setting() {
-        let mut settings = SettingsGroup::new(
-            "server".to_string(),
-            default_server_settings(),
-            Some("Server settings".to_string()),
-        );
-
-        settings
-            .set("server.allow_registration", JsonValue::Bool(false))
-            .unwrap();
-        assert_eq!(settings.get_bool("server.allow_registration"), Some(false));
-    }
-
-    #[test]
-    fn test_merge_settings() {
-        let mut settings = SettingsGroup::new(
-            "server".to_string(),
-            serde_json::json!({"key1": "value1"}),
-            Some("Test settings".to_string()),
-        );
-
-        let new_settings = serde_json::json!({"key2": "value2"});
-        settings.merge(new_settings).unwrap();
-
-        assert_eq!(settings.get_str("key1"), Some("value1"));
-        assert_eq!(settings.get_str("key2"), Some("value2"));
-    }
-
-    #[test]
-    fn test_proto_bytes() {
+    fn test_as_object() {
         let settings = SettingsGroup::new(
             "server".to_string(),
-            default_server_settings(),
-            Some("Server settings".to_string()),
+            serde_json::json!({"key1": "value1", "key2": 123}).to_string(),
         );
 
-        let bytes = settings.to_proto_bytes().unwrap();
-        let restored = SettingsGroup::from_proto_bytes("server".to_string(), &bytes).unwrap();
-
-        assert_eq!(settings.settings_json, restored.settings_json);
+        let obj = settings.as_object().unwrap();
+        assert_eq!(obj.get("key1").cloned().unwrap(), JsonValue::String("value1".to_string()));
+        assert_eq!(obj.get("key2").cloned().unwrap(), JsonValue::Number(123.into()));
     }
 }
