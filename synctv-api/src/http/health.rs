@@ -11,7 +11,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::time::Instant;
-use tracing::debug;
 
 use crate::http::AppState;
 
@@ -26,7 +25,7 @@ pub struct HealthResponse {
 }
 
 /// Individual health check
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheck {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,9 +137,16 @@ pub async fn redis_check(State(state): State<AppState>) -> impl IntoResponse {
 async fn check_database(state: &AppState) -> HealthCheck {
     let start = Instant::now();
 
-    // Simple query to check database connection
-    let result = sqlx::query("SELECT 1")
-        .fetch_one(&state.db_pool)
+    // Check database connection by attempting to get a user list (empty query)
+    let result = state
+        .user_service
+        .list_users(&synctv_core::models::UserListQuery {
+            page: 1,
+            page_size: 1,
+            search: None,
+            status: None,
+            role: None,
+        })
         .await;
 
     match result {

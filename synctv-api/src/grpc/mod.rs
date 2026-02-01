@@ -1,16 +1,10 @@
 // Generated protobuf code
+// Note: All proto files are now in synctv-proto crate
 pub mod proto {
     #![allow(clippy::all)]
     #![allow(warnings)]
 
-    pub mod client {
-        include!("proto/synctv.client.rs");
-    }
-
-    pub mod admin {
-        include!("proto/synctv.admin.rs");
-    }
-
+    // Only cluster.proto is internal (from synctv-cluster)
     pub mod cluster {
         include!("proto/synctv.cluster.rs");
     }
@@ -29,8 +23,9 @@ pub use client_service::ClientServiceImpl;
 pub use interceptors::{AuthInterceptor, LoggingInterceptor, ValidationInterceptor, TimeoutInterceptor};
 pub use message_handler::{MessageHandler, cluster_event_to_server_message};
 
-use proto::admin::admin_service_server::AdminServiceServer;
-use proto::client::{
+// Use synctv_proto for all server traits and message types (single source of truth)
+use synctv_proto::admin_service_server::AdminServiceServer;
+use synctv_proto::client::{
     auth_service_server::AuthServiceServer, media_service_server::MediaServiceServer,
     public_service_server::PublicServiceServer, room_service_server::RoomServiceServer,
     user_service_server::UserServiceServer,

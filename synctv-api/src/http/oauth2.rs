@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use synctv_core::models::{
-    oauth2_client::{OAuth2CallbackRequest, OAuth2Provider},
+    oauth2_client::OAuth2CallbackRequest,
     id::UserId,
     user::User,
 };

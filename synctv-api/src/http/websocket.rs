@@ -17,7 +17,7 @@ use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 
 use crate::grpc::message_handler::MessageHandler;
-use crate::grpc::proto::client::ClientMessage;
+use synctv_proto::client::ClientMessage;
 use crate::http::AppState;
 use synctv_core::models::RoomId;
 
@@ -173,7 +173,7 @@ async fn handle_socket(
 
 /// Send error message to WebSocket
 async fn send_error(socket: &mut WebSocket, message_text: &str) {
-    use crate::grpc::proto::client::{self, server_message::Message};
+    use synctv_proto::client::{self, server_message::Message};
 
     let server_msg = client::ServerMessage {
         message: Some(Message::Error(client::ErrorMessage {

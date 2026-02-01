@@ -4,7 +4,9 @@ use tonic::{Request, Response, Status};
 use synctv_core::models::{ProviderInstance, RoomId, UserId, SettingsGroup as CoreSettingsGroup};
 use synctv_core::service::{ProviderInstanceManager, RoomService, UserService, SettingsService};
 
-use super::proto::admin::{admin_service_server::AdminService, *};
+// Use synctv_proto for all gRPC types to avoid duplication
+use synctv_proto::admin_service_server::AdminService;
+use synctv_proto::admin::*; // Import all message types
 
 /// AdminService implementation
 #[derive(Clone)]
@@ -34,7 +36,7 @@ impl AdminServiceImpl {
     fn instance_to_proto(
         &self,
         instance: &ProviderInstance,
-    ) -> super::proto::admin::ProviderInstance {
+    ) -> synctv_proto::admin::ProviderInstance {
         // Determine status based on enabled flag
         // In production, this would do actual health checks via gRPC ping or health check endpoint
         let status = if instance.enabled {
@@ -44,7 +46,7 @@ impl AdminServiceImpl {
             "disabled".to_string()
         };
 
-        super::proto::admin::ProviderInstance {
+        synctv_proto::admin::ProviderInstance {
             name: instance.name.clone(),
             endpoint: instance.endpoint.clone(),
             comment: instance.comment.clone().unwrap_or_default(),
@@ -63,8 +65,8 @@ impl AdminServiceImpl {
     fn settings_group_to_proto(
         &self,
         group: &CoreSettingsGroup,
-    ) -> super::proto::admin::SettingsGroup {
-        super::proto::admin::SettingsGroup {
+    ) -> synctv_proto::admin::SettingsGroup {
+        synctv_proto::admin::SettingsGroup {
             name: group.group_name.clone(),
             settings: group.to_proto_bytes().unwrap_or_default(),
         }
@@ -238,7 +240,7 @@ impl AdminService for AdminServiceImpl {
         };
 
         // Convert to proto format
-        let instances: Vec<super::proto::admin::ProviderInstance> = filtered_instances
+        let instances: Vec<synctv_proto::admin::ProviderInstance> = filtered_instances
             .iter()
             .map(|inst| self.instance_to_proto(inst))
             .collect();
@@ -1177,84 +1179,25 @@ impl AdminService for AdminServiceImpl {
         request: Request<ListRoomsRequest>,
     ) -> Result<Response<ListRoomsResponse>, Status> {
         self.check_admin(&request).await?;
+
+        // Get user_id from request metadata (set by interceptor)
+        let user_context = request
+            .extensions()
+            .get::<super::interceptors::UserContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+
+        let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
+
+        // Call service layer with gRPC types
         let req = request.into_inner();
-
-        // Build query
-        let status = if !req.status.is_empty() {
-            match req.status.as_str() {
-                "active" => Some(synctv_core::models::RoomStatus::Active),
-                "closed" => Some(synctv_core::models::RoomStatus::Closed),
-                _ => None,
-            }
-        } else {
-            None
-        };
-
-        let query = synctv_core::models::RoomListQuery {
-            page: req.page.max(1),
-            page_size: req.page_size.min(100).max(1),
-            status,
-            search: if req.search.is_empty() {
-                None
-            } else {
-                Some(req.search)
-            },
-        };
-
-        // Get rooms with member count (optimized single query)
-        let (rooms_with_count, total) = self
+        let response = self
             .room_service
-            .list_rooms_with_count(&query)
+            .list_rooms_grpc(req, &user_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to list rooms: {}", e)))?;
 
-        // Batch fetch creator usernames
-        let creator_ids: Vec<synctv_core::models::UserId> = rooms_with_count
-            .iter()
-            .map(|rwc| rwc.room.created_by.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-
-        let mut username_map = std::collections::HashMap::new();
-        for creator_id in creator_ids {
-            if let Ok(user) = self.user_service.get_user(&creator_id).await {
-                username_map.insert(creator_id.to_string(), user.username);
-            }
-        }
-
-        // Convert to AdminRoom proto
-        let admin_rooms: Vec<AdminRoom> = rooms_with_count
-            .into_iter()
-            .map(|rwc| {
-                let r = rwc.room;
-                AdminRoom {
-                    id: r.id.to_string(),
-                    name: r.name,
-                    creator_id: r.created_by.to_string(),
-                    creator_username: username_map
-                        .get(r.created_by.as_str())
-                        .cloned()
-                        .unwrap_or_default(),
-                    status: match r.status {
-                        synctv_core::models::RoomStatus::Pending => "pending".to_string(),
-
-                        synctv_core::models::RoomStatus::Active => "active".to_string(),
-                        synctv_core::models::RoomStatus::Closed => "closed".to_string(),
-                        synctv_core::models::RoomStatus::Banned => "banned".to_string(),
-                    },
-                    settings: serde_json::to_vec(&r.settings).unwrap_or_default(),
-                    member_count: rwc.member_count,
-                    created_at: r.created_at.timestamp(),
-                    updated_at: r.updated_at.timestamp(),
-                }
-            })
-            .collect();
-
-        Ok(Response::new(ListRoomsResponse {
-            rooms: admin_rooms,
-            total: total as i32,
-        }))
+        // Return gRPC response directly (no conversion needed)
+        Ok(Response::new(response))
     }
 
     async fn get_room(
@@ -1262,53 +1205,25 @@ impl AdminService for AdminServiceImpl {
         request: Request<GetRoomRequest>,
     ) -> Result<Response<GetRoomResponse>, Status> {
         self.check_admin(&request).await?;
+
+        // Get user_id from request metadata (set by interceptor)
+        let user_context = request
+            .extensions()
+            .get::<super::interceptors::UserContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+
+        let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
+
+        // Call service layer with gRPC types
         let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Get room
-        let room = self
+        let response = self
             .room_service
-            .get_room(&room_id)
+            .get_room_grpc(req, &user_id)
             .await
-            .map_err(|e| Status::not_found(format!("Room not found: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get room: {}", e)))?;
 
-        // Get member count
-        let member_count = self
-            .room_service
-            .get_member_count(&room_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to get member count: {}", e)))?;
-
-        // Get creator username
-        let creator_username = self
-            .user_service
-            .get_user(&room.created_by)
-            .await
-            .map(|u| u.username)
-            .unwrap_or_default();
-
-        // Convert to AdminRoom proto
-        let admin_room = AdminRoom {
-            id: room.id.to_string(),
-            name: room.name,
-            creator_id: room.created_by.to_string(),
-            creator_username,
-            status: match room.status {
-                synctv_core::models::RoomStatus::Pending => "pending".to_string(),
-
-                synctv_core::models::RoomStatus::Active => "active".to_string(),
-                synctv_core::models::RoomStatus::Closed => "closed".to_string(),
-                synctv_core::models::RoomStatus::Banned => "banned".to_string(),
-            },
-            settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
-            member_count,
-            created_at: room.created_at.timestamp(),
-            updated_at: room.updated_at.timestamp(),
-        };
-
-        Ok(Response::new(GetRoomResponse {
-            room: Some(admin_room),
-        }))
+        // Return gRPC response directly (no conversion needed)
+        Ok(Response::new(response))
     }
 
     async fn update_room_password(
@@ -1316,46 +1231,25 @@ impl AdminService for AdminServiceImpl {
         request: Request<UpdateRoomPasswordRequest>,
     ) -> Result<Response<UpdateRoomPasswordResponse>, Status> {
         self.check_admin(&request).await?;
+
+        // Get user_id from request metadata (set by interceptor)
+        let user_context = request
+            .extensions()
+            .get::<super::interceptors::UserContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+
+        let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
+
+        // Call service layer with gRPC types
         let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Get room
-        let mut room = self
+        let response = self
             .room_service
-            .get_room(&room_id)
+            .update_room_password_grpc(req, &user_id)
             .await
-            .map_err(|e| Status::not_found(format!("Room not found: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update room password: {}", e)))?;
 
-        // Hash new password if provided
-        let hashed_password = if !req.new_password.is_empty() {
-            Some(
-                synctv_core::service::auth::password::hash_password(&req.new_password)
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to hash password: {}", e)))?,
-            )
-        } else {
-            None
-        };
-
-        // Update settings
-        let mut settings_obj = room.settings.as_object().cloned().unwrap_or_default();
-        settings_obj.insert(
-            "require_password".to_string(),
-            serde_json::json!(hashed_password.is_some()),
-        );
-        settings_obj.insert("password".to_string(), serde_json::json!(hashed_password));
-        room.settings = serde_json::Value::Object(settings_obj);
-
-        // Update room via service
-        let _updated_room = self
-            .room_service
-            .admin_update_room(&room)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to update room: {}", e)))?;
-
-        tracing::info!("Admin updated password for room {}", room_id.as_str());
-
-        Ok(Response::new(UpdateRoomPasswordResponse { success: true }))
+        // Return gRPC response directly (no conversion needed)
+        Ok(Response::new(response))
     }
 
     async fn delete_room(
@@ -1363,28 +1257,25 @@ impl AdminService for AdminServiceImpl {
         request: Request<DeleteRoomRequest>,
     ) -> Result<Response<DeleteRoomResponse>, Status> {
         self.check_admin(&request).await?;
+
+        // Get user_id from request metadata (set by interceptor)
+        let user_context = request
+            .extensions()
+            .get::<super::interceptors::UserContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+
+        let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
+
+        // Call service layer with gRPC types
         let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Get room to verify it exists
-        let room = self
+        let response = self
             .room_service
-            .get_room(&room_id)
-            .await
-            .map_err(|e| Status::not_found(format!("Room not found: {}", e)))?;
-
-        // Soft delete room (sets deleted_at)
-        let mut room_to_delete = room.clone();
-        room_to_delete.deleted_at = Some(chrono::Utc::now());
-
-        self.room_service
-            .admin_update_room(&room_to_delete)
+            .delete_room_grpc(req, &user_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to delete room: {}", e)))?;
 
-        tracing::info!("Admin deleted room {}", room_id.as_str());
-
-        Ok(Response::new(DeleteRoomResponse { success: true }))
+        // Return gRPC response directly (no conversion needed)
+        Ok(Response::new(response))
     }
 
     async fn ban_room(
@@ -1586,33 +1477,27 @@ impl AdminService for AdminServiceImpl {
         &self,
         request: Request<GetRoomMembersRequest>,
     ) -> Result<Response<GetRoomMembersResponse>, Status> {
+        // Check admin permission
         self.check_admin(&request).await?;
-        let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
 
-        // Get room members
-        let members = self
+        // Get user_id from request metadata (set by interceptor)
+        let user_context = request
+            .extensions()
+            .get::<super::interceptors::UserContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+
+        let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
+
+        // Call service layer with gRPC types
+        let req = request.into_inner();
+        let response = self
             .room_service
-            .get_room_members(&room_id)
+            .get_room_members_grpc(req, &user_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to get room members: {}", e)))?;
 
-        // Convert to response
-        let member_list = members
-            .into_iter()
-            .map(|m| RoomMember {
-                room_id: room_id.to_string(),
-                user_id: m.user_id.to_string(),
-                username: m.username,
-                permissions: m.permissions.0,
-                joined_at: m.joined_at.timestamp(),
-                is_online: m.is_online,
-            })
-            .collect();
-
-        Ok(Response::new(GetRoomMembersResponse {
-            members: member_list,
-        }))
+        // Return gRPC response directly (no conversion needed)
+        Ok(Response::new(response))
     }
 
     // =========================

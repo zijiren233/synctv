@@ -24,6 +24,16 @@ use crate::{
     Error, Result,
 };
 
+// Re-export gRPC types for use in service layer
+pub use synctv_proto::admin::{
+    GetRoomRequest, GetRoomResponse,
+    ListRoomsRequest, ListRoomsResponse,
+    DeleteRoomRequest, DeleteRoomResponse,
+    UpdateRoomPasswordRequest, UpdateRoomPasswordResponse,
+    GetRoomMembersRequest, GetRoomMembersResponse,
+    AdminRoom,
+};
+
 /// Room service for business logic
 ///
 /// This is the main service that coordinates between domain services.
@@ -462,6 +472,244 @@ impl RoomService {
         permission: i64,
     ) -> Result<()> {
         self.permission_service.check_permission(room_id, user_id, permission).await
+    }
+
+    // ========== gRPC-typed Methods (New Architecture) ==========
+
+    /// Get room members using gRPC types
+    ///
+    /// This method demonstrates the new architecture where service layer
+    /// uses gRPC-generated types, allowing both HTTP and gRPC layers to be
+    /// lightweight wrappers.
+    ///
+    /// # Arguments
+    /// * `request` - GetRoomMembersRequest containing room_id
+    /// * `requesting_user_id` - The user making the request (for permission checking)
+    ///
+    /// # Returns
+    /// GetRoomMembersResponse containing list of room members
+    pub async fn get_room_members_grpc(
+        &self,
+        request: synctv_proto::GetRoomMembersRequest,
+        requesting_user_id: &UserId,
+    ) -> Result<synctv_proto::GetRoomMembersResponse> {
+        // Extract room_id
+        let room_id = RoomId::from_string(request.room_id.clone());
+
+        // Check permission - user must be a member of the room to see members
+        self.permission_service
+            .check_permission(&room_id, requesting_user_id, PermissionBits::SEND_CHAT)
+            .await?;
+
+        // Get members from repository
+        let members_with_users = self.member_service.list_members(&room_id).await?;
+
+        // Convert to gRPC RoomMember type
+        let proto_members: Vec<synctv_proto::RoomMember> = members_with_users
+            .into_iter()
+            .map(|m| synctv_proto::RoomMember {
+                room_id: m.room_id.as_str().to_string(),
+                user_id: m.user_id.as_str().to_string(),
+                username: m.username,
+                permissions: m.permissions.0,
+                joined_at: m.joined_at.timestamp(),
+                is_online: m.is_online,
+            })
+            .collect();
+
+        Ok(synctv_proto::GetRoomMembersResponse {
+            members: proto_members,
+        })
+    }
+
+    /// Get room by ID using gRPC types
+    pub async fn get_room_grpc(
+        &self,
+        request: GetRoomRequest,
+        requesting_user_id: &UserId,
+    ) -> Result<GetRoomResponse> {
+        let room_id = RoomId::from_string(request.room_id);
+
+        // Check permission - user must be able to view the room
+        self.permission_service
+            .check_permission(&room_id, requesting_user_id, PermissionBits::SEND_CHAT)
+            .await?;
+
+        let room = self.get_room(&room_id).await?;
+
+        // Get member count
+        let member_count = self.get_member_count(&room_id).await?;
+
+        // Get creator username
+        // TODO: Implement username lookup or cache
+        let creator_username = "user".to_string(); // Placeholder
+
+        // Convert settings to bytes (protobuf serialization)
+        let settings_bytes = serde_json::to_vec(&room.settings)
+            .unwrap_or_default();
+
+        let admin_room = AdminRoom {
+            id: room.id.as_str().to_string(),
+            name: room.name,
+            creator_id: room.created_by.as_str().to_string(),
+            creator_username,
+            status: room.status.as_str().to_string(),
+            settings: settings_bytes,
+            member_count,
+            created_at: room.created_at.timestamp(),
+            updated_at: room.updated_at.timestamp(),
+        };
+
+        Ok(GetRoomResponse {
+            room: Some(admin_room),
+        })
+    }
+
+    /// List rooms using gRPC types
+    pub async fn list_rooms_grpc(
+        &self,
+        request: ListRoomsRequest,
+        _requesting_user_id: &UserId,
+    ) -> Result<ListRoomsResponse> {
+        // Build query from request
+        let mut query = RoomListQuery {
+            page: request.page,
+            page_size: request.page_size,
+            ..Default::default()
+        };
+
+        if !request.status.is_empty() {
+            // Parse status string to RoomStatus enum
+            query.status = match request.status.as_str() {
+                "active" => Some(RoomStatus::Active),
+                "closed" => Some(RoomStatus::Closed),
+                "banned" => Some(RoomStatus::Banned),
+                "pending" => Some(RoomStatus::Pending),
+                _ => None,
+            };
+        }
+
+        if !request.search.is_empty() {
+            query.search = Some(request.search);
+        }
+
+        if !request.creator_id.is_empty() {
+            let creator_id = UserId::from_string(request.creator_id.clone());
+            let (rooms, total) = self.list_rooms_by_creator_with_count(&creator_id, query.page as i64, query.page_size as i64).await?;
+
+            // Convert rooms to AdminRoom format
+            let admin_rooms: Vec<AdminRoom> = rooms
+                .into_iter()
+                .map(|r| {
+                    let settings_bytes = serde_json::to_vec(&r.room.settings).unwrap_or_default();
+                    AdminRoom {
+                        id: r.room.id.as_str().to_string(),
+                        name: r.room.name,
+                        creator_id: r.room.created_by.as_str().to_string(),
+                        creator_username: "user".to_string(), // TODO: Implement lookup
+                        status: r.room.status.as_str().to_string(),
+                        settings: settings_bytes,
+                        member_count: r.member_count,
+                        created_at: r.room.created_at.timestamp(),
+                        updated_at: r.room.updated_at.timestamp(),
+                    }
+                })
+                .collect();
+
+            return Ok(ListRoomsResponse {
+                rooms: admin_rooms,
+                total: total as i32,
+            });
+        }
+
+        let (rooms, total) = self.list_rooms_with_count(&query).await?;
+
+        // Convert rooms to AdminRoom format
+        let admin_rooms: Vec<AdminRoom> = rooms
+            .into_iter()
+            .map(|r| {
+                let settings_bytes = serde_json::to_vec(&r.room.settings).unwrap_or_default();
+                AdminRoom {
+                    id: r.room.id.as_str().to_string(),
+                    name: r.room.name,
+                    creator_id: r.room.created_by.as_str().to_string(),
+                    creator_username: "user".to_string(), // TODO: Implement lookup
+                    status: r.room.status.as_str().to_string(),
+                    settings: settings_bytes,
+                    member_count: r.member_count,
+                    created_at: r.room.created_at.timestamp(),
+                    updated_at: r.room.updated_at.timestamp(),
+                }
+            })
+            .collect();
+
+        Ok(ListRoomsResponse {
+            rooms: admin_rooms,
+            total: total as i32,
+        })
+    }
+
+    /// Delete room using gRPC types
+    pub async fn delete_room_grpc(
+        &self,
+        request: DeleteRoomRequest,
+        requesting_user_id: &UserId,
+    ) -> Result<DeleteRoomResponse> {
+        let room_id = RoomId::from_string(request.room_id);
+
+        self.delete_room(room_id, requesting_user_id.clone()).await?;
+
+        Ok(DeleteRoomResponse { success: true })
+    }
+
+    /// Update room password using gRPC types
+    pub async fn update_room_password_grpc(
+        &self,
+        request: UpdateRoomPasswordRequest,
+        requesting_user_id: &UserId,
+    ) -> Result<UpdateRoomPasswordResponse> {
+        let room_id = RoomId::from_string(request.room_id);
+
+        // Check permission
+        self.permission_service
+            .check_permission(&room_id, requesting_user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
+            .await?;
+
+        // Get room
+        let mut room = self
+            .room_repo
+            .get_by_id(&room_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+
+        // Hash new password if provided
+        let hashed_password = if request.new_password.is_empty() {
+            None
+        } else {
+            Some(hash_password(&request.new_password).await?)
+        };
+
+        // Update room settings with new password
+        let mut settings = serde_json::from_value::<RoomSettings>(room.settings.clone())
+            .unwrap_or_default();
+
+        settings.require_password = hashed_password.is_some();
+
+        room.settings = json!({
+            "require_password": settings.require_password,
+            "password": hashed_password,
+            "auto_play_next": settings.auto_play_next,
+            "loop_playlist": settings.loop_playlist,
+            "shuffle_playlist": settings.shuffle_playlist,
+            "allow_guest_join": settings.allow_guest_join,
+            "max_members": settings.max_members,
+            "chat_enabled": settings.chat_enabled,
+            "danmaku_enabled": settings.danmaku_enabled,
+        });
+
+        self.room_repo.update(&room).await?;
+
+        Ok(UpdateRoomPasswordResponse { success: true })
     }
 
     // ========== Admin Operations ==========

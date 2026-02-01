@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "synctv-proto",
     "synctv-core",
     "synctv-api",
     "synctv-stream",
@@ -140,6 +141,7 @@ mockall = "0.13"
 wiremock = "0.6"
 
 # Internal workspace crates
+synctv-proto = { path = "synctv-proto" }
 synctv-core = { path = "synctv-core" }
 synctv-cluster = { path = "synctv-cluster" }
 synctv-providers = { path = "synctv-providers" }

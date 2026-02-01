@@ -49,6 +49,11 @@ impl AppError {
     pub fn internal_server_error(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
+
+    // Convenience alias
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::internal_server_error(message)
+    }
 }
 
 impl fmt::Display for AppError {

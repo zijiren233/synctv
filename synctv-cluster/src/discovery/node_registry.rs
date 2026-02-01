@@ -90,7 +90,7 @@ impl NodeRegistry {
                 .arg(&key)
                 .arg(self.heartbeat_timeout_secs * 2)
                 .arg(&value)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| Error::Database(format!("Redis SETEX failed: {}", e)))?;
         }
@@ -116,7 +116,7 @@ impl NodeRegistry {
             redis::cmd("EXPIRE")
                 .arg(&key)
                 .arg(self.heartbeat_timeout_secs * 2)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| Error::Database(format!("Redis EXPIRE failed: {}", e)))?;
         }
@@ -142,7 +142,7 @@ impl NodeRegistry {
 
             redis::cmd("DEL")
                 .arg(&key)
-                .query_async(&mut conn)
+                .query_async::<()>(&mut conn)
                 .await
                 .map_err(|e| Error::Database(format!("Redis DEL failed: {}", e)))?;
         }
@@ -172,15 +172,17 @@ impl NodeRegistry {
 
             let mut nodes = Vec::new();
             for key in keys {
-                let value: String = redis::cmd("GET")
+                let value: Option<String> = redis::cmd("GET")
                     .arg(&key)
                     .query_async(&mut conn)
                     .await
                     .map_err(|e| Error::Database(format!("Redis GET failed: {}", e)))?;
 
-                if let Ok(node_info) = serde_json::from_str::<NodeInfo>(&value) {
-                    if !node_info.is_stale(self.heartbeat_timeout_secs) {
-                        nodes.push(node_info);
+                if let Some(value) = value {
+                    if let Ok(node_info) = serde_json::from_str::<NodeInfo>(&value) {
+                        if !node_info.is_stale(self.heartbeat_timeout_secs) {
+                            nodes.push(node_info);
+                        }
                     }
                 }
             }

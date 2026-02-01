@@ -1,32 +1,16 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Compile core proto files (client, admin, cluster)
-    tonic_build::configure()
-        .build_server(true)
-        .build_client(true)
-        .file_descriptor_set_path("src/grpc/proto/descriptor.bin")
-        .out_dir("src/grpc/proto")
-        .compile_protos(
-            &[
-                "../proto/client.proto",
-                "../proto/admin.proto",
-                "../proto/cluster.proto",
-            ],
-            &["../proto"],
-        )?;
+    // All proto files are now generated in synctv-proto crate
+    // No proto generation needed here
 
-    // Compile provider proto files to providers/proto directory
-    tonic_build::configure()
-        .build_server(true)
-        .build_client(true)
-        .out_dir("src/grpc/providers/proto")
-        .compile_protos(
-            &[
-                "../proto/providers/bilibili.proto",
-                "../proto/providers/alist.proto",
-                "../proto/providers/emby.proto",
-            ],
-            &["../proto"],
-        )?;
+    // Copy descriptor set from synctv-proto for gRPC reflection
+    let proto_descriptor = std::path::Path::new("../synctv-proto/src/descriptor.bin");
+    let reflection_descriptor = std::path::Path::new("src/grpc/proto/descriptor.bin");
+
+    if proto_descriptor.exists() {
+        std::fs::create_dir_all(reflection_descriptor.parent().unwrap())?;
+        std::fs::copy(proto_descriptor, reflection_descriptor)?;
+    }
 
     Ok(())
 }
+

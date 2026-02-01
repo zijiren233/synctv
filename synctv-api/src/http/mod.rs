@@ -7,6 +7,7 @@ pub mod health;
 pub mod middleware;
 pub mod oauth2;
 pub mod room;
+pub mod user;
 pub mod websocket;
 
 // Provider HTTP route extensions (decoupled via trait)
@@ -78,22 +79,45 @@ pub fn create_router(
         .route("/api/oauth2/:provider/bind", post(oauth2::bind_provider))
         .route("/api/oauth2/:provider/bind", axum::routing::delete(oauth2::unbind_provider))
         .route("/api/oauth2/providers", get(oauth2::list_providers))
+        // User management routes
+        .route("/api/user/me", get(user::get_me))
+        .route("/api/user/logout", post(user::logout))
+        .route("/api/user/username", post(user::update_username))
+        .route("/api/user/password", post(user::update_password))
+        .route("/api/user/rooms", get(user::get_my_rooms))
+        .route("/api/user/rooms/joined", get(user::get_joined_rooms))
+        .route("/api/user/rooms/:room_id", axum::routing::delete(user::delete_my_room))
+        .route("/api/user/rooms/:room_id/exit", post(user::exit_room))
+        // Room discovery routes (public)
+        .route("/api/room/check/:room_id", get(room::check_room))
+        .route("/api/room/list", get(room::list_rooms))
+        .route("/api/room/hot", get(room::hot_rooms))
         // Room management routes
         .route("/api/rooms", post(room::create_room))
         .route("/api/rooms/:room_id", get(room::get_room))
         .route("/api/rooms/:room_id/join", post(room::join_room))
         .route("/api/rooms/:room_id/leave", post(room::leave_room))
+        .route("/api/rooms/:room_id/settings", get(room::get_room_settings))
+        .route("/api/rooms/:room_id/members", get(room::get_room_members))
+        .route("/api/rooms/:room_id/pwd/check", post(room::check_password))
         .route(
             "/api/rooms/:room_id",
             axum::routing::delete(room::delete_room),
         )
+        // Room admin routes
+        .route("/api/rooms/:room_id/admin/settings", post(room::update_room_settings_admin))
+        .route("/api/rooms/:room_id/admin/password", post(room::set_room_password))
         // Media/playlist routes
         .route("/api/rooms/:room_id/media", post(room::add_media))
         .route("/api/rooms/:room_id/media", get(room::get_playlist))
+        .route("/api/rooms/:room_id/media/batch", post(room::push_media_batch))
         .route(
             "/api/rooms/:room_id/media/:media_id",
             axum::routing::delete(room::remove_media),
         )
+        .route("/api/rooms/:room_id/media/:media_id/edit", post(room::edit_media))
+        .route("/api/rooms/:room_id/media/swap", post(room::swap_media_items))
+        .route("/api/rooms/:room_id/media/clear", post(room::clear_playlist))
         // Playback control routes
         .route("/api/rooms/:room_id/playback/play", post(room::play))
         .route("/api/rooms/:room_id/playback/pause", post(room::pause))

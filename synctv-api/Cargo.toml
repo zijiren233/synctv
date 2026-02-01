@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 # Internal
+synctv-proto = { path = "../synctv-proto" }
 synctv-core.workspace = true
 synctv-cluster.workspace = true
 synctv-providers.workspace = true

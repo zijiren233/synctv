@@ -1,6 +1,7 @@
 use synctv_core::service::auth::JwtService;
 use tonic::{metadata::MetadataMap, Request, Status};
-use tracing::{debug, info, warn, instrument, Instrument};
+use tracing::warn;
+use std::fmt::Debug;
 
 /// User context - contains user_id extracted from JWT
 /// Used by UserService and AdminService methods
@@ -125,7 +126,6 @@ impl LoggingInterceptor {
     }
 
     /// Log request with method name and timing
-    #[instrument(skip(self, request))]
     pub fn log<T>(&self, method: &'static str, request: Request<T>) -> Request<T> {
         let metadata = request.metadata();
         let user_agent = metadata
@@ -133,7 +133,7 @@ impl LoggingInterceptor {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("unknown");
 
-        debug!(
+        tracing::debug!(
             method = method,
             user_agent = user_agent,
             "Incoming gRPC request"
@@ -223,12 +223,10 @@ impl TimeoutInterceptor {
     }
 
     /// Ensure request has a deadline
-    pub fn enforce_timeout<T>(&self, request: &mut Request<T>) {
-        // If no deadline is set, add a default one
-        if request.deadline().is_err() {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(self.default_timeout_secs);
-            request.set_timeout(deadline);
-        }
+    pub fn enforce_timeout<T>(&self, _request: &mut Request<T>) {
+        // Note: tonic deadlines should be set by the client using gRPC timeout headers
+        // This interceptor is a placeholder for future timeout enforcement
+        // For now, we rely on the client to set appropriate timeouts
     }
 }
 
@@ -237,17 +235,5 @@ impl Debug for TimeoutInterceptor {
         f.debug_struct("TimeoutInterceptor")
             .field("default_timeout_secs", &self.default_timeout_secs)
             .finish()
-    }
-}
-
-// Helper to set deadline on tonic request
-trait RequestTimeoutExt {
-    fn set_timeout(&mut self, deadline: std::time::Instant);
-}
-
-impl<T> RequestTimeoutExt for Request<T> {
-    fn set_timeout(&mut self, deadline: std::time::Instant) {
-        self.metadata_mut()
-            .insert("grpc-timeout", format!("{}S", deadline.elapsed().as_secs()).parse().unwrap());
     }
 }

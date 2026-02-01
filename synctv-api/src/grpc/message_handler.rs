@@ -11,8 +11,8 @@ use tracing::{debug, error, warn};
 use synctv_core::{models::RoomId, service::RoomService};
 use synctv_cluster::sync::{ClusterEvent, PublishRequest, RoomMessageHub};
 
-use crate::grpc::proto::client::{self, ClientMessage, ServerMessage};
-use crate::grpc::proto::client::client_message::Message as ClientMessageMsg;
+use synctv_proto::client::{self, ClientMessage, ServerMessage};
+use synctv_proto::client::client_message::Message as ClientMessageMsg;
 
 /// Shared message handler
 pub struct MessageHandler {

@@ -13,7 +13,8 @@ use synctv_core::service::{
     UserService as CoreUserService,
 };
 
-use super::proto::client::{
+// Use synctv_proto for all gRPC traits and types
+use synctv_proto::client::{
     auth_service_server::AuthService, media_service_server::MediaService,
     public_service_server::PublicService, room_service_server::RoomService,
     user_service_server::UserService, *,
