@@ -8,12 +8,10 @@
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
-use chrono::Utc;
 
 use synctv_core::{
     service::RoomService,
     repository::UserProviderCredentialRepository,
-    models::settings::{groups, server},
     Config,
 };
 use synctv_stream::relay::StreamRegistry;
@@ -52,7 +50,6 @@ pub struct Services {
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     pub settings_service: Arc<synctv_core::service::SettingsService>,
     pub settings_registry: Arc<synctv_core::service::SettingsRegistry>,
-    pub server_start_time: chrono::DateTime<Utc>,
 }
 
 impl Services {
@@ -81,12 +78,6 @@ impl SyncTvServer {
     /// Start all servers
     pub async fn start(mut self) -> anyhow::Result<()> {
         info!("Starting SyncTV server...");
-
-        // Save server start time to settings for uptime tracking
-        let start_timestamp = self.services.server_start_time.timestamp();
-        let key = format!("{}.{}", groups::SERVER, server::SERVER_START_TIME);
-        let _ = self.services.settings_service.update(&key, start_timestamp.to_string()).await
-            .map_err(|e| tracing::warn!("Failed to save server start time: {}", e));
 
         // Start gRPC server
         let grpc_handle = self.start_grpc_server().await?;

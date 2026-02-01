@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use synctv_core::models::{ProviderInstance, RoomId, UserId, SettingsGroup as CoreSettingsGroup, settings::{groups, server}};
+use synctv_core::models::{ProviderInstance, RoomId, UserId, SettingsGroup as CoreSettingsGroup};
 use synctv_core::service::{ProviderInstanceManager, RoomService, UserService, SettingsService, SettingsRegistry};
 
 // Use synctv_proto for all gRPC types to avoid duplication
@@ -1775,35 +1775,6 @@ impl AdminService for AdminServiceImpl {
             .map(|instances| instances.len() as i64)
             .unwrap_or(0);
 
-        // Get server start time from settings and calculate uptime
-        let uptime_seconds = {
-            let settings = self
-                .settings_service
-                .get(groups::SERVER)
-                .await
-                .unwrap_or_else(|_| {
-                    // Create empty SettingsGroup with empty data
-                    synctv_core::models::SettingsGroup {
-                        key: groups::SERVER.to_string(),
-                        group: groups::SERVER.to_string(),
-                        value: "".to_string(),
-                        created_at: chrono::Utc::now(),
-                        updated_at: chrono::Utc::now(),
-                    }
-                });
-            settings
-                .parse_json()
-                .ok()
-                .and_then(|json| json.get(server::SERVER_START_TIME).cloned())
-                .and_then(|v| v.as_i64())
-                .map(|start_time| {
-                    let now = chrono::Utc::now();
-                    let duration = now.timestamp() - start_time;
-                    duration.max(0) as i64
-                })
-                .unwrap_or(0)
-        };
-
         // Additional statistics can be added here
         let additional_stats = vec![];
 
@@ -1825,7 +1796,6 @@ impl AdminService for AdminServiceImpl {
             banned_rooms: closed_rooms as i32, // Using closed as "banned" for rooms
             total_media: 0,                    // Would require aggregating media across all rooms
             provider_instances: provider_instances as i32,
-            uptime_seconds,
             additional_stats,
         }))
     }

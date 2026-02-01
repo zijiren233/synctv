@@ -448,6 +448,5 @@ message GetSystemStatsResponse {
     int32 banned_rooms = 6;
     int32 total_media = 7;
     int32 provider_instances = 8;
-    int64 uptime_seconds = 9;
-    bytes additional_stats = 10; // JSON for extensibility
+    bytes additional_stats = 9; // JSON for extensibility
 }

@@ -4,7 +4,6 @@ mod server;
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{error, info};
-use chrono::Utc;
 
 use synctv_core::{
     logging,
@@ -39,9 +38,6 @@ fn generate_node_id() -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize server start time
-    let _ = *synctv_core::SERVER_START_TIME;
-
     // 1. Load configuration
     let config = load_config()?;
 
@@ -199,7 +195,6 @@ async fn main() -> Result<()> {
         oauth2_service: synctv_services.oauth2_service.clone(),
         settings_service: synctv_services.settings_service.clone(),
         settings_registry: synctv_services.settings_registry.clone(),
-        server_start_time: Utc::now(),
     };
 
     let server = SyncTvServer::new(config, services, streaming_state);

@@ -77,7 +77,7 @@ pub fn create_router(
     };
 
     let mut router = Router::new()
-        // Health check endpoints
+        // Health check endpoints (for monitoring probes)
         .merge(health::create_health_router())
         // Authentication routes
         .route("/api/auth/register", post(auth::register))
@@ -190,8 +190,3 @@ fn build_provider_routes(_state: &AppState) -> Router<AppState> {
     router
 }
 */
-
-/// Health check endpoint
-async fn health_check() -> &'static str {
-    "OK"
-}

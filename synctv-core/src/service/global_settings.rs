@@ -43,7 +43,6 @@ pub struct SettingsRegistry {
     pub allow_room_creation: Setting<bool>,
     pub max_rooms_per_user: Setting<i64>,
     pub max_members_per_room: Setting<i64>,
-    pub server_start_time: Setting<i64>,
 }
 
 impl std::fmt::Debug for SettingsRegistry {
@@ -74,7 +73,7 @@ impl SettingsRegistry {
                     }
                 }
             ),
-            max_members_per_room: setting!(i64, "server.max_members_per_room", storage.clone(), 100,
+            max_members_per_room: setting!(i64, "server.max_members_per_room", storage, 100,
                 |v: &i64| -> anyhow::Result<()> {
                     if *v > 0 && *v <= 10000 {
                         Ok(())
@@ -83,7 +82,6 @@ impl SettingsRegistry {
                     }
                 }
             ),
-            server_start_time: setting!(i64, "server.server_start_time", storage, 0),
         }
     }
 

@@ -23,7 +23,6 @@ pub mod server {
     pub const ALLOW_ROOM_CREATION: &str = "allow_room_creation";
     pub const MAX_ROOMS_PER_USER: &str = "max_rooms_per_user";
     pub const MAX_MEMBERS_PER_ROOM: &str = "max_members_per_room";
-    pub const SERVER_START_TIME: &str = "server_start_time";
 
     pub const DEFAULT_ROOM_SETTINGS: &str = "default_room_settings";
     pub const DEFAULT_ROOM_REQUIRE_PASSWORD: &str = "require_password";

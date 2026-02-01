@@ -620,10 +620,8 @@ pub struct GetSystemStatsResponse {
     pub total_media: i32,
     #[prost(int32, tag = "8")]
     pub provider_instances: i32,
-    #[prost(int64, tag = "9")]
-    pub uptime_seconds: i64,
     /// JSON for extensibility
-    #[prost(bytes = "vec", tag = "10")]
+    #[prost(bytes = "vec", tag = "9")]
     pub additional_stats: ::prost::alloc::vec::Vec<u8>,
 }
 /// Generated client implementations.
