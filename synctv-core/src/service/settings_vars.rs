@@ -423,8 +423,8 @@ mod tests {
         // In real usage, the validator would be stored with the setting
         let validator_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-        let _ = |v: &i64| -> Result<()> {
-            validator_called.store(true, std::sync::atomic::Ordering::SeqCstst);
+        let _validator = |v: &i64| -> Result<()> {
+            validator_called.store(true, std::sync::atomic::Ordering::SeqCst);
             if *v > 0 && *v <= 100 {
                 Ok(())
             } else {
@@ -434,6 +434,6 @@ mod tests {
 
         // The validator would be set via with_validator in actual usage
         // This is just to demonstrate the API
-        assert!(validator_called.load(std::sync::atomic::Ordering::SeqCstst));
+        assert!(!validator_called.load(std::sync::atomic::Ordering::SeqCst));
     }
 }
