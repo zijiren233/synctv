@@ -1,4 +1,6 @@
 pub mod auth;
+pub mod oauth2;
+pub mod settings;
 pub mod user;
 pub mod room;
 pub mod rate_limit;
@@ -8,6 +10,8 @@ pub mod providers_manager;
 pub mod token_blacklist;
 
 pub use auth::{hash_password, verify_password, JwtService, TokenType, Claims};
+pub use oauth2::{OAuth2Service, OAuth2State, OAuth2UserInfo};
+pub use settings::{SettingsService, SettingsChangeListener};
 pub use user::UserService;
 pub use room::RoomService;
 pub use rate_limit::{RateLimiter, RateLimitConfig, RateLimitError};

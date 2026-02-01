@@ -159,7 +159,7 @@ impl AlistProviderService for AlistProviderGrpcService {
         tracing::info!("gRPC Alist get binds request for user: {}", auth_context.user_id);
 
         // Query saved Alist credentials for current user
-        let credentials = self.app_state.credential_repository
+        let credentials = self.app_state.provider_instance_repository
             .get_by_user(&auth_context.user_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to query credentials: {}", e)))?;

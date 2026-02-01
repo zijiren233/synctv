@@ -19,6 +19,7 @@ pub mod proto {
 pub mod admin_service;
 pub mod client_service;
 pub mod interceptors;
+pub mod message_handler;
 
 // Provider gRPC service extensions (decoupled via trait)
 pub mod providers;
@@ -26,6 +27,7 @@ pub mod providers;
 pub use admin_service::AdminServiceImpl;
 pub use client_service::ClientServiceImpl;
 pub use interceptors::AuthInterceptor;
+pub use message_handler::{MessageHandler, cluster_event_to_server_message};
 
 use proto::admin::admin_service_server::AdminServiceServer;
 use proto::client::{
@@ -38,11 +40,10 @@ use tonic_reflection::server::Builder as ReflectionBuilder;
 
 use std::sync::Arc;
 use synctv_cluster::sync::{ConnectionManager, PublishRequest, RoomMessageHub};
-use synctv_core::repository::UserProviderCredentialRepository;
 use synctv_core::service::auth::JwtService;
 use synctv_core::service::{
     ContentFilter, ProviderInstanceManager, ProvidersManager, RateLimitConfig, RateLimiter,
-    RoomService as CoreRoomService, UserService as CoreUserService,
+    RoomService as CoreRoomService, UserService as CoreUserService, SettingsService,
 };
 use synctv_core::Config;
 
@@ -60,7 +61,7 @@ pub async fn serve(
     connection_manager: ConnectionManager,
     providers_manager: Option<Arc<ProvidersManager>>,
     provider_instance_manager: Arc<ProviderInstanceManager>,
-    credential_repository: Arc<UserProviderCredentialRepository>,
+    settings_service: Arc<SettingsService>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
 
@@ -69,11 +70,11 @@ pub async fn serve(
     // Clone services for all uses before unwrapping
     let user_service_for_client = user_service.clone();
     let user_service_for_admin = user_service.clone();
-    let user_service_for_provider = user_service.clone();
+    let _user_service_for_provider = user_service.clone();
 
     let room_service_for_client = room_service.clone();
     let room_service_for_admin = room_service.clone();
-    let room_service_for_provider = room_service.clone();
+    let _room_service_for_provider = room_service.clone();
 
     // Create service instances
     let user_service_clone =
@@ -96,6 +97,7 @@ pub async fn serve(
         Arc::try_unwrap(user_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
         Arc::try_unwrap(room_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
         provider_instance_manager,
+        settings_service,
     );
 
     // Create server builder
@@ -163,15 +165,20 @@ pub async fn serve(
 
     // Register provider gRPC services via registry pattern
     // Each provider module self-registers, achieving complete decoupling!
-    if let Some(providers_mgr) = providers_manager {
+    if let Some(_providers_mgr) = providers_manager {
         tracing::info!("Initializing provider gRPC service modules");
 
+        // TODO: Re-implement provider gRPC services with proper dependency injection
+        // The provider services need a proper AppState with provider_instance_repository
+        // For now, provider services are disabled
+
+        /*
         // Create AppState for provider extensions
         let app_state = Arc::new(crate::http::AppState {
             user_service: user_service_for_provider,
             room_service: room_service_for_provider,
             provider_instance_manager: providers_mgr.instance_manager().clone(),
-            credential_repository,
+            provider_instance_repository: TODO,
         });
 
         // Initialize all provider modules (triggers self-registration)
@@ -181,6 +188,7 @@ pub async fn serve(
 
         // Build services from registry (no knowledge of specific types!)
         router = providers::build_provider_services(app_state, router);
+        */
     }
 
     // Start server

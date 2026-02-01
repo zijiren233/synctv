@@ -1,0 +1,267 @@
+//! OAuth2/OIDC authentication service
+//!
+//! This service handles OAuth2/OIDC login flow WITHOUT storing tokens.
+//! Tokens are only used temporarily during login to fetch user info.
+
+use std::sync::Arc;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+use tracing::{debug, info};
+
+use crate::{
+    models::{oauth2_client::*, UserId},
+    repository::UserOAuthProviderRepository,
+    oauth2::Provider as OAuth2ProviderTrait,
+    Error, Result,
+};
+
+/// OAuth2 state (for CSRF protection during authorization flow)
+#[derive(Debug, Clone)]
+pub struct OAuth2State {
+    pub instance_name: String,
+    pub redirect_url: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// OAuth2 user info from provider (service layer)
+#[derive(Debug, Clone)]
+pub struct OAuth2UserInfo {
+    pub provider: OAuth2Provider,
+    pub provider_user_id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub avatar: Option<String>,
+}
+
+/// OAuth2 authentication service
+///
+/// Handles OAuth2/OIDC login flow:
+/// 1. Generate authorization URL with PKCE
+/// 2. Exchange authorization code for user info
+/// 3. Create/update user-provider mapping (NO TOKENS STORED)
+#[derive(Clone)]
+pub struct OAuth2Service {
+    repository: UserOAuthProviderRepository,
+    /// Map of instance name -> provider instance (e.g., "github", "logto1", "logto2")
+    providers: Arc<RwLock<HashMap<String, Box<dyn OAuth2ProviderTrait>>>>,
+    /// Map of instance name -> provider enum type
+    provider_types: Arc<RwLock<HashMap<String, OAuth2Provider>>>,
+    states: Arc<RwLock<HashMap<String, OAuth2State>>>,
+}
+
+impl std::fmt::Debug for OAuth2Service {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuth2Service")
+            .field("repository", &std::any::type_name::<UserOAuthProviderRepository>())
+            .finish_non_exhaustive()
+    }
+}
+
+impl OAuth2Service {
+    /// Create new OAuth2 service
+    pub fn new(repository: UserOAuthProviderRepository) -> Self {
+        Self {
+            repository,
+            providers: Arc::new(RwLock::new(HashMap::new())),
+            provider_types: Arc::new(RwLock::new(HashMap::new())),
+            states: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Register an OAuth2 provider instance
+    ///
+    /// # Arguments
+    /// * `instance_name` - Unique instance name (e.g., "github", "logto1", "logto2")
+    /// * `provider_type` - Provider type enum
+    /// * `provider` - The provider instance
+    pub async fn register_provider(
+        &self,
+        instance_name: String,
+        provider_type: OAuth2Provider,
+        provider: Box<dyn OAuth2ProviderTrait>,
+    ) {
+        let mut providers = self.providers.write().await;
+        let mut provider_types = self.provider_types.write().await;
+
+        providers.insert(instance_name.clone(), provider);
+        provider_types.insert(instance_name.clone(), provider_type.clone());
+
+        info!("Registered OAuth2 provider: {} (type: {})", instance_name, provider_type.as_str());
+    }
+
+    /// Get provider by instance name
+    async fn get_provider(&self, instance_name: &str) -> Result<(Box<dyn OAuth2ProviderTrait>, OAuth2Provider)> {
+        let providers = self.providers.read().await;
+        let provider_types = self.provider_types.read().await;
+
+        let provider = providers.get(instance_name)
+            .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {}", instance_name)))?;
+
+        // Note: We can't return the provider directly because it's borrowed
+        // Instead, we need to clone the provider type and create a new approach
+        let provider_type = provider_types.get(instance_name)
+            .ok_or_else(|| Error::InvalidInput(format!("Provider type not found: {}", instance_name)))?;
+
+        // For now, we'll use a different approach - store the provider types separately
+        // and get the provider each time we need it
+        // This is a limitation of trait objects - we can't clone them
+
+        // We need to refactor this - for now, let's return an error
+        // The actual implementation should restructure how providers are accessed
+        Err(Error::Internal("Provider access pattern needs refactoring".to_string()))
+    }
+
+    /// Generate authorization URL
+    pub async fn get_authorization_url(
+        &self,
+        instance_name: &str,
+        redirect_url: Option<String>,
+    ) -> Result<(String, String)> {
+        let providers = self.providers.read().await;
+        let provider = providers.get(instance_name)
+            .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {}", instance_name)))?;
+
+        // Generate state token
+        let state_token = nanoid::nanoid!(32);
+
+        // Generate authorization URL using provider
+        let auth_url = provider.new_auth_url(&state_token).await
+            .map_err(|e| Error::Internal(format!("Failed to generate authorization URL: {}", e)))?;
+
+        // Store state for verification during callback
+        let oauth_state = OAuth2State {
+            instance_name: instance_name.to_string(),
+            redirect_url,
+            created_at: chrono::Utc::now(),
+        };
+
+        let mut states = self.states.write().await;
+        states.insert(state_token.clone(), oauth_state);
+
+        debug!(
+            "Generated OAuth2 authorization URL for provider {}",
+            instance_name
+        );
+
+        Ok((auth_url, state_token))
+    }
+
+    /// Verify OAuth2 state during callback
+    pub async fn verify_state(&self, state_token: &str) -> Result<OAuth2State> {
+        let mut states = self.states.write().await;
+        states
+            .remove(state_token)
+            .ok_or_else(|| Error::Authentication("Invalid or expired OAuth2 state".to_string()))
+    }
+
+    /// Exchange authorization code for user info
+    pub async fn exchange_code_for_user_info(
+        &self,
+        instance_name: &str,
+        code: &str,
+    ) -> Result<(OAuth2UserInfo, OAuth2Provider)> {
+        let providers = self.providers.read().await;
+        let provider_types = self.provider_types.read().await;
+
+        let provider = providers.get(instance_name)
+            .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {}", instance_name)))?;
+
+        let provider_type = provider_types.get(instance_name)
+            .ok_or_else(|| Error::InvalidInput(format!("Provider type not found: {}", instance_name)))?;
+
+        debug!("Exchanging code for user info from {}", instance_name);
+
+        // Use provider to get user info
+        let user_info = provider.get_user_info(code).await
+            .map_err(|e| Error::Internal(format!("Failed to get user info: {}", e)))?;
+
+        // Convert provider user info to service user info
+        let service_user_info = OAuth2UserInfo {
+            provider: provider_type.clone(),
+            provider_user_id: user_info.provider_user_id,
+            username: user_info.username,
+            email: user_info.email,
+            avatar: user_info.avatar,
+        };
+
+        Ok((service_user_info, provider_type.clone()))
+    }
+
+    /// Create or update user-OAuth2 provider mapping
+    pub async fn upsert_user_provider(
+        &self,
+        user_id: &UserId,
+        provider: &OAuth2Provider,
+        provider_user_id: &str,
+        user_info: &OAuth2UserInfo,
+    ) -> Result<()> {
+        // Convert service user info to repository format
+        let repo_user_info = crate::models::oauth2_client::OAuth2UserInfo {
+            provider: provider.clone(),
+            provider_user_id: user_info.provider_user_id.clone(),
+            username: user_info.username.clone(),
+            email: user_info.email.clone(),
+            avatar: user_info.avatar.clone(),
+        };
+
+        self.repository
+            .upsert(user_id, provider, provider_user_id, &repo_user_info)
+            .await
+    }
+
+    /// Find user by OAuth2 provider
+    pub async fn find_user_by_provider(
+        &self,
+        provider: &OAuth2Provider,
+        provider_user_id: &str,
+    ) -> Result<Option<UserId>> {
+        match self
+            .repository
+            .find_by_provider(provider, provider_user_id)
+            .await?
+        {
+            Some(mapping) => Ok(Some(mapping.user_id)),
+            None => Ok(None),
+        }
+    }
+
+    /// Get all OAuth2 providers for a user
+    pub async fn get_user_providers(&self, user_id: &UserId) -> Result<Vec<OAuth2Provider>> {
+        let mappings = self.repository.find_by_user(user_id).await?;
+        Ok(mappings
+            .into_iter()
+            .filter_map(|m| m.provider_enum())
+            .collect())
+    }
+
+    /// Unlink OAuth2 provider from user
+    pub async fn unlink_provider(
+        &self,
+        user_id: &UserId,
+        provider: &OAuth2Provider,
+        provider_user_id: &str,
+    ) -> Result<bool> {
+        self.repository
+            .delete(user_id, provider, provider_user_id)
+            .await
+    }
+
+    /// Clean up expired OAuth2 states (maintenance task)
+    pub async fn cleanup_expired_states(&self, max_age_seconds: i64) -> Result<()> {
+        let mut states = self.states.write().await;
+        let now = chrono::Utc::now();
+        let initial_count = states.len();
+
+        states.retain(|_, state| {
+            let age = now.signed_duration_since(state.created_at).num_seconds();
+            age < max_age_seconds
+        });
+
+        let removed = initial_count - states.len();
+        if removed > 0 {
+            debug!("Cleaned up {} expired OAuth2 states", removed);
+        }
+
+        Ok(())
+    }
+}

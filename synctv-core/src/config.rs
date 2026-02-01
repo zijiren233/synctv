@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Application configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
@@ -11,9 +12,11 @@ pub struct Config {
     pub jwt: JwtConfig,
     pub logging: LoggingConfig,
     pub streaming: StreamingConfig,
+    pub oauth2: OAuth2Config,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ServerConfig {
     pub host: String,
     pub grpc_port: u16,
@@ -129,38 +132,31 @@ impl Default for StreamingConfig {
     }
 }
 
+/// OAuth2 configuration
+///
+/// Stores OAuth2 provider configurations in the main config file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuth2Config {
+    /// Provider configurations (e.g., github, google, logto1, logto2)
+    #[serde(default)]
+    pub providers: serde_yaml::Value,
+}
+
+impl Default for OAuth2Config {
+    fn default() -> Self {
+        Self {
+            providers: serde_yaml::Value::Mapping(serde_yaml::mapping::Mapping::new()),
+        }
+    }
+}
+
 impl Config {
     /// Load configuration from multiple sources with priority:
     /// 1. Environment variables (highest priority)
     /// 2. Config file (if provided)
     /// 3. Defaults (lowest priority)
     pub fn load(config_file: Option<&str>) -> Result<Self, ConfigError> {
-        let mut builder = ConfigBuilder::builder()
-            // Start with defaults
-            .set_default("server.host", ServerConfig::default().host)?
-            .set_default("server.grpc_port", ServerConfig::default().grpc_port as i64)?
-            .set_default("server.http_port", ServerConfig::default().http_port as i64)?
-            .set_default("server.enable_reflection", ServerConfig::default().enable_reflection)?
-            .set_default("database.url", DatabaseConfig::default().url)?
-            .set_default("database.max_connections", DatabaseConfig::default().max_connections as i64)?
-            .set_default("database.min_connections", DatabaseConfig::default().min_connections as i64)?
-            .set_default("database.connect_timeout_seconds", DatabaseConfig::default().connect_timeout_seconds as i64)?
-            .set_default("database.idle_timeout_seconds", DatabaseConfig::default().idle_timeout_seconds as i64)?
-            .set_default("redis.url", RedisConfig::default().url)?
-            .set_default("redis.pool_size", RedisConfig::default().pool_size as i64)?
-            .set_default("redis.connect_timeout_seconds", RedisConfig::default().connect_timeout_seconds as i64)?
-            .set_default("redis.key_prefix", RedisConfig::default().key_prefix)?
-            .set_default("jwt.private_key_path", JwtConfig::default().private_key_path)?
-            .set_default("jwt.public_key_path", JwtConfig::default().public_key_path)?
-            .set_default("jwt.access_token_duration_hours", JwtConfig::default().access_token_duration_hours as i64)?
-            .set_default("jwt.refresh_token_duration_days", JwtConfig::default().refresh_token_duration_days as i64)?
-            .set_default("logging.level", LoggingConfig::default().level)?
-            .set_default("logging.format", LoggingConfig::default().format)?
-            .set_default("streaming.rtmp_port", StreamingConfig::default().rtmp_port as i64)?
-            .set_default("streaming.hls_port", StreamingConfig::default().hls_port as i64)?
-            .set_default("streaming.max_streams", StreamingConfig::default().max_streams as i64)?
-            .set_default("streaming.gop_cache_size", StreamingConfig::default().gop_cache_size as i64)?
-            .set_default("streaming.stream_timeout_seconds", StreamingConfig::default().stream_timeout_seconds as i64)?;
+        let mut builder = ConfigBuilder::builder();
 
         // Load config file if provided
         if let Some(path) = config_file {
@@ -169,10 +165,10 @@ impl Config {
             }
         }
 
-        // Override with environment variables (SYNCTV__SERVER__HOST, etc.)
+        // Override with environment variables (SYNCTV_SERVER_HOST, etc.)
         builder = builder.add_source(
             Environment::with_prefix("SYNCTV")
-                .separator("__")
+                .separator("_")
                 .try_parsing(true),
         );
 
@@ -224,6 +220,7 @@ mod tests {
             jwt: JwtConfig::default(),
             logging: LoggingConfig::default(),
             streaming: StreamingConfig::default(),
+            oauth2: OAuth2Config::default(),
         });
 
         assert!(!config.database_url().is_empty());
@@ -246,6 +243,7 @@ mod tests {
             jwt: JwtConfig::default(),
             logging: LoggingConfig::default(),
             streaming: StreamingConfig::default(),
+            oauth2: OAuth2Config::default(),
         };
 
         assert_eq!(config.grpc_address(), "127.0.0.1:50051");

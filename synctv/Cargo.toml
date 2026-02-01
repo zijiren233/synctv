@@ -1,0 +1,43 @@
+[package]
+name = "synctv"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "synctv"
+path = "src/main.rs"
+
+[dependencies]
+# Internal workspace libraries
+synctv-core.workspace = true
+synctv-api = { path = "../synctv-api" }
+synctv-stream.workspace = true
+synctv-cluster.workspace = true
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# HTTP Framework
+axum.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# Redis
+redis.workspace = true
+
+# Utilities
+anyhow.workspace = true
+hostname.workspace = true
+nanoid.workspace = true
+once_cell.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[sqlx]
+migrate-path = "../migrations"

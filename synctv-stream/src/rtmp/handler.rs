@@ -1,7 +1,6 @@
 // Integration layer between xiu's StreamHub and SyncTV's GOP cache
 
 use crate::cache::gop_cache::{GopCache, GopFrame};
-use bytes::BytesMut;
 use std::sync::Arc;
 use streamhub::define::{FrameData, TStreamHandler, DataSender, SubscribeType};
 use streamhub::errors::StreamHubError;
@@ -20,7 +19,7 @@ impl SyncTvStreamHandler {
     }
 
     pub fn save_frame(&self, frame_data: &FrameData) {
-        let (timestamp, data, is_keyframe) = match frame_data {
+        let (timestamp, data, is_keyframe, frame_type) = match frame_data {
             FrameData::Video { timestamp, data } => {
                 // Detect keyframe from video data
                 // For H.264: check if frame type is 1 (keyframe)
@@ -30,13 +29,14 @@ impl SyncTvStreamHandler {
                 } else {
                     false
                 };
-                (*timestamp, data.clone(), is_keyframe)
+                (*timestamp, data.clone().freeze(), is_keyframe, crate::cache::gop_cache::FrameType::Video)
             }
             FrameData::Audio { timestamp, data } => {
-                (*timestamp, data.clone(), false)
+                (*timestamp, data.clone().freeze(), false, crate::cache::gop_cache::FrameType::Audio)
             }
             FrameData::MetaData { timestamp, data } => {
-                (*timestamp, data.clone(), false)
+                // Metadata frames treated as video for now
+                (*timestamp, data.clone().freeze(), false, crate::cache::gop_cache::FrameType::Video)
             }
             _ => return,
         };
@@ -44,6 +44,7 @@ impl SyncTvStreamHandler {
         let gop_frame = GopFrame {
             timestamp,
             is_keyframe,
+            frame_type,
             data,
         };
 
@@ -70,7 +71,7 @@ impl TStreamHandler for SyncTvStreamHandler {
         // Send cached GOP frames to new subscriber
         let frames = self.gop_cache.get_frames(&self.room_id);
 
-        log::info!(
+        tracing::info!(
             "Sending {} cached frames to new subscriber for room {}",
             frames.len(),
             self.room_id
@@ -78,17 +79,16 @@ impl TStreamHandler for SyncTvStreamHandler {
 
         for gop_frame in frames {
             // Convert GopFrame back to FrameData
-            // Determine if audio or video based on content or metadata
-            let frame_data = if gop_frame.is_keyframe || is_video_data(&gop_frame.data) {
-                FrameData::Video {
+            // Determine if audio or video based on frame_type
+            let frame_data = match gop_frame.frame_type {
+                crate::cache::gop_cache::FrameType::Video => FrameData::Video {
                     timestamp: gop_frame.timestamp,
-                    data: gop_frame.data,
-                }
-            } else {
-                FrameData::Audio {
+                    data: gop_frame.data.into(),
+                },
+                crate::cache::gop_cache::FrameType::Audio => FrameData::Audio {
                     timestamp: gop_frame.timestamp,
-                    data: gop_frame.data,
-                }
+                    data: gop_frame.data.into(),
+                },
             };
 
             frame_sender.send(frame_data).map_err(|_| StreamHubError {
@@ -108,7 +108,7 @@ impl TStreamHandler for SyncTvStreamHandler {
     }
 }
 
-fn is_video_data(data: &BytesMut) -> bool {
+fn is_video_data(data: &[u8]) -> bool {
     if data.is_empty() {
         return false;
     }

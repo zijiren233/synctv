@@ -149,8 +149,10 @@ impl RoomRepository {
 
         // Dynamic query building for status filter
         let status_filter = match &query.status {
+            Some(RoomStatus::Pending) => "r.status = 'pending'",
             Some(RoomStatus::Active) => "r.status = 'active'",
             Some(RoomStatus::Closed) => "r.status = 'closed'",
+            Some(RoomStatus::Banned) => "r.status = 'banned'",
             None => "",
         };
         if !status_filter.is_empty() {
@@ -366,15 +368,19 @@ impl RoomRepository {
 
     fn status_to_str(&self, status: &RoomStatus) -> &'static str {
         match status {
+            RoomStatus::Pending => "pending",
             RoomStatus::Active => "active",
             RoomStatus::Closed => "closed",
+            RoomStatus::Banned => "banned",
         }
     }
 
     fn str_to_status(&self, s: &str) -> RoomStatus {
         match s {
+            "pending" => RoomStatus::Pending,
             "active" => RoomStatus::Active,
             "closed" => RoomStatus::Closed,
+            "banned" => RoomStatus::Banned,
             _ => RoomStatus::Active,
         }
     }

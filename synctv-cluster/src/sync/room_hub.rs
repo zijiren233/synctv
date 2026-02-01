@@ -22,7 +22,7 @@ pub struct Subscriber {
 
 /// In-memory hub for routing messages to connected clients in rooms
 /// This handles local message distribution (single node)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RoomMessageHub {
     /// Map of room_id -> list of subscribers
     rooms: Arc<DashMap<RoomId, Vec<Subscriber>>>,

@@ -283,7 +283,7 @@ async fn binds(
 
     // Query saved Alist credentials for current user
     match state
-        .credential_repository
+        .provider_instance_repository
         .get_by_user(&auth.user_id.to_string())
         .await
     {

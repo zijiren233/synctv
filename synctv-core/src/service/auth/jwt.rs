@@ -51,6 +51,14 @@ pub struct JwtService {
     algorithm: Algorithm,
 }
 
+impl std::fmt::Debug for JwtService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JwtService")
+            .field("algorithm", &self.algorithm)
+            .finish()
+    }
+}
+
 impl JwtService {
     /// Create a new JWT service with RS256 keys
     ///

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use synctv_core::models::{ProviderInstance, RoomId, UserId};
-use synctv_core::service::{ProviderInstanceManager, RoomService, UserService};
+use synctv_core::models::{ProviderInstance, RoomId, UserId, SettingsGroup as CoreSettingsGroup};
+use synctv_core::service::{ProviderInstanceManager, RoomService, UserService, SettingsService};
 
 use super::proto::admin::{admin_service_server::AdminService, *};
 
@@ -12,6 +12,7 @@ pub struct AdminServiceImpl {
     user_service: Arc<UserService>,
     room_service: Arc<RoomService>,
     provider_manager: Arc<ProviderInstanceManager>,
+    settings_service: Arc<SettingsService>,
 }
 
 impl AdminServiceImpl {
@@ -19,11 +20,13 @@ impl AdminServiceImpl {
         user_service: UserService,
         room_service: RoomService,
         provider_manager: Arc<ProviderInstanceManager>,
+        settings_service: Arc<SettingsService>,
     ) -> Self {
         Self {
             user_service: Arc::new(user_service),
             room_service: Arc::new(room_service),
             provider_manager,
+            settings_service,
         }
     }
 
@@ -53,6 +56,17 @@ impl AdminServiceImpl {
             status,
             created_at: instance.created_at.timestamp(),
             updated_at: instance.updated_at.timestamp(),
+        }
+    }
+
+    /// Convert SettingsGroup to proto message
+    fn settings_group_to_proto(
+        &self,
+        group: &CoreSettingsGroup,
+    ) -> super::proto::admin::SettingsGroup {
+        super::proto::admin::SettingsGroup {
+            name: group.group_name.clone(),
+            settings: group.to_proto_bytes().unwrap_or_default(),
         }
     }
 
@@ -117,16 +131,19 @@ impl AdminService for AdminServiceImpl {
     ) -> Result<Response<GetSettingsResponse>, Status> {
         self.check_admin(&request).await?;
 
-        // System settings would be stored in a dedicated settings table or configuration system
-        // For now, return empty list of settings groups
-        // In production, this would query all settings groups from database
+        let groups = self
+            .settings_service
+            .get_all()
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
 
-        tracing::warn!(
-            "GetSettings called but system settings management is not fully implemented"
-        );
+        let proto_groups: Vec<_> = groups
+            .into_iter()
+            .map(|g| self.settings_group_to_proto(&g))
+            .collect();
 
-        // Return empty settings groups
-        Ok(Response::new(GetSettingsResponse { groups: vec![] }))
+        tracing::info!("Retrieved {} settings groups", proto_groups.len());
+        Ok(Response::new(GetSettingsResponse { groups: proto_groups }))
     }
 
     async fn get_settings_group(
@@ -136,17 +153,14 @@ impl AdminService for AdminServiceImpl {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
-        // System settings groups would be stored in a dedicated configuration system
-        // For now, return empty settings for the requested group
-        // In production, this would query settings for the specified group from database
-
-        tracing::warn!("GetSettingsGroup called for group '{}' but system settings management is not fully implemented", req.group);
+        let group = self
+            .settings_service
+            .get(&req.group)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get settings group: {}", e)))?;
 
         Ok(Response::new(GetSettingsGroupResponse {
-            group: Some(SettingsGroup {
-                name: req.group,
-                settings: vec![], // Would contain JSON settings bytes
-            }),
+            group: Some(self.settings_group_to_proto(&group)),
         }))
     }
 
@@ -157,20 +171,19 @@ impl AdminService for AdminServiceImpl {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
-        // System settings updates would be persisted to a settings table/service
-        // For now, just log the update
-        // In production, this would update the settings table and broadcast changes via Redis Pub/Sub
+        // Parse JSON from bytes
+        let settings_json: serde_json::Value = serde_json::from_slice(&req.settings)
+            .map_err(|e| Status::invalid_argument(format!("Invalid JSON settings: {}", e)))?;
 
-        tracing::warn!(
-            "UpdateSettings called for group '{}' but system settings management is not fully implemented",
-            req.group
-        );
+        let group = self
+            .settings_service
+            .update(&req.group, settings_json)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to update settings: {}", e)))?;
 
+        tracing::info!("Updated settings group '{}'", req.group);
         Ok(Response::new(UpdateSettingsResponse {
-            group: Some(SettingsGroup {
-                name: req.group,
-                settings: req.settings,
-            }),
+            group: Some(self.settings_group_to_proto(&group)),
         }))
     }
 
@@ -1060,8 +1073,11 @@ impl AdminService for AdminServiceImpl {
                     creator_id: r.created_by.to_string(),
                     creator_username: String::new(), // Can be fetched if needed
                     status: match r.status {
+                        synctv_core::models::RoomStatus::Pending => "pending".to_string(),
+
                         synctv_core::models::RoomStatus::Active => "active".to_string(),
                         synctv_core::models::RoomStatus::Closed => "closed".to_string(),
+                        synctv_core::models::RoomStatus::Banned => "banned".to_string(),
                     },
                     settings: serde_json::to_vec(&r.settings).unwrap_or_default(),
                     member_count,
@@ -1086,8 +1102,11 @@ impl AdminService for AdminServiceImpl {
                     creator_id: room.created_by.to_string(),
                     creator_username: String::new(), // Can be fetched if needed
                     status: match room.status {
+                        synctv_core::models::RoomStatus::Pending => "pending".to_string(),
+
                         synctv_core::models::RoomStatus::Active => "active".to_string(),
                         synctv_core::models::RoomStatus::Closed => "closed".to_string(),
+                        synctv_core::models::RoomStatus::Banned => "banned".to_string(),
                     },
                     settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
                     member_count,
@@ -1218,8 +1237,11 @@ impl AdminService for AdminServiceImpl {
                         .cloned()
                         .unwrap_or_default(),
                     status: match r.status {
+                        synctv_core::models::RoomStatus::Pending => "pending".to_string(),
+
                         synctv_core::models::RoomStatus::Active => "active".to_string(),
                         synctv_core::models::RoomStatus::Closed => "closed".to_string(),
+                        synctv_core::models::RoomStatus::Banned => "banned".to_string(),
                     },
                     settings: serde_json::to_vec(&r.settings).unwrap_or_default(),
                     member_count: rwc.member_count,
@@ -1272,8 +1294,11 @@ impl AdminService for AdminServiceImpl {
             creator_id: room.created_by.to_string(),
             creator_username,
             status: match room.status {
+                synctv_core::models::RoomStatus::Pending => "pending".to_string(),
+
                 synctv_core::models::RoomStatus::Active => "active".to_string(),
                 synctv_core::models::RoomStatus::Closed => "closed".to_string(),
+                synctv_core::models::RoomStatus::Banned => "banned".to_string(),
             },
             settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
             member_count,
@@ -1480,8 +1505,11 @@ impl AdminService for AdminServiceImpl {
             creator_id: updated_room.created_by.to_string(),
             creator_username,
             status: match updated_room.status {
+                synctv_core::models::RoomStatus::Pending => "pending".to_string(),
+
                 synctv_core::models::RoomStatus::Active => "active".to_string(),
                 synctv_core::models::RoomStatus::Closed => "closed".to_string(),
+                synctv_core::models::RoomStatus::Banned => "banned".to_string(),
             },
             settings: serde_json::to_vec(&updated_room.settings).unwrap_or_default(),
             member_count,
@@ -1537,8 +1565,11 @@ impl AdminService for AdminServiceImpl {
             creator_id: room.created_by.to_string(),
             creator_username,
             status: match room.status {
+                synctv_core::models::RoomStatus::Pending => "pending".to_string(),
+
                 synctv_core::models::RoomStatus::Active => "active".to_string(),
                 synctv_core::models::RoomStatus::Closed => "closed".to_string(),
+                synctv_core::models::RoomStatus::Banned => "banned".to_string(),
             },
             settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
             member_count,

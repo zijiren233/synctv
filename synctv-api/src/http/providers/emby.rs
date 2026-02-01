@@ -114,14 +114,19 @@ async fn login(
     match client.me(me_req).await {
         Ok(user_info) => {
             tracing::info!("Emby login successful: user_id={}", user_info.id);
+
+            // Extract admin status from policy
+            let is_admin = user_info.policy
+                .as_ref()
+                .map(|p| p.is_administrator)
+                .unwrap_or(false);
+
             (
                 StatusCode::OK,
                 Json(EmbyLoginResponse {
                     user_id: user_info.id,
                     username: user_info.name,
-                    // Note: MeResp doesn't include policy info, set to false for now
-                    // TODO: Add a separate call to check if user is admin if needed
-                    is_admin: false,
+                    is_admin,
                 }),
             )
                 .into_response()
@@ -278,7 +283,7 @@ async fn binds(
 
     // Query saved Emby credentials for current user
     match state
-        .credential_repository
+        .provider_instance_repository
         .get_by_user(&auth.user_id.to_string())
         .await
     {

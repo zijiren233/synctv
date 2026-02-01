@@ -30,6 +30,21 @@ pub struct UserInfo {
     pub name: String,
     #[serde(rename = "ServerId")]
     pub server_id: String,
+    #[serde(rename = "Policy", default)]
+    pub policy: Option<UserPolicy>,
+}
+
+/// User policy information
+#[derive(Debug, Deserialize, Clone)]
+pub struct UserPolicy {
+    #[serde(rename = "IsAdministrator", default)]
+    pub is_administrator: bool,
+    #[serde(rename = "IsHidden", default)]
+    pub is_hidden: bool,
+    #[serde(rename = "IsDisabled", default)]
+    pub is_disabled: bool,
+    #[serde(rename = "EnableAllFolders", default)]
+    pub enable_all_folders: bool,
 }
 
 /// Media item information
@@ -378,12 +393,24 @@ impl From<SystemInfo> for crate::grpc::emby::SystemInfoResp {
     }
 }
 
+impl From<UserPolicy> for crate::grpc::emby::UserPolicy {
+    fn from(policy: UserPolicy) -> Self {
+        Self {
+            is_administrator: policy.is_administrator,
+            is_hidden: policy.is_hidden,
+            is_disabled: policy.is_disabled,
+            enable_all_folders: policy.enable_all_folders,
+        }
+    }
+}
+
 impl From<UserInfo> for crate::grpc::emby::MeResp {
     fn from(user_info: UserInfo) -> Self {
         Self {
             id: user_info.id,
             name: user_info.name,
             server_id: user_info.server_id,
+            policy: user_info.policy.map(|p| p.into()),
         }
     }
 }

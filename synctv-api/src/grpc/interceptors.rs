@@ -12,6 +12,7 @@ pub struct UserContext {
 /// Used by RoomService and MediaService methods
 #[derive(Debug, Clone)]
 pub struct RoomContext {
+    #[allow(dead_code)] // Nested for future use when both user and room info needed
     pub user_ctx: UserContext,
     pub room_id: String,
 }

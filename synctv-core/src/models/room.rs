@@ -9,16 +9,32 @@ use super::id::{RoomId, UserId};
 #[derive(Default)]
 pub enum RoomStatus {
     #[default]
+    Pending,
     Active,
     Closed,
+    Banned,
 }
 
 impl RoomStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Pending => "pending",
             Self::Active => "active",
             Self::Closed => "closed",
+            Self::Banned => "banned",
         }
+    }
+
+    pub fn is_banned(&self) -> bool {
+        matches!(self, Self::Banned)
+    }
+
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Active)
     }
 }
 

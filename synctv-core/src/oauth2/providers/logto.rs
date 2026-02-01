@@ -1,0 +1,125 @@
+//! Logto OAuth2 provider
+
+use crate::oauth2::{Provider, OAuth2UserInfo};
+use crate::Error;
+use async_trait::async_trait;
+use oauth2::{
+    basic::BasicClient,
+    AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl, TokenResponse,
+};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+/// Logto OAuth2 provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogtoConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    pub redirect_url: String,
+    pub endpoint: String,
+}
+
+/// Logto OAuth2 provider
+///
+/// Supports multiple instances (e.g., logto1, logto2) with different endpoints.
+/// Similar to Go's logtoProvider in synctv/internal/provider/providers/logto.go
+pub struct LogtoProvider {
+    client: Arc<BasicClient>,
+    endpoint: String,
+    http_client: Arc<Client>,
+}
+
+impl LogtoProvider {
+    /// Create a new Logto provider with configuration
+    pub fn create(client_id: String, client_secret: String, redirect_url: String, endpoint: &str) -> Self {
+        let endpoint = endpoint.trim_end_matches('/');
+        let client = Arc::new(
+            BasicClient::new(
+                ClientId::new(client_id),
+                Some(ClientSecret::new(client_secret)),
+                AuthUrl::new(format!("{}/oidc/auth", endpoint)).unwrap(),
+                Some(TokenUrl::new(format!("{}/oidc/token", endpoint)).unwrap()),
+            )
+            .set_redirect_uri(RedirectUrl::new(redirect_url).unwrap()),
+        );
+
+        Self {
+            client,
+            endpoint: endpoint.to_string(),
+            http_client: Arc::new(Client::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for LogtoProvider {
+    fn provider_type(&self) -> &str {
+        "logto"
+    }
+
+    async fn new_auth_url(&self, state: &str) -> Result<String, Error> {
+        let (auth_url, _csrf_token) = self
+            .client
+            .authorize_url(|| oauth2::CsrfToken::new(state.to_string()))
+            .url();
+        Ok(auth_url.to_string())
+    }
+
+    async fn get_user_info(&self, code: &str) -> Result<OAuth2UserInfo, Error> {
+        // Exchange code for token
+        let token = self
+            .client
+            .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
+            .request_async(oauth2::reqwest::async_http_client)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to exchange code: {}", e)))?;
+
+        // Fetch user info from Logto
+        let resp = self
+            .http_client
+            .get(format!("{}/oidc/me", self.endpoint))
+            .header("Authorization", format!("Bearer {}", token.access_token().secret()))
+            .send()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to fetch user info: {}", e)))?
+            .error_for_status()
+            .map_err(|e| Error::Internal(format!("Logto API error: {}", e)))?;
+
+        #[derive(Deserialize)]
+        struct LogtoUser {
+            sub: String,
+            username: Option<String>,
+            name: Option<String>,
+            email: Option<String>,
+            picture: Option<String>,
+        }
+
+        let user: LogtoUser = resp
+            .json()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to parse user info: {}", e)))?;
+
+        let username = user.username.or(user.name).unwrap_or_default();
+
+        Ok(OAuth2UserInfo {
+            provider_user_id: user.sub,
+            username,
+            email: user.email,
+            avatar: user.picture,
+        })
+    }
+}
+
+/// Factory function for Logto provider
+pub fn logto_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error> {
+    let config: LogtoConfig = serde_yaml::from_value(config.clone())
+        .map_err(|e| Error::InvalidInput(format!("Invalid Logto config: {}", e)))?;
+
+    Ok(Box::new(LogtoProvider::create(
+        config.client_id,
+        config.client_secret,
+        config.redirect_url,
+        &config.endpoint,
+    )))
+}

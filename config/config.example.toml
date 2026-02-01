@@ -1,0 +1,115 @@
+# SyncTV Configuration Example
+#
+# Copy this file to config.toml and modify as needed
+#
+# Configuration priority: defaults < config file < environment variables
+#
+# Environment variables use double underscore separator:
+#   SYNCTV__SERVER__HOST=0.0.0.0
+#   SYNCTV__DATABASE__URL=postgresql://...
+#   SYNCTV__OAUTH2__GITHUB__CLIENT_ID=xxx
+
+[server]
+host = "0.0.0.0"
+grpc_port = 50051
+http_port = 8080
+enable_reflection = true
+
+[database]
+url = "postgresql://synctv:synctv@localhost:5432/synctv"
+max_connections = 20
+min_connections = 5
+connect_timeout_seconds = 10
+idle_timeout_seconds = 600
+
+[redis]
+url = "redis://localhost:6379"
+pool_size = 10
+connect_timeout_seconds = 5
+key_prefix = "synctv:"
+
+[jwt]
+private_key_path = "./keys/jwt_private.pem"
+public_key_path = "./keys/jwt_public.pem"
+access_token_duration_hours = 1
+refresh_token_duration_days = 30
+
+[logging]
+level = "info"
+format = "pretty"
+# file_path = "/var/log/synctv/app.log"
+
+[streaming]
+rtmp_port = 1935
+hls_port = 8081
+max_streams = 50
+gop_cache_size = 2
+stream_timeout_seconds = 300
+
+# ============================================================================
+# OAuth2/OIDC Configuration
+# ============================================================================
+# OAuth2 providers are configured in YAML format within this TOML file
+# because OAuth2 requires dynamic structure (different providers have different fields)
+#
+# To enable OAuth2, uncomment the [oauth2] section and configure providers below
+
+[oauth2]
+# OAuth2 configuration in YAML format (inline)
+# This is parsed as YAML to support dynamic provider-specific fields
+
+# Example configuration (uncomment and modify):
+# providers = '''
+# # Standard OAuth2 Providers
+# github:
+#   client_id: "your_github_client_id"
+#   client_secret: "your_github_client_secret"
+#
+# google:
+#   client_id: "your_google_client_id"
+#   client_secret: "your_google_client_secret"
+#
+# # Multiple instances of same provider (requires 'type' field)
+# logto1:
+#   type: logto
+#   client_id: "logto1_client_id"
+#   client_secret: "logto1_client_secret"
+#   endpoint: "https://logto1.example.com"
+#
+# logto2:
+#   type: logto
+#   client_id: "logto2_client_id"
+#   client_secret: "logto2_client_secret"
+#   endpoint: "https://logto2.example.com"
+#
+# # Generic OIDC provider
+# custom_oidc:
+#   type: oidc
+#   client_id: "custom_client_id"
+#   client_secret: "custom_client_secret"
+#   issuer: "https://custom.oidc.provider.com"
+# '''
+providers = ""
+
+# ============================================================================
+# Environment Variables for OAuth2
+# ============================================================================
+#
+# OAuth2 providers can also be configured via environment variables:
+#
+# Format: SYNCTV_OAUTH2_<INSTANCE_NAME>_<FIELD>
+#
+# Examples:
+#   SYNCTV_OAUTH2_GITHUB_CLIENT_ID=xxx
+#   SYNCTV_OAUTH2_GITHUB_CLIENT_SECRET=yyy
+#
+#   SYNCTV_OAUTH2_LOGTO1_TYPE=logto
+#   SYNCTV_OAUTH2_LOGTO1_CLIENT_ID=xxx
+#   SYNCTV_OAUTH2_LOGTO1_ENDPOINT=https://logto1.example.com
+#
+# Callback URLs are automatically generated as:
+#   http://<server.host>/api/oauth2/<instance_name>/callback
+#
+# For example, if server.host = "0.0.0.0" (use actual host in production):
+#   http://localhost:8080/api/oauth2/github/callback
+#   http://localhost:8080/api/oauth2/logto1/callback

@@ -3,6 +3,7 @@ use chrono::Utc;
 
 use crate::{
     models::{User, UserId},
+    models::oauth2_client::OAuth2Provider,
     repository::UserRepository,
     service::auth::{hash_password, verify_password, JwtService, TokenType},
     service::TokenBlacklistService,
@@ -172,6 +173,52 @@ impl UserService {
     /// Check if a token is blacklisted
     pub async fn is_token_blacklisted(&self, token: &str) -> Result<bool> {
         self.blacklist_service.is_blacklisted(token).await
+    }
+
+    /// Create or load user by OAuth2 provider
+    ///
+    /// This method is called during OAuth2 login flow.
+    /// If a user exists with the given provider and provider_user_id, return it.
+    /// Otherwise, create a new user with a random password.
+    ///
+    /// Note: This method doesn't save the OAuth2 token - that's handled by OAuth2Service.
+    /// Note: Email is optional for OAuth2 users.
+    pub async fn create_or_load_by_oauth2(
+        &self,
+        provider: &OAuth2Provider,
+        provider_user_id: &str,
+        username: &str,
+        email: Option<&str>,
+    ) -> Result<User> {
+        // Check if user already exists by username
+        if let Some(user) = self.repository.get_by_username(username).await? {
+            tracing::info!(
+                "Found existing user {} by username during OAuth2 login",
+                user.id.as_str()
+            );
+            return Ok(user);
+        }
+
+        // Generate a random password (OAuth2 users don't need password login)
+        let random_password = nanoid::nanoid!(32);
+
+        // Use email if provided, otherwise use a placeholder
+        let email = email.unwrap_or(&format!("{}@{}.oauth.local", username, provider.as_str())).to_string();
+
+        // Hash password
+        let password_hash = hash_password(&random_password).await?;
+
+        // Create user
+        let user = User::new(username.to_string(), email, password_hash);
+        let created_user = self.repository.create(&user).await?;
+
+        tracing::info!(
+            "Created new user {} via OAuth2 provider {}",
+            created_user.id.as_str(),
+            provider.as_str()
+        );
+
+        Ok(created_user)
     }
 
     /// Validate username

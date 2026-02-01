@@ -492,8 +492,11 @@ impl UserService for ClientServiceImpl {
                 name: rwc.room.name,
                 created_by: rwc.room.created_by.to_string(),
                 status: match rwc.room.status {
+                    RoomStatus::Pending => "pending".to_string(),
+
                     RoomStatus::Active => "active".to_string(),
                     RoomStatus::Closed => "closed".to_string(),
+                    RoomStatus::Banned => "banned".to_string(),
                 },
                 settings: serde_json::to_vec(&rwc.room.settings).unwrap_or_default(),
                 created_at: rwc.room.created_at.timestamp(),
@@ -550,8 +553,11 @@ impl UserService for ClientServiceImpl {
                     name: room.name,
                     created_by: room.created_by.to_string(),
                     status: match room.status {
+                        RoomStatus::Pending => "pending".to_string(),
+
                         RoomStatus::Active => "active".to_string(),
                         RoomStatus::Closed => "closed".to_string(),
+                        RoomStatus::Banned => "banned".to_string(),
                     },
                     settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
                     created_at: room.created_at.timestamp(),
@@ -855,8 +861,11 @@ impl RoomService for ClientServiceImpl {
                 name: updated_room.name,
                 created_by: updated_room.created_by.to_string(),
                 status: match updated_room.status {
+                    RoomStatus::Pending => "pending".to_string(),
+
                     RoomStatus::Active => "active".to_string(),
                     RoomStatus::Closed => "closed".to_string(),
+                    RoomStatus::Banned => "banned".to_string(),
                 },
                 settings: serde_json::to_vec(&updated_room.settings).unwrap_or_default(),
                 created_at: updated_room.created_at.timestamp(),
@@ -1843,8 +1852,11 @@ impl PublicService for ClientServiceImpl {
                 name: room.name,
                 created_by: room.created_by.to_string(),
                 status: match room.status {
+                    RoomStatus::Pending => "pending".to_string(),
+
                     RoomStatus::Active => "active".to_string(),
                     RoomStatus::Closed => "closed".to_string(),
+                    RoomStatus::Banned => "banned".to_string(),
                 },
                 settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
                 created_at: room.created_at.timestamp(),
@@ -1905,8 +1917,11 @@ impl PublicService for ClientServiceImpl {
                     name: room.name,
                     created_by: room.created_by.to_string(),
                     status: match room.status {
+                        RoomStatus::Pending => "pending".to_string(),
+
                         RoomStatus::Active => "active".to_string(),
                         RoomStatus::Closed => "closed".to_string(),
+                        RoomStatus::Banned => "banned".to_string(),
                     },
                     settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
                     created_at: room.created_at.timestamp(),

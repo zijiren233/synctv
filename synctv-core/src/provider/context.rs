@@ -2,11 +2,13 @@
 //
 // Contains all information needed for provider execution
 
+use sqlx::PgPool;
+
 /// Provider execution context
 ///
 /// Provides access to database, Redis, user information, and other resources
 /// needed by providers to generate playback information.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProviderContext<'a> {
     /// User ID requesting playback (optional)
     pub user_id: Option<&'a str>,
@@ -19,9 +21,12 @@ pub struct ProviderContext<'a> {
 
     /// Cache key prefix (e.g., "synctv")
     pub key_prefix: &'a str,
-    // TODO: Add database and Redis pools when implementing
-    // pub db: &'a PgPool,
-    // pub redis: &'a Pool,
+
+    /// Database connection pool (optional)
+    pub db: Option<&'a PgPool>,
+
+    /// Redis connection manager (optional)
+    pub redis: Option<&'a redis::aio::ConnectionManager>,
 }
 
 impl<'a> ProviderContext<'a> {
@@ -32,6 +37,8 @@ impl<'a> ProviderContext<'a> {
             room_id: None,
             base_url: None,
             key_prefix,
+            db: None,
+            redis: None,
         }
     }
 
@@ -50,6 +57,18 @@ impl<'a> ProviderContext<'a> {
     /// Set base URL
     pub fn with_base_url(mut self, base_url: &'a str) -> Self {
         self.base_url = Some(base_url);
+        self
+    }
+
+    /// Set database pool
+    pub fn with_db(mut self, db: &'a PgPool) -> Self {
+        self.db = Some(db);
+        self
+    }
+
+    /// Set Redis connection manager
+    pub fn with_redis(mut self, redis: &'a redis::aio::ConnectionManager) -> Self {
+        self.redis = Some(redis);
         self
     }
 }

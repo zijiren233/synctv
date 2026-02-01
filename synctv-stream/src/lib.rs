@@ -4,5 +4,7 @@ pub mod error;
 pub mod grpc;
 pub mod streaming;
 pub mod storage;
+pub mod rtmp;
 
-pub use streaming::StreamingServer;
+// Export RTMP server for use in synctv-api
+pub use rtmp::RtmpStreamingServer;

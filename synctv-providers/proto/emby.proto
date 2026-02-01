@@ -33,10 +33,18 @@ message MeReq {
   string userId = 3;
 }
 
+message UserPolicy {
+  bool isAdministrator = 1;
+  bool isHidden = 2;
+  bool isDisabled = 3;
+  bool enableAllFolders = 4;
+}
+
 message MeResp {
   string id = 1;
   string name = 2;
   string serverId = 3;
+  optional UserPolicy policy = 4;
 }
 
 message GetItemsReq {

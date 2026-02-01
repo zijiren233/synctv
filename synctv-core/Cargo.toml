@@ -28,12 +28,14 @@ redis.workspace = true
 # Security
 argon2.workspace = true
 jsonwebtoken.workspace = true
+oauth2.workspace = true
 aes-gcm.workspace = true
 ammonia.workspace = true
 
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 
 # Caching
 moka.workspace = true
@@ -45,6 +47,7 @@ uuid.workspace = true
 rand.workspace = true
 md5.workspace = true
 humantime.workspace = true
+hex.workspace = true
 
 # Utilities
 anyhow.workspace = true
