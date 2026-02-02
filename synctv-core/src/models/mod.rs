@@ -26,7 +26,7 @@ pub use oauth2_client::{
     OAuth2AuthUrlResponse, OAuth2CallbackRequest, OAuth2CallbackResponse, UserOAuthProviderMapping,
     OAuth2Provider, OAuth2UserInfo,
 };
-pub use permission::{PermissionBits, Role};
+pub use permission::{PermissionBits, Role as RoomRole};
 pub use playback::{
     ChangeSpeedRequest, PlaybackControlRequest, RoomPlaybackState, SeekRequest, SwitchMediaRequest,
 };
@@ -36,7 +36,7 @@ pub use room::{
     CreateRoomRequest, Room, RoomListQuery, RoomSettings, RoomStatus, RoomWithCount,
     UpdateRoomRequest, PlayMode, AutoPlaySettings,
 };
-pub use room_member::{RoomMember, RoomMemberWithUser};
+pub use room_member::{RoomMember, RoomMemberWithUser, MemberStatus};
 pub use settings::{
     default_email_settings, default_oauth_settings, default_server_settings, get_default_settings,
     SettingsGroup, SettingsError,

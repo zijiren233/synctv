@@ -29,9 +29,9 @@ pub struct CreatePlaylistRequest {
     pub provider_instance_name: Option<String>,
 }
 
-/// Request to update a playlist/folder
+/// Request to set playlist properties
 #[derive(Debug, Clone)]
-pub struct UpdatePlaylistRequest {
+pub struct SetPlaylistRequest {
     pub playlist_id: PlaylistId,
     pub name: Option<String>,
     pub position: Option<i32>,
@@ -159,12 +159,12 @@ impl PlaylistService {
         self.playlist_repo.get_by_room(room_id).await
     }
 
-    /// Update playlist
-    pub async fn update_playlist(
+    /// Set playlist properties
+    pub async fn set_playlist(
         &self,
         room_id: RoomId,
         user_id: UserId,
-        request: UpdatePlaylistRequest,
+        request: SetPlaylistRequest,
     ) -> Result<Playlist> {
         // Check permission
         self.permission_service

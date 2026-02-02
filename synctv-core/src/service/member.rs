@@ -1,10 +1,10 @@
 //! Member management service
 //!
 //! Handles room member operations including joining, leaving, kicking,
-//! and role management.
+//! and role management with Allow/Deny permission pattern.
 
 use crate::{
-    models::{Room, RoomId, RoomMember, RoomMemberWithUser, UserId, PermissionBits, Role},
+    models::{Room, RoomId, RoomMember, RoomMemberWithUser, UserId, PermissionBits, RoomRole, MemberStatus},
     repository::{RoomMemberRepository, RoomRepository},
     service::permission::PermissionService,
     Error, Result,
@@ -45,7 +45,7 @@ impl MemberService {
         &self,
         room_id: RoomId,
         user_id: UserId,
-        role: Role,
+        role: RoomRole,
     ) -> Result<RoomMember> {
         // Check if room exists
         let room = self
@@ -56,24 +56,27 @@ impl MemberService {
 
         // Check if room is active
         if room.status != crate::models::RoomStatus::Active {
-            return Err(Error::InvalidInput("Room is closed".to_string()));
+            return Err(Error::InvalidInput("Room is not active".to_string()));
         }
 
         // Check if already a member
         if self.member_repo.is_member(&room_id, &user_id).await? {
-            return Err(Error::InvalidInput("Already a member of this room".to_string()));
+            return Err(Error::AlreadyExists("Already a member of this room".to_string()));
         }
 
         // Check max members
-        if let Some(max_members) = room.settings.get("max_members").and_then(|v| v.as_i64()) {
+        let room_settings: serde_json::Value = serde_json::from_value(room.settings.clone())
+            .unwrap_or(serde_json::json!({}));
+
+        if let Some(max_members) = room_settings["max_members"].as_i64() {
             let current_count = self.member_repo.count_by_room(&room_id).await?;
             if current_count >= max_members as i32 {
                 return Err(Error::InvalidInput("Room is full".to_string()));
             }
         }
 
-        // Add as member with role permissions
-        let member = RoomMember::new(room_id.clone(), user_id, role.permissions());
+        // Add as member with role (no direct permissions - uses Allow/Deny pattern)
+        let member = RoomMember::new(room_id.clone(), user_id, role);
         let created_member = self.member_repo.add(&member).await?;
 
         Ok(created_member)
@@ -131,28 +134,35 @@ impl MemberService {
         Ok(())
     }
 
-    /// Update member permissions
-    pub async fn update_member_permissions(
+    /// Set member Allow/Deny permissions
+    ///
+    /// This implements the Allow/Deny pattern:
+    /// - added_permissions: Extra permissions to add to role default
+    /// - removed_permissions: Permissions to remove from role default
+    pub async fn set_member_permissions(
         &self,
         room_id: RoomId,
         granter_id: UserId,
         target_user_id: UserId,
-        permissions: PermissionBits,
+        added_permissions: Option<i64>,
+        removed_permissions: Option<i64>,
     ) -> Result<RoomMember> {
         // Check if granter has permission to modify permissions
         self.permission_service
             .check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
             .await?;
 
-        // Verify target is a member
-        if !self.member_repo.is_member(&room_id, &target_user_id).await? {
-            return Err(Error::NotFound("User is not a member of this room".to_string()));
-        }
-
-        // Update permissions
+        // Get current member to get version
         let member = self
             .member_repo
-            .update_permissions(&room_id, &target_user_id, permissions)
+            .get(&room_id, &target_user_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
+
+        // Update permissions with optimistic locking
+        let updated_member = self
+            .member_repo
+            .update_permissions(&room_id, &target_user_id, added_permissions, removed_permissions, member.version)
             .await?;
 
         // Invalidate permission cache for target user
@@ -160,10 +170,10 @@ impl MemberService {
             .invalidate_cache(&room_id, &target_user_id)
             .await;
 
-        Ok(member)
+        Ok(updated_member)
     }
 
-    /// Grant a specific permission to a member
+    /// Grant a specific permission to a member (Allow pattern)
     pub async fn grant_permission(
         &self,
         room_id: RoomId,
@@ -171,23 +181,23 @@ impl MemberService {
         target_user_id: UserId,
         permission: i64,
     ) -> Result<RoomMember> {
-        // Get current permissions
+        // Get current member
         let member = self
             .member_repo
             .get(&room_id, &target_user_id)
             .await?
             .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
 
-        // Grant permission
-        let mut permissions = member.permissions;
-        permissions.grant(permission);
+        // Add to existing added_permissions
+        let current_added = member.added_permissions.unwrap_or(0);
+        let new_added = current_added | permission;
 
         // Update
-        self.update_member_permissions(room_id, granter_id, target_user_id, permissions)
+        self.update_member_permissions(room_id, granter_id, target_user_id, Some(new_added), member.removed_permissions)
             .await
     }
 
-    /// Revoke a specific permission from a member
+    /// Revoke a specific permission from a member (Deny pattern)
     pub async fn revoke_permission(
         &self,
         room_id: RoomId,
@@ -195,20 +205,53 @@ impl MemberService {
         target_user_id: UserId,
         permission: i64,
     ) -> Result<RoomMember> {
-        // Get current permissions
+        // Get current member
         let member = self
             .member_repo
             .get(&room_id, &target_user_id)
             .await?
             .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
 
-        // Revoke permission
-        let mut permissions = member.permissions;
-        permissions.revoke(permission);
+        // Add to existing removed_permissions
+        let current_removed = member.removed_permissions.unwrap_or(0);
+        let new_removed = current_removed | permission;
 
         // Update
-        self.update_member_permissions(room_id, granter_id, target_user_id, permissions)
+        self.update_member_permissions(room_id, granter_id, target_user_id, member.added_permissions, Some(new_removed))
             .await
+    }
+
+    /// Reset member permissions to role default (clear Allow/Deny)
+    pub async fn reset_member_permissions(
+        &self,
+        room_id: RoomId,
+        granter_id: UserId,
+        target_user_id: UserId,
+    ) -> Result<RoomMember> {
+        // Check if granter has permission to modify permissions
+        self.permission_service
+            .check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
+            .await?;
+
+        // Get current member to get version
+        let member = self
+            .member_repo
+            .get(&room_id, &target_user_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
+
+        // Reset to role default (clear both added and removed)
+        let updated_member = self
+            .member_repo
+            .reset_permissions(&room_id, &target_user_id, member.version)
+            .await?;
+
+        // Invalidate permission cache for target user
+        self.permission_service
+            .invalidate_cache(&room_id, &target_user_id)
+            .await;
+
+        Ok(updated_member)
     }
 
     /// Get all members of a room with user info
@@ -251,7 +294,7 @@ impl MemberService {
         user_id: &UserId,
         page: i64,
         page_size: i64,
-    ) -> Result<(Vec<(Room, PermissionBits, i32)>, i64)> {
+    ) -> Result<(Vec<(Room, RoomRole, MemberStatus, i32)>, i64)> {
         self.member_repo
             .list_by_user_with_details(user_id, page, page_size)
             .await
@@ -263,25 +306,58 @@ impl MemberService {
         room_id: RoomId,
         admin_id: UserId,
         target_user_id: UserId,
+        reason: Option<String>,
     ) -> Result<()> {
         // Check admin permission
         self.permission_service
             .check_permission(&room_id, &admin_id, PermissionBits::KICK_USER)
             .await?;
 
-        // Remove member from room (this sets left_at)
-        self.remove_member(room_id, target_user_id).await?;
+        // Ban member
+        self.member_repo
+            .ban_member(&room_id, &target_user_id, &admin_id, reason)
+            .await?;
+
+        // Invalidate permission cache for banned user
+        self.permission_service
+            .invalidate_cache(&room_id, &target_user_id)
+            .await;
 
         Ok(())
     }
 
-    /// Set member role (member/admin)
+    /// Unban a member from a room
+    pub async fn unban_member(
+        &self,
+        room_id: RoomId,
+        admin_id: UserId,
+        target_user_id: UserId,
+    ) -> Result<()> {
+        // Check admin permission
+        self.permission_service
+            .check_permission(&room_id, &admin_id, PermissionBits::KICK_USER)
+            .await?;
+
+        // Unban member
+        self.member_repo
+            .unban_member(&room_id, &target_user_id)
+            .await?;
+
+        // Invalidate permission cache for unbanned user
+        self.permission_service
+            .invalidate_cache(&room_id, &target_user_id)
+            .await;
+
+        Ok(())
+    }
+
+    /// Set member role (member/admin/creator)
     pub async fn set_member_role(
         &self,
         room_id: RoomId,
         creator_id: UserId,
         target_user_id: UserId,
-        role: crate::models::Role,
+        role: RoomRole,
     ) -> Result<RoomMember> {
         // Check if user is creator (only creator can change roles)
         let room = self
@@ -297,14 +373,50 @@ impl MemberService {
         }
 
         // Verify target is a member
-        if !self.member_repo.is_member(&room_id, &target_user_id).await? {
-            return Err(Error::NotFound("User is not a member of this room".to_string()));
-        }
+        let member = self
+            .member_repo
+            .get(&room_id, &target_user_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
 
-        // Update role
+        // Update role with optimistic locking
         let updated_member = self
             .member_repo
-            .update_role(&room_id, &target_user_id, role)
+            .update_role(&room_id, &target_user_id, role, member.version)
+            .await?;
+
+        // Invalidate permission cache
+        self.permission_service
+            .invalidate_cache(&room_id, &target_user_id)
+            .await;
+
+        Ok(updated_member)
+    }
+
+    /// Set member status (active/pending/banned)
+    pub async fn set_member_status(
+        &self,
+        room_id: RoomId,
+        admin_id: UserId,
+        target_user_id: UserId,
+        status: MemberStatus,
+    ) -> Result<RoomMember> {
+        // Check admin permission
+        self.permission_service
+            .check_permission(&room_id, &admin_id, PermissionBits::KICK_USER)
+            .await?;
+
+        // Get current member
+        let member = self
+            .member_repo
+            .get(&room_id, &target_user_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
+
+        // Update status with optimistic locking
+        let updated_member = self
+            .member_repo
+            .update_status(&room_id, &target_user_id, status, member.version)
             .await?;
 
         // Invalidate permission cache

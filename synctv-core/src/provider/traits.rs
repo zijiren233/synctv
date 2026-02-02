@@ -305,7 +305,7 @@ pub trait DynamicFolder: MediaProvider {
     /// # Arguments
     /// - `ctx`: Provider context (includes user_id, room_id, etc.)
     /// - `playlist`: The dynamic folder (playlist object)
-    /// - `current_media`: Currently playing media object
+    /// - `playing_media`: Currently playing media object
     /// - `relative_path`: Current relative path in the dynamic folder
     /// - `play_mode`: Play mode (sequential, repeat one, repeat all, shuffle)
     ///
@@ -315,14 +315,14 @@ pub trait DynamicFolder: MediaProvider {
     ///
     /// # Implementation Notes
     /// - **Sequential**: Return next item in order, None at end
-    /// - **RepeatOne**: Return current_media again
+    /// - **RepeatOne**: Return playing_media again
     /// - **RepeatAll**: Wrap around to first item
     /// - **Shuffle**: Return random item from playlist
     ///
     /// # Example
     /// ```rust
     /// // Emby playlist scenario
-    /// // current_media.source_config = {"playlist_id": "123", "current_index": 5}
+    /// // playing_media.source_config = {"playlist_id": "123", "current_index": 5}
     /// // Returns item at index 6
     ///
     /// // Alist folder scenario
@@ -333,7 +333,7 @@ pub trait DynamicFolder: MediaProvider {
         &self,
         ctx: &ProviderContext<'_>,
         playlist: &crate::models::Playlist,
-        current_media: &crate::models::Media,
+        playing_media: &crate::models::Media,
         relative_path: &str,
         play_mode: crate::models::PlayMode,
     ) -> Result<Option<NextPlayItem>, ProviderError>;

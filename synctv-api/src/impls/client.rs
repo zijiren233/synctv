@@ -590,7 +590,7 @@ fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::client::M
 fn playback_state_to_proto(state: &synctv_core::models::RoomPlaybackState) -> crate::proto::client::PlaybackState {
     crate::proto::client::PlaybackState {
         room_id: state.room_id.as_str().to_string(),
-        current_media_id: state.current_media_id.map(|id| id.as_str().to_string()).unwrap_or_default(),
+        playing_media_id: state.playing_media_id.map(|id| id.as_str().to_string()).unwrap_or_default(),
         position: state.position,
         speed: state.speed,
         is_playing: state.is_playing,

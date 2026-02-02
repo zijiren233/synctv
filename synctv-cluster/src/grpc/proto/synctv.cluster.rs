@@ -118,7 +118,7 @@ pub struct RoomState {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PlaybackState {
     #[prost(string, tag = "1")]
-    pub current_media_id: ::prost::alloc::string::String,
+    pub playing_media_id: ::prost::alloc::string::String,
     #[prost(double, tag = "2")]
     pub position: f64,
     #[prost(double, tag = "3")]

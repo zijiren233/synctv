@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use crate::{
     models::{
         Room, RoomId, RoomMember, RoomSettings, RoomStatus, RoomWithCount, UserId,
-        PermissionBits, Role, RoomPlaybackState, Media, MediaId,
+        PermissionBits, RoomRole, MemberStatus, RoomPlaybackState, Media, MediaId,
         RoomListQuery, ChatMessage,
     },
     repository::{RoomRepository, RoomMemberRepository, MediaRepository, PlaylistRepository, RoomPlaybackStateRepository, ChatRepository},
@@ -78,7 +78,12 @@ impl RoomService {
         let chat_repo = ChatRepository::new(pool);
 
         // Initialize permission service with caching
-        let permission_service = PermissionService::new(member_repo.clone(), 10000, 300);
+        let permission_service = PermissionService::new(
+            member_repo.clone(),
+            room_repo.clone(),
+            10000,
+            300
+        );
 
         // Initialize provider instance manager and providers manager
         let provider_instance_manager = Arc::new(crate::service::ProviderInstanceManager::new(provider_instance_repo.clone()));
@@ -157,15 +162,10 @@ impl RoomService {
         let created_room = self.room_repo.create(&room).await?;
 
         // Add creator as member with full permissions
-        let member = RoomMember::new(
-            created_room.id.clone(),
-            created_by,
-            Role::Creator.permissions(),
-        );
         let created_member = self.member_service.add_member(
             created_room.id.clone(),
-            member.user_id.clone(),
-            Role::Creator,
+            created_by,
+            RoomRole::Creator,
         ).await?;
 
         // Initialize playback state
@@ -205,7 +205,7 @@ impl RoomService {
         }
 
         // Add member (will check if already member and max members)
-        let created_member = self.member_service.add_member(room_id.clone(), user_id.clone(), Role::Member).await?;
+        let created_member = self.member_service.add_member(room_id.clone(), user_id.clone(), RoomRole::Member).await?;
 
         // Get all members
         let members = self.member_service.list_members(&room_id).await?;
@@ -244,8 +244,8 @@ impl RoomService {
         Ok(())
     }
 
-    /// Update room settings
-    pub async fn update_settings(
+    /// Set room settings
+    pub async fn set_settings(
         &self,
         room_id: RoomId,
         user_id: UserId,
@@ -329,7 +329,7 @@ impl RoomService {
         user_id: &UserId,
         page: i64,
         page_size: i64,
-    ) -> Result<(Vec<(Room, PermissionBits, i32)>, i64)> {
+    ) -> Result<(Vec<(Room, RoomRole, MemberStatus, i32)>, i64)> {
         self.member_service.list_user_rooms_with_details(user_id, page, page_size).await
     }
 
@@ -346,15 +346,19 @@ impl RoomService {
         self.member_service.grant_permission(room_id, granter_id, target_user_id, permission).await
     }
 
-    /// Update member permissions
-    pub async fn update_member_permission(
+    /// Update member permissions (Allow/Deny pattern)
+    ///
+    /// This method sets both added_permissions and removed_permissions.
+    /// To reset to role default, pass None for both.
+    pub async fn set_member_permission(
         &self,
         room_id: RoomId,
         granter_id: UserId,
         target_user_id: UserId,
-        permissions: PermissionBits,
+        added_permissions: Option<i64>,
+        removed_permissions: Option<i64>,
     ) -> Result<crate::models::RoomMember> {
-        self.member_service.update_member_permissions(room_id, granter_id, target_user_id, permissions).await
+        self.member_service.set_member_permissions(room_id, granter_id, target_user_id, added_permissions, removed_permissions).await
     }
 
     /// Kick member from room
@@ -455,9 +459,9 @@ impl RoomService {
     }
 
     /// Get current playing media for a room
-    pub async fn get_current_media(&self, room_id: &RoomId) -> Result<Option<Media>> {
+    pub async fn get_playing_media(&self, room_id: &RoomId) -> Result<Option<Media>> {
         let state = self.playback_service.get_state(room_id).await?;
-        if let Some(media_id) = state.current_media_id {
+        if let Some(media_id) = state.playing_media_id {
             Ok(self.media_service.get_media(&media_id).await?)
         } else {
             Ok(None)
@@ -503,7 +507,7 @@ impl RoomService {
     }
 
     /// Set current playing media for a room
-    pub async fn set_current_media(
+    pub async fn set_playing_media(
         &self,
         room_id: RoomId,
         user_id: UserId,
@@ -619,16 +623,39 @@ impl RoomService {
         // Get members from repository
         let members_with_users = self.member_service.list_members(&room_id).await?;
 
+        // Get room to calculate effective permissions
+        let room = self
+            .room_repo
+            .get_by_id(&room_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+
+        // Get room settings for default permissions
+        let room_settings: serde_json::Value = serde_json::from_value(room.settings.clone())
+            .unwrap_or(serde_json::json!({}));
+
         // Convert to gRPC RoomMember type
         let proto_members: Vec<synctv_proto::admin::RoomMember> = members_with_users
             .into_iter()
-            .map(|m| synctv_proto::admin::RoomMember {
-                room_id: m.room_id.as_str().to_string(),
-                user_id: m.user_id.as_str().to_string(),
-                username: m.username,
-                permissions: m.permissions.0,
-                joined_at: m.joined_at.timestamp(),
-                is_online: m.is_online,
+            .map(|m| {
+                // Calculate effective permissions
+                let effective = m.effective_permissions(
+                    match m.role {
+                        RoomRole::Admin => room_settings["default_admin_permissions"].as_i64(),
+                        RoomRole::Member => room_settings["default_member_permissions"].as_i64(),
+                        RoomRole::Guest => room_settings["guest_permissions"].as_i64(),
+                        RoomRole::Creator => None,
+                    }
+                );
+
+                synctv_proto::admin::RoomMember {
+                    room_id: m.room_id.as_str().to_string(),
+                    user_id: m.user_id.as_str().to_string(),
+                    username: m.username,
+                    permissions: effective.0,
+                    joined_at: m.joined_at.timestamp(),
+                    is_online: m.is_online,
+                }
             })
             .collect();
 
@@ -795,12 +822,12 @@ impl RoomService {
         Ok(DeleteRoomResponse { success: true })
     }
 
-    /// Update room password using gRPC types
-    pub async fn update_room_password_grpc(
+    /// Set room password using gRPC types
+    pub async fn set_room_password(
         &self,
-        request: UpdateRoomPasswordRequest,
+        request: SetRoomPasswordRequest,
         requesting_user_id: &UserId,
-    ) -> Result<UpdateRoomPasswordResponse> {
+    ) -> Result<SetRoomPasswordResponse> {
         let room_id = RoomId::from_string(request.room_id);
 
         // Check permission

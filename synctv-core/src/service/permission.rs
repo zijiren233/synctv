@@ -1,22 +1,23 @@
 //! Permission management service
 //!
-//! Centralized permission checking and management with caching support.
+//! Centralized permission checking and management with Allow/Deny pattern and caching.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    models::{RoomId, UserId, PermissionBits},
-    repository::RoomMemberRepository,
+    models::{RoomId, UserId, PermissionBits, Room},
+    repository::{RoomMemberRepository, RoomRepository},
     Error, Result,
 };
 
 /// Permission management service
 ///
-/// Handles permission checking with optional caching and role inheritance.
+/// Handles permission checking with Allow/Deny pattern, optional caching and role inheritance.
 #[derive(Clone)]
 pub struct PermissionService {
     member_repo: RoomMemberRepository,
+    room_repo: RoomRepository,
     cache: Arc<moka::future::Cache<String, PermissionBits>>,
 }
 
@@ -28,9 +29,10 @@ impl std::fmt::Debug for PermissionService {
 
 impl PermissionService {
     /// Create a new permission service with caching
-    pub fn new(member_repo: RoomMemberRepository, cache_size: u64, cache_ttl_secs: u64) -> Self {
+    pub fn new(member_repo: RoomMemberRepository, room_repo: RoomRepository, cache_size: u64, cache_ttl_secs: u64) -> Self {
         Self {
             member_repo,
+            room_repo,
             cache: Arc::new(
                 moka::future::CacheBuilder::new(cache_size)
                     .time_to_live(Duration::from_secs(cache_ttl_secs))
@@ -40,9 +42,10 @@ impl PermissionService {
     }
 
     /// Create a permission service without caching
-    pub fn without_cache(member_repo: RoomMemberRepository) -> Self {
+    pub fn without_cache(member_repo: RoomMemberRepository, room_repo: RoomRepository) -> Self {
         Self {
             member_repo,
+            room_repo,
             cache: Arc::new(
                 moka::future::CacheBuilder::new(1)
                     .time_to_live(Duration::from_secs(1))
@@ -72,7 +75,10 @@ impl PermissionService {
         Ok(())
     }
 
-    /// Get user's permissions in a room (with caching)
+    /// Get user's effective permissions in a room (with caching)
+    ///
+    /// This implements the Allow/Deny permission pattern:
+    /// effective_permissions = (role_default | added) & ~removed
     pub async fn get_user_permissions(
         &self,
         room_id: &RoomId,
@@ -92,7 +98,32 @@ impl PermissionService {
             .await?
             .ok_or_else(|| Error::Authorization("Not a member of this room".to_string()))?;
 
-        let permissions = member.permissions;
+        // Get room settings for role defaults
+        let room = self
+            .room_repo
+            .get_by_id(room_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+
+        // Get room default permissions from settings
+        let room_settings: serde_json::Value = serde_json::from_value(room.settings.clone())
+            .unwrap_or(serde_json::json!({}));
+
+        let room_default_permissions = match member.role {
+            crate::models::RoomRole::Admin => {
+                room_settings["default_admin_permissions"].as_i64()
+            }
+            crate::models::RoomRole::Member => {
+                room_settings["default_member_permissions"].as_i64()
+            }
+            crate::models::RoomRole::Guest => {
+                room_settings["guest_permissions"].as_i64()
+            }
+            crate::models::RoomRole::Creator => None, // Creator doesn't need defaults
+        };
+
+        // Calculate effective permissions
+        let permissions = member.effective_permissions(room_default_permissions);
 
         // Update cache
         self.cache.insert(cache_key, permissions).await;
@@ -141,6 +172,54 @@ impl PermissionService {
         }
 
         Ok(())
+    }
+
+    /// Check if user has a specific role in room
+    pub async fn check_role(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        expected_role: crate::models::RoomRole,
+    ) -> Result<()> {
+        let member = self
+            .member_repo
+            .get(room_id, user_id)
+            .await?
+            .ok_or_else(|| Error::Authorization("Not a member of this room".to_string()))?;
+
+        if member.role != expected_role {
+            return Err(Error::Authorization("Insufficient permissions".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Check if user is room creator
+    pub async fn is_creator(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+    ) -> Result<bool> {
+        let member = self
+            .member_repo
+            .get(room_id, user_id)
+            .await?;
+
+        Ok(member.map(|m| m.role == crate::models::RoomRole::Creator).unwrap_or(false))
+    }
+
+    /// Check if user is room admin or creator
+    pub async fn is_admin_or_creator(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+    ) -> Result<bool> {
+        let member = self
+            .member_repo
+            .get(room_id, user_id)
+            .await?;
+
+        Ok(member.map(|m| matches!(m.role, crate::models::RoomRole::Admin | crate::models::RoomRole::Creator)).unwrap_or(false))
     }
 }
 

@@ -92,7 +92,7 @@ pub struct MediaResponse {
 #[derive(Debug, Serialize)]
 pub struct PlaybackStateResponse {
     pub is_playing: bool,
-    pub current_media_id: Option<String>,
+    pub playing_media_id: Option<String>,
     pub position: f64,
     pub speed: f64,
     pub updated_at: String,
@@ -505,8 +505,8 @@ pub async fn get_playback_state(
 
     Ok(Json(PlaybackStateResponse {
         is_playing: state_data.is_playing,
-        current_media_id: state_data
-            .current_media_id
+        playing_media_id: state_data
+            .playing_media_id
             .map(|id| id.as_str().to_string()),
         position: state_data.position,
         speed: state_data.speed,

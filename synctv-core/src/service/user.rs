@@ -158,9 +158,38 @@ impl UserService {
         self.repository.get_by_email(email).await
     }
 
-    /// Update user
+    /// Update user (entire user object)
     pub async fn update_user(&self, user: &User) -> Result<User> {
         self.repository.update(user).await
+    }
+
+    /// Set user password
+    pub async fn set_password(&self, user_id: &UserId, new_password: &str) -> Result<User> {
+        // Validate new password
+        self.validate_password(new_password)?;
+
+        // Hash new password
+        let password_hash = hash_password(new_password).await?;
+
+        // Update password in database
+        let updated_user = self.repository.update_password(user_id, &password_hash).await?;
+
+        tracing::info!("Password updated for user {}", user_id.as_str());
+
+        Ok(updated_user)
+    }
+
+    /// Set user email verification status
+    pub async fn set_email_verified(&self, user_id: &UserId, email_verified: bool) -> Result<User> {
+        let updated_user = self.repository.update_email_verified(user_id, email_verified).await?;
+
+        tracing::info!(
+            "Email verification status set to {} for user {}",
+            email_verified,
+            user_id.as_str()
+        );
+
+        Ok(updated_user)
     }
 
     /// List users with query (admin function)
@@ -361,35 +390,6 @@ impl UserService {
     /// This should be called when a user's username is changed.
     pub async fn invalidate_username_cache(&self, user_id: &UserId) -> Result<()> {
         self.username_cache.invalidate(user_id).await
-    }
-
-    /// Update user password
-    pub async fn update_password(&self, user_id: &UserId, new_password: &str) -> Result<User> {
-        // Validate new password
-        self.validate_password(new_password)?;
-
-        // Hash new password
-        let password_hash = hash_password(new_password).await?;
-
-        // Update password in database
-        let updated_user = self.repository.update_password(user_id, &password_hash).await?;
-
-        tracing::info!("Password updated for user {}", user_id.as_str());
-
-        Ok(updated_user)
-    }
-
-    /// Update user email verification status
-    pub async fn update_email_verified(&self, user_id: &UserId, email_verified: bool) -> Result<User> {
-        let updated_user = self.repository.update_email_verified(user_id, email_verified).await?;
-
-        tracing::info!(
-            "Email verification status updated to {} for user {}",
-            email_verified,
-            user_id.as_str()
-        );
-
-        Ok(updated_user)
     }
 
     /// Get the database pool (for creating dependent services)

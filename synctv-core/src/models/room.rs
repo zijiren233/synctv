@@ -164,6 +164,32 @@ pub struct RoomSettings {
     pub max_members: Option<i32>,
     pub chat_enabled: bool,
     pub danmaku_enabled: bool,
+
+    // ===== Permission Configuration (Allow/Deny Pattern) =====
+
+    /// Default permissions for Admin role (0 = use global default)
+    #[serde(default)]
+    pub default_admin_permissions: i64,
+
+    /// Default permissions for Member role (0 = use global default)
+    #[serde(default)]
+    pub default_member_permissions: i64,
+
+    /// Permissions for guests (0 = use global default)
+    #[serde(default)]
+    pub guest_permissions: i64,
+
+    /// Whether room requires approval for new members
+    #[serde(default)]
+    pub require_approval: bool,
+
+    /// Whether members can auto-join (without invitation)
+    #[serde(default = "default_true")]
+    pub allow_auto_join: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Room with member count (for efficient queries with JOIN)

@@ -1,7 +1,10 @@
 use sqlx::{PgPool, postgres::PgRow, Row};
 
 use crate::{
-    models::{RoomMember, RoomMemberWithUser, RoomId, UserId, PermissionBits},
+    models::{
+        RoomMember, RoomMemberWithUser, RoomId, UserId, RoomRole, MemberStatus,
+        RoomSettings,
+    },
     Error, Result,
 };
 
@@ -16,19 +19,38 @@ impl RoomMemberRepository {
         Self { pool }
     }
 
-    /// Add user to room
+    /// Add user to room with role
     pub async fn add(&self, member: &RoomMember) -> Result<RoomMember> {
         let row = sqlx::query(
-            "INSERT INTO room_members (room_id, user_id, permissions, joined_at)
-             VALUES ($1, $2, $3, $4)
+            "INSERT INTO room_members (
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, version
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT (room_id, user_id) DO UPDATE
-             SET left_at = NULL, joined_at = $4
-             RETURNING room_id, user_id, permissions, joined_at, left_at"
+             SET
+                role = EXCLUDED.role,
+                status = EXCLUDED.status,
+                added_permissions = EXCLUDED.added_permissions,
+                removed_permissions = EXCLUDED.removed_permissions,
+                left_at = NULL,
+                joined_at = EXCLUDED.joined_at,
+                version = room_members.version + 1
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
         )
         .bind(member.room_id.as_str())
         .bind(member.user_id.as_str())
-        .bind(member.permissions.0)
+        .bind(member.role.to_string())
+        .bind(member.status.to_string())
+        .bind(member.added_permissions)
+        .bind(member.removed_permissions)
         .bind(member.joined_at)
+        .bind(member.version)
         .fetch_one(&self.pool)
         .await?;
 
@@ -39,7 +61,7 @@ impl RoomMemberRepository {
     pub async fn remove(&self, room_id: &RoomId, user_id: &UserId) -> Result<bool> {
         let result = sqlx::query(
             "UPDATE room_members
-             SET left_at = $3
+             SET left_at = $3, version = version + 1
              WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL"
         )
         .bind(room_id.as_str())
@@ -54,9 +76,35 @@ impl RoomMemberRepository {
     /// Get member by room and user
     pub async fn get(&self, room_id: &RoomId, user_id: &UserId) -> Result<Option<RoomMember>> {
         let row = sqlx::query(
-            "SELECT room_id, user_id, permissions, joined_at, left_at
+            "SELECT
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason
              FROM room_members
              WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok(Some(self.row_to_member(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Get member by ID (including banned/inactive)
+    pub async fn get_any(&self, room_id: &RoomId, user_id: &UserId) -> Result<Option<RoomMember>> {
+        let row = sqlx::query(
+            "SELECT
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason
+             FROM room_members
+             WHERE room_id = $1 AND user_id = $2"
         )
         .bind(room_id.as_str())
         .bind(user_id.as_str())
@@ -72,7 +120,11 @@ impl RoomMemberRepository {
     /// List all active members in a room
     pub async fn list_by_room(&self, room_id: &RoomId) -> Result<Vec<RoomMemberWithUser>> {
         let rows = sqlx::query(
-            "SELECT rm.room_id, rm.user_id, rm.permissions, rm.joined_at, u.username
+            "SELECT
+                rm.room_id, rm.user_id, rm.role, rm.status,
+                rm.added_permissions, rm.removed_permissions,
+                rm.joined_at, rm.banned_at, rm.banned_reason,
+                u.username
              FROM room_members rm
              JOIN users u ON rm.user_id = u.id
              WHERE rm.room_id = $1 AND rm.left_at IS NULL
@@ -87,22 +139,218 @@ impl RoomMemberRepository {
             .collect()
     }
 
-    /// Update member permissions
+    /// List all active members in a room with online status
+    pub async fn list_by_room_with_online(
+        &self,
+        room_id: &RoomId,
+        online_user_ids: &[UserId],
+    ) -> Result<Vec<RoomMemberWithUser>> {
+        let rows = sqlx::query(
+            "SELECT
+                rm.room_id, rm.user_id, rm.role, rm.status,
+                rm.added_permissions, rm.removed_permissions,
+                rm.joined_at, rm.banned_at, rm.banned_reason,
+                u.username
+             FROM room_members rm
+             JOIN users u ON rm.user_id = u.id
+             WHERE rm.room_id = $1 AND rm.left_at IS NULL
+             ORDER BY rm.joined_at ASC"
+        )
+        .bind(room_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let online_set: std::collections::HashSet<_> =
+            online_user_ids.iter().map(|id| id.as_str()).collect();
+
+        rows.into_iter()
+            .map(|row| {
+                let mut member = self.row_to_member_with_user(row)?;
+                member.is_online = online_set.contains(member.user_id.as_str());
+                Ok(member)
+            })
+            .collect()
+    }
+
+    /// Update member role with optimistic locking
+    pub async fn update_role(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        role: RoomRole,
+        current_version: i64,
+    ) -> Result<RoomMember> {
+        let row = sqlx::query(
+            "UPDATE room_members
+             SET
+                role = $3,
+                version = version + 1
+             WHERE room_id = $1 AND user_id = $2 AND version = $4
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
+        .bind(role.to_string())
+        .bind(current_version)
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_member(row)
+    }
+
+    /// Update member status with optimistic locking
+    pub async fn update_status(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        status: MemberStatus,
+        current_version: i64,
+    ) -> Result<RoomMember> {
+        let row = sqlx::query(
+            "UPDATE room_members
+             SET
+                status = $3,
+                version = version + 1
+             WHERE room_id = $1 AND user_id = $2 AND version = $4
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
+        .bind(status.to_string())
+        .bind(current_version)
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_member(row)
+    }
+
+    /// Update member Allow/Deny permissions with optimistic locking
     pub async fn update_permissions(
         &self,
         room_id: &RoomId,
         user_id: &UserId,
-        permissions: PermissionBits,
+        added_permissions: Option<i64>,
+        removed_permissions: Option<i64>,
+        current_version: i64,
     ) -> Result<RoomMember> {
         let row = sqlx::query(
             "UPDATE room_members
-             SET permissions = $3
-             WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL
-             RETURNING room_id, user_id, permissions, joined_at, left_at"
+             SET
+                added_permissions = $3,
+                removed_permissions = $4,
+                version = version + 1
+             WHERE room_id = $1 AND user_id = $2 AND version = $5
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
         )
         .bind(room_id.as_str())
         .bind(user_id.as_str())
-        .bind(permissions.0)
+        .bind(added_permissions)
+        .bind(removed_permissions)
+        .bind(current_version)
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_member(row)
+    }
+
+    /// Reset member permissions to role default (clear added/removed)
+    pub async fn reset_permissions(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        current_version: i64,
+    ) -> Result<RoomMember> {
+        let row = sqlx::query(
+            "UPDATE room_members
+             SET
+                added_permissions = NULL,
+                removed_permissions = NULL,
+                version = version + 1
+             WHERE room_id = $1 AND user_id = $2 AND version = $3
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
+        .bind(current_version)
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_member(row)
+    }
+
+    /// Ban member from room
+    pub async fn ban_member(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        banned_by: &UserId,
+        reason: Option<String>,
+    ) -> Result<RoomMember> {
+        let row = sqlx::query(
+            "UPDATE room_members
+             SET
+                status = 'banned',
+                banned_at = $3,
+                banned_by = $4,
+                banned_reason = $5,
+                version = version + 1
+             WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
+        .bind(chrono::Utc::now())
+        .bind(banned_by.as_str())
+        .bind(reason)
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_member(row)
+    }
+
+    /// Unban member from room
+    pub async fn unban_member(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+    ) -> Result<RoomMember> {
+        let row = sqlx::query(
+            "UPDATE room_members
+             SET
+                status = 'active',
+                banned_at = NULL,
+                banned_by = NULL,
+                banned_reason = NULL,
+                version = version + 1
+             WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
         .fetch_one(&self.pool)
         .await?;
 
@@ -174,13 +422,13 @@ impl RoomMemberRepository {
     }
 
     /// Get rooms where a user is a member with full room details and member count (optimized)
-    /// Returns (room, user_permissions, member_count) tuples
+    /// Returns (room, role, status, member_count) tuples
     pub async fn list_by_user_with_details(
         &self,
         user_id: &UserId,
         page: i64,
         page_size: i64,
-    ) -> Result<(Vec<(crate::models::Room, PermissionBits, i32)>, i64)> {
+    ) -> Result<(Vec<(crate::models::Room, RoomRole, MemberStatus, i32)>, i64)> {
         let offset = (page - 1) * page_size;
 
         // Get total count
@@ -194,13 +442,14 @@ impl RoomMemberRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        // Get rooms with user permissions and member count in single query
+        // Get rooms with user role and member count in single query
         let rows = sqlx::query(
             r#"
             SELECT
                 r.id, r.name, r.created_by, r.status, r.settings,
                 r.created_at, r.updated_at, r.deleted_at,
-                rm.permissions as user_permissions,
+                rm.role as user_role,
+                rm.status as user_status,
                 (
                     SELECT COUNT(*)::int
                     FROM room_members rm2
@@ -219,13 +468,15 @@ impl RoomMemberRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let results: Result<Vec<(crate::models::Room, PermissionBits, i32)>> = rows
+        let results: Result<Vec<(crate::models::Room, RoomRole, MemberStatus, i32)>> = rows
             .into_iter()
             .map(|row| {
                 let settings_json: serde_json::Value = row.try_get("settings")?;
                 let status_str: String = row.try_get("status")?;
                 let status = match status_str.as_str() {
                     "active" => crate::models::RoomStatus::Active,
+                    "pending" => crate::models::RoomStatus::Pending,
+                    "banned" => crate::models::RoomStatus::Banned,
                     _ => crate::models::RoomStatus::Active,
                 };
 
@@ -240,10 +491,26 @@ impl RoomMemberRepository {
                     deleted_at: row.try_get("deleted_at")?,
                 };
 
-                let permissions = PermissionBits::new(row.try_get("user_permissions")?);
+                let role_str: String = row.try_get("user_role")?;
+                let role = match role_str.as_str() {
+                    "creator" => RoomRole::Creator,
+                    "admin" => RoomRole::Admin,
+                    "member" => RoomRole::Member,
+                    "guest" => RoomRole::Guest,
+                    _ => RoomRole::Member,
+                };
+
+                let member_status_str: String = row.try_get("user_status")?;
+                let member_status = match member_status_str.as_str() {
+                    "active" => MemberStatus::Active,
+                    "pending" => MemberStatus::Pending,
+                    "banned" => MemberStatus::Banned,
+                    _ => MemberStatus::Active,
+                };
+
                 let member_count: i32 = row.try_get("member_count")?;
 
-                Ok((room, permissions, member_count))
+                Ok((room, role, member_status, member_count))
             })
             .collect();
 
@@ -253,8 +520,12 @@ impl RoomMemberRepository {
     /// List all members including inactive (left) (admin view)
     pub async fn list_by_room_all(&self, room_id: &RoomId) -> Result<Vec<RoomMemberWithUser>> {
         let rows = sqlx::query(
-            "SELECT rm.room_id, rm.user_id, rm.permissions, rm.joined_at, u.username,
-                   CASE WHEN rm.left_at IS NULL THEN true ELSE false END as is_active
+            "SELECT
+                rm.room_id, rm.user_id, rm.role, rm.status,
+                rm.added_permissions, rm.removed_permissions,
+                rm.joined_at, rm.banned_at, rm.banned_reason,
+                u.username,
+                CASE WHEN rm.left_at IS NULL THEN true ELSE false END as is_active
              FROM room_members rm
              JOIN users u ON rm.user_id = u.id
              WHERE rm.room_id = $1
@@ -265,75 +536,83 @@ impl RoomMemberRepository {
         .await?;
 
         rows.into_iter()
-            .map(|row| self.row_to_member_with_user_all(row))
+            .map(|row| {
+                let is_active: bool = row.try_get("is_active")?;
+                let mut member = self.row_to_member_with_user(row)?;
+                member.is_online = is_active;
+                Ok(member)
+            })
             .collect()
-    }
-
-    /// Update member role
-    pub async fn update_role(
-        &self,
-        room_id: &RoomId,
-        user_id: &UserId,
-        role: crate::models::Role,
-    ) -> Result<RoomMember> {
-        // Get current member to preserve joined_at
-        let member = self.get(room_id, user_id).await?
-            .ok_or_else(|| Error::NotFound("Member not found".to_string()))?;
-
-        // Update with new role permissions
-        let updated_member = RoomMember {
-            room_id: room_id.clone(),
-            user_id: user_id.clone(),
-            permissions: role.permissions(),
-            joined_at: member.joined_at,
-            left_at: member.left_at,
-        };
-
-        // Delete and re-add member (simple way to update all fields)
-        sqlx::query(
-            "DELETE FROM room_members WHERE room_id = $1 AND user_id = $2"
-        )
-        .bind(room_id.as_str())
-        .bind(user_id.as_str())
-        .execute(&self.pool)
-        .await?;
-
-        self.add(&updated_member).await
     }
 
     /// Convert database row to RoomMember
     fn row_to_member(&self, row: PgRow) -> Result<RoomMember> {
+        let role_str: String = row.try_get("role")?;
+        let role = match role_str.as_str() {
+            "creator" => RoomRole::Creator,
+            "admin" => RoomRole::Admin,
+            "member" => RoomRole::Member,
+            "guest" => RoomRole::Guest,
+            _ => return Err(Error::InvalidInput(format!("Unknown role: {}", role_str))),
+        };
+
+        let status_str: String = row.try_get("status")?;
+        let status = match status_str.as_str() {
+            "active" => MemberStatus::Active,
+            "pending" => MemberStatus::Pending,
+            "banned" => MemberStatus::Banned,
+            _ => return Err(Error::InvalidInput(format!("Unknown status: {}", status_str))),
+        };
+
+        let banned_by: Option<String> = row.try_get("banned_by")?;
+
         Ok(RoomMember {
             room_id: RoomId::from_string(row.try_get("room_id")?),
             user_id: UserId::from_string(row.try_get("user_id")?),
-            permissions: PermissionBits::new(row.try_get("permissions")?),
+            role,
+            status,
+            added_permissions: row.try_get("added_permissions")?,
+            removed_permissions: row.try_get("removed_permissions")?,
             joined_at: row.try_get("joined_at")?,
             left_at: row.try_get("left_at")?,
+            version: row.try_get("version")?,
+            banned_at: row.try_get("banned_at")?,
+            banned_by: banned_by.map(UserId::from_string),
+            banned_reason: row.try_get("banned_reason")?,
         })
     }
 
     /// Convert database row to RoomMemberWithUser
     fn row_to_member_with_user(&self, row: PgRow) -> Result<RoomMemberWithUser> {
+        let role_str: String = row.try_get("role")?;
+        let role = match role_str.as_str() {
+            "creator" => RoomRole::Creator,
+            "admin" => RoomRole::Admin,
+            "member" => RoomRole::Member,
+            "guest" => RoomRole::Guest,
+            _ => return Err(Error::InvalidInput(format!("Unknown role: {}", role_str))),
+        };
+
+        let status_str: String = row.try_get("status")?;
+        let status = match status_str.as_str() {
+            "active" => MemberStatus::Active,
+            "pending" => MemberStatus::Pending,
+            "banned" => MemberStatus::Banned,
+            _ => return Err(Error::InvalidInput(format!("Unknown status: {}", status_str))),
+        };
+
         Ok(RoomMemberWithUser {
             room_id: RoomId::from_string(row.try_get("room_id")?),
             user_id: UserId::from_string(row.try_get("user_id")?),
             username: row.try_get("username")?,
-            permissions: PermissionBits::new(row.try_get("permissions")?),
+            role,
+            status,
+            added_permissions: row.try_get("added_permissions")?,
+            removed_permissions: row.try_get("removed_permissions")?,
             joined_at: row.try_get("joined_at")?,
             is_online: false, // Will be populated by connection tracking
-        })
-    }
-
-    /// Convert database row to RoomMemberWithUser (including inactive)
-    fn row_to_member_with_user_all(&self, row: PgRow) -> Result<RoomMemberWithUser> {
-        let is_active: bool = row.try_get("is_active")?;
-        Ok(RoomMemberWithUser {
-            room_id: RoomId::from_string(row.try_get("room_id")?),
-            user_id: UserId::from_string(row.try_get("user_id")?),
-            username: row.try_get("username")?,
-            permissions: PermissionBits::new(row.try_get("permissions")?),
-            joined_at: row.try_get("joined_at")?,
-            is_online: is_active, // Use is_active flag from query
+            banned_at: row.try_get("banned_at")?,
+            banned_reason: row.try_get("banned_reason")?,
         })
     }
 }

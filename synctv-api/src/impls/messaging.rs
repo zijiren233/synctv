@@ -279,8 +279,8 @@ fn cluster_event_to_server_message(
                     room_id: room_id.to_string(),
                     state: Some(PlaybackState {
                         room_id: state.room_id.as_str().to_string(),
-                        current_media_id: state
-                            .current_media_id
+                        playing_media_id: state
+                            .playing_media_id
                             .as_ref()
                             .map(|id| id.as_str().to_string())
                             .unwrap_or_default(),

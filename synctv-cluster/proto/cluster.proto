@@ -103,7 +103,7 @@ message RoomState {
 }
 
 message PlaybackState {
-    string current_media_id = 1;
+    string playing_media_id = 1;
     double position = 2;
     double speed = 3;
     bool is_playing = 4;

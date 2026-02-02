@@ -17,14 +17,14 @@ use synctv_core::{
 
 /// Get current media in playlist
 #[axum::debug_handler]
-pub async fn get_current_media(
+pub async fn get_playing_media(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
     let room_id = RoomId::from_string(room_id);
     let media = state
         .room_service
-        .get_current_media(&room_id)
+        .get_playing_media(&room_id)
         .await?;
 
     let response = media.map(|m| media_to_response(&m));
@@ -213,7 +213,7 @@ pub async fn clear_playlist(
 
 /// Set current playing media
 #[axum::debug_handler]
-pub async fn set_current_media(
+pub async fn set_playing_media(
     State(state): State<AppState>,
     Path((room_id, media_id)): Path<(String, String)>,
     Json(req): Json<UserIdRequest>,
@@ -224,7 +224,7 @@ pub async fn set_current_media(
 
     let state = state
         .room_service
-        .set_current_media(room_id, user_id, media_id)
+        .set_playing_media(room_id, user_id, media_id)
         .await?;
 
     Ok(Json(playback_state_to_response(&state)))
@@ -309,7 +309,7 @@ pub struct PlaybackStateResponse {
     pub is_playing: bool,
     pub current_time: f64,
     pub playback_rate: f64,
-    pub current_media_id: Option<String>,
+    pub playing_media_id: Option<String>,
 }
 
 // ============== Helper Functions ==============
@@ -338,6 +338,6 @@ fn playback_state_to_response(state: &synctv_core::models::RoomPlaybackState) ->
         is_playing: state.is_playing,
         current_time: state.current_time,
         playback_rate: state.playback_rate,
-        current_media_id: state.current_media_id.map(|id| id.as_str().to_string()),
+        playing_media_id: state.playing_media_id.map(|id| id.as_str().to_string()),
     }
 }

@@ -17,13 +17,13 @@ service AuthService {
 service UserService {
     // Profile Management
     rpc Logout(LogoutRequest) returns (LogoutResponse);
-    rpc GetCurrentUser(GetCurrentUserRequest) returns (GetCurrentUserResponse);
-    rpc UpdateUsername(UpdateUsernameRequest) returns (UpdateUsernameResponse);
-    rpc UpdatePassword(UpdatePasswordRequest) returns (UpdatePasswordResponse);
+    rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
+    rpc SetUsername(SetUsernameRequest) returns (SetUsernameResponse);
+    rpc SetPassword(SetPasswordRequest) returns (SetPasswordResponse);
 
     // User's Rooms
-    rpc GetMyRooms(GetMyRoomsRequest) returns (GetMyRoomsResponse); // Rooms created by user
-    rpc GetJoinedRooms(GetJoinedRoomsRequest) returns (GetJoinedRoomsResponse); // Rooms user joined
+    rpc ListCreatedRooms(ListCreatedRoomsRequest) returns (ListCreatedRoomsResponse);
+    rpc ListParticipatedRooms(ListParticipatedRoomsRequest) returns (ListParticipatedRoomsResponse);
 }
 
 // ==================== Room Service ====================
@@ -31,16 +31,16 @@ service UserService {
 // Routes: /api/room/*
 service RoomService {
     // Room Management (resource-targeted operations)
-    rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse); // Create new room
-    rpc GetRoom(GetRoomRequest) returns (GetRoomResponse); // Get specific room
-    rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse); // Join specific room
-    rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse); // Leave specific room
-    rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse); // Delete specific room
-    rpc UpdateRoomSettings(UpdateRoomSettingsRequest) returns (UpdateRoomSettingsResponse); // Update specific room
+    rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse);
+    rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
+    rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
+    rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
+    rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
+    rpc SetRoomSettings(SetRoomSettingsRequest) returns (SetRoomSettingsResponse);
 
     // Member Management (room-scoped operations, use x-room-id)
     rpc GetRoomMembers(GetRoomMembersRequest) returns (GetRoomMembersResponse);
-    rpc UpdateMemberPermission(UpdateMemberPermissionRequest) returns (UpdateMemberPermissionResponse);
+    rpc SetMemberPermission(SetMemberPermissionRequest) returns (SetMemberPermissionResponse);
     rpc KickMember(KickMemberRequest) returns (KickMemberResponse);
 
     // Real-time Messaging (room-scoped, use x-room-id)
@@ -53,6 +53,13 @@ service RoomService {
 // Routes: /api/room/media/*
 service MediaService {
     // Playlist Management (room-scoped operations, use x-room-id)
+    rpc CreatePlaylist(CreatePlaylistRequest) returns (CreatePlaylistResponse);
+    rpc SetPlaylist(SetPlaylistRequest) returns (SetPlaylistResponse);
+    rpc DeletePlaylist(DeletePlaylistRequest) returns (DeletePlaylistResponse);
+    rpc GetPlaylists(GetPlaylistsRequest) returns (GetPlaylistsResponse);
+    rpc SetPlaying(SetPlayingRequest) returns (SetPlayingResponse);
+
+    // Media Management (room-scoped operations, use x-room-id)
     rpc AddMedia(AddMediaRequest) returns (AddMediaResponse);
     rpc RemoveMedia(RemoveMediaRequest) returns (RemoveMediaResponse);
     rpc GetPlaylist(GetPlaylistRequest) returns (GetPlaylistResponse);
@@ -126,9 +133,22 @@ message Media {
     bytes source_config = 11; // JSON source config (replaces url for flexibility)
 }
 
+message Playlist {
+    string id = 1;
+    string room_id = 2;
+    string name = 3;
+    string parent_id = 4; // Parent playlist ID for nested playlists (null for root)
+    int32 position = 5; // Position among sibling playlists
+    bool is_folder = 6; // True if this is a folder (can contain other playlists)
+    bool is_dynamic = 7; // True if this is a dynamic playlist (provider-based)
+    int32 item_count = 8; // Number of items in this playlist
+    int64 created_at = 9;
+    int64 updated_at = 10;
+}
+
 message PlaybackState {
     string room_id = 1;
-    string current_media_id = 2;
+    string playing_media_id = 2;
     double position = 3; // seconds
     double speed = 4;
     bool is_playing = 5;
@@ -178,9 +198,9 @@ message RefreshTokenResponse {
     string refresh_token = 2;
 }
 
-message GetCurrentUserRequest {}
+message GetProfileRequest {}
 
-message GetCurrentUserResponse {
+message GetProfileResponse {
     User user = 1;
 }
 
@@ -241,12 +261,12 @@ message DeleteRoomResponse {
     bool success = 1;
 }
 
-message UpdateRoomSettingsRequest {
+message SetRoomSettingsRequest {
     string room_id = 1;
     bytes settings = 2; // JSON settings
 }
 
-message UpdateRoomSettingsResponse {
+message SetRoomSettingsResponse {
     Room room = 1;
 }
 
@@ -258,12 +278,12 @@ message GetRoomMembersResponse {
     repeated RoomMember members = 1;
 }
 
-message UpdateMemberPermissionRequest {
+message SetMemberPermissionRequest {
     string user_id = 1;        // Target user
     int64 permissions = 2;      // New permissions
 }
 
-message UpdateMemberPermissionResponse {
+message SetMemberPermissionResponse {
     RoomMember member = 1;
 }
 
@@ -275,14 +295,65 @@ message KickMemberResponse {
     bool success = 1;
 }
 
-// Playlist Messages
+// Playlist Management Messages
 // Note: room_id extracted from x-room-id metadata
+
+message CreatePlaylistRequest {
+    string name = 1;
+    string parent_id = 2; // Optional parent playlist ID for nested playlists
+    bool is_folder = 3; // True if creating a folder (can contain other playlists)
+}
+
+message CreatePlaylistResponse {
+    Playlist playlist = 1;
+}
+
+message SetPlaylistRequest {
+    string playlist_id = 1;
+    string name = 2; // Optional new name
+    int32 position = 3; // Optional new position
+}
+
+message SetPlaylistResponse {
+    Playlist playlist = 1;
+}
+
+message DeletePlaylistRequest {
+    string playlist_id = 1;
+}
+
+message DeletePlaylistResponse {
+    bool success = 1;
+}
+
+message GetPlaylistsRequest {
+    string parent_id = 1; // Optional parent ID to get children of specific playlist
+}
+
+message GetPlaylistsResponse {
+    repeated Playlist playlists = 1;
+}
+
+message SetPlayingRequest {
+    string playlist_id = 1; // Playlist to play from
+    string media_id = 2; // Optional specific media to play (if not specified, starts from first or current position)
+}
+
+message SetPlayingResponse {
+    Playlist playlist = 1;
+    Media playing_media = 2; // The media that is now playing
+}
+
+// Media Management Messages
+// Note: room_id extracted from x-room-id metadata
+
 message AddMediaRequest {
-    string url = 1; // Deprecated: Use source_config instead
-    string provider = 2; // Optional, provider type name (e.g., "bilibili", "alist")
-    string provider_instance_name = 3; // Optional, specific provider instance (e.g., "bilibili_main")
-    bytes source_config = 4; // JSON source config (e.g., {"url": "...", "path": "..."})
-    string title = 5; // Optional media title
+    string playlist_id = 1; // Target playlist ID
+    string url = 2; // Deprecated: Use source_config instead
+    string provider = 3; // Optional, provider type name (e.g., "bilibili", "alist")
+    string provider_instance_name = 4; // Optional, specific provider instance (e.g., "bilibili_main")
+    bytes source_config = 5; // JSON source config (e.g., {"url": "...", "path": "..."})
+    string title = 6; // Optional media title
 }
 
 message AddMediaResponse {
@@ -297,10 +368,16 @@ message RemoveMediaResponse {
     bool success = 1;
 }
 
-message GetPlaylistRequest {}
+message GetPlaylistRequest {
+    string playlist_id = 1; // Playlist ID to get
+    int32 page = 2; // Page number (default 1)
+    int32 page_size = 3; // Items per page (default 50)
+}
 
 message GetPlaylistResponse {
-    repeated Media media = 1;
+    Playlist playlist = 1;
+    repeated Media media = 2;
+    int32 total = 3; // Total number of items in playlist
 }
 
 message SwapMediaRequest {
@@ -379,6 +456,10 @@ message ServerMessage {
         MediaAdded media_added = 9;
         MediaRemoved media_removed = 10;
         PermissionChanged permission_changed = 11;
+        PlaylistCreated playlist_created = 12;
+        PlaylistUpdated playlist_updated = 13;
+        PlaylistDeleted playlist_deleted = 14;
+        PlayingChanged playing_changed = 15;
     }
 }
 
@@ -463,39 +544,39 @@ message LogoutResponse {
     bool success = 1;
 }
 
-message UpdateUsernameRequest {
+message SetUsernameRequest {
     string new_username = 1;
 }
 
-message UpdateUsernameResponse {
+message SetUsernameResponse {
     User user = 1;
 }
 
-message UpdatePasswordRequest {
+message SetPasswordRequest {
     string old_password = 1;
     string new_password = 2;
 }
 
-message UpdatePasswordResponse {
+message SetPasswordResponse {
     bool success = 1;
 }
 
-message GetMyRoomsRequest {
+message ListCreatedRoomsRequest {
     int32 page = 1;
     int32 page_size = 2;
 }
 
-message GetMyRoomsResponse {
+message ListCreatedRoomsResponse {
     repeated Room rooms = 1;
     int32 total = 2;
 }
 
-message GetJoinedRoomsRequest {
+message ListParticipatedRoomsRequest {
     int32 page = 1;
     int32 page_size = 2;
 }
 
-message GetJoinedRoomsResponse {
+message ListParticipatedRoomsResponse {
     repeated RoomWithRole rooms = 1;
     int32 total = 2;
 }
@@ -621,4 +702,27 @@ message PermissionChanged {
     string user_id = 2;
     int64 new_permissions = 3;
     string updated_by = 4; // Username of who made the change
+}
+
+// ==================== Playlist Events ====================
+
+message PlaylistCreated {
+    string room_id = 1;
+    Playlist playlist = 2;
+}
+
+message PlaylistUpdated {
+    string room_id = 1;
+    Playlist playlist = 2;
+}
+
+message PlaylistDeleted {
+    string room_id = 1;
+    string playlist_id = 2;
+}
+
+message PlayingChanged {
+    string room_id = 1;
+    Playlist playlist = 2;
+    Media playing_media = 3; // Optional: the media that started playing
 }

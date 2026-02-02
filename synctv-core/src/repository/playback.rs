@@ -30,7 +30,7 @@ impl RoomPlaybackStateRepository {
             "INSERT INTO room_playback_state (room_id, position, speed, is_playing, updated_at, version)
              VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT (room_id) DO NOTHING
-             RETURNING room_id, current_media_id, position, speed, is_playing, updated_at, version"
+             RETURNING room_id, playing_media_id, position, speed, is_playing, updated_at, version"
         )
         .bind(room_id.as_str())
         .bind(state.position)
@@ -53,7 +53,7 @@ impl RoomPlaybackStateRepository {
     /// Get playback state
     pub async fn get(&self, room_id: &RoomId) -> Result<Option<RoomPlaybackState>> {
         let row = sqlx::query(
-            "SELECT room_id, current_media_id, position, speed, is_playing, updated_at, version
+            "SELECT room_id, playing_media_id, position, speed, is_playing, updated_at, version
              FROM room_playback_state
              WHERE room_id = $1",
         )
@@ -69,14 +69,14 @@ impl RoomPlaybackStateRepository {
 
     /// Update playback state with optimistic locking
     pub async fn update(&self, state: &RoomPlaybackState) -> Result<RoomPlaybackState> {
-        let movie_id_str = state.current_media_id.as_ref().map(|id| id.as_str());
+        let movie_id_str = state.playing_media_id.as_ref().map(|id| id.as_str());
 
         let row = sqlx::query(
             "UPDATE room_playback_state
-             SET current_media_id = $2, position = $3, speed = $4, is_playing = $5,
+             SET playing_media_id = $2, position = $3, speed = $4, is_playing = $5,
                  updated_at = $6, version = version + 1
              WHERE room_id = $1 AND version = $7
-             RETURNING room_id, current_media_id, position, speed, is_playing, updated_at, version",
+             RETURNING room_id, playing_media_id, position, speed, is_playing, updated_at, version",
         )
         .bind(state.room_id.as_str())
         .bind(movie_id_str)
@@ -99,11 +99,11 @@ impl RoomPlaybackStateRepository {
 
     /// Convert database row to RoomPlaybackState
     fn row_to_state(&self, row: PgRow) -> Result<RoomPlaybackState> {
-        let movie_id_opt: Option<String> = row.try_get("current_media_id")?;
+        let movie_id_opt: Option<String> = row.try_get("playing_media_id")?;
 
         Ok(RoomPlaybackState {
             room_id: RoomId::from_string(row.try_get("room_id")?),
-            current_media_id: movie_id_opt.map(MediaId::from_string),
+            playing_media_id: movie_id_opt.map(MediaId::from_string),
             position: row.try_get("position")?,
             speed: row.try_get("speed")?,
             is_playing: row.try_get("is_playing")?,

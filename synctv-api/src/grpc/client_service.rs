@@ -164,8 +164,8 @@ impl ClientServiceImpl {
                         room_id: room_id.as_str().to_string(),
                         state: Some(PlaybackState {
                             room_id: room_id.as_str().to_string(),
-                            current_media_id: state
-                                .current_media_id
+                            playing_media_id: state
+                                .playing_media_id
                                 .map(|id| id.as_str().to_string())
                                 .unwrap_or_default(),
                             position: state.position,
@@ -687,8 +687,8 @@ impl RoomService for ClientServiceImpl {
 
         let proto_playback = Some(PlaybackState {
             room_id: playback_state.room_id.as_str().to_string(),
-            current_media_id: playback_state
-                .current_media_id
+            playing_media_id: playback_state
+                .playing_media_id
                 .as_ref()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_default(),
@@ -752,8 +752,8 @@ impl RoomService for ClientServiceImpl {
 
         let proto_playback = Some(PlaybackState {
             room_id: playback_state.room_id.as_str().to_string(),
-            current_media_id: playback_state
-                .current_media_id
+            playing_media_id: playback_state
+                .playing_media_id
                 .as_ref()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_default(),
@@ -1099,45 +1099,6 @@ impl RoomService for ClientServiceImpl {
                 if let Err(e) = client_msg_rx.send(client_msg) {
                     tracing::error!("Failed to send message to handler: {}", e);
                     break;
-                }
-            }
-
-            // Client disconnected, cleanup
-            cluster_manager_clone.unsubscribe(&connection_id_clone);
-
-            // Notify other users that this user left
-            let event = ClusterEvent::UserLeft {
-                room_id: room_id_clone.clone(),
-                user_id: user_id_clone.clone(),
-                username: username_clone.clone(),
-                timestamp: chrono::Utc::now(),
-            };
-            cluster_manager_clone.broadcast(event);
-
-            // Unregister connection from connection manager
-            connection_manager_clone.unregister(&connection_id_clone);
-
-            tracing::info!(
-                user_id = %user_id_clone.as_str(),
-                connection_id = %connection_id_clone,
-                "Client disconnected from MessageStream"
-            );
-        });
-                {
-                    tracing::error!(
-                        error = %e,
-                        user_id = %user_id_clone.as_str(),
-                        "Error handling client message"
-                    );
-
-                    // Send error to client
-                    let error_msg = ServerMessage {
-                        message: Some(server_message::Message::Error(ErrorMessage {
-                            code: "INTERNAL_ERROR".to_string(),
-                            message: e.to_string(),
-                        })),
-                    };
-                    let _ = outgoing_tx_clone.send(error_msg);
                 }
             }
 
@@ -1620,8 +1581,8 @@ impl MediaService for ClientServiceImpl {
 
         let proto_state = Some(PlaybackState {
             room_id: state.room_id.as_str().to_string(),
-            current_media_id: state
-                .current_media_id
+            playing_media_id: state
+                .playing_media_id
                 .as_ref()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_default(),
@@ -1660,8 +1621,8 @@ impl MediaService for ClientServiceImpl {
 
         let proto_state = Some(PlaybackState {
             room_id: state.room_id.as_str().to_string(),
-            current_media_id: state
-                .current_media_id
+            playing_media_id: state
+                .playing_media_id
                 .as_ref()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_default(),
@@ -1698,8 +1659,8 @@ impl MediaService for ClientServiceImpl {
 
         let proto_state = Some(PlaybackState {
             room_id: state.room_id.as_str().to_string(),
-            current_media_id: state
-                .current_media_id
+            playing_media_id: state
+                .playing_media_id
                 .as_ref()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_default(),
@@ -1739,8 +1700,8 @@ impl MediaService for ClientServiceImpl {
 
         let proto_state = Some(PlaybackState {
             room_id: state.room_id.as_str().to_string(),
-            current_media_id: state
-                .current_media_id
+            playing_media_id: state
+                .playing_media_id
                 .as_ref()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_default(),
@@ -1781,8 +1742,8 @@ impl MediaService for ClientServiceImpl {
 
         let proto_state = Some(PlaybackState {
             room_id: state.room_id.as_str().to_string(),
-            current_media_id: state
-                .current_media_id
+            playing_media_id: state
+                .playing_media_id
                 .as_ref()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_default(),
@@ -1812,8 +1773,8 @@ impl MediaService for ClientServiceImpl {
 
         let proto_state = Some(PlaybackState {
             room_id: state.room_id.as_str().to_string(),
-            current_media_id: state
-                .current_media_id
+            playing_media_id: state
+                .playing_media_id
                 .as_ref()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_default(),

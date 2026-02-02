@@ -6,7 +6,7 @@ use super::id::{MediaId, RoomId};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomPlaybackState {
     pub room_id: RoomId,
-    pub current_media_id: Option<MediaId>,
+    pub playing_media_id: Option<MediaId>,
     pub position: f64, // seconds
     pub speed: f64,    // 0.5, 1.0, 1.5, 2.0, etc.
     pub is_playing: bool,
@@ -18,7 +18,7 @@ impl RoomPlaybackState {
     pub fn new(room_id: RoomId) -> Self {
         Self {
             room_id,
-            current_media_id: None,
+            playing_media_id: None,
             position: 0.0,
             speed: 1.0,
             is_playing: false,
@@ -52,7 +52,7 @@ impl RoomPlaybackState {
     }
 
     pub fn switch_media(&mut self, media_id: MediaId) {
-        self.current_media_id = Some(media_id);
+        self.playing_media_id = Some(media_id);
         self.position = 0.0;
         self.is_playing = false;
         self.updated_at = Utc::now();

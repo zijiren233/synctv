@@ -134,7 +134,7 @@ impl PlaybackService {
         }
 
         self.update_state(room_id, |state| {
-            state.current_media_id = Some(media_id);
+            state.playing_media_id = Some(media_id);
             state.position = 0.0;
             state.is_playing = true;
             state.updated_at = chrono::Utc::now();
@@ -189,7 +189,7 @@ impl PlaybackService {
         let next_media = match mode {
             PlayMode::Sequential => {
                 // Find next media by position
-                let current_pos = if let Some(ref current_id) = state.current_media_id {
+                let current_pos = if let Some(ref current_id) = state.playing_media_id {
                     playlist.iter()
                         .position(|m| &m.id == current_id)
                         .unwrap_or(0)
@@ -206,7 +206,7 @@ impl PlaybackService {
 
             PlayMode::RepeatOne => {
                 // Repeat current media
-                if let Some(ref current_id) = state.current_media_id {
+                if let Some(ref current_id) = state.playing_media_id {
                     playlist.iter()
                         .find(|m| &m.id == current_id)
                 } else {
@@ -216,7 +216,7 @@ impl PlaybackService {
 
             PlayMode::RepeatAll => {
                 // Loop back to start
-                let current_pos = if let Some(ref current_id) = state.current_media_id {
+                let current_pos = if let Some(ref current_id) = state.playing_media_id {
                     playlist.iter()
                         .position(|m| &m.id == current_id)
                         .unwrap_or(0)
@@ -243,7 +243,7 @@ impl PlaybackService {
                 // 2. Play through shuffled order
                 // 3. Re-shuffle when all items played
                 // See: /Volumes/workspace/rust/design/13-自动连播设计.md §3.4
-                if let Some(ref current_id) = state.current_media_id {
+                if let Some(ref current_id) = state.playing_media_id {
                     playlist.iter()
                         .filter(|m| &m.id != current_id)
                         .choose(&mut rand::thread_rng())
@@ -256,7 +256,7 @@ impl PlaybackService {
         // Switch to next media
         if let Some(next) = next_media {
             let new_state = self.update_state(room_id.clone(), |state| {
-                state.current_media_id = Some(next.id.clone());
+                state.playing_media_id = Some(next.id.clone());
                 state.position = 0.0;
                 state.is_playing = true;
                 state.updated_at = chrono::Utc::now();
@@ -301,9 +301,9 @@ impl PlaybackService {
 
         // Get current media to check duration
         let state = self.get_state(room_id).await?;
-        let current_media_id = state.current_media_id;
+        let playing_media_id = state.playing_media_id;
 
-        let current_media = match current_media_id {
+        let playing_media = match playing_media_id {
             Some(ref id) => self.media_service.get_media(id).await?.ok_or_else(|| {
                 Error::NotFound("Current media not found".to_string())
             })?,
@@ -311,7 +311,7 @@ impl PlaybackService {
         };
 
         // Check if media has metadata with duration
-        let duration = if let Some(duration) = current_media.metadata.get("duration") {
+        let duration = if let Some(duration) = playing_media.metadata.get("duration") {
             duration.as_f64()
         } else {
             return Ok(None);
@@ -361,7 +361,7 @@ impl PlaybackService {
             state.is_playing = false;
             state.position = 0.0;
             state.speed = 1.0;
-            state.current_media_id = None;
+            state.playing_media_id = None;
             state.updated_at = chrono::Utc::now();
             state.version += 1;
         })
@@ -375,9 +375,9 @@ impl PlaybackService {
     }
 
     /// Get current media being played
-    pub async fn get_current_media_id(&self, room_id: &RoomId) -> Result<Option<MediaId>> {
+    pub async fn get_playing_media_id(&self, room_id: &RoomId) -> Result<Option<MediaId>> {
         let state = self.get_state(room_id).await?;
-        Ok(state.current_media_id)
+        Ok(state.playing_media_id)
     }
 
     /// Get current playback position
@@ -447,7 +447,7 @@ impl PlaybackService {
                 state.speed = s;
             }
             if let Some(mid) = media_id {
-                state.current_media_id = Some(mid);
+                state.playing_media_id = Some(mid);
             }
             state.updated_at = chrono::Utc::now();
             state.version += 1;

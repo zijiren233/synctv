@@ -112,7 +112,7 @@ pub struct GetSettingsGroupResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateSettingsRequest {
+pub struct SetSettingsRequest {
     #[prost(string, tag = "1")]
     pub group: ::prost::alloc::string::String,
     #[prost(map = "string, string", tag = "2")]
@@ -124,7 +124,7 @@ pub struct UpdateSettingsRequest {
 /// Empty response - success is indicated by no error
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct UpdateSettingsResponse {}
+pub struct SetSettingsResponse {}
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SendTestEmailRequest {
@@ -188,7 +188,7 @@ pub struct AddProviderInstanceResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateProviderInstanceRequest {
+pub struct SetProviderInstanceRequest {
     /// Instance name (cannot be changed)
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
@@ -216,7 +216,7 @@ pub struct UpdateProviderInstanceRequest {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateProviderInstanceResponse {
+pub struct SetProviderInstanceResponse {
     #[prost(message, optional, tag = "1")]
     pub instance: ::core::option::Option<ProviderInstance>,
 }
@@ -342,7 +342,7 @@ pub struct GetUserResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateUserPasswordRequest {
+pub struct SetUserPasswordRequest {
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -350,13 +350,13 @@ pub struct UpdateUserPasswordRequest {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct UpdateUserPasswordResponse {
+pub struct SetUserPasswordResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateUserUsernameRequest {
+pub struct SetUserUsernameRequest {
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -364,13 +364,13 @@ pub struct UpdateUserUsernameRequest {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateUserUsernameResponse {
+pub struct SetUserUsernameResponse {
     #[prost(message, optional, tag = "1")]
     pub user: ::core::option::Option<AdminUser>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateUserRoleRequest {
+pub struct SetUserRoleRequest {
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
     /// user, admin
@@ -379,7 +379,7 @@ pub struct UpdateUserRoleRequest {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateUserRoleResponse {
+pub struct SetUserRoleResponse {
     #[prost(message, optional, tag = "1")]
     pub user: ::core::option::Option<AdminUser>,
 }
@@ -473,7 +473,7 @@ pub struct GetRoomResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateRoomPasswordRequest {
+pub struct SetRoomPasswordRequest {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
     /// Empty to remove password
@@ -482,7 +482,7 @@ pub struct UpdateRoomPasswordRequest {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct UpdateRoomPasswordResponse {
+pub struct SetRoomPasswordResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
 }
@@ -769,11 +769,11 @@ pub mod admin_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
-        pub async fn update_settings(
+        pub async fn set_settings(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateSettingsRequest>,
+            request: impl tonic::IntoRequest<super::SetSettingsRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateSettingsResponse>,
+            tonic::Response<super::SetSettingsResponse>,
             tonic::Status,
         > {
             self.inner
@@ -786,11 +786,11 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/UpdateSettings",
+                "/synctv.admin.AdminService/SetSettings",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("synctv.admin.AdminService", "UpdateSettings"));
+                .insert(GrpcMethod::new("synctv.admin.AdminService", "SetSettings"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn send_test_email(
@@ -872,11 +872,11 @@ pub mod admin_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
-        pub async fn update_provider_instance(
+        pub async fn set_provider_instance(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateProviderInstanceRequest>,
+            request: impl tonic::IntoRequest<super::SetProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateProviderInstanceResponse>,
+            tonic::Response<super::SetProviderInstanceResponse>,
             tonic::Status,
         > {
             self.inner
@@ -889,15 +889,12 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/UpdateProviderInstance",
+                "/synctv.admin.AdminService/SetProviderInstance",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new(
-                        "synctv.admin.AdminService",
-                        "UpdateProviderInstance",
-                    ),
+                    GrpcMethod::new("synctv.admin.AdminService", "SetProviderInstance"),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -1116,11 +1113,11 @@ pub mod admin_service_client {
                 .insert(GrpcMethod::new("synctv.admin.AdminService", "GetUser"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn update_user_password(
+        pub async fn set_user_password(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateUserPasswordRequest>,
+            request: impl tonic::IntoRequest<super::SetUserPasswordRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateUserPasswordResponse>,
+            tonic::Response<super::SetUserPasswordResponse>,
             tonic::Status,
         > {
             self.inner
@@ -1133,20 +1130,18 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/UpdateUserPassword",
+                "/synctv.admin.AdminService/SetUserPassword",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("synctv.admin.AdminService", "UpdateUserPassword"),
-                );
+                .insert(GrpcMethod::new("synctv.admin.AdminService", "SetUserPassword"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn update_user_username(
+        pub async fn set_user_username(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateUserUsernameRequest>,
+            request: impl tonic::IntoRequest<super::SetUserUsernameRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateUserUsernameResponse>,
+            tonic::Response<super::SetUserUsernameResponse>,
             tonic::Status,
         > {
             self.inner
@@ -1159,20 +1154,18 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/UpdateUserUsername",
+                "/synctv.admin.AdminService/SetUserUsername",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("synctv.admin.AdminService", "UpdateUserUsername"),
-                );
+                .insert(GrpcMethod::new("synctv.admin.AdminService", "SetUserUsername"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn update_user_role(
+        pub async fn set_user_role(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateUserRoleRequest>,
+            request: impl tonic::IntoRequest<super::SetUserRoleRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateUserRoleResponse>,
+            tonic::Response<super::SetUserRoleResponse>,
             tonic::Status,
         > {
             self.inner
@@ -1185,11 +1178,11 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/UpdateUserRole",
+                "/synctv.admin.AdminService/SetUserRole",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("synctv.admin.AdminService", "UpdateUserRole"));
+                .insert(GrpcMethod::new("synctv.admin.AdminService", "SetUserRole"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn ban_user(
@@ -1339,11 +1332,11 @@ pub mod admin_service_client {
                 .insert(GrpcMethod::new("synctv.admin.AdminService", "GetRoom"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn update_room_password(
+        pub async fn set_room_password(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateRoomPasswordRequest>,
+            request: impl tonic::IntoRequest<super::SetRoomPasswordRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateRoomPasswordResponse>,
+            tonic::Response<super::SetRoomPasswordResponse>,
             tonic::Status,
         > {
             self.inner
@@ -1356,13 +1349,11 @@ pub mod admin_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.admin.AdminService/UpdateRoomPassword",
+                "/synctv.admin.AdminService/SetRoomPassword",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("synctv.admin.AdminService", "UpdateRoomPassword"),
-                );
+                .insert(GrpcMethod::new("synctv.admin.AdminService", "SetRoomPassword"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn delete_room(
@@ -1619,11 +1610,11 @@ pub mod admin_service_server {
             tonic::Response<super::GetSettingsGroupResponse>,
             tonic::Status,
         >;
-        async fn update_settings(
+        async fn set_settings(
             &self,
-            request: tonic::Request<super::UpdateSettingsRequest>,
+            request: tonic::Request<super::SetSettingsRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateSettingsResponse>,
+            tonic::Response<super::SetSettingsResponse>,
             tonic::Status,
         >;
         async fn send_test_email(
@@ -1650,11 +1641,11 @@ pub mod admin_service_server {
             tonic::Response<super::AddProviderInstanceResponse>,
             tonic::Status,
         >;
-        async fn update_provider_instance(
+        async fn set_provider_instance(
             &self,
-            request: tonic::Request<super::UpdateProviderInstanceRequest>,
+            request: tonic::Request<super::SetProviderInstanceRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateProviderInstanceResponse>,
+            tonic::Response<super::SetProviderInstanceResponse>,
             tonic::Status,
         >;
         async fn delete_provider_instance(
@@ -1713,25 +1704,25 @@ pub mod admin_service_server {
             &self,
             request: tonic::Request<super::GetUserRequest>,
         ) -> std::result::Result<tonic::Response<super::GetUserResponse>, tonic::Status>;
-        async fn update_user_password(
+        async fn set_user_password(
             &self,
-            request: tonic::Request<super::UpdateUserPasswordRequest>,
+            request: tonic::Request<super::SetUserPasswordRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateUserPasswordResponse>,
+            tonic::Response<super::SetUserPasswordResponse>,
             tonic::Status,
         >;
-        async fn update_user_username(
+        async fn set_user_username(
             &self,
-            request: tonic::Request<super::UpdateUserUsernameRequest>,
+            request: tonic::Request<super::SetUserUsernameRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateUserUsernameResponse>,
+            tonic::Response<super::SetUserUsernameResponse>,
             tonic::Status,
         >;
-        async fn update_user_role(
+        async fn set_user_role(
             &self,
-            request: tonic::Request<super::UpdateUserRoleRequest>,
+            request: tonic::Request<super::SetUserRoleRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateUserRoleResponse>,
+            tonic::Response<super::SetUserRoleResponse>,
             tonic::Status,
         >;
         async fn ban_user(
@@ -1773,11 +1764,11 @@ pub mod admin_service_server {
             &self,
             request: tonic::Request<super::GetRoomRequest>,
         ) -> std::result::Result<tonic::Response<super::GetRoomResponse>, tonic::Status>;
-        async fn update_room_password(
+        async fn set_room_password(
             &self,
-            request: tonic::Request<super::UpdateRoomPasswordRequest>,
+            request: tonic::Request<super::SetRoomPasswordRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::UpdateRoomPasswordResponse>,
+            tonic::Response<super::SetRoomPasswordResponse>,
             tonic::Status,
         >;
         async fn delete_room(
@@ -2015,25 +2006,25 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/UpdateSettings" => {
+                "/synctv.admin.AdminService/SetSettings" => {
                     #[allow(non_camel_case_types)]
-                    struct UpdateSettingsSvc<T: AdminService>(pub Arc<T>);
+                    struct SetSettingsSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::UpdateSettingsRequest>
-                    for UpdateSettingsSvc<T> {
-                        type Response = super::UpdateSettingsResponse;
+                    > tonic::server::UnaryService<super::SetSettingsRequest>
+                    for SetSettingsSvc<T> {
+                        type Response = super::SetSettingsResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::UpdateSettingsRequest>,
+                            request: tonic::Request<super::SetSettingsRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::update_settings(&inner, request).await
+                                <T as AdminService>::set_settings(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2044,7 +2035,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = UpdateSettingsSvc(inner);
+                        let method = SetSettingsSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -2200,28 +2191,25 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/UpdateProviderInstance" => {
+                "/synctv.admin.AdminService/SetProviderInstance" => {
                     #[allow(non_camel_case_types)]
-                    struct UpdateProviderInstanceSvc<T: AdminService>(pub Arc<T>);
+                    struct SetProviderInstanceSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::UpdateProviderInstanceRequest>
-                    for UpdateProviderInstanceSvc<T> {
-                        type Response = super::UpdateProviderInstanceResponse;
+                    > tonic::server::UnaryService<super::SetProviderInstanceRequest>
+                    for SetProviderInstanceSvc<T> {
+                        type Response = super::SetProviderInstanceResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::UpdateProviderInstanceRequest>,
+                            request: tonic::Request<super::SetProviderInstanceRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::update_provider_instance(
-                                        &inner,
-                                        request,
-                                    )
+                                <T as AdminService>::set_provider_instance(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -2233,7 +2221,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = UpdateProviderInstanceSvc(inner);
+                        let method = SetProviderInstanceSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -2630,25 +2618,25 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/UpdateUserPassword" => {
+                "/synctv.admin.AdminService/SetUserPassword" => {
                     #[allow(non_camel_case_types)]
-                    struct UpdateUserPasswordSvc<T: AdminService>(pub Arc<T>);
+                    struct SetUserPasswordSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::UpdateUserPasswordRequest>
-                    for UpdateUserPasswordSvc<T> {
-                        type Response = super::UpdateUserPasswordResponse;
+                    > tonic::server::UnaryService<super::SetUserPasswordRequest>
+                    for SetUserPasswordSvc<T> {
+                        type Response = super::SetUserPasswordResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::UpdateUserPasswordRequest>,
+                            request: tonic::Request<super::SetUserPasswordRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::update_user_password(&inner, request)
+                                <T as AdminService>::set_user_password(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -2660,7 +2648,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = UpdateUserPasswordSvc(inner);
+                        let method = SetUserPasswordSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -2676,25 +2664,25 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/UpdateUserUsername" => {
+                "/synctv.admin.AdminService/SetUserUsername" => {
                     #[allow(non_camel_case_types)]
-                    struct UpdateUserUsernameSvc<T: AdminService>(pub Arc<T>);
+                    struct SetUserUsernameSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::UpdateUserUsernameRequest>
-                    for UpdateUserUsernameSvc<T> {
-                        type Response = super::UpdateUserUsernameResponse;
+                    > tonic::server::UnaryService<super::SetUserUsernameRequest>
+                    for SetUserUsernameSvc<T> {
+                        type Response = super::SetUserUsernameResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::UpdateUserUsernameRequest>,
+                            request: tonic::Request<super::SetUserUsernameRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::update_user_username(&inner, request)
+                                <T as AdminService>::set_user_username(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -2706,7 +2694,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = UpdateUserUsernameSvc(inner);
+                        let method = SetUserUsernameSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -2722,25 +2710,25 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/UpdateUserRole" => {
+                "/synctv.admin.AdminService/SetUserRole" => {
                     #[allow(non_camel_case_types)]
-                    struct UpdateUserRoleSvc<T: AdminService>(pub Arc<T>);
+                    struct SetUserRoleSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::UpdateUserRoleRequest>
-                    for UpdateUserRoleSvc<T> {
-                        type Response = super::UpdateUserRoleResponse;
+                    > tonic::server::UnaryService<super::SetUserRoleRequest>
+                    for SetUserRoleSvc<T> {
+                        type Response = super::SetUserRoleResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::UpdateUserRoleRequest>,
+                            request: tonic::Request<super::SetUserRoleRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::update_user_role(&inner, request).await
+                                <T as AdminService>::set_user_role(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2751,7 +2739,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = UpdateUserRoleSvc(inner);
+                        let method = SetUserRoleSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -3037,25 +3025,25 @@ pub mod admin_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.admin.AdminService/UpdateRoomPassword" => {
+                "/synctv.admin.AdminService/SetRoomPassword" => {
                     #[allow(non_camel_case_types)]
-                    struct UpdateRoomPasswordSvc<T: AdminService>(pub Arc<T>);
+                    struct SetRoomPasswordSvc<T: AdminService>(pub Arc<T>);
                     impl<
                         T: AdminService,
-                    > tonic::server::UnaryService<super::UpdateRoomPasswordRequest>
-                    for UpdateRoomPasswordSvc<T> {
-                        type Response = super::UpdateRoomPasswordResponse;
+                    > tonic::server::UnaryService<super::SetRoomPasswordRequest>
+                    for SetRoomPasswordSvc<T> {
+                        type Response = super::SetRoomPasswordResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::UpdateRoomPasswordRequest>,
+                            request: tonic::Request<super::SetRoomPasswordRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as AdminService>::update_room_password(&inner, request)
+                                <T as AdminService>::set_room_password(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -3067,7 +3055,7 @@ pub mod admin_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = UpdateRoomPasswordSvc(inner);
+                        let method = SetRoomPasswordSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
