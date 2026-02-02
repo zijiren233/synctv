@@ -11,7 +11,6 @@ pub enum RoomStatus {
     #[default]
     Pending,
     Active,
-    Closed,
     Banned,
 }
 
@@ -20,7 +19,6 @@ impl RoomStatus {
         match self {
             Self::Pending => "pending",
             Self::Active => "active",
-            Self::Closed => "closed",
             Self::Banned => "banned",
         }
     }
@@ -110,11 +108,6 @@ impl Room {
 
     pub fn is_active(&self) -> bool {
         self.status == RoomStatus::Active && self.deleted_at.is_none()
-    }
-
-    pub fn close(&mut self) {
-        self.status = RoomStatus::Closed;
-        self.updated_at = Utc::now();
     }
 }
 

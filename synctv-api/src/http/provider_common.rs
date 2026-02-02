@@ -2,8 +2,11 @@
 //!
 //! Shared functionality across all provider routes
 
-use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};
+use axum::{extract::State, response::IntoResponse, routing::get, Json, Router, response::Response};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use axum::http::StatusCode;
+use synctv_core::provider::ProviderError;
 
 use super::AppState;
 
@@ -22,6 +25,57 @@ async fn list_instances(State(state): State<AppState>) -> impl IntoResponse {
     Json(json!({
         "instances": instances
     }))
+}
+
+/// Convert ProviderError to HTTP response
+pub fn error_response(e: ProviderError) -> (StatusCode, Json<serde_json::Value>) {
+    let (status, message) = match e {
+        ProviderError::NetworkError(msg) => (StatusCode::BAD_GATEWAY, msg),
+        ProviderError::ApiError(msg) => (StatusCode::BAD_GATEWAY, msg),
+        ProviderError::ParseError(msg) => (StatusCode::BAD_REQUEST, msg),
+        ProviderError::InvalidConfig(msg) => (StatusCode::BAD_REQUEST, msg),
+        ProviderError::NotFound => (StatusCode::NOT_FOUND, "Resource not found".to_string()),
+        ProviderError::InstanceNotFound(msg) => (StatusCode::NOT_FOUND, msg),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+
+    let body = json!({
+        "error": message,
+        "details": e.to_string()
+    });
+
+    (status, Json(body))
+}
+
+/// Convert String error to HTTP response (for implementation layer errors)
+pub fn parse_provider_error(error_msg: &str) -> ProviderError {
+    // Parse common error patterns and convert to ProviderError
+    let lower = error_msg.to_lowercase();
+
+    if lower.contains("network") || lower.contains("connection") {
+        ProviderError::NetworkError(error_msg.to_string())
+    } else if lower.contains("not found") {
+        ProviderError::NotFound
+    } else if lower.contains("parse") || lower.contains("invalid") {
+        ProviderError::ParseError(error_msg.to_string())
+    } else if lower.contains("unauthorized") || lower.contains("authentication") {
+        ProviderError::ApiError(error_msg.to_string())
+    } else {
+        ProviderError::ApiError(error_msg.to_string())
+    }
+}
+
+/// Extract instance_name from query parameter
+#[derive(Debug, Deserialize)]
+pub struct InstanceQuery {
+    #[serde(default)]
+    pub instance_name: Option<String>,
+}
+
+impl InstanceQuery {
+    pub fn as_deref(&self) -> Option<&str> {
+        self.instance_name.as_deref()
+    }
 }
 
 #[cfg(test)]

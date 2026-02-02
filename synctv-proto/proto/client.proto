@@ -106,7 +106,7 @@ message Room {
     string id = 1;
     string name = 2;
     string created_by = 3;
-    string status = 4; // active, closed
+    string status = 4; // pending, active, banned
     bytes settings = 5; // JSON settings
     int64 created_at = 6;
     int32 member_count = 7;
@@ -115,13 +115,15 @@ message Room {
 message Media {
     string id = 1;
     string room_id = 2;
-    string url = 3;
-    string provider = 4; // bilibili, alist, emby, direct
-    string title = 5;
+    string url = 3; // Deprecated: Use source_config instead
+    string provider = 4; // bilibili, alist, emby, direct (also known as source_provider)
+    string title = 5; // Also known as name
     bytes metadata = 6; // JSON metadata
     int32 position = 7; // Position in playlist
     int64 added_at = 8;
-    string added_by = 9;
+    string added_by = 9; // Also known as creator_id
+    string provider_instance_name = 10; // e.g., "bilibili_main", "alist_company"
+    bytes source_config = 11; // JSON source config (replaces url for flexibility)
 }
 
 message PlaybackState {
@@ -276,8 +278,11 @@ message KickMemberResponse {
 // Playlist Messages
 // Note: room_id extracted from x-room-id metadata
 message AddMediaRequest {
-    string url = 1;
-    string provider = 2; // Optional, auto-detect if empty
+    string url = 1; // Deprecated: Use source_config instead
+    string provider = 2; // Optional, provider type name (e.g., "bilibili", "alist")
+    string provider_instance_name = 3; // Optional, specific provider instance (e.g., "bilibili_main")
+    bytes source_config = 4; // JSON source config (e.g., {"url": "...", "path": "..."})
+    string title = 5; // Optional media title
 }
 
 message AddMediaResponse {
@@ -299,8 +304,9 @@ message GetPlaylistResponse {
 }
 
 message SwapMediaRequest {
-    string media_id1 = 1;
-    string media_id2 = 2;
+    string room_id = 1; // Room ID
+    string media_id1 = 2;
+    string media_id2 = 3;
 }
 
 message SwapMediaResponse {
@@ -370,6 +376,9 @@ message ServerMessage {
         RoomSettingsChanged room_settings = 6;
         HeartbeatAck heartbeat_ack = 7;
         ErrorMessage error = 8;
+        MediaAdded media_added = 9;
+        MediaRemoved media_removed = 10;
+        PermissionChanged permission_changed = 11;
     }
 }
 
@@ -588,4 +597,28 @@ message ConfirmPasswordResetRequest {
 message ConfirmPasswordResetResponse {
     string message = 1;
     string user_id = 2;
+}
+
+// ==================== Additional Server Messages ====================
+
+message MediaAdded {
+    string room_id = 1;
+    string media_id = 2;
+    string title = 3;
+    string added_by = 4; // Username
+    string added_by_user_id = 5; // User ID
+}
+
+message MediaRemoved {
+    string room_id = 1;
+    string media_id = 2;
+    string removed_by = 4; // Username
+    string removed_by_user_id = 5; // User ID
+}
+
+message PermissionChanged {
+    string room_id = 1;
+    string user_id = 2;
+    int64 new_permissions = 3;
+    string updated_by = 4; // Username of who made the change
 }

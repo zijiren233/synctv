@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// 64-bit permission bitmask
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +138,31 @@ impl Role {
                 perms.grant(PermissionBits::SEND_CHAT);
                 perms
             }
+        }
+    }
+}
+
+impl FromStr for Role {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "creator" => Ok(Role::Creator),
+            "admin" => Ok(Role::Admin),
+            "member" => Ok(Role::Member),
+            "guest" => Ok(Role::Guest),
+            _ => Err(format!("Unknown role: {}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Role::Creator => write!(f, "creator"),
+            Role::Admin => write!(f, "admin"),
+            Role::Member => write!(f, "member"),
+            Role::Guest => write!(f, "guest"),
         }
     }
 }

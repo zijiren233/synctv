@@ -108,6 +108,10 @@ impl From<synctv_core::Error> for AppError {
                 tracing::error!("Serialization error: {}", e);
                 AppError::internal_server_error("Data processing error")
             }
+            Error::Deserialization { context } => {
+                tracing::error!("Deserialization error: {}", context);
+                AppError::internal_server_error("Data processing error")
+            }
             Error::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
                 AppError::internal_server_error("Internal server error")

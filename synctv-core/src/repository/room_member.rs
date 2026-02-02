@@ -226,7 +226,6 @@ impl RoomMemberRepository {
                 let status_str: String = row.try_get("status")?;
                 let status = match status_str.as_str() {
                     "active" => crate::models::RoomStatus::Active,
-                    "closed" => crate::models::RoomStatus::Closed,
                     _ => crate::models::RoomStatus::Active,
                 };
 

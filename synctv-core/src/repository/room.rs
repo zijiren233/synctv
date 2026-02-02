@@ -151,7 +151,6 @@ impl RoomRepository {
         let status_filter = match &query.status {
             Some(RoomStatus::Pending) => "r.status = 'pending'",
             Some(RoomStatus::Active) => "r.status = 'active'",
-            Some(RoomStatus::Closed) => "r.status = 'closed'",
             Some(RoomStatus::Banned) => "r.status = 'banned'",
             None => "",
         };
@@ -391,7 +390,6 @@ impl RoomRepository {
         match status {
             RoomStatus::Pending => "pending",
             RoomStatus::Active => "active",
-            RoomStatus::Closed => "closed",
             RoomStatus::Banned => "banned",
         }
     }
@@ -400,7 +398,6 @@ impl RoomRepository {
         match s {
             "pending" => RoomStatus::Pending,
             "active" => RoomStatus::Active,
-            "closed" => RoomStatus::Closed,
             "banned" => RoomStatus::Banned,
             _ => RoomStatus::Active,
         }

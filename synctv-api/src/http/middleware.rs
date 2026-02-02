@@ -11,7 +11,7 @@ use synctv_core::{
     service::{JwtService, auth::JwtValidator},
 };
 
-use super::AppError;
+use super::{AppError, AppState};
 
 /// Authenticated user extracted from JWT token
 #[derive(Debug, Clone)]

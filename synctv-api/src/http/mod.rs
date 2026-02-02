@@ -27,10 +27,11 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
+use synctv_cluster::sync::PublishRequest;
+use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::repository::{ProviderInstanceRepository, UserProviderCredentialRepository};
 use synctv_core::service::{ProviderInstanceManager, RoomService, UserService};
 use synctv_stream::streaming::{create_streaming_router, StreamingHttpState};
-use synctv_cluster::sync::PublishRequest;
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -43,9 +44,12 @@ pub struct AppState {
     pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
     pub provider_instance_manager: Arc<ProviderInstanceManager>,
-    pub provider_instance_repository: Arc<ProviderInstanceRepository>,
     pub user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
+    pub alist_provider: Arc<AlistProvider>,
+    pub bilibili_provider: Arc<BilibiliProvider>,
+    pub emby_provider: Arc<EmbyProvider>,
     pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
+    pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     pub jwt_service: synctv_core::service::JwtService,
     pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
@@ -54,6 +58,9 @@ pub struct AppState {
     pub email_service: Option<Arc<synctv_core::service::EmailService>>,
     pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
+    // Unified API implementation layer
+    pub client_api: Arc<crate::impls::ClientApiImpl>,
+    pub admin_api: Option<Arc<crate::impls::AdminApiImpl>>,
 }
 
 /// Create the HTTP router with all routes
@@ -63,7 +70,11 @@ pub fn create_router(
     provider_instance_manager: Arc<ProviderInstanceManager>,
     provider_instance_repository: Arc<ProviderInstanceRepository>,
     user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
+    alist_provider: Arc<AlistProvider>,
+    bilibili_provider: Arc<BilibiliProvider>,
+    emby_provider: Arc<EmbyProvider>,
     message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
+    cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     jwt_service: synctv_core::service::JwtService,
     redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
     streaming_state: Option<StreamingHttpState>,
@@ -74,13 +85,36 @@ pub fn create_router(
     publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
 ) -> axum::Router {
+    // Create the unified API implementation layer
+    let client_api = Arc::new(crate::impls::ClientApiImpl::new(
+        user_service.clone(),
+        room_service.clone(),
+    ));
+
+    // AdminApi requires SettingsService and EmailService
+    // If they're not configured, we need to handle this appropriately
+    // For now, we'll skip creating admin_api if these aren't available
+    let admin_api = if let (Some(settings_svc), Some(email_svc)) = (&settings_service, &email_service) {
+        Some(Arc::new(crate::impls::AdminApiImpl::new(
+            room_service.clone(),
+            user_service.clone(),
+            settings_svc.clone(),
+            email_svc.clone(),
+        )))
+    } else {
+        None
+    };
+
     let state = AppState {
         user_service,
         room_service,
         provider_instance_manager: provider_instance_manager.clone(),
-        provider_instance_repository,
         user_provider_credential_repository,
+        alist_provider,
+        bilibili_provider,
+        emby_provider,
         message_hub,
+        cluster_manager,
         jwt_service,
         redis_publish_tx,
         oauth2_service,
@@ -89,7 +123,12 @@ pub fn create_router(
         email_service,
         publish_key_service,
         notification_service,
+        client_api,
+        admin_api,
     };
+
+    // Note: If admin_api is None, admin endpoints won't work
+    // This is acceptable for configurations without email/settings services
 
     let mut router = Router::new()
         // Health check endpoints (for monitoring probes)
@@ -109,11 +148,23 @@ pub fn create_router(
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/refresh", post(auth::refresh_token))
         // OAuth2 routes
-        .route("/api/oauth2/:provider/authorize", get(oauth2::get_authorize_url))
-        .route("/api/oauth2/:provider/callback", get(oauth2::oauth2_callback_get))
-        .route("/api/oauth2/:provider/callback", post(oauth2::oauth2_callback_post))
+        .route(
+            "/api/oauth2/:provider/authorize",
+            get(oauth2::get_authorize_url),
+        )
+        .route(
+            "/api/oauth2/:provider/callback",
+            get(oauth2::oauth2_callback_get),
+        )
+        .route(
+            "/api/oauth2/:provider/callback",
+            post(oauth2::oauth2_callback_post),
+        )
         .route("/api/oauth2/:provider/bind", post(oauth2::bind_provider))
-        .route("/api/oauth2/:provider/bind", axum::routing::delete(oauth2::unbind_provider))
+        .route(
+            "/api/oauth2/:provider/bind",
+            axum::routing::delete(oauth2::unbind_provider),
+        )
         .route("/api/oauth2/providers", get(oauth2::list_providers))
         // User management routes
         .route("/api/user/me", get(user::get_me))
@@ -122,7 +173,10 @@ pub fn create_router(
         .route("/api/user/password", post(user::update_password))
         .route("/api/user/rooms", get(user::get_my_rooms))
         .route("/api/user/rooms/joined", get(user::get_joined_rooms))
-        .route("/api/user/rooms/:room_id", axum::routing::delete(user::delete_my_room))
+        .route(
+            "/api/user/rooms/:room_id",
+            axum::routing::delete(user::delete_my_room),
+        )
         .route("/api/user/rooms/:room_id/exit", post(user::exit_room))
         // Room discovery routes (public)
         .route("/api/room/check/:room_id", get(room::check_room))
@@ -141,19 +195,37 @@ pub fn create_router(
             axum::routing::delete(room::delete_room),
         )
         // Room admin routes
-        .route("/api/rooms/:room_id/admin/settings", post(room::update_room_settings_admin))
-        .route("/api/rooms/:room_id/admin/password", post(room::set_room_password))
+        .route(
+            "/api/rooms/:room_id/admin/settings",
+            post(room::update_room_settings_admin),
+        )
+        .route(
+            "/api/rooms/:room_id/admin/password",
+            post(room::set_room_password),
+        )
         // Media/playlist routes
         .route("/api/rooms/:room_id/media", post(room::add_media))
         .route("/api/rooms/:room_id/media", get(room::get_playlist))
-        .route("/api/rooms/:room_id/media/batch", post(room::push_media_batch))
+        .route(
+            "/api/rooms/:room_id/media/batch",
+            post(room::push_media_batch),
+        )
         .route(
             "/api/rooms/:room_id/media/:media_id",
             axum::routing::delete(room::remove_media),
         )
-        .route("/api/rooms/:room_id/media/:media_id/edit", post(room::edit_media))
-        .route("/api/rooms/:room_id/media/swap", post(room::swap_media_items))
-        .route("/api/rooms/:room_id/media/clear", post(room::clear_playlist))
+        .route(
+            "/api/rooms/:room_id/media/:media_id/edit",
+            post(room::edit_media),
+        )
+        .route(
+            "/api/rooms/:room_id/media/swap",
+            post(room::swap_media_items),
+        )
+        .route(
+            "/api/rooms/:room_id/media/clear",
+            post(room::clear_playlist),
+        )
         // Playback control routes
         .route("/api/rooms/:room_id/playback/play", post(room::play))
         .route("/api/rooms/:room_id/playback/pause", post(room::pause))
@@ -171,9 +243,14 @@ pub fn create_router(
             get(room::get_playback_state),
         )
         // WebSocket endpoint for real-time messaging
-        .route("/ws/rooms/:room_id", axum::routing::get(websocket::websocket_handler))
+        .route(
+            "/ws/rooms/:room_id",
+            axum::routing::get(websocket::websocket_handler),
+        )
         // Provider-specific HTTP routes
-        .merge(providers::register_all_routes());
+        .nest("/api/providers/bilibili", providers::bilibili::bilibili_routes())
+        .nest("/api/providers/alist", providers::alist::alist_routes())
+        .nest("/api/providers/emby", providers::emby::emby_routes());
 
     // Note: Streaming routes (/live, /hls) are not merged here because they use StreamingHttpState
     // which is incompatible with our AppState. They should be run on a separate port or service.

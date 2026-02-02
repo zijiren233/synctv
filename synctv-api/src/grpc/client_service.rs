@@ -4,7 +4,8 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 
-use synctv_cluster::sync::{ClusterEvent, ConnectionManager, PublishRequest, RoomMessageHub};
+use synctv_cluster::sync::{ClusterEvent, ClusterManager, ConnectionManager};
+use crate::impls::messaging::{StreamMessageHandler, MessageSender};
 use synctv_core::models::{
     MediaId, PermissionBits, ProviderType, RoomId, RoomListQuery, RoomSettings, RoomStatus, UserId,
 };
@@ -14,7 +15,7 @@ use synctv_core::service::{
 };
 
 // Use synctv_proto for all gRPC traits and types
-use synctv_proto::client::{
+use crate::proto::client::{
     auth_service_server::AuthService, email_service_server::EmailService,
     media_service_server::MediaService, public_service_server::PublicService,
     room_service_server::RoomService, user_service_server::UserService, *,
@@ -25,8 +26,7 @@ use synctv_proto::client::{
 pub struct ClientServiceImpl {
     user_service: Arc<CoreUserService>,
     room_service: Arc<CoreRoomService>,
-    message_hub: Arc<RoomMessageHub>,
-    redis_publish_tx: Option<tokio::sync::mpsc::UnboundedSender<PublishRequest>>,
+    cluster_manager: Arc<ClusterManager>,
     rate_limiter: Arc<RateLimiter>,
     rate_limit_config: Arc<RateLimitConfig>,
     content_filter: Arc<ContentFilter>,
@@ -40,8 +40,7 @@ impl ClientServiceImpl {
     pub fn new(
         user_service: CoreUserService,
         room_service: CoreRoomService,
-        message_hub: RoomMessageHub,
-        redis_publish_tx: Option<tokio::sync::mpsc::UnboundedSender<PublishRequest>>,
+        cluster_manager: ClusterManager,
         rate_limiter: RateLimiter,
         rate_limit_config: RateLimitConfig,
         content_filter: ContentFilter,
@@ -53,8 +52,7 @@ impl ClientServiceImpl {
         Self {
             user_service: Arc::new(user_service),
             room_service: Arc::new(room_service),
-            message_hub: Arc::new(message_hub),
-            redis_publish_tx,
+            cluster_manager: Arc::new(cluster_manager),
             rate_limiter: Arc::new(rate_limiter),
             rate_limit_config: Arc::new(rate_limit_config),
             content_filter: Arc::new(content_filter),
@@ -505,7 +503,6 @@ impl UserService for ClientServiceImpl {
                     RoomStatus::Pending => "pending".to_string(),
 
                     RoomStatus::Active => "active".to_string(),
-                    RoomStatus::Closed => "closed".to_string(),
                     RoomStatus::Banned => "banned".to_string(),
                 },
                 settings: serde_json::to_vec(&rwc.room.settings).unwrap_or_default(),
@@ -566,7 +563,6 @@ impl UserService for ClientServiceImpl {
                         RoomStatus::Pending => "pending".to_string(),
 
                         RoomStatus::Active => "active".to_string(),
-                        RoomStatus::Closed => "closed".to_string(),
                         RoomStatus::Banned => "banned".to_string(),
                     },
                     settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
@@ -874,7 +870,6 @@ impl RoomService for ClientServiceImpl {
                     RoomStatus::Pending => "pending".to_string(),
 
                     RoomStatus::Active => "active".to_string(),
-                    RoomStatus::Closed => "closed".to_string(),
                     RoomStatus::Banned => "banned".to_string(),
                 },
                 settings: serde_json::to_vec(&updated_room.settings).unwrap_or_default(),
@@ -984,7 +979,28 @@ impl RoomService for ClientServiceImpl {
 
         Ok(Response::new(KickMemberResponse { success: true }))
     }
+}
 
+/// gRPC message sender for StreamMessageHandler
+struct GrpcMessageSender {
+    sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
+}
+
+impl GrpcMessageSender {
+    fn new(sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>) -> Self {
+        Self { sender }
+    }
+}
+
+impl MessageSender for GrpcMessageSender {
+    fn send(&self, message: crate::proto::client::ServerMessage) -> Result<(), String> {
+        self.sender
+            .send(message)
+            .map_err(|e| format!("Failed to send message: {}", e))
+    }
+}
+
+impl RoomService for ClientServiceImpl {
     type MessageStreamStream = std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<ServerMessage, Status>> + Send + 'static>,
     >;
@@ -1049,54 +1065,64 @@ impl RoomService for ClientServiceImpl {
         // Create channel for outgoing messages
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel::<ServerMessage>();
 
-        // Subscribe to room messages
-        let mut rx =
-            self.message_hub
-                .subscribe(room_id.clone(), user_id.clone(), connection_id.clone());
+        // Create gRPC message sender
+        let grpc_sender = Box::new(GrpcMessageSender::new(outgoing_tx.clone()));
 
-        // Forward messages from hub to client
-        let outgoing_tx_clone = outgoing_tx.clone();
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                if let Some(server_msg) = Self::convert_event_to_server_message(event) {
-                    let _ = outgoing_tx_clone.send(server_msg);
-                }
-            }
-        });
+        // Create StreamMessageHandler with all configuration
+        let stream_handler = StreamMessageHandler::new(
+            room_id.clone(),
+            user_id.clone(),
+            username,
+            self.room_service.clone(),
+            self.cluster_manager.clone(),
+            self.rate_limiter.clone(),
+            self.rate_limit_config.clone(),
+            self.content_filter.clone(),
+            grpc_sender,
+        );
 
-        // Clone for the task
-        let message_hub = self.message_hub.clone();
-        let room_service = self.room_service.clone();
+        // Start the handler and get receiver for incoming messages
+        let mut client_msg_rx = stream_handler.start();
+
+        // Clone for cleanup task
         let connection_id_clone = connection_id.clone();
+        let connection_manager_clone = self.connection_manager.clone();
+        let cluster_manager_clone = self.cluster_manager.clone();
+        let room_id_clone = room_id.clone();
         let user_id_clone = user_id.clone();
         let username_clone = username.clone();
-        let room_id_clone = room_id.clone();
         let outgoing_tx_clone = outgoing_tx.clone();
-        let redis_publish_tx_clone = self.redis_publish_tx.clone();
-        let rate_limiter_clone = self.rate_limiter.clone();
-        let rate_limit_config_clone = self.rate_limit_config.clone();
-        let content_filter_clone = self.content_filter.clone();
-        let connection_manager_clone = self.connection_manager.clone();
 
         // Spawn task to handle incoming client messages
         tokio::spawn(async move {
             while let Ok(Some(client_msg)) = client_stream.message().await {
-                if let Err(e) = Self::handle_client_message_with_room(
-                    client_msg,
-                    &message_hub,
-                    &room_service,
-                    &user_id_clone,
-                    &username_clone,
-                    &room_id_clone,
-                    &connection_id_clone,
-                    &outgoing_tx_clone,
-                    &redis_publish_tx_clone,
-                    &rate_limiter_clone,
-                    &rate_limit_config_clone,
-                    &content_filter_clone,
-                    &connection_manager_clone,
-                )
-                .await
+                if let Err(e) = client_msg_rx.send(client_msg) {
+                    tracing::error!("Failed to send message to handler: {}", e);
+                    break;
+                }
+            }
+
+            // Client disconnected, cleanup
+            cluster_manager_clone.unsubscribe(&connection_id_clone);
+
+            // Notify other users that this user left
+            let event = ClusterEvent::UserLeft {
+                room_id: room_id_clone.clone(),
+                user_id: user_id_clone.clone(),
+                username: username_clone.clone(),
+                timestamp: chrono::Utc::now(),
+            };
+            cluster_manager_clone.broadcast(event);
+
+            // Unregister connection from connection manager
+            connection_manager_clone.unregister(&connection_id_clone);
+
+            tracing::info!(
+                user_id = %user_id_clone.as_str(),
+                connection_id = %connection_id_clone,
+                "Client disconnected from MessageStream"
+            );
+        });
                 {
                     tracing::error!(
                         error = %e,
@@ -1116,7 +1142,7 @@ impl RoomService for ClientServiceImpl {
             }
 
             // Client disconnected, cleanup
-            message_hub.unsubscribe(&connection_id_clone);
+            cluster_manager_clone.unsubscribe(&connection_id_clone);
 
             // Notify other users that this user left
             let event = ClusterEvent::UserLeft {
@@ -1125,7 +1151,7 @@ impl RoomService for ClientServiceImpl {
                 username: username_clone.clone(),
                 timestamp: chrono::Utc::now(),
             };
-            message_hub.broadcast(&room_id_clone, event);
+            cluster_manager_clone.broadcast(event);
 
             // Unregister connection from connection manager
             connection_manager_clone.unregister(&connection_id_clone);
@@ -1225,14 +1251,13 @@ impl RoomService for ClientServiceImpl {
 impl ClientServiceImpl {
     async fn handle_client_message_with_room(
         msg: ClientMessage,
-        message_hub: &RoomMessageHub,
+        cluster_manager: &ClusterManager,
         room_service: &CoreRoomService,
         user_id: &UserId,
         username: &str,
         room_id: &RoomId,
         connection_id: &str,
         outgoing_tx: &tokio::sync::mpsc::UnboundedSender<ServerMessage>,
-        redis_publish_tx: &Option<tokio::sync::mpsc::UnboundedSender<PublishRequest>>,
         rate_limiter: &RateLimiter,
         rate_limit_config: &RateLimitConfig,
         content_filter: &ContentFilter,
@@ -1286,16 +1311,8 @@ impl ClientServiceImpl {
                     timestamp: Utc::now(),
                 };
 
-                // Broadcast to local subscribers
-                message_hub.broadcast(room_id, event.clone());
-
-                // Publish to Redis for multi-replica sync
-                if let Some(tx) = redis_publish_tx {
-                    let _ = tx.send(PublishRequest {
-                        room_id: room_id.clone(),
-                        event,
-                    });
-                }
+                // Broadcast to cluster (handles both local and Redis)
+                cluster_manager.broadcast(event);
             }
 
             Some(client_message::Message::Danmaku(danmaku)) => {
@@ -1333,16 +1350,8 @@ impl ClientServiceImpl {
                     timestamp: Utc::now(),
                 };
 
-                // Broadcast to local subscribers
-                message_hub.broadcast(room_id, event.clone());
-
-                // Publish to Redis for multi-replica sync
-                if let Some(tx) = redis_publish_tx {
-                    let _ = tx.send(PublishRequest {
-                        room_id: room_id.clone(),
-                        event,
-                    });
-                }
+                // Broadcast to cluster (handles both local and Redis)
+                cluster_manager.broadcast(event);
             }
 
             Some(client_message::Message::Heartbeat(heartbeat)) => {
@@ -1364,6 +1373,117 @@ impl ClientServiceImpl {
 
         Ok(())
     }
+}
+
+// ==================== Helper function for gRPC message handling ====================
+
+/// Handle client message with rate limiting and content filtering
+/// Then delegate to StreamMessageHandler for actual processing
+async fn handle_client_message_with_rate_limit(
+    msg: ClientMessage,
+    stream_handler: &StreamMessageHandler,
+    rate_limiter: &RateLimiter,
+    rate_limit_config: &RateLimitConfig,
+    content_filter: &ContentFilter,
+    room_service: &CoreRoomService,
+    connection_manager: &ConnectionManager,
+    connection_id: &str,
+    outgoing_tx: &tokio::sync::mpsc::UnboundedSender<ServerMessage>,
+) -> Result<(), Status> {
+    // Record message activity
+    connection_manager.record_message(connection_id);
+
+    match msg.message {
+        Some(client_message::Message::Chat(chat)) => {
+            // Check rate limit
+            let rate_limit_key = format!("user:{}:chat", stream_handler.get_user_id().as_str());
+            rate_limiter
+                .check_rate_limit(
+                    &rate_limit_key,
+                    rate_limit_config.chat_per_second,
+                    rate_limit_config.window_seconds,
+                )
+                .await
+                .map_err(|e| Status::resource_exhausted(e.to_string()))?;
+
+            // Filter and sanitize content
+            let sanitized_content = content_filter
+                .filter_chat(&chat.content)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+            // Check if user is in the room
+            room_service
+                .check_permission(stream_handler.get_room_id(), stream_handler.get_user_id(), PermissionBits::SEND_CHAT)
+                .await
+                .map_err(|e| Status::permission_denied(e.to_string()))?;
+
+            // Create modified message with sanitized content
+            let sanitized_msg = ClientMessage {
+                message: Some(client_message::Message::Chat(crate::proto::client::ChatMessageSend {
+                    content: sanitized_content,
+                })),
+            };
+
+            // Delegate to StreamMessageHandler
+            stream_handler.handle_client_message(&sanitized_msg).await
+                .map_err(|e| Status::internal(e.to_string()))?;
+        }
+
+        Some(client_message::Message::Danmaku(danmaku)) => {
+            // Check rate limit
+            let rate_limit_key = format!("user:{}:danmaku", stream_handler.get_user_id().as_str());
+            rate_limiter
+                .check_rate_limit(
+                    &rate_limit_key,
+                    rate_limit_config.danmaku_per_second,
+                    rate_limit_config.window_seconds,
+                )
+                .await
+                .map_err(|e| Status::resource_exhausted(e.to_string()))?;
+
+            // Filter and sanitize danmaku content
+            let sanitized_content = content_filter
+                .filter_danmaku(&danmaku.content)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+            // Check permission
+            room_service
+                .check_permission(stream_handler.get_room_id(), stream_handler.get_user_id(), PermissionBits::SEND_DANMAKU)
+                .await
+                .map_err(|e| Status::permission_denied(e.to_string()))?;
+
+            // Create modified message with sanitized content
+            let sanitized_msg = ClientMessage {
+                message: Some(client_message::Message::Danmaku(crate::proto::client::DanmakuMessageSend {
+                    content: sanitized_content,
+                    color: danmaku.color,
+                    position: danmaku.position,
+                })),
+            };
+
+            // Delegate to StreamMessageHandler
+            stream_handler.handle_client_message(&sanitized_msg).await
+                .map_err(|e| Status::internal(e.to_string()))?;
+        }
+
+        Some(client_message::Message::Heartbeat(heartbeat)) => {
+            // Send heartbeat acknowledgement
+            let ack = ServerMessage {
+                message: Some(server_message::Message::HeartbeatAck(crate::proto::client::HeartbeatAck {
+                    timestamp: heartbeat.timestamp,
+                })),
+            };
+            outgoing_tx
+                .send(ack)
+                .map_err(|_| Status::internal("Failed to send heartbeat ack"))?;
+        }
+
+        None => {
+            return Err(Status::invalid_argument("Empty message"));
+        }
+    }
+
+    Ok(())
 }
 
 // ==================== MediaService Implementation ====================
@@ -1865,7 +1985,6 @@ impl PublicService for ClientServiceImpl {
                     RoomStatus::Pending => "pending".to_string(),
 
                     RoomStatus::Active => "active".to_string(),
-                    RoomStatus::Closed => "closed".to_string(),
                     RoomStatus::Banned => "banned".to_string(),
                 },
                 settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
@@ -1930,7 +2049,6 @@ impl PublicService for ClientServiceImpl {
                         RoomStatus::Pending => "pending".to_string(),
 
                         RoomStatus::Active => "active".to_string(),
-                        RoomStatus::Closed => "closed".to_string(),
                         RoomStatus::Banned => "banned".to_string(),
                     },
                     settings: serde_json::to_vec(&room.settings).unwrap_or_default(),

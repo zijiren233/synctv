@@ -10,8 +10,9 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use synctv_core::{
-    service::RoomService,
+    service::{RoomService, UserService},
     repository::UserProviderCredentialRepository,
+    provider::{AlistProvider, BilibiliProvider, EmbyProvider},
     Config,
 };
 use synctv_stream::relay::StreamRegistry;
@@ -22,22 +23,14 @@ pub struct StreamingState {
     pub pull_manager: Arc<synctv_stream::streaming::PullStreamManager>,
 }
 
-/// SyncTV server - manages all server components
-pub struct SyncTvServer {
-    config: Config,
-    services: Services,
-    streaming_state: Option<StreamingState>,
-    grpc_handle: Option<JoinHandle<()>>,
-    http_handle: Option<JoinHandle<()>>,
-}
-
 /// Container for shared services
 #[derive(Clone)]
 pub struct Services {
-    pub user_service: Arc<synctv_core::service::UserService>,
+    pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
     pub jwt_service: synctv_core::service::JwtService,
     pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
+    pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     pub redis_publish_tx: Option<tokio::sync::mpsc::UnboundedSender<synctv_cluster::sync::PublishRequest>>,
     pub rate_limiter: synctv_core::service::RateLimiter,
     pub rate_limit_config: synctv_core::service::RateLimitConfig,
@@ -47,6 +40,9 @@ pub struct Services {
     pub provider_instance_manager: Arc<synctv_core::service::ProviderInstanceManager>,
     pub provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
     pub user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
+    pub alist_provider: Arc<AlistProvider>,
+    pub bilibili_provider: Arc<BilibiliProvider>,
+    pub emby_provider: Arc<EmbyProvider>,
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     pub settings_service: Arc<synctv_core::service::SettingsService>,
     pub settings_registry: Arc<synctv_core::service::SettingsRegistry>,
@@ -54,6 +50,15 @@ pub struct Services {
     pub email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
     pub publish_key_service: Arc<synctv_core::service::PublishKeyService>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
+}
+
+/// SyncTV server - manages all server components
+pub struct SyncTvServer {
+    config: Config,
+    services: Services,
+    streaming_state: Option<StreamingState>,
+    grpc_handle: Option<JoinHandle<()>>,
+    http_handle: Option<JoinHandle<()>>,
 }
 
 impl Services {
@@ -170,6 +175,7 @@ impl SyncTvServer {
         let provider_instance_repository = self.services.provider_instance_repository.clone();
         let user_provider_credential_repository = self.services.user_provider_credential_repository.clone();
         let message_hub = self.services.message_hub();
+        let cluster_manager = self.services.cluster_manager.clone();
         let jwt_service = self.services.jwt_service.clone();
         let redis_publish_tx = self.services.redis_publish_tx.clone();
         let oauth2_service = self.services.oauth2_service.clone();
@@ -191,7 +197,11 @@ impl SyncTvServer {
             provider_instance_manager,
             provider_instance_repository,
             user_provider_credential_repository,
+            self.services.alist_provider.clone(),
+            self.services.bilibili_provider.clone(),
+            self.services.emby_provider.clone(),
             message_hub,
+            cluster_manager,
             jwt_service,
             redis_publish_tx,
             streaming_state,

@@ -8,8 +8,9 @@ use tracing::{error, info};
 use synctv_core::{
     logging,
     bootstrap::{load_config, init_database, init_services},
+    provider::{AlistProvider, BilibiliProvider, EmbyProvider},
 };
-use synctv_cluster::sync::{RoomMessageHub, ConnectionManager, RedisPubSub};
+use synctv_cluster::sync::{RoomMessageHub, ConnectionManager, RedisPubSub, ClusterManager, ClusterConfig};
 
 use server::{SyncTvServer, Services, StreamingState};
 
@@ -68,41 +69,52 @@ async fn main() -> Result<()> {
     let message_hub = Arc::new(RoomMessageHub::new());
     info!("RoomMessageHub initialized");
 
-    // 7. Initialize connection manager
-    let connection_manager = ConnectionManager::default();
-    info!("Connection manager initialized");
-
-    // 8. Initialize Redis Pub/Sub
-    let redis_publish_tx = if !config.redis.url.is_empty() {
-        match RedisPubSub::new(
-            &config.redis.url,
-            message_hub.clone(),
-            generate_node_id(),
-        ) {
-            Ok(redis_pubsub) => {
-                let redis_pubsub = Arc::new(redis_pubsub);
-                match redis_pubsub.start().await {
-                    Ok(tx) => {
-                        info!("Redis Pub/Sub initialized successfully");
-                        Some(tx)
-                    }
-                    Err(e) => {
-                        error!("Failed to start Redis Pub/Sub: {}", e);
-                        error!("Continuing in single-node mode without Redis");
-                        None
-                    }
-                }
+    // 7. Initialize ClusterManager (unified cluster management)
+    let cluster_manager = if !config.redis.url.is_empty() {
+        let cluster_config = ClusterConfig {
+            redis_url: config.redis.url.clone(),
+            node_id: generate_node_id(),
+            dedup_window: std::time::Duration::from_secs(5),
+            cleanup_interval: std::time::Duration::from_secs(30),
+        };
+        match ClusterManager::new(cluster_config).await {
+            Ok(manager) => {
+                info!("ClusterManager initialized successfully");
+                Some(Arc::new(manager))
             }
             Err(e) => {
-                error!("Failed to create Redis Pub/Sub client: {}", e);
-                error!("Continuing in single-node mode without Redis");
+                error!("Failed to create ClusterManager: {}", e);
+                error!("Continuing in single-node mode");
                 None
             }
         }
     } else {
-        info!("Redis URL not configured, running in single-node mode");
-        None
+        info!("Redis not configured, using single-node ClusterManager");
+        // Create a single-node ClusterManager (no Redis)
+        let cluster_config = ClusterConfig {
+            redis_url: String::new(),
+            node_id: generate_node_id(),
+            dedup_window: std::time::Duration::from_secs(5),
+            cleanup_interval: std::time::Duration::from_secs(30),
+        };
+        match ClusterManager::new(cluster_config).await {
+            Ok(manager) => Some(Arc::new(manager)),
+            Err(e) => {
+                error!("Failed to create single-node ClusterManager: {}", e);
+                None
+            }
+        }
     };
+
+    // 8. Initialize connection manager
+    let connection_manager = ConnectionManager::default();
+    info!("Connection manager initialized");
+
+    // Note: Redis Pub/Sub is now handled by ClusterManager
+    // We get the publish_tx from cluster_manager for backward compatibility
+    let redis_publish_tx = cluster_manager
+        .as_ref()
+        .and_then(|cm| cm.redis_publish_tx().cloned());
 
     // 9. Initialize streaming components (RTMP server)
     let streaming_state = if !config.redis.url.is_empty() {
@@ -178,20 +190,29 @@ async fn main() -> Result<()> {
     };
 
     // 10. Create server with all services
+    let provider_instance_manager = synctv_services.provider_instance_manager.clone();
+    let alist_provider = Arc::new(AlistProvider::new(provider_instance_manager.clone()));
+    let bilibili_provider = Arc::new(BilibiliProvider::new(provider_instance_manager.clone()));
+    let emby_provider = Arc::new(EmbyProvider::new(provider_instance_manager.clone()));
+
     let services = Services {
         user_service: synctv_services.user_service.clone(),
         room_service: synctv_services.room_service.clone(),
         jwt_service: synctv_services.jwt_service.clone(),
         message_hub,
+        cluster_manager,
         redis_publish_tx,
         rate_limiter: synctv_services.rate_limiter.clone(),
         rate_limit_config: synctv_services.rate_limit_config.clone(),
         content_filter: synctv_services.content_filter.clone(),
         connection_manager,
         providers_manager: synctv_services.providers_manager.clone(),
-        provider_instance_manager: synctv_services.provider_instance_manager.clone(),
+        provider_instance_manager,
         provider_instance_repository: synctv_services.provider_instance_repo.clone(),
         user_provider_credential_repository: synctv_services.user_provider_credential_repo.clone(),
+        alist_provider,
+        bilibili_provider,
+        emby_provider,
         oauth2_service: synctv_services.oauth2_service.clone(),
         settings_service: synctv_services.settings_service.clone(),
         settings_registry: synctv_services.settings_registry.clone(),

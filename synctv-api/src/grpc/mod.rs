@@ -1,32 +1,26 @@
-// Generated protobuf code
-// Note: All proto files are now in synctv-proto crate
-pub mod proto {
-    #![allow(clippy::all)]
-    #![allow(warnings)]
+// Re-export proto types from synctv-proto
+pub use synctv_proto::{client, admin};
 
-    // Only cluster.proto is internal (from synctv-cluster)
-    pub mod cluster {
-        include!("proto/synctv.cluster.rs");
-    }
-}
+// Re-export cluster proto from synctv-cluster (internal)
+pub use synctv_cluster::grpc::synctv::cluster;
 
 pub mod admin_service;
 pub mod client_service;
 pub mod interceptors;
-pub mod message_handler;
 
-// Provider gRPC services
+// Provider gRPC services (local implementations)
 // Provider-specific gRPC services are registered from provider instances
 pub mod providers;
 
 pub use admin_service::AdminServiceImpl;
 pub use client_service::ClientServiceImpl;
-pub use interceptors::{AuthInterceptor, LoggingInterceptor, ValidationInterceptor, TimeoutInterceptor};
-pub use message_handler::{MessageHandler, cluster_event_to_server_message};
+pub use interceptors::{
+    AuthInterceptor, LoggingInterceptor, TimeoutInterceptor, ValidationInterceptor,
+};
 
 // Use synctv_proto for all server traits and message types (single source of truth)
-use synctv_proto::admin_service_server::AdminServiceServer;
-use synctv_proto::client::{
+use crate::proto::admin_service_server::AdminServiceServer;
+use crate::proto::client::{
     auth_service_server::AuthServiceServer, email_service_server::EmailServiceServer,
     media_service_server::MediaServiceServer, public_service_server::PublicServiceServer,
     room_service_server::RoomServiceServer, user_service_server::UserServiceServer,
@@ -36,11 +30,12 @@ use tonic_reflection::server::Builder as ReflectionBuilder;
 
 use std::sync::Arc;
 use synctv_cluster::sync::{ConnectionManager, PublishRequest, RoomMessageHub};
+use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::service::auth::JwtService;
 use synctv_core::service::{
-    ContentFilter, ProviderInstanceManager, ProvidersManager, RateLimitConfig, RateLimiter,
-    RoomService as CoreRoomService, UserService as CoreUserService, SettingsService,
-    SettingsRegistry, EmailService, EmailTokenService,
+    ContentFilter, EmailService, EmailTokenService, ProviderInstanceManager, ProvidersManager,
+    RateLimitConfig, RateLimiter, RoomService as CoreRoomService, SettingsRegistry,
+    SettingsService, UserService as CoreUserService,
 };
 use synctv_core::Config;
 
@@ -59,7 +54,9 @@ pub async fn serve(
     providers_manager: Option<Arc<ProvidersManager>>,
     provider_instance_manager: Arc<ProviderInstanceManager>,
     provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
-    user_provider_credential_repository: Arc<synctv_core::repository::UserProviderCredentialRepository>,
+    user_provider_credential_repository: Arc<
+        synctv_core::repository::UserProviderCredentialRepository,
+    >,
     settings_service: Arc<SettingsService>,
     settings_registry: Option<Arc<SettingsRegistry>>,
     email_service: Option<Arc<EmailService>>,
@@ -111,20 +108,8 @@ pub async fn serve(
     // Create server builder
     let mut server_builder = Server::builder();
 
-    // Add reflection if enabled
-    let reflection_service = if config.server.enable_reflection {
-        // Load file descriptor set from generated binary
-        let descriptor_bytes = include_bytes!("proto/descriptor.bin");
-        let reflection = ReflectionBuilder::configure()
-            .register_encoded_file_descriptor_set(descriptor_bytes.as_ref())
-            .build_v1()
-            .map_err(|e| anyhow::anyhow!("Failed to build reflection service: {}", e))?;
-
-        tracing::info!("gRPC reflection enabled");
-        Some(reflection)
-    } else {
-        None
-    };
+    // Note: gRPC reflection is disabled - proto definitions are in synctv-proto crate
+    // To enable reflection in the future, we would need to re-export descriptor from synctv-proto
 
     // Create auth interceptor for authenticated services
     let auth_interceptor = AuthInterceptor::new(jwt_service);
@@ -170,39 +155,61 @@ pub async fn serve(
             move |req| admin_interceptor.inject_user(req),
         ));
 
-    if let Some(reflection) = reflection_service {
-        router = router.add_service(reflection);
-    }
+    // Register provider gRPC services
+    if let Some(_providers_mgr) = providers_manager {
+        tracing::info!("Registering provider gRPC services");
 
-    // Register provider gRPC services via extension registration pattern
-    // Each provider module self-registers, achieving complete decoupling!
-    if let Some(providers_mgr) = providers_manager {
-        tracing::info!("Initializing provider gRPC service modules");
+        // Create AppState for provider gRPC services
+        let provider_instance_manager_for_provider = _providers_mgr.instance_manager().clone();
+        let alist_provider = Arc::new(AlistProvider::new(
+            provider_instance_manager_for_provider.clone(),
+        ));
+        let bilibili_provider = Arc::new(BilibiliProvider::new(
+            provider_instance_manager_for_provider.clone(),
+        ));
+        let emby_provider = Arc::new(EmbyProvider::new(
+            provider_instance_manager_for_provider.clone(),
+        ));
 
-        // Initialize all provider gRPC service builders
-        // (Each provider module registers its services via init())
-        providers::init_all();
-
-        // Create AppState for provider extensions with all required dependencies
         let app_state = Arc::new(crate::http::AppState {
-            user_service: user_service_for_provider,
-            room_service: room_service_for_provider,
-            provider_instance_manager: providers_mgr.instance_manager().clone(),
-            provider_instance_repository: provider_instance_repository.clone(),
+            user_service: user_service_for_provider.clone(),
+            room_service: room_service_for_provider.clone(),
+            provider_instance_manager: _providers_mgr.instance_manager().clone(),
             user_provider_credential_repository: user_provider_credential_repository.clone(),
+            alist_provider,
+            bilibili_provider,
+            emby_provider,
             message_hub: message_hub.clone(),
+            cluster_manager: None, // gRPC doesn't use cluster_manager directly
             jwt_service: jwt_service_for_provider,
             redis_publish_tx: redis_publish_tx.clone(),
-            oauth2_service: None, // Not used in gRPC provider services
+            oauth2_service: None,
             settings_service: Some(settings_service.clone()),
-            settings_registry: None, // Not used in gRPC provider services
-            email_service: None, // Not used in gRPC provider services
-            publish_key_service: None, // Not used in gRPC provider services
-            notification_service: None, // Not used in gRPC provider services
+            settings_registry: None,
+            email_service: None,
+            publish_key_service: None,
+            notification_service: None,
+            client_api: Arc::new(crate::impls::ClientApiImpl::new(
+                user_service_for_provider,
+                room_service_for_provider,
+            )),
+            admin_api: None,
         });
 
-        // Build services from all registered providers (no hardcoded provider types!)
-        router = provider_extensions::build_provider_services_all(app_state, router);
+        // Manually register provider gRPC services
+        use synctv_proto::providers::alist::alist_provider_service_server::AlistProviderServiceServer;
+        use synctv_proto::providers::bilibili::bilibili_provider_service_server::BilibiliProviderServiceServer;
+        use synctv_proto::providers::emby::emby_provider_service_server::EmbyProviderServiceServer;
+
+        router = router.add_service(AlistProviderServiceServer::new(
+            providers::alist::AlistProviderGrpcService::new(app_state.clone())
+        ));
+        router = router.add_service(BilibiliProviderServiceServer::new(
+            providers::bilibili::BilibiliProviderGrpcService::new(app_state.clone())
+        ));
+        router = router.add_service(EmbyProviderServiceServer::new(
+            providers::emby::EmbyProviderGrpcService::new(app_state)
+        ));
     }
 
     // Start server

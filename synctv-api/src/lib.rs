@@ -4,6 +4,8 @@
 
 pub mod grpc;
 pub mod http;
+pub mod impls;
+pub mod proto;
 pub mod observability;
 
 // Re-export commonly used types

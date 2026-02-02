@@ -23,7 +23,7 @@ pub struct Room {
     pub name: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub created_by: ::prost::alloc::string::String,
-    /// active, closed
+    /// pending, active, banned
     #[prost(string, tag = "4")]
     pub status: ::prost::alloc::string::String,
     /// JSON settings
@@ -41,11 +41,13 @@ pub struct Media {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub room_id: ::prost::alloc::string::String,
+    /// Deprecated: Use source_config instead
     #[prost(string, tag = "3")]
     pub url: ::prost::alloc::string::String,
-    /// bilibili, alist, emby, direct
+    /// bilibili, alist, emby, direct (also known as source_provider)
     #[prost(string, tag = "4")]
     pub provider: ::prost::alloc::string::String,
+    /// Also known as name
     #[prost(string, tag = "5")]
     pub title: ::prost::alloc::string::String,
     /// JSON metadata
@@ -56,8 +58,15 @@ pub struct Media {
     pub position: i32,
     #[prost(int64, tag = "8")]
     pub added_at: i64,
+    /// Also known as creator_id
     #[prost(string, tag = "9")]
     pub added_by: ::prost::alloc::string::String,
+    /// e.g., "bilibili_main", "alist_company"
+    #[prost(string, tag = "10")]
+    pub provider_instance_name: ::prost::alloc::string::String,
+    /// JSON source config (replaces url for flexibility)
+    #[prost(bytes = "vec", tag = "11")]
+    pub source_config: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -309,11 +318,21 @@ pub struct KickMemberResponse {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddMediaRequest {
+    /// Deprecated: Use source_config instead
     #[prost(string, tag = "1")]
     pub url: ::prost::alloc::string::String,
-    /// Optional, auto-detect if empty
+    /// Optional, provider type name (e.g., "bilibili", "alist")
     #[prost(string, tag = "2")]
     pub provider: ::prost::alloc::string::String,
+    /// Optional, specific provider instance (e.g., "bilibili_main")
+    #[prost(string, tag = "3")]
+    pub provider_instance_name: ::prost::alloc::string::String,
+    /// JSON source config (e.g., {"url": "...", "path": "..."})
+    #[prost(bytes = "vec", tag = "4")]
+    pub source_config: ::prost::alloc::vec::Vec<u8>,
+    /// Optional media title
+    #[prost(string, tag = "5")]
+    pub title: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -345,9 +364,12 @@ pub struct GetPlaylistResponse {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SwapMediaRequest {
+    /// Room ID
     #[prost(string, tag = "1")]
-    pub media_id1: ::prost::alloc::string::String,
+    pub room_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
+    pub media_id1: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
     pub media_id2: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -446,7 +468,10 @@ pub mod client_message {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ServerMessage {
-    #[prost(oneof = "server_message::Message", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
+    #[prost(
+        oneof = "server_message::Message",
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11"
+    )]
     pub message: ::core::option::Option<server_message::Message>,
 }
 /// Nested message and enum types in `ServerMessage`.
@@ -470,6 +495,12 @@ pub mod server_message {
         HeartbeatAck(super::HeartbeatAck),
         #[prost(message, tag = "8")]
         Error(super::ErrorMessage),
+        #[prost(message, tag = "9")]
+        MediaAdded(super::MediaAdded),
+        #[prost(message, tag = "10")]
+        MediaRemoved(super::MediaRemoved),
+        #[prost(message, tag = "11")]
+        PermissionChanged(super::PermissionChanged),
     }
 }
 /// Note: room_id extracted from x-room-id metadata in MessageStream context
@@ -816,6 +847,49 @@ pub struct ConfirmPasswordResetResponse {
     pub message: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub user_id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MediaAdded {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub media_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub title: ::prost::alloc::string::String,
+    /// Username
+    #[prost(string, tag = "4")]
+    pub added_by: ::prost::alloc::string::String,
+    /// User ID
+    #[prost(string, tag = "5")]
+    pub added_by_user_id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MediaRemoved {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub media_id: ::prost::alloc::string::String,
+    /// Username
+    #[prost(string, tag = "4")]
+    pub removed_by: ::prost::alloc::string::String,
+    /// User ID
+    #[prost(string, tag = "5")]
+    pub removed_by_user_id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PermissionChanged {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub user_id: ::prost::alloc::string::String,
+    #[prost(int64, tag = "3")]
+    pub new_permissions: i64,
+    /// Username of who made the change
+    #[prost(string, tag = "4")]
+    pub updated_by: ::prost::alloc::string::String,
 }
 /// Generated client implementations.
 pub mod auth_service_client {

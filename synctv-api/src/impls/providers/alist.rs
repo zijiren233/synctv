@@ -1,0 +1,104 @@
+//! Alist API Implementation
+//!
+//! Unified implementation for all Alist API operations.
+//! Used by both HTTP and gRPC handlers.
+
+use std::sync::Arc;
+use synctv_core::provider::AlistProvider;
+use crate::proto::providers::alist::*;
+
+/// Alist API implementation
+///
+/// Contains all business logic for Alist operations.
+/// Methods accept grpc-generated request types and return grpc-generated response types.
+#[derive(Debug, Clone)]
+pub struct AlistApiImpl {
+    provider: Arc<AlistProvider>,
+}
+
+impl AlistApiImpl {
+    pub fn new(provider: Arc<AlistProvider>) -> Self {
+        Self { provider }
+    }
+
+    /// Login to Alist
+    pub async fn login(&self, req: LoginRequest, instance_name: Option<&str>) -> Result<LoginResponse, String> {
+        let (password, hashed) = if !req.hashed_password.is_empty() {
+            (req.hashed_password, true)
+        } else {
+            (req.password, false)
+        };
+
+        let login_req = synctv_providers::grpc::alist::LoginReq {
+            host: req.host,
+            username: req.username,
+            password,
+            hashed,
+        };
+
+        let token = self.provider
+            .login(login_req, instance_name)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(LoginResponse { token })
+    }
+
+    /// List Alist directory
+    pub async fn list(&self, req: ListRequest, instance_name: Option<&str>) -> Result<ListResponse, String> {
+        let list_req = synctv_providers::grpc::alist::FsListReq {
+            host: req.host,
+            token: req.token,
+            path: req.path,
+            password: req.password,
+            page: req.page,
+            per_page: req.per_page,
+            refresh: req.refresh,
+        };
+
+        let resp = self.provider
+            .fs_list(list_req, instance_name)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let content: Vec<FileItem> = resp.content.into_iter().map(|item| FileItem {
+            name: item.name,
+            size: item.size,
+            is_dir: item.is_dir,
+            modified: item.modified,
+            sign: item.sign,
+            thumb: item.thumb,
+            r#type: item.r#type,
+        }).collect();
+
+        Ok(ListResponse {
+            content,
+            total: resp.total,
+        })
+    }
+
+    /// Get Alist user info
+    pub async fn get_me(&self, req: GetMeRequest, instance_name: Option<&str>) -> Result<GetMeResponse, String> {
+        let me_req = synctv_providers::grpc::alist::MeReq {
+            host: req.host,
+            token: req.token,
+        };
+
+        let resp = self.provider
+            .me(me_req, instance_name)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(GetMeResponse {
+            username: resp.username,
+            base_path: resp.base_path,
+        })
+    }
+
+    /// Logout
+    pub async fn logout(&self, _req: LogoutRequest) -> Result<LogoutResponse, String> {
+        Ok(LogoutResponse {
+            message: "Logout successful".to_string(),
+        })
+    }
+}

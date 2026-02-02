@@ -44,6 +44,46 @@ impl EmbyProvider {
         // Fallback to singleton local client
         load_local_emby_client()
     }
+
+    // ========== Provider API Methods ==========
+
+    /// Login to Emby/Jellyfin (validate API key)
+    pub async fn login(
+        &self,
+        host: String,
+        api_key: String,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::emby::MeResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+
+        let me_req = synctv_providers::grpc::emby::MeReq {
+            host,
+            token: api_key,
+            user_id: String::new(), // Empty = get current user
+        };
+
+        client.me(me_req).await.map_err(|e| e.into())
+    }
+
+    /// List Emby library items
+    pub async fn fs_list(
+        &self,
+        req: synctv_providers::grpc::emby::FsListReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::emby::FsListResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.fs_list(req).await.map_err(|e| e.into())
+    }
+
+    /// Get Emby user info
+    pub async fn me(
+        &self,
+        req: synctv_providers::grpc::emby::MeReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::emby::MeResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.me(req).await.map_err(|e| e.into())
+    }
 }
 
 /// Emby source configuration

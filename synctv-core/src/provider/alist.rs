@@ -63,6 +63,44 @@ impl AlistProvider {
         }
         .to_string()
     }
+
+    // ========== Provider API Methods ==========
+
+    /// Login to Alist
+    ///
+    /// Takes grpc-generated LoginReq and returns token string
+    pub async fn login(
+        &self,
+        req: synctv_providers::grpc::alist::LoginReq,
+        instance_name: Option<&str>,
+    ) -> Result<String, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.login(req).await.map_err(|e| e.into())
+    }
+
+    /// List Alist directory
+    ///
+    /// Takes grpc-generated FsListReq and returns FsListResp
+    pub async fn fs_list(
+        &self,
+        req: synctv_providers::grpc::alist::FsListReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::alist::FsListResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.fs_list(req).await.map_err(|e| e.into())
+    }
+
+    /// Get Alist user info
+    ///
+    /// Takes grpc-generated MeReq and returns MeResp
+    pub async fn me(
+        &self,
+        req: synctv_providers::grpc::alist::MeReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::alist::MeResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.me(req).await.map_err(|e| e.into())
+    }
 }
 
 /// Alist source configuration

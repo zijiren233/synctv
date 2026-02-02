@@ -39,6 +39,7 @@ thiserror.workspace = true
 parking_lot.workspace = true
 once_cell.workspace = true
 rand.workspace = true
+nanoid.workspace = true
 
 # Logging
 tracing.workspace = true

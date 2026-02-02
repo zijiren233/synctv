@@ -23,6 +23,25 @@ pub struct BilibiliProvider {
     provider_instance_manager: Arc<ProviderInstanceManager>,
 }
 
+/// Bilibili video info
+#[derive(Debug, Clone, Serialize)]
+pub struct BilibiliVideoInfo {
+    pub bvid: String,
+    pub cid: u64,
+    pub epid: u64,
+    pub name: String,
+    pub cover_image: String,
+    pub r#live: bool,
+}
+
+/// Bilibili page info response
+#[derive(Debug, Clone, Serialize)]
+pub struct BilibiliPageInfo {
+    pub title: String,
+    pub actors: Vec<String>,
+    pub videos: Vec<BilibiliVideoInfo>,
+}
+
 impl BilibiliProvider {
     /// Create a new BilibiliProvider with ProviderInstanceManager
     pub fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
@@ -46,6 +65,113 @@ impl BilibiliProvider {
 
         // Fallback to singleton local client
         load_local_bilibili_client()
+    }
+
+    // ========== Provider API Methods ==========
+
+    /// Match URL to determine type and ID
+    pub async fn r#match(
+        &self,
+        url: String,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::MatchResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        let req = synctv_providers::grpc::bilibili::MatchReq { url };
+        client.r#match(req).await.map_err(|e| e.into())
+    }
+
+    /// Parse video page
+    pub async fn parse_video_page(
+        &self,
+        req: synctv_providers::grpc::bilibili::ParseVideoPageReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.parse_video_page(req).await.map_err(|e| e.into())
+    }
+
+    /// Parse PGC page
+    pub async fn parse_pgc_page(
+        &self,
+        req: synctv_providers::grpc::bilibili::ParsePgcPageReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.parse_pgc_page(req).await.map_err(|e| e.into())
+    }
+
+    /// Parse live page
+    pub async fn parse_live_page(
+        &self,
+        req: synctv_providers::grpc::bilibili::ParseLivePageReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.parse_live_page(req).await.map_err(|e| e.into())
+    }
+
+    /// Generate QR code for login
+    pub async fn new_qr_code(
+        &self,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::NewQrCodeResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client
+            .new_qr_code(synctv_providers::grpc::bilibili::Empty {})
+            .await
+            .map_err(|e| e.into())
+    }
+
+    /// Check QR code login status
+    pub async fn login_with_qr_code(
+        &self,
+        req: synctv_providers::grpc::bilibili::LoginWithQrCodeReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::LoginWithQrCodeResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.login_with_qr_code(req).await.map_err(|e| e.into())
+    }
+
+    /// Get new captcha
+    pub async fn new_captcha(
+        &self,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::NewCaptchaResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client
+            .new_captcha(synctv_providers::grpc::bilibili::Empty {})
+            .await
+            .map_err(|e| e.into())
+    }
+
+    /// Send SMS verification code
+    pub async fn new_sms(
+        &self,
+        req: synctv_providers::grpc::bilibili::NewSmsReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::NewSmsResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.new_sms(req).await.map_err(|e| e.into())
+    }
+
+    /// Login with SMS code
+    pub async fn login_with_sms(
+        &self,
+        req: synctv_providers::grpc::bilibili::LoginWithSmsReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::LoginWithSmsResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.login_with_sms(req).await.map_err(|e| e.into())
+    }
+
+    /// Get user info
+    pub async fn user_info(
+        &self,
+        req: synctv_providers::grpc::bilibili::UserInfoReq,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::UserInfoResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        client.user_info(req).await.map_err(|e| e.into())
     }
 }
 

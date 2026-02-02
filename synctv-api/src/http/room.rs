@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use synctv_core::models::{
     id::{MediaId, RoomId},
     media::ProviderType,
@@ -109,9 +110,20 @@ pub async fn create_room(
     }
 
     // Build room settings
-    let settings = RoomSettings {
+    let settings = synctv_core::models::RoomSettings {
         require_password: req.password.is_some(),
         auto_play_next: req.auto_play_next.unwrap_or(true),
+        auto_play: synctv_core::models::AutoPlaySettings {
+            enabled: req.auto_play_next.unwrap_or(true),
+            mode: if req.loop_playlist.unwrap_or(false) {
+                synctv_core::models::PlayMode::RepeatAll
+            } else if req.shuffle_playlist.unwrap_or(false) {
+                synctv_core::models::PlayMode::Shuffle
+            } else {
+                synctv_core::models::PlayMode::Sequential
+            },
+            delay: 0,
+        },
         loop_playlist: req.loop_playlist.unwrap_or(false),
         shuffle_playlist: req.shuffle_playlist.unwrap_or(false),
         allow_guest_join: req.allow_guest_join.unwrap_or(false),
@@ -230,26 +242,45 @@ pub async fn add_media(
 ) -> AppResult<Json<MediaResponse>> {
     let room_id = RoomId::from_string(room_id);
 
-    // Parse provider type
-    let provider = ProviderType::from_str(&req.provider).ok_or_else(|| {
-        super::AppError::bad_request(format!("Invalid provider: {}", req.provider))
-    })?;
+    // Build source_config from URL
+    let source_config = serde_json::json!({
+        "url": req.url
+    });
+
+    // Determine provider instance name (empty for direct URL)
+    let provider_instance_name = if req.provider.is_empty() {
+        String::new()
+    } else {
+        req.provider.clone()
+    };
+
+    // Extract title from URL or use provided title
+    let title = if req.title.is_empty() {
+        req.url.split('/').last().unwrap_or("Unknown").to_string()
+    } else {
+        req.title.clone()
+    };
 
     // Add media (permission check is done inside service)
     let media = state
         .room_service
-        .add_media(room_id, auth.user_id, req.url, provider, req.title)
+        .add_media(room_id, auth.user_id, provider_instance_name, source_config, title)
         .await?;
+
+    // Extract URL from source_config
+    let url = media.source_config.get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     Ok(Json(MediaResponse {
         id: media.id.as_str().to_string(),
-        title: media.title,
-        url: media.url,
-        provider: media.provider.as_str().to_string(),
+        title: media.name.clone(),
+        url: url.to_string(),
+        provider: media.source_provider.clone(),
         position: media.position,
         metadata: media.metadata.clone(),
         added_at: media.added_at.to_rfc3339(),
-        added_by: media.added_by.as_str().to_string(),
+        added_by: media.creator_id.as_str().to_string(),
     }))
 }
 
@@ -293,15 +324,20 @@ pub async fn get_playlist(
 
     let response = media
         .into_iter()
-        .map(|m| MediaResponse {
-            id: m.id.as_str().to_string(),
-            title: m.title,
-            url: m.url,
-            provider: m.provider.as_str().to_string(),
-            position: m.position,
-            metadata: m.metadata.clone(),
-            added_at: m.added_at.to_rfc3339(),
-            added_by: m.added_by.as_str().to_string(),
+        .map(|m| {
+            let url = m.source_config.get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            MediaResponse {
+                id: m.id.as_str().to_string(),
+                title: m.name.clone(),
+                url: url.to_string(),
+                provider: m.source_provider.clone(),
+                position: m.position,
+                metadata: m.metadata.clone(),
+                added_at: m.added_at.to_rfc3339(),
+                added_by: m.creator_id.as_str().to_string(),
+            }
         })
         .collect();
 
@@ -670,15 +706,15 @@ pub async fn check_password(
 /// Get room members
 ///
 /// This handler now uses the gRPC-typed service method, making it a lightweight wrapper.
-/// The service layer uses synctv_proto::admin::GetRoomMembersRequest/Response from admin.proto
+/// The service layer uses crate::proto::admin::GetRoomMembersRequest/Response from admin.proto
 /// which have complete request structures with room_id included.
 pub async fn get_room_members(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<synctv_proto::admin::GetRoomMembersResponse>> {
+) -> AppResult<Json<crate::proto::admin::GetRoomMembersResponse>> {
     // Construct gRPC request with room_id from path parameter
-    let request = synctv_proto::admin::GetRoomMembersRequest { room_id };
+    let request = crate::proto::admin::GetRoomMembersRequest { room_id };
 
     // Call service layer with gRPC types - returns gRPC response directly
     let response = state
@@ -846,44 +882,33 @@ pub async fn edit_media(
     let room_id = RoomId::from_string(room_id);
     let media_id = MediaId::from_string(media_id);
 
-    // Check permission
-    state
+    // Build metadata from URL if provided
+    let metadata = if let Some(url) = &req.url {
+        Some(serde_json::json!({"url": url}))
+    } else {
+        None
+    };
+
+    // Edit media (permission check is done inside service)
+    let media = state
         .room_service
-        .check_permission(&room_id, &auth.user_id, PermissionBits::ADD_MEDIA)
+        .edit_media(room_id, auth.user_id, media_id, req.title, metadata)
         .await?;
 
-    // Get existing media
-    let playlist = state
-        .room_service
-        .get_playlist(&room_id)
-        .await
-        .map_err(|e| super::AppError::internal(format!("Failed to get playlist: {}", e)))?;
+    // Extract URL from source_config
+    let url = media.source_config.get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
-    let mut media = playlist
-        .into_iter()
-        .find(|m| m.id == media_id)
-        .ok_or_else(|| super::AppError::not_found("Media not found"))?;
-
-    // Update fields
-    if let Some(title) = req.title {
-        media.title = title;
-    }
-    if let Some(url) = req.url {
-        media.url = url;
-    }
-
-    // Save changes (using update_media in service)
-    // Note: This would require adding an update_media method to RoomService
-    // For now, return success
     Ok(Json(MediaResponse {
         id: media.id.as_str().to_string(),
-        title: media.title,
-        url: media.url,
-        provider: media.provider.as_str().to_string(),
+        title: media.name.clone(),
+        url: url.to_string(),
+        provider: media.source_provider.clone(),
         position: media.position,
         metadata: media.metadata.clone(),
         added_at: media.added_at.to_rfc3339(),
-        added_by: media.added_by.as_str().to_string(),
+        added_by: media.creator_id.as_str().to_string(),
     }))
 }
 
@@ -954,30 +979,50 @@ pub async fn push_media_batch(
 
     let mut results = Vec::new();
     for item in req.items {
-        let provider = ProviderType::from_str(&item.provider).ok_or_else(|| {
-            super::AppError::bad_request(format!("Invalid provider: {}", item.provider))
-        })?;
+        // Build source_config from URL
+        let source_config = serde_json::json!({
+            "url": item.url
+        });
+
+        // Determine provider instance name (empty for direct URL)
+        let provider_instance_name = if item.provider.is_empty() {
+            String::new()
+        } else {
+            item.provider.clone()
+        };
+
+        // Extract title from URL or use provided title
+        let title = if item.title.is_empty() {
+            item.url.split('/').last().unwrap_or("Unknown").to_string()
+        } else {
+            item.title.clone()
+        };
 
         let media = state
             .room_service
             .add_media(
                 room_id.clone(),
                 auth.user_id.clone(),
-                item.url.clone(),
-                provider,
-                item.title,
+                provider_instance_name,
+                source_config,
+                title,
             )
             .await?;
 
+        // Extract URL from source_config
+        let url = media.source_config.get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
         results.push(MediaResponse {
             id: media.id.as_str().to_string(),
-            title: media.title,
-            url: media.url,
-            provider: media.provider.as_str().to_string(),
+            title: media.name.clone(),
+            url: url.to_string(),
+            provider: media.source_provider.clone(),
             position: media.position,
             metadata: media.metadata.clone(),
             added_at: media.added_at.to_rfc3339(),
-            added_by: media.added_by.as_str().to_string(),
+            added_by: media.creator_id.as_str().to_string(),
         });
     }
 

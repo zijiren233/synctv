@@ -17,7 +17,7 @@ pub use chat::{
     SendDanmakuRequest,
 };
 pub use id::{generate_id, MediaId, PlaylistId, RoomId, UserId};
-pub use media::{Media, MediaMetadata};
+pub use media::{Media, MediaMetadata, ProviderType};
 pub use notification::{
     CreateNotificationRequest, MarkAllAsReadRequest, MarkAsReadRequest, Notification,
     NotificationListQuery, NotificationType,

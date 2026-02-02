@@ -5,8 +5,8 @@ use synctv_core::models::{ProviderInstance, RoomId, UserId, SettingsGroup as Cor
 use synctv_core::service::{ProviderInstanceManager, RoomService, UserService, SettingsService, SettingsRegistry};
 
 // Use synctv_proto for all gRPC types to avoid duplication
-use synctv_proto::admin_service_server::AdminService;
-use synctv_proto::admin::*; // Import all message types
+use crate::proto::admin_service_server::AdminService;
+use crate::proto::admin::*; // Import all message types
 
 /// AdminService implementation
 #[derive(Clone)]
@@ -39,7 +39,7 @@ impl AdminServiceImpl {
     fn instance_to_proto(
         &self,
         instance: &ProviderInstance,
-    ) -> synctv_proto::admin::ProviderInstance {
+    ) -> crate::proto::admin::ProviderInstance {
         // Determine status based on enabled flag
         // In production, this would do actual health checks via gRPC ping or health check endpoint
         let status = if instance.enabled {
@@ -49,7 +49,7 @@ impl AdminServiceImpl {
             "disabled".to_string()
         };
 
-        synctv_proto::admin::ProviderInstance {
+        crate::proto::admin::ProviderInstance {
             name: instance.name.clone(),
             endpoint: instance.endpoint.clone(),
             comment: instance.comment.clone().unwrap_or_default(),
@@ -68,8 +68,8 @@ impl AdminServiceImpl {
     fn settings_group_to_proto(
         &self,
         group: &CoreSettingsGroup,
-    ) -> synctv_proto::admin::SettingsGroup {
-        synctv_proto::admin::SettingsGroup {
+    ) -> crate::proto::admin::SettingsGroup {
+        crate::proto::admin::SettingsGroup {
             name: group.key.clone(),
             settings: group.value.clone().into_bytes(),
         }
@@ -259,7 +259,7 @@ impl AdminService for AdminServiceImpl {
         };
 
         // Convert to proto format
-        let instances: Vec<synctv_proto::admin::ProviderInstance> = filtered_instances
+        let instances: Vec<crate::proto::admin::ProviderInstance> = filtered_instances
             .iter()
             .map(|inst| self.instance_to_proto(inst))
             .collect();
@@ -1097,7 +1097,6 @@ impl AdminService for AdminServiceImpl {
                         synctv_core::models::RoomStatus::Pending => "pending".to_string(),
 
                         synctv_core::models::RoomStatus::Active => "active".to_string(),
-                        synctv_core::models::RoomStatus::Closed => "closed".to_string(),
                         synctv_core::models::RoomStatus::Banned => "banned".to_string(),
                     },
                     settings: serde_json::to_vec(&r.settings).unwrap_or_default(),
@@ -1126,7 +1125,6 @@ impl AdminService for AdminServiceImpl {
                         synctv_core::models::RoomStatus::Pending => "pending".to_string(),
 
                         synctv_core::models::RoomStatus::Active => "active".to_string(),
-                        synctv_core::models::RoomStatus::Closed => "closed".to_string(),
                         synctv_core::models::RoomStatus::Banned => "banned".to_string(),
                     },
                     settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
@@ -1418,7 +1416,6 @@ impl AdminService for AdminServiceImpl {
                 synctv_core::models::RoomStatus::Pending => "pending".to_string(),
 
                 synctv_core::models::RoomStatus::Active => "active".to_string(),
-                synctv_core::models::RoomStatus::Closed => "closed".to_string(),
                 synctv_core::models::RoomStatus::Banned => "banned".to_string(),
             },
             settings: serde_json::to_vec(&updated_room.settings).unwrap_or_default(),
@@ -1477,7 +1474,6 @@ impl AdminService for AdminServiceImpl {
                 synctv_core::models::RoomStatus::Pending => "pending".to_string(),
 
                 synctv_core::models::RoomStatus::Active => "active".to_string(),
-                synctv_core::models::RoomStatus::Closed => "closed".to_string(),
                 synctv_core::models::RoomStatus::Banned => "banned".to_string(),
             },
             settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
@@ -1740,7 +1736,6 @@ impl AdminService for AdminServiceImpl {
         let room_query_closed = synctv_core::models::RoomListQuery {
             page: 1,
             page_size: 1,
-            status: Some(synctv_core::models::RoomStatus::Closed),
             search: None,
         };
         let room_query_all = synctv_core::models::RoomListQuery {

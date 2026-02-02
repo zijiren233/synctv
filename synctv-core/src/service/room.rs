@@ -439,11 +439,77 @@ impl RoomService {
 
     /// Get playlist (all media in room's root playlist)
     pub async fn get_playlist(&self, room_id: &RoomId) -> Result<Vec<Media>> {
-        // TODO: Get room's root playlist and fetch media
-        // For now, return empty vec as this needs to be implemented
-        // let root_playlist = self.playlist_repo.get_root_playlist(room_id).await?;
-        // self.media_service.get_playlist_media(&root_playlist.id).await
-        Ok(Vec::new())
+        let root_playlist = self.playlist_service.get_root_playlist(room_id).await?;
+        self.media_service.get_playlist_media(&root_playlist.id).await
+    }
+
+    /// Get playlist paginated
+    pub async fn get_playlist_paginated(
+        &self,
+        room_id: &RoomId,
+        page: i32,
+        page_size: i32,
+    ) -> Result<(Vec<Media>, i64)> {
+        let root_playlist = self.playlist_service.get_root_playlist(room_id).await?;
+        self.media_service.get_playlist_media_paginated(&root_playlist.id, page, page_size).await
+    }
+
+    /// Get current playing media for a room
+    pub async fn get_current_media(&self, room_id: &RoomId) -> Result<Option<Media>> {
+        let state = self.playback_service.get_state(room_id).await?;
+        if let Some(media_id) = state.current_media_id {
+            Ok(self.media_service.get_media(&media_id).await?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Edit media item
+    pub async fn edit_media(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        media_id: MediaId,
+        name: Option<String>,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<Media> {
+        use crate::service::media::EditMediaRequest;
+        let request = EditMediaRequest {
+            media_id,
+            name,
+            position: None,
+            metadata,
+        };
+        self.media_service.edit_media(room_id, user_id, request).await
+    }
+
+    /// Clear all media from room's root playlist
+    pub async fn clear_playlist(&self, room_id: RoomId, user_id: UserId) -> Result<i64> {
+        let root_playlist = self.playlist_service.get_root_playlist(&room_id).await?;
+        let playlist_id = root_playlist.id.clone();
+
+        // Get all media in playlist
+        let media_list = self.media_service.get_playlist_media(&playlist_id).await?;
+
+        // Remove each media item
+        let mut count = 0;
+        for media in media_list {
+            if self.media_service.remove_media(room_id.clone(), user_id.clone(), media.id).await.is_ok() {
+                count += 1;
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Set current playing media for a room
+    pub async fn set_current_media(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        media_id: MediaId,
+    ) -> Result<RoomPlaybackState> {
+        self.playback_service.switch_media(room_id, user_id, media_id).await
     }
 
     /// Swap positions of two media items in playlist
@@ -539,9 +605,9 @@ impl RoomService {
     /// GetRoomMembersResponse containing list of room members
     pub async fn get_room_members_grpc(
         &self,
-        request: synctv_proto::GetRoomMembersRequest,
+        request: synctv_proto::admin::GetRoomMembersRequest,
         requesting_user_id: &UserId,
-    ) -> Result<synctv_proto::GetRoomMembersResponse> {
+    ) -> Result<synctv_proto::admin::GetRoomMembersResponse> {
         // Extract room_id
         let room_id = RoomId::from_string(request.room_id.clone());
 
@@ -554,9 +620,9 @@ impl RoomService {
         let members_with_users = self.member_service.list_members(&room_id).await?;
 
         // Convert to gRPC RoomMember type
-        let proto_members: Vec<synctv_proto::RoomMember> = members_with_users
+        let proto_members: Vec<synctv_proto::admin::RoomMember> = members_with_users
             .into_iter()
-            .map(|m| synctv_proto::RoomMember {
+            .map(|m| synctv_proto::admin::RoomMember {
                 room_id: m.room_id.as_str().to_string(),
                 user_id: m.user_id.as_str().to_string(),
                 username: m.username,
@@ -566,7 +632,7 @@ impl RoomService {
             })
             .collect();
 
-        Ok(synctv_proto::GetRoomMembersResponse {
+        Ok(synctv_proto::admin::GetRoomMembersResponse {
             members: proto_members,
         })
     }
@@ -634,7 +700,6 @@ impl RoomService {
             // Parse status string to RoomStatus enum
             query.status = match request.status.as_str() {
                 "active" => Some(RoomStatus::Active),
-                "closed" => Some(RoomStatus::Closed),
                 "banned" => Some(RoomStatus::Banned),
                 "pending" => Some(RoomStatus::Pending),
                 _ => None,

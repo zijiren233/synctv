@@ -1,8 +1,44 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::str::FromStr;
 
 use super::id::{MediaId, PlaylistId, RoomId, UserId};
+
+/// Media provider type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderType {
+    DirectUrl,
+    Bilibili,
+    Alist,
+    Emby,
+}
+
+impl FromStr for ProviderType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "direct_url" | "directurl" => Ok(ProviderType::DirectUrl),
+            "bilibili" => Ok(ProviderType::Bilibili),
+            "alist" => Ok(ProviderType::Alist),
+            "emby" => Ok(ProviderType::Emby),
+            _ => Err(format!("Unknown provider type: {}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for ProviderType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProviderType::DirectUrl => write!(f, "direct_url"),
+            ProviderType::Bilibili => write!(f, "bilibili"),
+            ProviderType::Alist => write!(f, "alist"),
+            ProviderType::Emby => write!(f, "emby"),
+        }
+    }
+}
 
 /// Media file (video/audio)
 #[derive(Debug, Clone, Serialize, Deserialize)]
