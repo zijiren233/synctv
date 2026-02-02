@@ -1216,6 +1216,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctor"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+dependencies = [
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
 name = "ctr"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3417,6 +3427,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
 name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5470,6 +5486,7 @@ dependencies = [
  "bytes",
  "chrono",
  "config",
+ "ctor",
  "dashmap",
  "futures",
  "growable-bloom-filter",
@@ -5484,6 +5501,7 @@ dependencies = [
  "oauth2",
  "once_cell",
  "parking_lot",
+ "paste",
  "rand 0.8.5",
  "redis",
  "regex",

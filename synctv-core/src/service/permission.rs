@@ -6,8 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    models::{RoomId, UserId, PermissionBits, Room},
-    repository::{RoomMemberRepository, RoomRepository},
+    models::{RoomId, UserId, PermissionBits, Room, RoomSettings},
+    repository::{RoomMemberRepository, RoomRepository, RoomSettingsRepository},
+    service::SettingsRegistry,
     Error, Result,
 };
 
@@ -18,7 +19,9 @@ use crate::{
 pub struct PermissionService {
     member_repo: RoomMemberRepository,
     room_repo: RoomRepository,
+    room_settings_repo: Option<RoomSettingsRepository>,
     cache: Arc<moka::future::Cache<String, PermissionBits>>,
+    settings_registry: Option<Arc<SettingsRegistry>>,
 }
 
 impl std::fmt::Debug for PermissionService {
@@ -29,28 +32,126 @@ impl std::fmt::Debug for PermissionService {
 
 impl PermissionService {
     /// Create a new permission service with caching
-    pub fn new(member_repo: RoomMemberRepository, room_repo: RoomRepository, cache_size: u64, cache_ttl_secs: u64) -> Self {
+    pub fn new(
+        member_repo: RoomMemberRepository,
+        room_repo: RoomRepository,
+        settings_registry: Option<Arc<SettingsRegistry>>,
+        cache_size: u64,
+        cache_ttl_secs: u64,
+    ) -> Self {
         Self {
             member_repo,
             room_repo,
+            room_settings_repo: None, // Will be set later if needed
             cache: Arc::new(
                 moka::future::CacheBuilder::new(cache_size)
                     .time_to_live(Duration::from_secs(cache_ttl_secs))
                     .build(),
             ),
+            settings_registry,
         }
     }
 
     /// Create a permission service without caching
-    pub fn without_cache(member_repo: RoomMemberRepository, room_repo: RoomRepository) -> Self {
+    pub fn without_cache(
+        member_repo: RoomMemberRepository,
+        room_repo: RoomRepository,
+        settings_registry: Option<Arc<SettingsRegistry>>,
+    ) -> Self {
         Self {
             member_repo,
             room_repo,
+            room_settings_repo: None,
             cache: Arc::new(
                 moka::future::CacheBuilder::new(1)
                     .time_to_live(Duration::from_secs(1))
                     .build(),
             ),
+            settings_registry,
+        }
+    }
+
+    /// Set the room settings repository
+    pub fn set_room_settings_repo(&mut self, repo: RoomSettingsRepository) {
+        self.room_settings_repo = Some(repo);
+    }
+
+    /// Get global default permissions for a role from SettingsRegistry
+    fn get_global_default_permissions(&self, role: &crate::models::RoomRole) -> PermissionBits {
+        if let Some(registry) = &self.settings_registry {
+            match role {
+                crate::models::RoomRole::Admin => {
+                    PermissionBits(registry.admin_default_permissions.get().unwrap_or(1073741823))
+                }
+                crate::models::RoomRole::Member => {
+                    PermissionBits(registry.member_default_permissions.get().unwrap_or(262143))
+                }
+                crate::models::RoomRole::Guest => {
+                    PermissionBits(registry.guest_default_permissions.get().unwrap_or(511))
+                }
+                crate::models::RoomRole::Creator => PermissionBits(crate::models::PermissionBits::ALL),
+            }
+        } else {
+            // Fallback to hardcoded defaults if SettingsRegistry not available
+            match role {
+                crate::models::RoomRole::Admin => {
+                    let mut perms = PermissionBits::empty();
+                    perms.grant(PermissionBits::DELETE_ROOM);
+                    perms.grant(PermissionBits::UPDATE_ROOM_SETTINGS);
+                    perms.grant(PermissionBits::INVITE_USER);
+                    perms.grant(PermissionBits::KICK_USER);
+                    perms.grant(PermissionBits::ADD_MEDIA);
+                    perms.grant(PermissionBits::REMOVE_MEDIA);
+                    perms.grant(PermissionBits::REORDER_PLAYLIST);
+                    perms.grant(PermissionBits::SWITCH_MEDIA);
+                    perms.grant(PermissionBits::PLAY_PAUSE);
+                    perms.grant(PermissionBits::SEEK);
+                    perms.grant(PermissionBits::CHANGE_SPEED);
+                    perms.grant(PermissionBits::SEND_CHAT);
+                    perms.grant(PermissionBits::SEND_DANMAKU);
+                    perms.grant(PermissionBits::DELETE_MESSAGE);
+                    perms.grant(PermissionBits::GRANT_PERMISSION);
+                    perms.grant(PermissionBits::REVOKE_PERMISSION);
+                    perms
+                }
+                crate::models::RoomRole::Member => {
+                    let mut perms = PermissionBits::empty();
+                    perms.grant(PermissionBits::ADD_MEDIA);
+                    perms.grant(PermissionBits::PLAY_PAUSE);
+                    perms.grant(PermissionBits::SEEK);
+                    perms.grant(PermissionBits::SEND_CHAT);
+                    perms.grant(PermissionBits::SEND_DANMAKU);
+                    perms
+                }
+                crate::models::RoomRole::Guest => PermissionBits(crate::models::PermissionBits::SEND_CHAT),
+                crate::models::RoomRole::Creator => PermissionBits(crate::models::PermissionBits::ALL),
+            }
+        }
+    }
+
+    /// Calculate role default permissions with room-level overrides applied
+    ///
+    /// This combines:
+    /// 1. Global default permissions (from SettingsRegistry)
+    /// 2. Room-level overrides: (global | room_added) & ~room_removed
+    pub fn calculate_role_default_permissions(
+        &self,
+        role: &crate::models::RoomRole,
+        room_settings: &RoomSettings,
+    ) -> PermissionBits {
+        let global_default = self.get_global_default_permissions(role);
+
+        match role {
+            crate::models::RoomRole::Creator => PermissionBits(crate::models::PermissionBits::ALL),
+            crate::models::RoomRole::Admin => {
+                room_settings.admin_permissions(global_default)
+            }
+            crate::models::RoomRole::Member => {
+                room_settings.member_permissions(global_default)
+            }
+            crate::models::RoomRole::Guest => {
+                room_settings.guest_permissions(global_default)
+            }
         }
     }
 
@@ -99,31 +200,17 @@ impl PermissionService {
             .ok_or_else(|| Error::Authorization("Not a member of this room".to_string()))?;
 
         // Get room settings for role defaults
-        let room = self
-            .room_repo
-            .get_by_id(room_id)
-            .await?
-            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
-
-        // Get room default permissions from settings
-        let room_settings: serde_json::Value = serde_json::from_value(room.settings.clone())
-            .unwrap_or(serde_json::json!({}));
-
-        let room_default_permissions = match member.role {
-            crate::models::RoomRole::Admin => {
-                room_settings["default_admin_permissions"].as_i64()
-            }
-            crate::models::RoomRole::Member => {
-                room_settings["default_member_permissions"].as_i64()
-            }
-            crate::models::RoomRole::Guest => {
-                room_settings["guest_permissions"].as_i64()
-            }
-            crate::models::RoomRole::Creator => None, // Creator doesn't need defaults
+        let room_settings = if let Some(ref settings_repo) = self.room_settings_repo {
+            settings_repo.get(room_id).await?
+        } else {
+            RoomSettings::default()
         };
 
-        // Calculate effective permissions
-        let permissions = member.effective_permissions(room_default_permissions);
+        // Calculate role default permissions (global + room-level overrides)
+        let role_default = self.calculate_role_default_permissions(&member.role, &room_settings);
+
+        // Apply member-level overrides
+        let permissions = member.effective_permissions(role_default);
 
         // Update cache
         self.cache.insert(cache_key, permissions).await;

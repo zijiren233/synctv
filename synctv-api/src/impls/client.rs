@@ -117,7 +117,7 @@ impl ClientApiImpl {
         let (rooms, total) = self.room_service.list_rooms(&query).await
             .map_err(|e| e.to_string())?;
 
-        let room_list: Vec<_> = rooms.into_iter().map(|r| room_to_proto_basic(&r)).collect();
+        let room_list: Vec<_> = rooms.into_iter().map(|r| room_to_proto_basic(&r, None)).collect();
 
         Ok(crate::proto::client::ListRoomsResponse {
             rooms: room_list,
@@ -143,7 +143,7 @@ impl ClientApiImpl {
             let permissions = role.permissions().0;
 
             crate::proto::client::RoomWithRole {
-                room: Some(room_to_proto_basic(&room)),
+                room: Some(room_to_proto_basic(&room, None)),
                 permissions,
                 role: role_str.to_string(),
             }
@@ -174,7 +174,7 @@ impl ClientApiImpl {
             .map_err(|e| e.to_string())?;
 
         Ok(crate::proto::client::CreateRoomResponse {
-            room: Some(room_to_proto_basic(&room)),
+            room: Some(room_to_proto_basic(&room, None)),
         })
     }
 
@@ -190,7 +190,7 @@ impl ClientApiImpl {
             .map(|s| playback_state_to_proto(&s));
 
         Ok(crate::proto::client::GetRoomResponse {
-            room: Some(room_to_proto_basic(&room)),
+            room: Some(room_to_proto_basic(&room, None)),
             playback_state,
         })
     }
@@ -219,14 +219,14 @@ impl ClientApiImpl {
                 room_id: m.room_id.as_str().to_string(),
                 user_id: m.user_id.as_str().to_string(),
                 username: m.username.clone(),
-                permissions: m.effective_permissions(None).0,
+                permissions: m.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
                 joined_at: m.joined_at.timestamp(),
                 is_online: m.is_online,
             }
         }).collect();
 
         Ok(crate::proto::client::JoinRoomResponse {
-            room: Some(room_to_proto_basic(&room)),
+            room: Some(room_to_proto_basic(&room, None)),
             members: proto_members,
             playback_state,
         })
@@ -277,10 +277,8 @@ impl ClientApiImpl {
             serde_json::from_slice::<synctv_core::models::RoomSettings>(&req.settings)
                 .map_err(|e| e.to_string())?
         } else {
-            // Get current settings and deserialize from JsonValue
-            let room = self.room_service.get_room(&rid).await
-                .map_err(|e| e.to_string())?;
-            serde_json::from_value::<synctv_core::models::RoomSettings>(room.settings)
+            // Get current settings from room_settings table
+            self.room_service.get_room_settings(&rid).await
                 .map_err(|e| e.to_string())?
         };
 
@@ -292,7 +290,7 @@ impl ClientApiImpl {
             .map_err(|e| e.to_string())?;
 
         Ok(crate::proto::client::SetRoomSettingsResponse {
-            room: Some(room_to_proto_basic(&room)),
+            room: Some(room_to_proto_basic(&room, None)),
         })
     }
 
@@ -527,7 +525,7 @@ impl ClientApiImpl {
                 room_id: m.room_id.as_str().to_string(),
                 user_id: m.user_id.as_str().to_string(),
                 username: m.username.clone(),
-                permissions: m.effective_permissions(None).0,
+                permissions: m.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
                 joined_at: m.joined_at.timestamp(),
                 is_online: m.is_online,
             }
@@ -603,13 +601,17 @@ fn user_to_proto(user: &synctv_core::models::User) -> crate::proto::client::User
     }
 }
 
-fn room_to_proto_basic(room: &synctv_core::models::Room) -> crate::proto::client::Room {
+fn room_to_proto_basic(
+    room: &synctv_core::models::Room,
+    settings: Option<&synctv_core::models::RoomSettings>,
+) -> crate::proto::client::Room {
+    let room_settings = settings.cloned().unwrap_or_default();
     crate::proto::client::Room {
         id: room.id.as_str().to_string(),
         name: room.name.clone(),
         created_by: room.created_by.as_str().to_string(),
         status: room.status.as_str().to_string(),
-        settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
+        settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
         created_at: room.created_at.timestamp(),
         member_count: 0, // TODO: Fetch actual member count
     }
@@ -653,7 +655,7 @@ fn room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) -> cra
         room_id: member.room_id.as_str().to_string(),
         user_id: member.user_id.as_str().to_string(),
         username: member.username.clone(),
-        permissions: member.effective_permissions(None).0,
+        permissions: member.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
         joined_at: member.joined_at.timestamp(),
         is_online: member.is_online,
     }

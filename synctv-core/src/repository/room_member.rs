@@ -3,8 +3,8 @@ use sqlx::{PgPool, postgres::PgRow, Row};
 use crate::{
     models::{
         RoomMember, RoomMemberWithUser, RoomId, UserId, RoomRole, MemberStatus,
-        RoomSettings,
     },
+    service::AddMemberOptions,
     Error, Result,
 };
 
@@ -53,6 +53,127 @@ impl RoomMemberRepository {
         .bind(member.version)
         .fetch_one(&self.pool)
         .await?;
+
+        self.row_to_member(row)
+    }
+
+    /// Add user to room with role and options in a single transaction
+    ///
+    /// This method performs all checks and the insert operation in a single database transaction:
+    /// - Check if room exists and is active
+    /// - Check if user is already a member
+    /// - Check max members limit
+    /// - Insert the new member
+    ///
+    /// All checks use SELECT ... FOR UPDATE to lock rows and prevent race conditions.
+    ///
+    /// # Arguments
+    ///
+    /// * `member` - The member to add
+    /// * `options` - Options controlling which checks to perform and limits to enforce
+    pub async fn add_with_options(
+        &self,
+        member: &RoomMember,
+        options: &AddMemberOptions,
+    ) -> Result<RoomMember> {
+        // Begin transaction
+        let mut tx = self.pool.begin().await?;
+
+        // 1. Check if room exists and lock the row
+        let room_row = sqlx::query(
+            "SELECT room_id, status FROM rooms
+             WHERE room_id = $1
+             FOR UPDATE"
+        )
+        .bind(member.room_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let room_row = match room_row {
+            Some(row) => row,
+            None => return Err(Error::NotFound("Room not found".to_string())),
+        };
+
+        // 2. Check if room is active (if option enabled)
+        if options.check_room_active {
+            let status: String = room_row.try_get("status")?;
+            if status != "Active" {
+                return Err(Error::InvalidInput("Room is not active".to_string()));
+            }
+        }
+
+        // 3. Check if user is already a member (if option enabled)
+        if options.check_duplicate {
+            let existing = sqlx::query(
+                "SELECT user_id FROM room_members
+                 WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL
+                 FOR UPDATE"
+            )
+            .bind(member.room_id.as_str())
+            .bind(member.user_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            if existing.is_some() {
+                return Err(Error::AlreadyExists("Already a member of this room".to_string()));
+            }
+        }
+
+        // 4. Check max members limit (if option enabled)
+        if options.check_max_members {
+            let max_members = options.max_members;
+            if max_members > 0 {
+                let count_row = sqlx::query(
+                    "SELECT COUNT(*) as count FROM room_members
+                     WHERE room_id = $1 AND left_at IS NULL"
+                )
+                .bind(member.room_id.as_str())
+                .fetch_one(&mut *tx)
+                .await?;
+
+                let count: i64 = count_row.try_get("count")?;
+                if count as u64 >= max_members {
+                    return Err(Error::InvalidInput("Room is full".to_string()));
+                }
+            }
+        }
+
+        // 5. Insert the new member
+        let row = sqlx::query(
+            "INSERT INTO room_members (
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, version
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (room_id, user_id) DO UPDATE
+             SET
+                role = EXCLUDED.role,
+                status = EXCLUDED.status,
+                added_permissions = EXCLUDED.added_permissions,
+                removed_permissions = EXCLUDED.removed_permissions,
+                left_at = NULL,
+                joined_at = EXCLUDED.joined_at,
+                version = room_members.version + 1
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
+        )
+        .bind(member.room_id.as_str())
+        .bind(member.user_id.as_str())
+        .bind(member.role.to_string())
+        .bind(member.status.to_string())
+        .bind(member.added_permissions)
+        .bind(member.removed_permissions)
+        .bind(member.joined_at)
+        .bind(member.version)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // Commit transaction
+        tx.commit().await?;
 
         self.row_to_member(row)
     }
@@ -446,7 +567,7 @@ impl RoomMemberRepository {
         let rows = sqlx::query(
             r#"
             SELECT
-                r.id, r.name, r.created_by, r.status, r.settings,
+                r.id, r.name, r.created_by, r.status,
                 r.created_at, r.updated_at, r.deleted_at,
                 rm.role as user_role,
                 rm.status as user_status,
@@ -471,7 +592,6 @@ impl RoomMemberRepository {
         let results: Result<Vec<(crate::models::Room, RoomRole, MemberStatus, i32)>> = rows
             .into_iter()
             .map(|row| {
-                let settings_json: serde_json::Value = row.try_get("settings")?;
                 let status_str: String = row.try_get("status")?;
                 let status = match status_str.as_str() {
                     "active" => crate::models::RoomStatus::Active,
@@ -485,7 +605,6 @@ impl RoomMemberRepository {
                     name: row.try_get("name")?,
                     created_by: UserId::from_string(row.try_get("created_by")?),
                     status,
-                    settings: settings_json,
                     created_at: row.try_get("created_at")?,
                     updated_at: row.try_get("updated_at")?,
                     deleted_at: row.try_get("deleted_at")?,
@@ -573,6 +692,8 @@ impl RoomMemberRepository {
             status,
             added_permissions: row.try_get("added_permissions")?,
             removed_permissions: row.try_get("removed_permissions")?,
+            admin_added_permissions: row.try_get("admin_added_permissions")?,
+            admin_removed_permissions: row.try_get("admin_removed_permissions")?,
             joined_at: row.try_get("joined_at")?,
             left_at: row.try_get("left_at")?,
             version: row.try_get("version")?,
@@ -609,6 +730,8 @@ impl RoomMemberRepository {
             status,
             added_permissions: row.try_get("added_permissions")?,
             removed_permissions: row.try_get("removed_permissions")?,
+            admin_added_permissions: row.try_get("admin_added_permissions")?,
+            admin_removed_permissions: row.try_get("admin_removed_permissions")?,
             joined_at: row.try_get("joined_at")?,
             is_online: false, // Will be populated by connection tracking
             banned_at: row.try_get("banned_at")?,

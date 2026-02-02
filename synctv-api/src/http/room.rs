@@ -130,9 +130,13 @@ pub async fn create_room(
         max_members: req.max_members,
         chat_enabled: req.chat_enabled.unwrap_or(true),
         danmaku_enabled: req.danmaku_enabled.unwrap_or(true),
-        default_admin_permissions: 0, // Use global default
-        default_member_permissions: 0, // Use global default
-        guest_permissions: 0, // Use global default
+        // Permission overrides (None = use global defaults from SettingsRegistry)
+        admin_added_permissions: None,
+        admin_removed_permissions: None,
+        member_added_permissions: None,
+        member_removed_permissions: None,
+        guest_added_permissions: None,
+        guest_removed_permissions: None,
         require_approval: false,
         allow_auto_join: true,
     };
@@ -143,12 +147,17 @@ pub async fn create_room(
         .create_room(req.name, auth.user_id.clone(), req.password, Some(settings))
         .await?;
 
+    // Load settings for the response
+    let room_settings = state.room_service.get_room_settings(&room.id).await?;
+    let settings_json = serde_json::to_value(&room_settings)
+        .unwrap_or(serde_json::json!({}));
+
     Ok(Json(RoomResponse {
         id: room.id.as_str().to_string(),
         name: room.name,
         created_by: room.created_by.as_str().to_string(),
         status: room.status.as_str().to_string(),
-        settings: room.settings.clone(),
+        settings: settings_json,
         created_at: room.created_at.to_rfc3339(),
     }))
 }
@@ -170,12 +179,17 @@ pub async fn get_room(
     // Get room
     let room = state.room_service.get_room(&room_id).await?;
 
+    // Load settings for the response
+    let room_settings = state.room_service.get_room_settings(&room_id).await?;
+    let settings_json = serde_json::to_value(&room_settings)
+        .unwrap_or(serde_json::json!({}));
+
     Ok(Json(RoomResponse {
         id: room.id.as_str().to_string(),
         name: room.name,
         created_by: room.created_by.as_str().to_string(),
         status: room.status.as_str().to_string(),
-        settings: room.settings.clone(),
+        settings: settings_json,
         created_at: room.created_at.to_rfc3339(),
     }))
 }
@@ -530,11 +544,9 @@ pub async fn check_room(
 
     match state.room_service.get_room(&room_id).await {
         Ok(room) => {
-            let requires_password = room
-                .settings
-                .get("require_password")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            let settings = state.room_service.get_room_settings(&room_id).await
+                .unwrap_or_default();
+            let requires_password = settings.require_password;
             Ok(Json(serde_json::json!({
                 "exists": true,
                 "requires_password": requires_password,
@@ -651,15 +663,21 @@ pub async fn get_room_settings(
         .await
         .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
 
-    // Return public settings (hide password hash)
-    let mut public_settings = room.settings.clone();
-    if let Some(obj) = public_settings.as_object_mut() {
+    // Load settings from service layer
+    let room_settings = state.room_service.get_room_settings(&room_id).await
+        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {}", e)))?;
+
+    // Convert to JSON and hide password hash
+    let mut settings_json = serde_json::to_value(&room_settings)
+        .map_err(|e| super::AppError::internal(format!("Failed to serialize settings: {}", e)))?;
+
+    if let Some(obj) = settings_json.as_object_mut() {
         obj.remove("password");
     }
 
     Ok(Json(RoomSettingsResponse {
         name: room.name,
-        settings: public_settings,
+        settings: settings_json,
     }))
 }
 
@@ -676,29 +694,18 @@ pub async fn check_password(
 ) -> AppResult<Json<serde_json::Value>> {
     let room_id = RoomId::from_string(room_id);
 
-    let room = state
+    // Verify room exists
+    state
         .room_service
         .get_room(&room_id)
         .await
         .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
 
-    // Get password hash from settings JSON
-    let password_hash = room
-        .settings
-        .get("password")
-        .and_then(|v| v.as_str());
-
-    let is_valid = match password_hash {
-        Some(stored) => {
-            synctv_core::service::auth::password::verify_password(
-                &req.password,
-                stored,
-            )
-            .await
-            .map_err(|e| super::AppError::internal(format!("Password verification failed: {}", e)))?
-        }
-        None => true, // No password set, always valid
-    };
+    let is_valid = state
+        .room_service
+        .check_room_password(&room_id, &req.password)
+        .await
+        .map_err(|e| super::AppError::internal(format!("Password verification failed: {}", e)))?;
 
     Ok(Json(serde_json::json!({
         "valid": is_valid
@@ -761,45 +768,50 @@ pub async fn set_room_settings_admin(
         .check_permission(&room_id, &auth.user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
         .await?;
 
-    let mut room = state
+    // Verify room exists
+    state
         .room_service
         .get_room(&room_id)
         .await
         .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
 
-    // Update settings
-    let mut settings = room.settings.clone();
-    if let Some(obj) = settings.as_object_mut() {
-        if let Some(v) = req.require_password {
-            obj.insert("require_password".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = req.max_members {
-            obj.insert("max_members".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = req.allow_guest_join {
-            obj.insert("allow_guest_join".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = req.auto_play_next {
-            obj.insert("auto_play_next".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = req.loop_playlist {
-            obj.insert("loop_playlist".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = req.shuffle_playlist {
-            obj.insert("shuffle_playlist".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = req.chat_enabled {
-            obj.insert("chat_enabled".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = req.danmaku_enabled {
-            obj.insert("danmaku_enabled".to_string(), serde_json::json!(v));
-        }
-    }
-    room.settings = settings;
+    // Load current settings
+    let mut settings = state
+        .room_service
+        .get_room_settings(&room_id)
+        .await
+        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {}", e)))?;
 
+    // Update settings from request
+    if let Some(v) = req.require_password {
+        settings.require_password = v;
+    }
+    if let Some(v) = req.max_members {
+        settings.max_members = Some(v);
+    }
+    if let Some(v) = req.allow_guest_join {
+        settings.allow_guest_join = v;
+    }
+    if let Some(v) = req.auto_play_next {
+        settings.auto_play_next = v;
+    }
+    if let Some(v) = req.loop_playlist {
+        settings.loop_playlist = v;
+    }
+    if let Some(v) = req.shuffle_playlist {
+        settings.shuffle_playlist = v;
+    }
+    if let Some(v) = req.chat_enabled {
+        settings.chat_enabled = v;
+    }
+    if let Some(v) = req.danmaku_enabled {
+        settings.danmaku_enabled = v;
+    }
+
+    // Save updated settings
     state
         .room_service
-        .admin_update_room(&room)
+        .set_settings(room_id.clone(), auth.user_id.clone(), settings)
         .await
         .map_err(|e| super::AppError::internal(format!("Failed to update settings: {}", e)))?;
 
@@ -829,37 +841,40 @@ pub async fn set_room_password(
         .check_permission(&room_id, &auth.user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
         .await?;
 
-    let mut room = state
+    // Hash password if provided
+    let password = req.password.unwrap_or_default();
+
+    // Load current settings
+    let mut settings = state
         .room_service
-        .get_room(&room_id)
+        .get_room_settings(&room_id)
         .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
+        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {}", e)))?;
+
+    // Update require_password flag
+    settings.require_password = !password.is_empty();
 
     // Hash password if provided
-    let password_hash = if let Some(pwd) = req.password {
-        if pwd.is_empty() {
-            None
-        } else {
-            let hash = synctv_core::service::auth::password::hash_password(&pwd)
-                .await
-                .map_err(|e| super::AppError::internal(format!("Failed to hash password: {}", e)))?;
-            Some(hash)
-        }
-    } else {
+    let password_hash = if password.is_empty() {
         None
+    } else {
+        let hash = synctv_core::service::auth::password::hash_password(&password)
+            .await
+            .map_err(|e| super::AppError::internal(format!("Failed to hash password: {}", e)))?;
+        Some(hash)
     };
 
-    // Update settings
-    let mut settings = room.settings.clone();
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert("require_password".to_string(), serde_json::json!(password_hash.is_some()));
-        obj.insert("password".to_string(), serde_json::json!(password_hash));
-    }
-    room.settings = settings;
-
+    // Save updated settings
     state
         .room_service
-        .admin_update_room(&room)
+        .set_settings(room_id.clone(), auth.user_id.clone(), settings)
+        .await
+        .map_err(|e| super::AppError::internal(format!("Failed to update settings: {}", e)))?;
+
+    // Update password hash
+    state
+        .room_service
+        .update_room_password(&room_id, password_hash)
         .await
         .map_err(|e| super::AppError::internal(format!("Failed to update password: {}", e)))?;
 

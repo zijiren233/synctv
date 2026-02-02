@@ -9,6 +9,7 @@ pub mod playlist;
 pub mod provider_instance;
 pub mod room;
 pub mod room_member;
+pub mod room_settings;
 pub mod settings;
 pub mod user;
 
@@ -33,9 +34,10 @@ pub use playback::{
 pub use playlist::{Playlist, PlaylistWithCount, CreatePlaylistRequest, UpdatePlaylistRequest};
 pub use provider_instance::{ProviderCredential, ProviderInstance, UserProviderCredential};
 pub use room::{
-    CreateRoomRequest, Room, RoomListQuery, RoomSettings, RoomStatus, RoomWithCount,
+    CreateRoomRequest, Room, RoomListQuery, RoomStatus, RoomWithCount,
     UpdateRoomRequest, PlayMode, AutoPlaySettings,
 };
+pub use room_settings::RoomSettings;
 pub use room_member::{RoomMember, RoomMemberWithUser, MemberStatus};
 pub use settings::{
     default_email_settings, default_oauth_settings, default_server_settings, get_default_settings,

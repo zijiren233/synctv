@@ -4,11 +4,91 @@
 //! and role management with Allow/Deny permission pattern.
 
 use crate::{
-    models::{Room, RoomId, RoomMember, RoomMemberWithUser, UserId, PermissionBits, RoomRole, MemberStatus},
-    repository::{RoomMemberRepository, RoomRepository},
+    models::{Room, RoomId, RoomMember, RoomMemberWithUser, UserId, PermissionBits, RoomRole, MemberStatus, RoomSettings},
+    repository::{RoomMemberRepository, RoomRepository, RoomSettingsRepository},
     service::permission::PermissionService,
     Error, Result,
 };
+
+/// Options for adding a member to a room
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // Default options (all checks enabled)
+/// let options = AddMemberOptions::new();
+///
+/// // Skip max members check
+/// let options = AddMemberOptions::new().skip_max_members_check();
+///
+/// // Set custom max members limit
+/// let options = AddMemberOptions::new().with_max_members(100);
+///
+/// // Skip cache invalidation
+/// let options = AddMemberOptions::new().skip_cache_invalidation();
+///
+/// // Combine options
+/// let options = AddMemberOptions::new()
+///     .skip_max_members_check()
+///     .skip_cache_invalidation();
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct AddMemberOptions {
+    /// Check if room is active
+    pub check_room_active: bool,
+    /// Check for duplicate membership
+    pub check_duplicate: bool,
+    /// Check max members limit
+    pub check_max_members: bool,
+    /// Maximum number of members allowed (0 = no limit)
+    pub max_members: u64,
+    /// Invalidate permission cache after adding
+    pub invalidate_cache: bool,
+}
+
+impl AddMemberOptions {
+    /// Create default options (all checks enabled, no max limit)
+    pub fn new() -> Self {
+        Self {
+            check_room_active: true,
+            check_duplicate: true,
+            check_max_members: false,  // disabled by default
+            max_members: 0,           // 0 means no limit
+            invalidate_cache: true,
+        }
+    }
+
+    /// Set max members limit (enables the check)
+    pub fn with_max_members(mut self, max: u64) -> Self {
+        self.max_members = max;
+        self.check_max_members = true;
+        self
+    }
+
+    /// Skip max members check
+    pub fn skip_max_members_check(mut self) -> Self {
+        self.check_max_members = false;
+        self
+    }
+
+    /// Skip room active check
+    pub fn skip_active_check(mut self) -> Self {
+        self.check_room_active = false;
+        self
+    }
+
+    /// Skip duplicate membership check
+    pub fn skip_duplicate_check(mut self) -> Self {
+        self.check_duplicate = false;
+        self
+    }
+
+    /// Skip cache invalidation
+    pub fn skip_cache_invalidation(mut self) -> Self {
+        self.invalidate_cache = false;
+        self
+    }
+}
 
 /// Member management service
 ///
@@ -17,6 +97,7 @@ use crate::{
 pub struct MemberService {
     member_repo: RoomMemberRepository,
     room_repo: RoomRepository,
+    room_settings_repo: Option<RoomSettingsRepository>,
     permission_service: PermissionService,
 }
 
@@ -36,48 +117,65 @@ impl MemberService {
         Self {
             member_repo,
             room_repo,
+            room_settings_repo: None,
             permission_service,
         }
     }
 
-    /// Add a user as a member to a room
+    /// Set the room settings repository
+    pub fn set_room_settings_repo(&mut self, repo: RoomSettingsRepository) {
+        self.room_settings_repo = Some(repo);
+    }
+
+    /// Add a user as a member to a room (with default options)
+    ///
+    /// This is a convenience method that uses default options.
     pub async fn add_member(
         &self,
         room_id: RoomId,
         user_id: UserId,
         role: RoomRole,
     ) -> Result<RoomMember> {
-        // Check if room exists
-        let room = self
-            .room_repo
-            .get_by_id(&room_id)
-            .await?
-            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+        self.add_member_with_options(room_id, user_id, role, AddMemberOptions::new())
+            .await
+    }
 
-        // Check if room is active
-        if room.status != crate::models::RoomStatus::Active {
-            return Err(Error::InvalidInput("Room is not active".to_string()));
+    /// Add a user as a member to a room with custom options
+    ///
+    /// This method uses a database transaction to perform all checks and the insert atomically.
+    pub async fn add_member_with_options(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        role: RoomRole,
+        mut options: AddMemberOptions,
+    ) -> Result<RoomMember> {
+        // Get room settings and apply to options if max_members check is enabled
+        if options.check_max_members {
+            let room_settings = if let Some(ref settings_repo) = self.room_settings_repo {
+                settings_repo.get(&room_id).await?
+            } else {
+                RoomSettings::default()
+            };
+
+            options.max_members = room_settings.max_members.0;
         }
 
-        // Check if already a member
-        if self.member_repo.is_member(&room_id, &user_id).await? {
-            return Err(Error::AlreadyExists("Already a member of this room".to_string()));
+        // Create member object
+        let member = RoomMember::new(room_id.clone(), user_id.clone(), role);
+
+        // Add member with options (transaction happens in repository)
+        let created_member = self
+            .member_repo
+            .add_with_options(&member, &options)
+            .await?;
+
+        // Invalidate permission cache (outside transaction)
+        if options.invalidate_cache {
+            self.permission_service
+                .invalidate_cache(&room_id, &user_id)
+                .await;
         }
-
-        // Check max members
-        let room_settings: serde_json::Value = serde_json::from_value(room.settings.clone())
-            .unwrap_or(serde_json::json!({}));
-
-        if let Some(max_members) = room_settings["max_members"].as_i64() {
-            let current_count = self.member_repo.count_by_room(&room_id).await?;
-            if current_count >= max_members as i32 {
-                return Err(Error::InvalidInput("Room is full".to_string()));
-            }
-        }
-
-        // Add as member with role (no direct permissions - uses Allow/Deny pattern)
-        let member = RoomMember::new(room_id.clone(), user_id, role);
-        let created_member = self.member_repo.add(&member).await?;
 
         Ok(created_member)
     }

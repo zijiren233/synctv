@@ -58,6 +58,8 @@ thiserror.workspace = true
 bytes.workspace = true
 parking_lot.workspace = true
 once_cell.workspace = true
+ctor = "0.2"
+paste = "1.0"
 url.workspace = true
 regex.workspace = true
 

@@ -36,7 +36,12 @@ service RoomService {
     rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
     rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
     rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
+
+    // Room Settings Management
+    rpc GetRoomSettings(GetRoomSettingsRequest) returns (GetRoomSettingsResponse);
     rpc SetRoomSettings(SetRoomSettingsRequest) returns (SetRoomSettingsResponse);
+    rpc UpdateRoomSetting(UpdateRoomSettingRequest) returns (UpdateRoomSettingResponse);
+    rpc ResetRoomSettings(ResetRoomSettingsRequest) returns (ResetRoomSettingsResponse);
 
     // Member Management (room-scoped operations, use x-room-id)
     rpc GetRoomMembers(GetRoomMembersRequest) returns (GetRoomMembersResponse);
@@ -268,6 +273,35 @@ message SetRoomSettingsRequest {
 
 message SetRoomSettingsResponse {
     Room room = 1;
+}
+
+// Get room settings
+message GetRoomSettingsRequest {
+    string room_id = 1;
+}
+
+message GetRoomSettingsResponse {
+    bytes settings = 1; // JSON settings
+}
+
+// Update single room setting
+message UpdateRoomSettingRequest {
+    string room_id = 1;
+    string key = 2; // Setting key (e.g., "chat_enabled")
+    bytes value = 3; // Setting value (JSON encoded)
+}
+
+message UpdateRoomSettingResponse {
+    bytes settings = 1; // Updated full settings
+}
+
+// Reset room settings to default
+message ResetRoomSettingsRequest {
+    string room_id = 1;
+}
+
+message ResetRoomSettingsResponse {
+    bytes settings = 1; // Reset settings (default values)
 }
 
 // Room Members Messages

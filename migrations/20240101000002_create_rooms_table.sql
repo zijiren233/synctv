@@ -4,7 +4,6 @@ CREATE TABLE IF NOT EXISTS rooms (
     name VARCHAR(255) NOT NULL,
     created_by CHAR(12) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     status VARCHAR(20) NOT NULL DEFAULT 'active',
-    settings JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ NULL
@@ -31,6 +30,7 @@ ALTER TABLE rooms ADD CONSTRAINT rooms_status_check
     CHECK (status IN ('active', 'closed'));
 
 -- Comments
-COMMENT ON TABLE rooms IS 'Video watching rooms';
+COMMENT ON TABLE rooms IS 'Video watching rooms - all settings stored in room_settings table';
 COMMENT ON COLUMN rooms.id IS '12-character nanoid';
-COMMENT ON COLUMN rooms.settings IS 'Room settings (JSON): password, auto_play, max_members, etc.';
+COMMENT ON COLUMN rooms.status IS 'Room status: active, closed, pending';
+

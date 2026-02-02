@@ -55,18 +55,15 @@ impl RoomRepository {
 
     /// Create a new room
     pub async fn create(&self, room: &Room) -> Result<Room> {
-        let settings_json = serde_json::to_value(&room.settings)?;
-
         let row = sqlx::query(
-            "INSERT INTO rooms (id, name, created_by, status, settings, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id, name, created_by, status, settings, created_at, updated_at, deleted_at"
+            "INSERT INTO rooms (id, name, created_by, status, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id, name, created_by, status, created_at, updated_at, deleted_at"
         )
         .bind(room.id.as_str())
         .bind(&room.name)
         .bind(room.created_by.as_str())
         .bind(self.status_to_str(&room.status))
-        .bind(&settings_json)
         .bind(room.created_at)
         .bind(room.updated_at)
         .fetch_one(&self.pool)
@@ -78,7 +75,7 @@ impl RoomRepository {
     /// Get room by ID
     pub async fn get_by_id(&self, room_id: &RoomId) -> Result<Option<Room>> {
         let row = sqlx::query(
-            "SELECT id, name, created_by, status, settings, created_at, updated_at, deleted_at
+            "SELECT id, name, created_by, status, created_at, updated_at, deleted_at
              FROM rooms
              WHERE id = $1 AND deleted_at IS NULL"
         )
@@ -94,18 +91,15 @@ impl RoomRepository {
 
     /// Update room
     pub async fn update(&self, room: &Room) -> Result<Room> {
-        let settings_json = serde_json::to_value(&room.settings)?;
-
         let row = sqlx::query(
             "UPDATE rooms
-             SET name = $2, status = $3, settings = $4, updated_at = $5
+             SET name = $2, status = $3, updated_at = $4
              WHERE id = $1 AND deleted_at IS NULL
-             RETURNING id, name, created_by, status, settings, created_at, updated_at, deleted_at"
+             RETURNING id, name, created_by, status, created_at, updated_at, deleted_at"
         )
         .bind(room.id.as_str())
         .bind(&room.name)
         .bind(self.status_to_str(&room.status))
-        .bind(&settings_json)
         .bind(chrono::Utc::now())
         .fetch_one(&self.pool)
         .await?;
@@ -143,7 +137,7 @@ impl RoomRepository {
 
         // Get rooms
         let list_query = format!(
-            "SELECT r.id, r.name, r.created_by, r.status, r.settings, r.created_at, r.updated_at, r.deleted_at
+            "SELECT r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
              FROM rooms r
              WHERE {}
              ORDER BY r.created_at DESC
@@ -189,13 +183,13 @@ impl RoomRepository {
         let list_query = format!(
             r#"
             SELECT
-                r.id, r.name, r.created_by, r.status, r.settings,
+                r.id, r.name, r.created_by, r.status,
                 r.created_at, r.updated_at, r.deleted_at,
                 COALESCE(COUNT(rm.user_id) FILTER (WHERE rm.left_at IS NULL), 0)::int as member_count
             FROM rooms r
             LEFT JOIN room_members rm ON r.id = rm.room_id
             WHERE {}
-            GROUP BY r.id, r.name, r.created_by, r.status, r.settings, r.created_at, r.updated_at, r.deleted_at
+            GROUP BY r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
             ORDER BY r.created_at DESC
             LIMIT $1 OFFSET $2
             "#,
@@ -282,7 +276,7 @@ impl RoomRepository {
 
         // Get rooms
         let list_query = format!(
-            "SELECT r.id, r.name, r.created_by, r.status, r.settings, r.created_at, r.updated_at, r.deleted_at
+            "SELECT r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
              FROM rooms r
              WHERE {}
              ORDER BY r.created_at DESC
@@ -329,13 +323,13 @@ impl RoomRepository {
         let list_query = format!(
             r#"
             SELECT
-                r.id, r.name, r.created_by, r.status, r.settings,
+                r.id, r.name, r.created_by, r.status,
                 r.created_at, r.updated_at, r.deleted_at,
                 COALESCE(COUNT(rm.user_id) FILTER (WHERE rm.left_at IS NULL), 0)::int as member_count
             FROM rooms r
             LEFT JOIN room_members rm ON r.id = rm.room_id
             WHERE {}
-            GROUP BY r.id, r.name, r.created_by, r.status, r.settings, r.created_at, r.updated_at, r.deleted_at
+            GROUP BY r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
             ORDER BY r.created_at DESC
             LIMIT $1 OFFSET $2
             "#,
@@ -384,7 +378,7 @@ impl RoomRepository {
 
         // Get rooms
         let list_query = format!(
-            "SELECT r.id, r.name, r.created_by, r.status, r.settings, r.created_at, r.updated_at, r.deleted_at
+            "SELECT r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
              FROM rooms r
              WHERE {}
              ORDER BY r.created_at DESC
@@ -430,7 +424,6 @@ impl RoomRepository {
 
     /// Convert database row to Room model
     fn row_to_room(&self, row: PgRow) -> Result<Room> {
-        let settings_json: JsonValue = row.try_get("settings")?;
         let status_str: String = row.try_get("status")?;
 
         Ok(Room {
@@ -438,7 +431,6 @@ impl RoomRepository {
             name: row.try_get("name")?,
             created_by: UserId::from_string(row.try_get("created_by")?),
             status: self.str_to_status(&status_str),
-            settings: settings_json,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             deleted_at: row.try_get("deleted_at")?,
@@ -454,7 +446,7 @@ impl RoomRepository {
             UPDATE rooms
             SET status = $1, updated_at = CURRENT_TIMESTAMP
             WHERE id = $2 AND deleted_at IS NULL
-            RETURNING id, name, created_by, status, settings, created_at, updated_at, deleted_at
+            RETURNING id, name, created_by, status, created_at, updated_at, deleted_at
             "#,
         )
         .bind(status_str)

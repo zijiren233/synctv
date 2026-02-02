@@ -1,8 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::fmt::Display;
 
 use super::id::{RoomId, UserId};
+use super::permission::{PermissionBits, Role as RoomRole};
+use crate::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -85,21 +88,19 @@ pub struct Room {
     pub name: String,
     pub created_by: UserId,
     pub status: RoomStatus,
-    pub settings: JsonValue,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
 impl Room {
-    pub fn new(name: String, created_by: UserId, settings: JsonValue) -> Self {
+    pub fn new(name: String, created_by: UserId) -> Self {
         let now = Utc::now();
         Self {
             id: RoomId::new(),
             name,
             created_by,
             status: RoomStatus::Active,
-            settings,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -123,6 +124,13 @@ pub struct UpdateRoomRequest {
     pub name: Option<String>,
     pub status: Option<RoomStatus>,
     pub settings: Option<JsonValue>,
+}
+
+/// Room with settings loaded from room_settings table
+#[derive(Debug, Clone)]
+pub struct RoomWithSettings {
+    pub room: Room,
+    pub settings: RoomSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,19 +173,35 @@ pub struct RoomSettings {
     pub chat_enabled: bool,
     pub danmaku_enabled: bool,
 
-    // ===== Permission Configuration (Allow/Deny Pattern) =====
+    // ===== Permission Override Configuration =====
+    //
+    // Rooms can override global default permissions from SettingsRegistry
+    // Each role has added/removed permissions that modify the global defaults
+    // Formula: (global_default | added) & ~removed
 
-    /// Default permissions for Admin role (0 = use global default)
+    /// Additional permissions for Admin role (on top of global default)
     #[serde(default)]
-    pub default_admin_permissions: i64,
+    pub admin_added_permissions: Option<i64>,
 
-    /// Default permissions for Member role (0 = use global default)
+    /// Removed permissions for Admin role (overrides global default)
     #[serde(default)]
-    pub default_member_permissions: i64,
+    pub admin_removed_permissions: Option<i64>,
 
-    /// Permissions for guests (0 = use global default)
+    /// Additional permissions for Member role (on top of global default)
     #[serde(default)]
-    pub guest_permissions: i64,
+    pub member_added_permissions: Option<i64>,
+
+    /// Removed permissions for Member role (overrides global default)
+    #[serde(default)]
+    pub member_removed_permissions: Option<i64>,
+
+    /// Additional permissions for Guests (on top of global default)
+    #[serde(default)]
+    pub guest_added_permissions: Option<i64>,
+
+    /// Removed permissions for Guests (overrides global default)
+    #[serde(default)]
+    pub guest_removed_permissions: Option<i64>,
 
     /// Whether room requires approval for new members
     #[serde(default)]
@@ -186,6 +210,69 @@ pub struct RoomSettings {
     /// Whether members can auto-join (without invitation)
     #[serde(default = "default_true")]
     pub allow_auto_join: bool,
+}
+
+impl RoomSettings {
+    /// Calculate effective permissions for a role based on global defaults and room overrides
+    ///
+    /// Formula: (global_default | added) & ~removed
+    ///
+    /// Arguments:
+    /// - global_default: Default permissions from global settings
+    /// - added_permissions: Additional permissions from room settings (Optional)
+    /// - removed_permissions: Removed permissions from room settings (Optional)
+    pub fn effective_permissions_for_role(
+        global_default: PermissionBits,
+        added_permissions: Option<i64>,
+        removed_permissions: Option<i64>,
+    ) -> PermissionBits {
+        let mut result = global_default.0;
+
+        // Add extra permissions
+        if let Some(added) = added_permissions {
+            result |= added;
+        }
+
+        // Remove permissions
+        if let Some(removed) = removed_permissions {
+            result &= !removed;
+        }
+
+        PermissionBits(result)
+    }
+
+    /// Get effective permissions for Admin role
+    ///
+    /// Requires global default admin permissions from SettingsRegistry
+    pub fn admin_permissions(&self, global_default: PermissionBits) -> PermissionBits {
+        Self::effective_permissions_for_role(
+            global_default,
+            self.admin_added_permissions,
+            self.admin_removed_permissions,
+        )
+    }
+
+    /// Get effective permissions for Member role
+    ///
+    /// Requires global default member permissions from SettingsRegistry
+    pub fn member_permissions(&self, global_default: PermissionBits) -> PermissionBits {
+        Self::effective_permissions_for_role(
+            global_default,
+            self.member_added_permissions,
+            self.member_removed_permissions,
+        )
+    }
+
+    /// Get effective permissions for Guest
+    ///
+    /// Requires global default guest permissions from SettingsRegistry
+    pub fn guest_permissions(&self, global_default: PermissionBits) -> PermissionBits {
+        Self::effective_permissions_for_role(
+            global_default,
+            self.guest_added_permissions,
+            self.guest_removed_permissions,
+        )
+    }
 }
 
 fn default_true() -> bool {
@@ -198,4 +285,67 @@ pub struct RoomWithCount {
     #[serde(flatten)]
     pub room: Room,
     pub member_count: i32,
+}
+
+// ==================== Trait Implementations for Settings System ====================
+
+impl Display for PlayMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlayMode::Sequential => write!(f, "sequential"),
+            PlayMode::RepeatOne => write!(f, "repeat_one"),
+            PlayMode::RepeatAll => write!(f, "repeat_all"),
+            PlayMode::Shuffle => write!(f, "shuffle"),
+        }
+    }
+}
+
+impl std::str::FromStr for PlayMode {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "sequential" => Ok(PlayMode::Sequential),
+            "repeat_one" => Ok(PlayMode::RepeatOne),
+            "repeat_all" => Ok(PlayMode::RepeatAll),
+            "shuffle" => Ok(PlayMode::Shuffle),
+            _ => Err(Error::InvalidInput(format!("Invalid PlayMode: {}", s))),
+        }
+    }
+}
+
+impl Display for AutoPlaySettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Use JSON representation for complex types
+        let json = serde_json::to_string(self)
+            .map_err(|_| std::fmt::Error)?;
+        write!(f, "{}", json)
+    }
+}
+
+impl std::str::FromStr for AutoPlaySettings {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(s)
+            .map_err(|e| Error::InvalidInput(format!("Invalid AutoPlaySettings: {}", e)))
+    }
+}
+
+impl Display for RoomSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Use JSON representation for the entire settings struct
+        let json = serde_json::to_string(self)
+            .map_err(|_| std::fmt::Error)?;
+        write!(f, "{}", json)
+    }
+}
+
+impl std::str::FromStr for RoomSettings {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(s)
+            .map_err(|e| Error::InvalidInput(format!("Invalid RoomSettings: {}", e)))
+    }
 }

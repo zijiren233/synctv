@@ -50,7 +50,7 @@ impl AdminApiImpl {
         let (rooms, total) = self.room_service.list_rooms(&query).await
             .map_err(|e| e.to_string())?;
 
-        let room_list: Vec<_> = rooms.into_iter().map(|r| admin_room_to_proto(&r)).collect();
+        let room_list: Vec<_> = rooms.into_iter().map(|r| admin_room_to_proto(&r, None)).collect();
 
         Ok(crate::proto::admin::ListRoomsResponse {
             rooms: room_list,
@@ -67,7 +67,7 @@ impl AdminApiImpl {
             .map_err(|e| e.to_string())?;
 
         Ok(crate::proto::admin::GetRoomResponse {
-            room: Some(admin_room_to_proto(&room)),
+            room: Some(admin_room_to_proto(&room, None)),
         })
     }
 
@@ -319,14 +319,18 @@ impl AdminApiImpl {
 
 // === Helper Functions ===
 
-fn admin_room_to_proto(room: &synctv_core::models::Room) -> crate::proto::admin::AdminRoom {
+fn admin_room_to_proto(
+    room: &synctv_core::models::Room,
+    settings: Option<&synctv_core::models::RoomSettings>,
+) -> crate::proto::admin::AdminRoom {
+    let room_settings = settings.cloned().unwrap_or_default();
     crate::proto::admin::AdminRoom {
         id: room.id.to_string(),
         name: room.name.clone(),
         creator_id: room.created_by.to_string(),
         creator_username: String::new(), // Would need to fetch user
         status: room.status.as_str().to_string(),
-        settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
+        settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
         member_count: 0, // TODO: Fetch actual member count
         created_at: room.created_at.timestamp(),
         updated_at: room.updated_at.timestamp(),
@@ -338,7 +342,7 @@ fn admin_room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) 
         room_id: member.room_id.to_string(),
         user_id: member.user_id.to_string(),
         username: member.username.clone(),
-        permissions: member.effective_permissions(None).0,
+        permissions: member.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
         joined_at: member.joined_at.timestamp(),
         is_online: member.is_online,
     }

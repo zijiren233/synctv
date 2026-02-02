@@ -473,6 +473,65 @@ pub struct GetRoomResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetRoomSettingsRequest {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetRoomSettingsResponse {
+    /// JSON settings
+    #[prost(bytes = "vec", tag = "1")]
+    pub settings: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SetRoomSettingsRequest {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    /// JSON settings
+    #[prost(bytes = "vec", tag = "2")]
+    pub settings: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SetRoomSettingsResponse {
+    #[prost(message, optional, tag = "1")]
+    pub room: ::core::option::Option<AdminRoom>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateRoomSettingRequest {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    /// Setting key
+    #[prost(string, tag = "2")]
+    pub key: ::prost::alloc::string::String,
+    /// Setting value (JSON encoded)
+    #[prost(bytes = "vec", tag = "3")]
+    pub value: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateRoomSettingResponse {
+    /// Updated full settings
+    #[prost(bytes = "vec", tag = "1")]
+    pub settings: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResetRoomSettingsRequest {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResetRoomSettingsResponse {
+    #[prost(message, optional, tag = "1")]
+    pub room: ::core::option::Option<AdminRoom>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SetRoomPasswordRequest {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
@@ -1332,6 +1391,106 @@ pub mod admin_service_client {
                 .insert(GrpcMethod::new("synctv.admin.AdminService", "GetRoom"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn get_room_settings(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetRoomSettingsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetRoomSettingsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.admin.AdminService/GetRoomSettings",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("synctv.admin.AdminService", "GetRoomSettings"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn set_room_settings(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SetRoomSettingsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SetRoomSettingsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.admin.AdminService/SetRoomSettings",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("synctv.admin.AdminService", "SetRoomSettings"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_room_setting(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateRoomSettingRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateRoomSettingResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.admin.AdminService/UpdateRoomSetting",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("synctv.admin.AdminService", "UpdateRoomSetting"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn reset_room_settings(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ResetRoomSettingsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ResetRoomSettingsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.admin.AdminService/ResetRoomSettings",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("synctv.admin.AdminService", "ResetRoomSettings"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn set_room_password(
             &mut self,
             request: impl tonic::IntoRequest<super::SetRoomPasswordRequest>,
@@ -1764,6 +1923,34 @@ pub mod admin_service_server {
             &self,
             request: tonic::Request<super::GetRoomRequest>,
         ) -> std::result::Result<tonic::Response<super::GetRoomResponse>, tonic::Status>;
+        async fn get_room_settings(
+            &self,
+            request: tonic::Request<super::GetRoomSettingsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetRoomSettingsResponse>,
+            tonic::Status,
+        >;
+        async fn set_room_settings(
+            &self,
+            request: tonic::Request<super::SetRoomSettingsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SetRoomSettingsResponse>,
+            tonic::Status,
+        >;
+        async fn update_room_setting(
+            &self,
+            request: tonic::Request<super::UpdateRoomSettingRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateRoomSettingResponse>,
+            tonic::Status,
+        >;
+        async fn reset_room_settings(
+            &self,
+            request: tonic::Request<super::ResetRoomSettingsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ResetRoomSettingsResponse>,
+            tonic::Status,
+        >;
         async fn set_room_password(
             &self,
             request: tonic::Request<super::SetRoomPasswordRequest>,
@@ -3010,6 +3197,190 @@ pub mod admin_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetRoomSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.admin.AdminService/GetRoomSettings" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetRoomSettingsSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::GetRoomSettingsRequest>
+                    for GetRoomSettingsSvc<T> {
+                        type Response = super::GetRoomSettingsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetRoomSettingsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::get_room_settings(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetRoomSettingsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.admin.AdminService/SetRoomSettings" => {
+                    #[allow(non_camel_case_types)]
+                    struct SetRoomSettingsSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::SetRoomSettingsRequest>
+                    for SetRoomSettingsSvc<T> {
+                        type Response = super::SetRoomSettingsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SetRoomSettingsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::set_room_settings(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SetRoomSettingsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.admin.AdminService/UpdateRoomSetting" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpdateRoomSettingSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::UpdateRoomSettingRequest>
+                    for UpdateRoomSettingSvc<T> {
+                        type Response = super::UpdateRoomSettingResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpdateRoomSettingRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::update_room_setting(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpdateRoomSettingSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.admin.AdminService/ResetRoomSettings" => {
+                    #[allow(non_camel_case_types)]
+                    struct ResetRoomSettingsSvc<T: AdminService>(pub Arc<T>);
+                    impl<
+                        T: AdminService,
+                    > tonic::server::UnaryService<super::ResetRoomSettingsRequest>
+                    for ResetRoomSettingsSvc<T> {
+                        type Response = super::ResetRoomSettingsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ResetRoomSettingsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AdminService>::reset_room_settings(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ResetRoomSettingsSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

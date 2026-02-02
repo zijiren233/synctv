@@ -12,7 +12,7 @@ use crate::{
         PermissionBits, RoomRole, MemberStatus, RoomPlaybackState, Media, MediaId,
         RoomListQuery, ChatMessage,
     },
-    repository::{RoomRepository, RoomMemberRepository, MediaRepository, PlaylistRepository, RoomPlaybackStateRepository, ChatRepository},
+    repository::{RoomRepository, RoomMemberRepository, MediaRepository, PlaylistRepository, RoomPlaybackStateRepository, ChatRepository, RoomSettingsRepository},
     service::{
         auth::password::{hash_password, verify_password},
         permission::PermissionService,
@@ -46,6 +46,7 @@ pub use synctv_proto::admin::{
 pub struct RoomService {
     // Core repositories
     room_repo: RoomRepository,
+    room_settings_repo: RoomSettingsRepository,
     playback_repo: RoomPlaybackStateRepository,
     chat_repo: ChatRepository,
 
@@ -70,6 +71,7 @@ impl RoomService {
     pub fn new(pool: PgPool, user_service: UserService) -> Self {
         // Initialize repositories
         let room_repo = RoomRepository::new(pool.clone());
+        let room_settings_repo = RoomSettingsRepository::new(pool.clone());
         let member_repo = RoomMemberRepository::new(pool.clone());
         let media_repo = MediaRepository::new(pool.clone());
         let playlist_repo = PlaylistRepository::new(pool.clone());
@@ -78,19 +80,22 @@ impl RoomService {
         let chat_repo = ChatRepository::new(pool);
 
         // Initialize permission service with caching
-        let permission_service = PermissionService::new(
+        let mut permission_service = PermissionService::new(
             member_repo.clone(),
             room_repo.clone(),
+            None, // SettingsRegistry - will be set later if needed
             10000,
             300
         );
+        permission_service.set_room_settings_repo(room_settings_repo.clone());
 
         // Initialize provider instance manager and providers manager
         let provider_instance_manager = Arc::new(crate::service::ProviderInstanceManager::new(provider_instance_repo.clone()));
         let providers_manager = Arc::new(ProvidersManager::new(provider_instance_manager));
 
         // Initialize domain services
-        let member_service = MemberService::new(member_repo.clone(), room_repo.clone(), permission_service.clone());
+        let mut member_service = MemberService::new(member_repo.clone(), room_repo.clone(), permission_service.clone());
+        member_service.set_room_settings_repo(room_settings_repo.clone());
         let playlist_service = PlaylistService::new(playlist_repo.clone(), permission_service.clone());
         let media_service = MediaService::new(
             media_repo.clone(),
@@ -103,6 +108,7 @@ impl RoomService {
 
         Self {
             room_repo,
+            room_settings_repo,
             playback_repo,
             chat_repo,
             member_service,
@@ -136,30 +142,26 @@ impl RoomService {
 
         // Build settings
         let mut room_settings = settings.unwrap_or_default();
-        room_settings.require_password = password.is_some();
+        room_settings.require_password = crate::models::room_settings::RequirePassword(password.is_some());
 
-        // Hash password if provided
+        // Create room
+        let room = Room::new(name, created_by.clone());
+        let created_room = self.room_repo.create(&room).await?;
+
+        // Hash password if provided and store in room_settings
         let hashed_password = if let Some(pwd) = password {
             Some(hash_password(&pwd).await?)
         } else {
             None
         };
 
-        let settings_json = json!({
-            "require_password": room_settings.require_password,
-            "password": hashed_password,
-            "auto_play_next": room_settings.auto_play_next,
-            "loop_playlist": room_settings.loop_playlist,
-            "shuffle_playlist": room_settings.shuffle_playlist,
-            "allow_guest_join": room_settings.allow_guest_join,
-            "max_members": room_settings.max_members,
-            "chat_enabled": room_settings.chat_enabled,
-            "danmaku_enabled": room_settings.danmaku_enabled,
-        });
+        // Save settings to room_settings table
+        // Store password hash separately in a "password" key
+        if let Some(pwd_hash) = &hashed_password {
+            self.room_settings_repo.set(&created_room.id, "password", pwd_hash).await?;
+        }
 
-        // Create room
-        let room = Room::new(name, created_by.clone(), settings_json);
-        let created_room = self.room_repo.create(&room).await?;
+        self.room_settings_repo.set_settings(&created_room.id, &room_settings).await?;
 
         // Add creator as member with full permissions
         let created_member = self.member_service.add_member(
@@ -194,13 +196,22 @@ impl RoomService {
         }
 
         // Check password if required
-        if let Some(password_hash) = room.settings.get("password").and_then(|v| v.as_str()) {
-            let provided_password = password.ok_or_else(|| Error::Authorization("Password required".to_string()))?;
+        // Load settings to check if password is required
+        let room_settings = self.room_settings_repo.get(&room_id).await?;
+        if room_settings.require_password.0 {
+            // Load password hash from room_settings table
+            let password_hash = self.room_settings_repo.get_password_hash(&room_id).await?;
 
-            // Verify password using Argon2id
-            let is_valid = verify_password(&provided_password, password_hash).await?;
-            if !is_valid {
-                return Err(Error::Authorization("Invalid password".to_string()));
+            if let Some(hash) = password_hash {
+                let provided_password = password.ok_or_else(|| Error::Authorization("Password required".to_string()))?;
+
+                // Verify password using Argon2id
+                let is_valid = verify_password(&provided_password, &hash).await?;
+                if !is_valid {
+                    return Err(Error::Authorization("Invalid password".to_string()));
+                }
+            } else {
+                return Err(Error::Authorization("Password required but not set".to_string()));
             }
         }
 
@@ -256,31 +267,21 @@ impl RoomService {
             .check_permission(&room_id, &user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
             .await?;
 
-        // Get room
-        let mut room = self
+        // Verify room exists
+        let room = self
             .room_repo
             .get_by_id(&room_id)
             .await?
             .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
 
-        // Update settings
-        room.settings = json!({
-            "auto_play_next": settings.auto_play_next,
-            "loop_playlist": settings.loop_playlist,
-            "shuffle_playlist": settings.shuffle_playlist,
-            "allow_guest_join": settings.allow_guest_join,
-            "max_members": settings.max_members,
-            "chat_enabled": settings.chat_enabled,
-            "danmaku_enabled": settings.danmaku_enabled,
-        });
-
-        // Save
-        let updated_room = self.room_repo.update(&room).await?;
+        // Save settings to room_settings table
+        self.room_settings_repo.set_settings(&room_id, &settings).await?;
 
         // Notify room members
-        let _ = self.notification_service.notify_settings_updated(&room_id, room.settings).await;
+        let settings_json = serde_json::to_value(&settings)?;
+        let _ = self.notification_service.notify_settings_updated(&room_id, settings_json).await;
 
-        Ok(updated_room)
+        Ok(room)
     }
 
     // ========== Query Operations ==========
@@ -291,6 +292,41 @@ impl RoomService {
             .get_by_id(room_id)
             .await?
             .ok_or_else(|| Error::NotFound("Room not found".to_string()))
+    }
+
+    /// Get room with settings
+    pub async fn get_room_with_settings(&self, room_id: &RoomId) -> Result<(Room, RoomSettings)> {
+        let room = self.get_room(room_id).await?;
+        let settings = self.room_settings_repo.get(room_id).await?;
+        Ok((room, settings))
+    }
+
+    /// Get room settings
+    pub async fn get_room_settings(&self, room_id: &RoomId) -> Result<RoomSettings> {
+        self.room_settings_repo.get(room_id).await
+    }
+
+    /// Check room password
+    pub async fn check_room_password(&self, room_id: &RoomId, password: &str) -> Result<bool> {
+        let password_hash = self.room_settings_repo.get_password_hash(room_id).await?;
+
+        match password_hash {
+            Some(stored) => {
+                verify_password(password, &stored).await
+                    .map_err(|e| Error::Internal(format!("Password verification failed: {}", e)))
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Update room password
+    pub async fn update_room_password(&self, room_id: &RoomId, password_hash: Option<String>) -> Result<()> {
+        if let Some(pwd_hash) = password_hash {
+            self.room_settings_repo.set(room_id, "password", &pwd_hash).await?;
+        } else {
+            self.room_settings_repo.delete(room_id, "password").await?;
+        }
+        Ok(())
     }
 
     /// List all rooms (paginated)
@@ -623,30 +659,19 @@ impl RoomService {
         // Get members from repository
         let members_with_users = self.member_service.list_members(&room_id).await?;
 
-        // Get room to calculate effective permissions
-        let room = self
-            .room_repo
-            .get_by_id(&room_id)
-            .await?
-            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
-
-        // Get room settings for default permissions
-        let room_settings: serde_json::Value = serde_json::from_value(room.settings.clone())
-            .unwrap_or(serde_json::json!({}));
+        // Load room settings to calculate effective permissions
+        let room_settings = self.room_settings_repo.get(&room_id).await?;
 
         // Convert to gRPC RoomMember type
         let proto_members: Vec<synctv_proto::admin::RoomMember> = members_with_users
             .into_iter()
             .map(|m| {
-                // Calculate effective permissions
-                let effective = m.effective_permissions(
-                    match m.role {
-                        RoomRole::Admin => room_settings["default_admin_permissions"].as_i64(),
-                        RoomRole::Member => room_settings["default_member_permissions"].as_i64(),
-                        RoomRole::Guest => room_settings["guest_permissions"].as_i64(),
-                        RoomRole::Creator => None,
-                    }
-                );
+                // Calculate role default permissions (global + room-level overrides)
+                let role_default = self.permission_service
+                    .calculate_role_default_permissions(&m.role, &room_settings);
+
+                // Apply member-level overrides
+                let effective = m.effective_permissions(role_default);
 
                 synctv_proto::admin::RoomMember {
                     room_id: m.room_id.as_str().to_string(),
@@ -689,8 +714,11 @@ impl RoomService {
             .await?
             .unwrap_or_else(|| "Unknown".to_string());
 
+        // Load room settings
+        let room_settings = self.room_settings_repo.get(&room_id).await?;
+
         // Convert settings to bytes (protobuf serialization)
-        let settings_bytes = serde_json::to_vec(&room.settings)
+        let settings_bytes = serde_json::to_vec(&room_settings)
             .unwrap_or_default();
 
         let admin_room = AdminRoom {
@@ -745,11 +773,26 @@ impl RoomService {
             let creator_ids: Vec<UserId> = rooms.iter().map(|r| r.room.created_by.clone()).collect();
             let usernames_map: std::collections::HashMap<UserId, String> = self.user_service.get_usernames(&creator_ids).await.unwrap_or_default();
 
+            // Load settings for all rooms
+            let room_ids: Vec<RoomId> = rooms.iter().map(|r| r.room.id.clone()).collect();
+            let settings_map: std::collections::HashMap<RoomId, RoomSettings> = {
+                let mut map = std::collections::HashMap::new();
+                for room_id in &room_ids {
+                    if let Ok(settings) = self.room_settings_repo.get(room_id).await {
+                        map.insert(room_id.clone(), settings);
+                    }
+                }
+                map
+            };
+
             // Convert rooms to AdminRoom format
             let admin_rooms: Vec<AdminRoom> = rooms
                 .into_iter()
                 .map(|r| {
-                    let settings_bytes = serde_json::to_vec(&r.room.settings).unwrap_or_default();
+                    let settings = settings_map.get(&r.room.id)
+                        .cloned()
+                        .unwrap_or_default();
+                    let settings_bytes = serde_json::to_vec(&settings).unwrap_or_default();
                     let creator_username = usernames_map
                         .get(&r.room.created_by)
                         .cloned()
@@ -780,11 +823,26 @@ impl RoomService {
         let creator_ids: Vec<UserId> = rooms.iter().map(|r| r.room.created_by.clone()).collect();
         let usernames_map: std::collections::HashMap<UserId, String> = self.user_service.get_usernames(&creator_ids).await.unwrap_or_default();
 
+        // Load settings for all rooms
+        let room_ids: Vec<RoomId> = rooms.iter().map(|r| r.room.id.clone()).collect();
+        let settings_map: std::collections::HashMap<RoomId, RoomSettings> = {
+            let mut map = std::collections::HashMap::new();
+            for room_id in &room_ids {
+                if let Ok(settings) = self.room_settings_repo.get(room_id).await {
+                    map.insert(room_id.clone(), settings);
+                }
+            }
+            map
+        };
+
         // Convert rooms to AdminRoom format
         let admin_rooms: Vec<AdminRoom> = rooms
             .into_iter()
             .map(|r| {
-                let settings_bytes = serde_json::to_vec(&r.room.settings).unwrap_or_default();
+                let settings = settings_map.get(&r.room.id)
+                    .cloned()
+                    .unwrap_or_default();
+                let settings_bytes = serde_json::to_vec(&settings).unwrap_or_default();
                 let creator_username = usernames_map
                     .get(&r.room.created_by)
                     .cloned()
@@ -835,8 +893,8 @@ impl RoomService {
             .check_permission(&room_id, requesting_user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
             .await?;
 
-        // Get room
-        let mut room = self
+        // Verify room exists
+        let _room = self
             .room_repo
             .get_by_id(&room_id)
             .await?
@@ -849,25 +907,21 @@ impl RoomService {
             Some(hash_password(&request.new_password).await?)
         };
 
-        // Update room settings with new password
-        let mut settings = serde_json::from_value::<RoomSettings>(room.settings.clone())
-            .unwrap_or_default();
+        // Load current settings
+        let mut settings = self.room_settings_repo.get(&room_id).await?;
 
-        settings.require_password = hashed_password.is_some();
+        settings.require_password = crate::models::room_settings::RequirePassword(hashed_password.is_some());
 
-        room.settings = json!({
-            "require_password": settings.require_password,
-            "password": hashed_password,
-            "auto_play_next": settings.auto_play_next,
-            "loop_playlist": settings.loop_playlist,
-            "shuffle_playlist": settings.shuffle_playlist,
-            "allow_guest_join": settings.allow_guest_join,
-            "max_members": settings.max_members,
-            "chat_enabled": settings.chat_enabled,
-            "danmaku_enabled": settings.danmaku_enabled,
-        });
+        // Update password in room_settings table
+        if let Some(pwd_hash) = &hashed_password {
+            self.room_settings_repo.set(&room_id, "password", pwd_hash).await?;
+        } else {
+            // Remove password if clearing
+            self.room_settings_repo.delete(&room_id, "password").await?;
+        }
 
-        self.room_repo.update(&room).await?;
+        // Update settings
+        self.room_settings_repo.set_settings(&room_id, &settings).await?;
 
         Ok(SetRoomPasswordResponse { success: true })
     }

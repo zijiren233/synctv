@@ -153,14 +153,14 @@ impl PlaybackService {
         settings: &RoomSettings,
     ) -> Result<Option<RoomPlaybackState>> {
         // Use new auto_play settings, falling back to legacy fields for compatibility
-        let (enabled, mode) = if settings.auto_play.enabled || settings.auto_play_next {
-            let mode = settings.auto_play.mode;
-            let enabled = settings.auto_play.enabled || settings.auto_play_next;
+        let (enabled, mode) = if settings.auto_play.value.enabled || settings.auto_play_next.0 {
+            let mode = settings.auto_play.value.mode;
+            let enabled = settings.auto_play.value.enabled || settings.auto_play_next.0;
 
             // If legacy fields suggest a different mode than the new setting, use legacy
-            let mode = if settings.loop_playlist {
+            let mode = if settings.loop_playlist.0 {
                 PlayMode::RepeatAll
-            } else if settings.shuffle_playlist {
+            } else if settings.shuffle_playlist.0 {
                 PlayMode::Shuffle
             } else {
                 mode
@@ -293,7 +293,7 @@ impl PlaybackService {
         current_position: f64,
     ) -> Result<Option<RoomPlaybackState>> {
         // Use new auto_play settings with legacy fallback
-        let enabled = settings.auto_play.enabled || settings.auto_play_next;
+        let enabled = settings.auto_play.value.enabled || settings.auto_play_next.0;
 
         if !enabled {
             return Ok(None);

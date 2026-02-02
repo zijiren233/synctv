@@ -75,11 +75,17 @@ pub struct RoomMember {
     /// Member status (account state)
     pub status: MemberStatus,
 
-    /// Allow/Deny permission pattern
+    /// Allow/Deny permission pattern for member role
     /// - effective_permissions = (role_default | added) & ~removed
     /// - None = use role default permissions
     pub added_permissions: Option<i64>,
     pub removed_permissions: Option<i64>,
+
+    /// Allow/Deny permission pattern for admin role (overrides member-level permissions)
+    /// - Only applies when role = Admin
+    /// - effective_permissions = (admin_default | admin_added) & ~admin_removed
+    pub admin_added_permissions: Option<i64>,
+    pub admin_removed_permissions: Option<i64>,
 
     pub joined_at: DateTime<Utc>,
     pub left_at: Option<DateTime<Utc>>,
@@ -103,6 +109,8 @@ impl RoomMember {
             status: MemberStatus::Active,
             added_permissions: None,
             removed_permissions: None,
+            admin_added_permissions: None,
+            admin_removed_permissions: None,
             joined_at: now,
             left_at: None,
             version: 0,
@@ -118,71 +126,44 @@ impl RoomMember {
 
     /// Calculate effective permissions using Allow/Deny pattern
     ///
-    /// Permission inheritance chain:
-    /// 1. Creator → All permissions (fixed)
-    /// 2. Admin/Member → (role_default | added) & ~removed
-    /// 3. Guest → guest_permissions from room settings
-    pub fn effective_permissions(&self, room_default_permissions: Option<i64>) -> PermissionBits {
+    /// Permission inheritance chain (three-layer override system):
+    /// 1. Global default permissions (from SettingsRegistry)
+    /// 2. Room-level override: (global | room_added) & ~room_removed
+    /// 3. Member-level override: (room_level | member_added/admin_added) & ~(member_removed/admin_removed)
+    ///
+    /// Arguments:
+    /// - role_default: Already-calculated permissions for this role
+    ///   (global default with room-level overrides applied)
+    ///
+    /// This method then applies member-level overrides to get final permissions
+    pub fn effective_permissions(&self, role_default: PermissionBits) -> PermissionBits {
         match self.role {
             RoomRole::Creator => {
                 // Creator has all permissions (fixed, cannot be modified)
                 PermissionBits(PermissionBits::ALL)
             }
-            RoomRole::Guest => {
-                // Guests use room guest permissions (or global default if not configured)
-                let base = room_default_permissions.unwrap_or_else(|| {
-                    // Global default guest permissions
-                    PermissionBits::SEND_CHAT
-                });
-                PermissionBits(base)
+            RoomRole::Admin => {
+                // Start with role default (already has global + room overrides)
+                let mut result = role_default.0;
+
+                // Apply admin-specific Allow/Deny modifications
+                if let Some(added) = self.admin_added_permissions {
+                    result |= added;
+                }
+                if let Some(removed) = self.admin_removed_permissions {
+                    result &= !removed;
+                }
+
+                PermissionBits(result)
             }
-            RoomRole::Admin | RoomRole::Member => {
-                // Get role base permissions
-                let base = room_default_permissions.unwrap_or_else(|| {
-                    // Use global default role permissions
-                    match self.role {
-                        RoomRole::Admin => {
-                            let mut perms = PermissionBits::empty();
-                            perms.grant(PermissionBits::DELETE_ROOM);
-                            perms.grant(PermissionBits::UPDATE_ROOM_SETTINGS);
-                            perms.grant(PermissionBits::INVITE_USER);
-                            perms.grant(PermissionBits::KICK_USER);
-                            perms.grant(PermissionBits::ADD_MEDIA);
-                            perms.grant(PermissionBits::REMOVE_MEDIA);
-                            perms.grant(PermissionBits::REORDER_PLAYLIST);
-                            perms.grant(PermissionBits::SWITCH_MEDIA);
-                            perms.grant(PermissionBits::PLAY_PAUSE);
-                            perms.grant(PermissionBits::SEEK);
-                            perms.grant(PermissionBits::CHANGE_SPEED);
-                            perms.grant(PermissionBits::SEND_CHAT);
-                            perms.grant(PermissionBits::SEND_DANMAKU);
-                            perms.grant(PermissionBits::DELETE_MESSAGE);
-                            perms.grant(PermissionBits::GRANT_PERMISSION);
-                            perms.grant(PermissionBits::REVOKE_PERMISSION);
-                            perms.0
-                        }
-                        RoomRole::Member => {
-                            let mut perms = PermissionBits::empty();
-                            perms.grant(PermissionBits::ADD_MEDIA);
-                            perms.grant(PermissionBits::PLAY_PAUSE);
-                            perms.grant(PermissionBits::SEEK);
-                            perms.grant(PermissionBits::SEND_CHAT);
-                            perms.grant(PermissionBits::SEND_DANMAKU);
-                            perms.0
-                        }
-                        _ => 0,
-                    }
-                });
+            RoomRole::Member | RoomRole::Guest => {
+                // Start with role default (already has global + room overrides)
+                let mut result = role_default.0;
 
-                // Apply Allow/Deny modifications
-                let mut result = base;
-
-                // Add extra permissions
+                // Apply member-level Allow/Deny modifications
                 if let Some(added) = self.added_permissions {
                     result |= added;
                 }
-
-                // Remove permissions
                 if let Some(removed) = self.removed_permissions {
                     result &= !removed;
                 }
@@ -193,12 +174,12 @@ impl RoomMember {
     }
 
     /// Check if member has a specific permission (considers both status and effective permissions)
-    pub fn has_permission(&self, permission: i64, room_default_permissions: Option<i64>) -> bool {
+    pub fn has_permission(&self, permission: i64, role_default: PermissionBits) -> bool {
         if !self.status.is_active() {
             return false;
         }
 
-        self.effective_permissions(room_default_permissions).has(permission)
+        self.effective_permissions(role_default).has(permission)
     }
 
     pub fn leave(&mut self) {
@@ -249,6 +230,8 @@ pub struct RoomMemberWithUser {
     pub status: MemberStatus,
     pub added_permissions: Option<i64>,
     pub removed_permissions: Option<i64>,
+    pub admin_added_permissions: Option<i64>,
+    pub admin_removed_permissions: Option<i64>,
     pub joined_at: DateTime<Utc>,
     pub is_online: bool,
     pub banned_at: Option<DateTime<Utc>>,
@@ -257,7 +240,11 @@ pub struct RoomMemberWithUser {
 
 impl RoomMemberWithUser {
     /// Calculate effective permissions for display
-    pub fn effective_permissions(&self, room_default_permissions: Option<i64>) -> PermissionBits {
+    ///
+    /// Arguments:
+    /// - role_default: Already-calculated permissions for this role
+    ///   (global default with room-level overrides applied)
+    pub fn effective_permissions(&self, role_default: PermissionBits) -> PermissionBits {
         let member = RoomMember {
             room_id: self.room_id.clone(),
             user_id: self.user_id.clone(),
@@ -265,6 +252,8 @@ impl RoomMemberWithUser {
             status: self.status,
             added_permissions: self.added_permissions,
             removed_permissions: self.removed_permissions,
+            admin_added_permissions: self.admin_added_permissions,
+            admin_removed_permissions: self.admin_removed_permissions,
             joined_at: self.joined_at,
             left_at: None,
             version: 0,
@@ -273,6 +262,6 @@ impl RoomMemberWithUser {
             banned_reason: self.banned_reason.clone(),
         };
 
-        member.effective_permissions(room_default_permissions)
+        member.effective_permissions(role_default)
     }
 }
