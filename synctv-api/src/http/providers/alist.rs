@@ -72,9 +72,6 @@ fn alist_routes() -> Router<AppState> {
 }
 
 /// Self-register Alist routes on module load
-pub fn init() {
-    super::register_route_builder(|| ("alist".to_string(), alist_routes()));
-}
 
 // Handlers
 

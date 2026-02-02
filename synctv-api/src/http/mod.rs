@@ -17,7 +17,8 @@ pub mod room_extra;
 pub mod user;
 pub mod websocket;
 
-// Provider HTTP route extensions (decoupled via trait)
+// Provider HTTP routes
+// Provider-specific HTTP endpoints are registered from provider instances
 pub mod provider_common;
 pub mod providers;
 
@@ -171,8 +172,8 @@ pub fn create_router(
         )
         // WebSocket endpoint for real-time messaging
         .route("/ws/rooms/:room_id", axum::routing::get(websocket::websocket_handler))
-        // Provider-specific HTTP routes (re-enabled with UserProviderCredentialRepository)
-        .merge(providers::build_provider_routes());
+        // Provider-specific HTTP routes
+        .merge(providers::register_all_routes());
 
     // Note: Streaming routes (/live, /hls) are not merged here because they use StreamingHttpState
     // which is incompatible with our AppState. They should be run on a separate port or service.

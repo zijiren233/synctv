@@ -95,9 +95,6 @@ fn bilibili_routes() -> Router<AppState> {
 /// Self-register Bilibili routes on module load
 ///
 /// This runs automatically when the module is loaded, no manual registration needed!
-pub fn init() {
-    super::register_route_builder(|| ("bilibili".to_string(), bilibili_routes()));
-}
 
 // Handlers
 

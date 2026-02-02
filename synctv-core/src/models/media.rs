@@ -2,72 +2,66 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use super::id::{MediaId, RoomId, UserId};
+use super::id::{MediaId, PlaylistId, RoomId, UserId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ProviderType {
-    Bilibili,
-    Alist,
-    Emby,
-    DirectUrl,
-}
-
-impl ProviderType {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "bilibili" => Some(Self::Bilibili),
-            "alist" => Some(Self::Alist),
-            "emby" => Some(Self::Emby),
-            "directurl" | "direct" => Some(Self::DirectUrl),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Bilibili => "bilibili",
-            Self::Alist => "alist",
-            Self::Emby => "emby",
-            Self::DirectUrl => "directurl",
-        }
-    }
-}
-
+/// Media file (video/audio)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Media {
     pub id: MediaId,
+    pub playlist_id: PlaylistId,
     pub room_id: RoomId,
-    pub url: String,
-    pub provider: ProviderType,
-    pub title: String,
-    pub metadata: JsonValue,
+    pub creator_id: UserId,
+    pub name: String,
     pub position: i32,
+    /// Provider type name (e.g., "bilibili", "alist", "emby", "direct_url")
+    /// Stored as string for flexibility, not an enum
+    pub source_provider: String,
+    pub source_config: JsonValue,
+    pub metadata: JsonValue,
+    /// Provider instance name (e.g., "bilibili_main", "alist_company")
+    /// Used to look up the provider from the registry at playback time
+    pub provider_instance_name: Option<String>,
     pub added_at: DateTime<Utc>,
-    pub added_by: UserId,
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
 impl Media {
-    pub fn new(
+    /// Create media from provider instance (registry pattern)
+    ///
+    /// This is the preferred way to create media when using the provider registry.
+    /// The provider_instance_name is used to look up the provider at playback time.
+    ///
+    /// # Arguments
+    /// * `provider_name` - Provider type name from provider.name() (e.g., "bilibili")
+    /// * `provider_instance_name` - Instance name for lookup (e.g., "bilibili_main")
+    ///
+    /// # Example
+    /// ```rust
+    /// let provider = providers_manager.get_provider("bilibili_main").await?;
+    /// let media = Media::from_provider(..., provider.name(), "bilibili_main", ...);
+    /// ```
+    pub fn from_provider(
+        playlist_id: PlaylistId,
         room_id: RoomId,
-        url: String,
-        provider: ProviderType,
-        title: String,
-        metadata: JsonValue,
+        creator_id: UserId,
+        name: String,
+        source_config: JsonValue,
+        provider_name: &str,
+        provider_instance_name: String,
         position: i32,
-        added_by: UserId,
     ) -> Self {
         Self {
             id: MediaId::new(),
+            playlist_id,
             room_id,
-            url,
-            provider,
-            title,
-            metadata,
+            creator_id,
+            name,
             position,
+            source_provider: provider_name.to_string(),
+            source_config,
+            metadata: JsonValue::default(),
+            provider_instance_name: Some(provider_instance_name),
             added_at: Utc::now(),
-            added_by,
             deleted_at: None,
         }
     }
@@ -75,13 +69,6 @@ impl Media {
     pub fn is_deleted(&self) -> bool {
         self.deleted_at.is_some()
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AddMediaRequest {
-    pub url: String,
-    pub provider: Option<ProviderType>,
-    pub title: Option<String>,
 }
 
 /// Media metadata structure (stored as JSON in database)

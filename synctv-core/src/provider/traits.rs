@@ -68,6 +68,17 @@ pub struct PlaybackResult {
     pub metadata: HashMap<String, Value>,
 }
 
+/// Item type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemType {
+    Video,   // Video file
+    Audio,   // Audio file
+    Folder,  // Folder/directory
+    Live,    // Live stream
+    File,    // Other file
+}
+
 /// Directory item (file or folder)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectoryItem {
@@ -77,7 +88,7 @@ pub struct DirectoryItem {
     /// Item type
     pub item_type: ItemType,
 
-    /// Full path
+    /// Full path from root
     pub path: String,
 
     /// File size in bytes (for files)
@@ -91,15 +102,6 @@ pub struct DirectoryItem {
     /// Modified time (Unix timestamp)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified_at: Option<i64>,
-}
-
-/// Item type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ItemType {
-    File,
-    Folder,
-    Video,
 }
 
 /// Media provider trait
@@ -149,11 +151,6 @@ pub trait MediaProvider: Send + Sync {
         ctx: &ProviderContext<'_>,
         source_config: &Value,
     ) -> Result<PlaybackResult, ProviderError>;
-
-    // Note: Service/Route registration is handled in synctv-api layer
-    // via extension traits to avoid circular dependencies.
-    // See synctv-api/src/http/provider_extensions.rs
-    // See synctv-api/src/grpc/provider_extensions.rs
 
     // ========== Caching Strategy ==========
 
@@ -269,29 +266,101 @@ pub trait MediaProvider: Send + Sync {
     }
 }
 
-/// Optional trait for providers that support directory browsing
+/// Optional trait for providers that support dynamic folders
 ///
 /// Implemented by: Alist, Emby
 /// Not implemented by: Bilibili, DirectUrl, RTMP
+///
+/// This trait enables providers to:
+/// 1. List contents of dynamic folders (playlists)
+/// 2. Provide next item for auto-play
 #[async_trait]
 pub trait DynamicFolder: MediaProvider {
-    /// List directory contents
+    /// List playlist contents
     ///
-    /// Returns files and folders that can be added to playlist.
-    async fn list_directory(
+    /// Used to browse dynamic folders and load their contents.
+    ///
+    /// # Arguments
+    /// - `ctx`: Provider context (includes user_id, room_id, etc.)
+    /// - `playlist`: The dynamic folder (playlist object)
+    /// - `relative_path`: Relative path within the dynamic folder (e.g., "subfolder/video.mp4")
+    /// - `page`: Page number (0-indexed)
+    /// - `page_size`: Items per page
+    ///
+    /// # Returns
+    /// List of items (videos, folders) in the dynamic folder
+    async fn list_playlist(
         &self,
         ctx: &ProviderContext<'_>,
-        path: Option<&str>,
+        playlist: &crate::models::Playlist,
+        relative_path: Option<&str>,
         page: usize,
         page_size: usize,
     ) -> Result<Vec<DirectoryItem>, ProviderError>;
 
-    /// Search within provider
-    async fn search(
+    /// Get next item for auto-play
+    ///
+    /// Used by the auto-play system to get the next item when current media finishes.
+    ///
+    /// # Arguments
+    /// - `ctx`: Provider context (includes user_id, room_id, etc.)
+    /// - `playlist`: The dynamic folder (playlist object)
+    /// - `current_media`: Currently playing media object
+    /// - `relative_path`: Current relative path in the dynamic folder
+    /// - `play_mode`: Play mode (sequential, repeat one, repeat all, shuffle)
+    ///
+    /// # Returns
+    /// - `Some(NextPlayItem)`: Next item to play
+    /// - `None`: No more items (end of playlist for sequential mode)
+    ///
+    /// # Implementation Notes
+    /// - **Sequential**: Return next item in order, None at end
+    /// - **RepeatOne**: Return current_media again
+    /// - **RepeatAll**: Wrap around to first item
+    /// - **Shuffle**: Return random item from playlist
+    ///
+    /// # Example
+    /// ```rust
+    /// // Emby playlist scenario
+    /// // current_media.source_config = {"playlist_id": "123", "current_index": 5}
+    /// // Returns item at index 6
+    ///
+    /// // Alist folder scenario
+    /// // relative_path = "/movies/action/"
+    /// // Returns next video file in the folder
+    /// ```
+    async fn next(
         &self,
         ctx: &ProviderContext<'_>,
-        keyword: &str,
-        page: usize,
-        page_size: usize,
-    ) -> Result<Vec<DirectoryItem>, ProviderError>;
+        playlist: &crate::models::Playlist,
+        current_media: &crate::models::Media,
+        relative_path: &str,
+        play_mode: crate::models::PlayMode,
+    ) -> Result<Option<NextPlayItem>, ProviderError>;
+}
+
+/// Next play item for auto-play
+///
+/// Contains all information needed to play the next item in a playlist.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NextPlayItem {
+    /// Item name
+    pub name: String,
+
+    /// Item type
+    pub item_type: ItemType,
+
+    /// Provider source_config (to be stored in Media.source_config)
+    pub source_config: serde_json::Value,
+
+    /// Metadata (duration, thumbnail, etc.)
+    pub metadata: serde_json::Value,
+
+    /// Provider-specific data for next() calls
+    /// e.g., Emby playlist index, Alist folder current path
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    pub provider_data: serde_json::Value,
+
+    /// Relative path within the dynamic folder
+    pub relative_path: String,
 }

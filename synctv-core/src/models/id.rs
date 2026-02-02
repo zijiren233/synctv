@@ -99,6 +99,37 @@ impl std::fmt::Display for MediaId {
     }
 }
 
+/// Playlist ID type (CHAR(12) nanoid)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PlaylistId(pub String);
+
+impl PlaylistId {
+    pub fn new() -> Self {
+        Self(generate_id())
+    }
+
+    pub fn from_string(id: String) -> Self {
+        Self(id)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for PlaylistId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for PlaylistId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

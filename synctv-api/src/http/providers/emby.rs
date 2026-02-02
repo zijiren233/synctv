@@ -71,9 +71,6 @@ fn emby_routes() -> Router<AppState> {
 }
 
 /// Self-register Emby routes on module load
-pub fn init() {
-    super::register_route_builder(|| ("emby".to_string(), emby_routes()));
-}
 
 // Handlers
 

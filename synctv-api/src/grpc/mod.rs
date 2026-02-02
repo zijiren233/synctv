@@ -15,7 +15,8 @@ pub mod client_service;
 pub mod interceptors;
 pub mod message_handler;
 
-// Provider gRPC service extensions (decoupled via trait)
+// Provider gRPC services
+// Provider-specific gRPC services are registered from provider instances
 pub mod providers;
 
 pub use admin_service::AdminServiceImpl;
@@ -173,10 +174,14 @@ pub async fn serve(
         router = router.add_service(reflection);
     }
 
-    // Register provider gRPC services via registry pattern
+    // Register provider gRPC services via extension registration pattern
     // Each provider module self-registers, achieving complete decoupling!
     if let Some(providers_mgr) = providers_manager {
         tracing::info!("Initializing provider gRPC service modules");
+
+        // Initialize all provider gRPC service builders
+        // (Each provider module registers its services via init())
+        providers::init_all();
 
         // Create AppState for provider extensions with all required dependencies
         let app_state = Arc::new(crate::http::AppState {
@@ -196,13 +201,8 @@ pub async fn serve(
             notification_service: None, // Not used in gRPC provider services
         });
 
-        // Initialize all provider modules (triggers self-registration)
-        providers::bilibili::init();
-        providers::alist::init();
-        providers::emby::init();
-
-        // Build services from registry (no knowledge of specific types!)
-        router = providers::build_provider_services(app_state, router);
+        // Build services from all registered providers (no hardcoded provider types!)
+        router = provider_extensions::build_provider_services_all(app_state, router);
     }
 
     // Start server

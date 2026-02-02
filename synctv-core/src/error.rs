@@ -11,6 +11,9 @@ pub enum Error {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    #[error("Deserialization error: {context}")]
+    Deserialization { context: String },
+
     #[error("Authentication error: {0}")]
     Authentication(String),
 

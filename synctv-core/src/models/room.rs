@@ -38,6 +38,49 @@ impl RoomStatus {
     }
 }
 
+/// Playback mode for auto-play
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayMode {
+    /// Sequential play (stop after last item)
+    Sequential,
+    /// Repeat single item
+    RepeatOne,
+    /// Repeat all items (loop back to start)
+    RepeatAll,
+    /// Random playback
+    Shuffle,
+}
+
+impl Default for PlayMode {
+    fn default() -> Self {
+        Self::Sequential
+    }
+}
+
+/// Auto-play settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoPlaySettings {
+    /// Whether auto-play is enabled
+    pub enabled: bool,
+
+    /// Playback mode
+    pub mode: PlayMode,
+
+    /// Delay before playing next item (seconds)
+    pub delay: u32,
+}
+
+impl Default for AutoPlaySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mode: PlayMode::Sequential,
+            delay: 3,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Room {
     pub id: RoomId,
@@ -112,8 +155,17 @@ impl Default for RoomListQuery {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RoomSettings {
     pub require_password: bool,
+    /// Auto-play settings (deprecated, use auto_play)
+    #[serde(default)]
     pub auto_play_next: bool,
+    /// Auto-play settings
+    #[serde(default)]
+    pub auto_play: AutoPlaySettings,
+    /// Legacy: loop playlist (use auto_play.mode instead)
+    #[serde(default)]
     pub loop_playlist: bool,
+    /// Legacy: shuffle playlist (use auto_play.mode instead)
+    #[serde(default)]
     pub shuffle_playlist: bool,
     pub allow_guest_join: bool,
     pub max_members: Option<i32>,

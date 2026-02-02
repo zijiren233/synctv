@@ -1,0 +1,69 @@
+-- Create media table (media files in playlists)
+-- Design reference: /Volumes/workspace/rust/design/04-数据库设计.md §2.4.2
+
+CREATE TABLE IF NOT EXISTS media (
+    id CHAR(12) PRIMARY KEY,
+
+    -- ========== Belongs to playlist ==========
+    playlist_id CHAR(12) NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+
+    -- ========== Basic information ==========
+    room_id CHAR(12) NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    creator_id CHAR(12) NOT NULL REFERENCES users(id),
+
+    -- File name
+    name VARCHAR(255) NOT NULL,
+
+    -- Sort position (within playlist)
+    position INTEGER NOT NULL DEFAULT 0,
+
+    -- ========== Video source type (string for flexibility) ==========
+    source_provider VARCHAR(64) NOT NULL DEFAULT 'direct_url',
+
+    -- ========== Video source configuration (persistent storage) ==========
+    source_config JSONB NOT NULL,
+
+    -- Metadata (duration, resolution, etc.)
+    metadata JSONB NOT NULL DEFAULT '{}',
+
+    -- Provider instance name (for registry lookup)
+    provider_instance_name VARCHAR(64),
+
+    -- Timestamps
+    added_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ NULL,
+
+    -- Constraints
+    CONSTRAINT unique_media_name UNIQUE (playlist_id, name),
+    CONSTRAINT valid_media_name CHECK (
+        length(trim(name)) > 0
+        AND length(name) <= 255
+        AND name NOT LIKE '%/%'
+    )
+);
+
+-- Create indexes
+CREATE INDEX idx_media_playlist ON media(playlist_id, position) WHERE deleted_at IS NULL;
+CREATE INDEX idx_media_room ON media(room_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_media_creator ON media(creator_id);
+CREATE INDEX idx_media_added_at ON media(added_at DESC);
+CREATE INDEX idx_media_deleted_at ON media(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX idx_media_source_provider ON media(source_provider) WHERE deleted_at IS NULL;
+CREATE INDEX idx_media_source_config ON media USING gin(source_config) WHERE deleted_at IS NULL;
+
+-- Performance optimization: covering index for playlist queries
+CREATE INDEX idx_media_playlist_covering ON media(playlist_id, position, source_provider, name)
+    WHERE deleted_at IS NULL;
+
+-- Comments
+COMMENT ON TABLE media IS 'Media items (videos/audio) in playlists';
+COMMENT ON COLUMN media.id IS '12-character nanoid';
+COMMENT ON COLUMN media.playlist_id IS 'Associated playlist (directory)';
+COMMENT ON COLUMN media.name IS 'File name (forbids / character)';
+COMMENT ON COLUMN media.position IS 'Position in playlist (0-indexed)';
+COMMENT ON COLUMN media.source_provider IS 'Provider type name (e.g., "bilibili", "alist", "emby", "direct_url")';
+COMMENT ON COLUMN media.source_config IS 'Provider-specific configuration (persistent)';
+COMMENT ON COLUMN media.metadata IS 'Metadata (duration, resolution, etc.)';
+COMMENT ON COLUMN media.provider_instance_name IS 'Provider instance name for registry lookup (e.g., "bilibili_main")';
+COMMENT ON CONSTRAINT unique_media_name ON media IS 'No duplicate names in same playlist';
+COMMENT ON CONSTRAINT valid_media_name ON media IS 'File name validation: not empty, 1-255 chars, no / character';

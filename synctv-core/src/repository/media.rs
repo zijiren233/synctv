@@ -1,8 +1,12 @@
+//! Media repository for database operations
+//!
+//! Design reference: /Volumes/workspace/rust/design/04-数据库设计.md §2.4.2
+
 use serde_json::Value as JsonValue;
 use sqlx::{postgres::PgRow, PgPool, Row};
 
 use crate::{
-    models::{Media, MediaId, ProviderType, RoomId, UserId},
+    models::{Media, MediaId, PlaylistId, RoomId},
     Result,
 };
 
@@ -19,22 +23,30 @@ impl MediaRepository {
 
     /// Add media to playlist
     pub async fn create(&self, media: &Media) -> Result<Media> {
+        let source_config_json = serde_json::to_value(&media.source_config)?;
         let metadata_json = serde_json::to_value(&media.metadata)?;
 
         let row = sqlx::query(
-            "INSERT INTO media (id, room_id, url, provider, title, metadata, position, added_at, added_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             RETURNING id, room_id, url, provider, title, metadata, position, added_at, added_by, deleted_at"
+            r#"
+            INSERT INTO media (id, playlist_id, room_id, creator_id, name, position,
+                              source_provider, source_config, metadata, provider_instance_name, added_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING id, playlist_id, room_id, creator_id, name, position,
+                       source_provider, source_config, metadata, provider_instance_name,
+                       added_at, deleted_at
+            "#
         )
         .bind(media.id.as_str())
+        .bind(media.playlist_id.as_str())
         .bind(media.room_id.as_str())
-        .bind(&media.url)
-        .bind(media.provider.as_str())
-        .bind(&media.title)
-        .bind(&metadata_json)
+        .bind(media.creator_id.as_str())
+        .bind(&media.name)
         .bind(media.position)
+        .bind(media.source_provider.as_str())
+        .bind(&source_config_json)
+        .bind(&metadata_json)
+        .bind(&media.provider_instance_name)
         .bind(media.added_at)
-        .bind(media.added_by.as_str())
         .fetch_one(&self.pool)
         .await?;
 
@@ -51,22 +63,30 @@ impl MediaRepository {
         let mut tx = self.pool.begin().await?;
 
         for item in items {
+            let source_config_json = serde_json::to_value(&item.source_config)?;
             let metadata_json = serde_json::to_value(&item.metadata)?;
 
             let row = sqlx::query(
-                "INSERT INTO media (id, room_id, url, provider, title, metadata, position, added_at, added_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                 RETURNING id, room_id, url, provider, title, metadata, position, added_at, added_by, deleted_at"
+                r#"
+                INSERT INTO media (id, playlist_id, room_id, creator_id, name, position,
+                                  source_provider, source_config, metadata, provider_instance_name, added_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                 RETURNING id, playlist_id, room_id, creator_id, name, position,
+                           source_provider, source_config, metadata, provider_instance_name,
+                           added_at, deleted_at
+                "#
             )
             .bind(item.id.as_str())
+            .bind(item.playlist_id.as_str())
             .bind(item.room_id.as_str())
-            .bind(&item.url)
-            .bind(item.provider.as_str())
-            .bind(&item.title)
-            .bind(&metadata_json)
+            .bind(item.creator_id.as_str())
+            .bind(&item.name)
             .bind(item.position)
+            .bind(item.source_provider.as_str())
+            .bind(&source_config_json)
+            .bind(&metadata_json)
+            .bind(&item.provider_instance_name)
             .bind(item.added_at)
-            .bind(item.added_by.as_str())
             .fetch_one(&mut *tx)
             .await?;
 
@@ -81,18 +101,26 @@ impl MediaRepository {
 
     /// Update media
     pub async fn update(&self, media: &Media) -> Result<Media> {
+        let source_config_json = serde_json::to_value(&media.source_config)?;
         let metadata_json = serde_json::to_value(&media.metadata)?;
 
         let row = sqlx::query(
-            "UPDATE media
-             SET url = $2, title = $3, metadata = $4
+            r#"
+            UPDATE media
+            SET name = $2, position = $3, source_config = $4, metadata = $5,
+                provider_instance_name = $6
              WHERE id = $1 AND deleted_at IS NULL
-             RETURNING id, room_id, url, provider, title, metadata, position, added_at, added_by, deleted_at"
+             RETURNING id, playlist_id, room_id, creator_id, name, position,
+                       source_provider, source_config, metadata, provider_instance_name,
+                       added_at, deleted_at
+            "#
         )
         .bind(media.id.as_str())
-        .bind(&media.url)
-        .bind(&media.title)
+        .bind(&media.name)
+        .bind(media.position)
+        .bind(&source_config_json)
         .bind(&metadata_json)
+        .bind(&media.provider_instance_name)
         .fetch_one(&self.pool)
         .await?;
 
@@ -102,9 +130,13 @@ impl MediaRepository {
     /// Get media by ID
     pub async fn get_by_id(&self, media_id: &MediaId) -> Result<Option<Media>> {
         let row = sqlx::query(
-            "SELECT id, room_id, url, provider, title, metadata, position, added_at, added_by, deleted_at
+            r#"
+            SELECT id, playlist_id, room_id, creator_id, name, position,
+                   source_provider, source_config, metadata, provider_instance_name,
+                   added_at, deleted_at
              FROM media
-             WHERE id = $1 AND deleted_at IS NULL"
+             WHERE id = $1 AND deleted_at IS NULL
+            "#
         )
         .bind(media_id.as_str())
         .fetch_optional(&self.pool)
@@ -116,15 +148,38 @@ impl MediaRepository {
         }
     }
 
-    /// Get playlist for a room
+    /// Get playlist for a room (all media in room's root playlist and sub-playlists)
     pub async fn get_playlist(&self, room_id: &RoomId) -> Result<Vec<Media>> {
         let rows = sqlx::query(
-            "SELECT id, room_id, url, provider, title, metadata, position, added_at, added_by, deleted_at
+            r#"
+            SELECT id, playlist_id, room_id, creator_id, name, position,
+                   source_provider, source_config, metadata, provider_instance_name,
+                   added_at, deleted_at
              FROM media
              WHERE room_id = $1 AND deleted_at IS NULL
-             ORDER BY position ASC"
+             ORDER BY playlist_id, position ASC
+            "#
         )
         .bind(room_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(|row| self.row_to_media(row)).collect()
+    }
+
+    /// Get media in a specific playlist
+    pub async fn get_by_playlist(&self, playlist_id: &PlaylistId) -> Result<Vec<Media>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, playlist_id, room_id, creator_id, name, position,
+                   source_provider, source_config, metadata, provider_instance_name,
+                   added_at, deleted_at
+             FROM media
+             WHERE playlist_id = $1 AND deleted_at IS NULL
+             ORDER BY position ASC
+            "#
+        )
+        .bind(playlist_id.as_str())
         .fetch_all(&self.pool)
         .await?;
 
@@ -134,7 +189,7 @@ impl MediaRepository {
     /// Get paginated playlist
     pub async fn get_playlist_paginated(
         &self,
-        room_id: &RoomId,
+        playlist_id: &PlaylistId,
         page: i32,
         page_size: i32,
     ) -> Result<(Vec<Media>, i64)> {
@@ -142,21 +197,27 @@ impl MediaRepository {
 
         // Get total count
         let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM media WHERE room_id = $1 AND deleted_at IS NULL"
+            r#"
+            SELECT COUNT(*) FROM media WHERE playlist_id = $1 AND deleted_at IS NULL
+            "#
         )
-        .bind(room_id.as_str())
+        .bind(playlist_id.as_str())
         .fetch_one(&self.pool)
         .await?;
 
         // Get paginated results
         let rows = sqlx::query(
-            "SELECT id, room_id, url, provider, title, metadata, position, added_at, added_by, deleted_at
+            r#"
+            SELECT id, playlist_id, room_id, creator_id, name, position,
+                   source_provider, source_config, metadata, provider_instance_name,
+                   added_at, deleted_at
              FROM media
-             WHERE room_id = $1 AND deleted_at IS NULL
+             WHERE playlist_id = $1 AND deleted_at IS NULL
              ORDER BY position ASC
-             LIMIT $2 OFFSET $3"
+             LIMIT $2 OFFSET $3
+            "#
         )
-        .bind(room_id.as_str())
+        .bind(playlist_id.as_str())
         .bind(page_size as i64)
         .bind(offset as i64)
         .fetch_all(&self.pool)
@@ -170,9 +231,11 @@ impl MediaRepository {
     /// Delete media from playlist (soft delete)
     pub async fn delete(&self, media_id: &MediaId) -> Result<bool> {
         let result = sqlx::query(
-            "UPDATE media
+            r#"
+            UPDATE media
              SET deleted_at = $2
-             WHERE id = $1 AND deleted_at IS NULL",
+             WHERE id = $1 AND deleted_at IS NULL
+            "#
         )
         .bind(media_id.as_str())
         .bind(chrono::Utc::now())
@@ -182,14 +245,16 @@ impl MediaRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Delete all media in a room
-    pub async fn delete_by_room(&self, room_id: &RoomId) -> Result<usize> {
+    /// Delete all media in a playlist
+    pub async fn delete_by_playlist(&self, playlist_id: &PlaylistId) -> Result<usize> {
         let result = sqlx::query(
-            "UPDATE media
+            r#"
+            UPDATE media
              SET deleted_at = $2
-             WHERE room_id = $1 AND deleted_at IS NULL"
+             WHERE playlist_id = $1 AND deleted_at IS NULL
+            "#
         )
-        .bind(room_id.as_str())
+        .bind(playlist_id.as_str())
         .bind(chrono::Utc::now())
         .execute(&self.pool)
         .await?;
@@ -230,52 +295,28 @@ impl MediaRepository {
         Ok(())
     }
 
-    /// Move media to first position (for setting current media)
-    pub async fn move_to_first(&self, media_id: &MediaId) -> Result<()> {
-        // Get current position
-        let current_pos: i32 = sqlx::query_scalar("SELECT position FROM media WHERE id = $1")
-            .bind(media_id.as_str())
-            .fetch_one(&self.pool)
-            .await?;
-
-        // Shift all items before this one down
-        sqlx::query(
-            "UPDATE media
-             SET position = position + 1
-             WHERE id != $1 AND position < $2 AND deleted_at IS NULL"
-        )
-        .bind(media_id.as_str())
-        .bind(current_pos)
-        .execute(&self.pool)
-        .await?;
-
-        // Set this item to position 0
-        sqlx::query("UPDATE media SET position = 0 WHERE id = $1")
-            .bind(media_id.as_str())
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
-
     /// Get next available position in playlist
-    pub async fn get_next_position(&self, room_id: &RoomId) -> Result<i32> {
+    pub async fn get_next_position(&self, playlist_id: &PlaylistId) -> Result<i32> {
         let max_pos: Option<i32> = sqlx::query_scalar(
-            "SELECT MAX(position) FROM media WHERE room_id = $1 AND deleted_at IS NULL",
+            r#"
+            SELECT MAX(position) FROM media WHERE playlist_id = $1 AND deleted_at IS NULL
+            "#
         )
-        .bind(room_id.as_str())
+        .bind(playlist_id.as_str())
         .fetch_one(&self.pool)
         .await?;
 
         Ok(max_pos.unwrap_or(-1) + 1)
     }
 
-    /// Count media items in a room
-    pub async fn count_by_room(&self, room_id: &RoomId) -> Result<i64> {
+    /// Count media items in a playlist
+    pub async fn count_by_playlist(&self, playlist_id: &PlaylistId) -> Result<i64> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM media WHERE room_id = $1 AND deleted_at IS NULL"
+            r#"
+            SELECT COUNT(*) FROM media WHERE playlist_id = $1 AND deleted_at IS NULL
+            "#
         )
-        .bind(room_id.as_str())
+        .bind(playlist_id.as_str())
         .fetch_one(&self.pool)
         .await?;
 
@@ -284,19 +325,18 @@ impl MediaRepository {
 
     /// Convert database row to Media
     fn row_to_media(&self, row: PgRow) -> Result<Media> {
-        let metadata_json: JsonValue = row.try_get("metadata")?;
-        let provider_str: String = row.try_get("provider")?;
-
         Ok(Media {
             id: MediaId::from_string(row.try_get("id")?),
+            playlist_id: PlaylistId::from_string(row.try_get("playlist_id")?),
             room_id: RoomId::from_string(row.try_get("room_id")?),
-            url: row.try_get("url")?,
-            provider: ProviderType::from_str(&provider_str).unwrap_or(ProviderType::DirectUrl),
-            title: row.try_get("title")?,
-            metadata: metadata_json,
+            creator_id: crate::models::UserId::from_string(row.try_get("creator_id")?),
+            name: row.try_get("name")?,
             position: row.try_get("position")?,
+            source_provider: row.try_get("source_provider")?,
+            source_config: row.try_get("source_config")?,
+            metadata: row.try_get("metadata")?,
+            provider_instance_name: row.try_get("provider_instance_name")?,
             added_at: row.try_get("added_at")?,
-            added_by: UserId::from_string(row.try_get("added_by")?),
             deleted_at: row.try_get("deleted_at")?,
         })
     }

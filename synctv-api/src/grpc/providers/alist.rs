@@ -194,10 +194,19 @@ impl AlistProviderService for AlistProviderGrpcService {
 }
 
 /// Self-register Alist gRPC service on module load
-pub fn init() {
-    super::register_service_builder(|app_state, router| {
-        tracing::info!("Registering Alist provider gRPC service");
-        let service = AlistProviderGrpcService::new(app_state);
-        router.add_service(AlistProviderServiceServer::new(service))
-    });
+
+/// Register Alist gRPC service
+///
+/// # Arguments
+/// - `app_state`: Application state
+/// - `router`: Tonic router to add service to
+///
+/// # Returns
+/// Router with Alist service added
+pub fn register_service(
+    app_state: Arc<crate::http::AppState>,
+    router: tonic::transport::server::Router,
+) -> tonic::transport::server::Router {
+    let service = AlistProviderGrpcService::new(app_state);
+    router.add_service(AlistProviderServiceServer::new(service))
 }

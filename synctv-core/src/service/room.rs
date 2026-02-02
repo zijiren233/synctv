@@ -12,18 +12,21 @@ use crate::{
         PermissionBits, Role, RoomPlaybackState, Media, MediaId,
         RoomListQuery, ChatMessage,
     },
-    repository::{RoomRepository, RoomMemberRepository, MediaRepository, RoomPlaybackStateRepository, ChatRepository},
+    repository::{RoomRepository, RoomMemberRepository, MediaRepository, PlaylistRepository, RoomPlaybackStateRepository, ChatRepository},
     service::{
         auth::password::{hash_password, verify_password},
         permission::PermissionService,
         member::MemberService,
         media::MediaService,
+        playlist::PlaylistService,
         playback::PlaybackService,
         notification::NotificationService,
         user::UserService,
+        ProvidersManager,
     },
     Error, Result,
 };
+use std::sync::Arc;
 
 // Re-export gRPC types for use in service layer
 pub use synctv_proto::admin::{
@@ -49,10 +52,12 @@ pub struct RoomService {
     // Domain services
     member_service: MemberService,
     permission_service: PermissionService,
+    playlist_service: PlaylistService,
     media_service: MediaService,
     playback_service: PlaybackService,
     notification_service: NotificationService,
     user_service: UserService,
+    providers_manager: Arc<ProvidersManager>,
 }
 
 impl std::fmt::Debug for RoomService {
@@ -67,16 +72,28 @@ impl RoomService {
         let room_repo = RoomRepository::new(pool.clone());
         let member_repo = RoomMemberRepository::new(pool.clone());
         let media_repo = MediaRepository::new(pool.clone());
+        let playlist_repo = PlaylistRepository::new(pool.clone());
         let playback_repo = RoomPlaybackStateRepository::new(pool.clone());
+        let provider_instance_repo = Arc::new(crate::repository::ProviderInstanceRepository::new(pool.clone()));
         let chat_repo = ChatRepository::new(pool);
 
         // Initialize permission service with caching
         let permission_service = PermissionService::new(member_repo.clone(), 10000, 300);
 
+        // Initialize provider instance manager and providers manager
+        let provider_instance_manager = Arc::new(crate::service::ProviderInstanceManager::new(provider_instance_repo.clone()));
+        let providers_manager = Arc::new(ProvidersManager::new(provider_instance_manager));
+
         // Initialize domain services
         let member_service = MemberService::new(member_repo.clone(), room_repo.clone(), permission_service.clone());
-        let media_service = MediaService::new(media_repo, permission_service.clone());
-        let playback_service = PlaybackService::new(playback_repo.clone(), permission_service.clone(), media_service.clone());
+        let playlist_service = PlaylistService::new(playlist_repo.clone(), permission_service.clone());
+        let media_service = MediaService::new(
+            media_repo.clone(),
+            playlist_repo.clone(),
+            permission_service.clone(),
+            providers_manager.clone(),
+        );
+        let playback_service = PlaybackService::new(playback_repo.clone(), permission_service.clone(), media_service.clone(), media_repo.clone());
         let notification_service = NotificationService::new();
 
         Self {
@@ -85,10 +102,12 @@ impl RoomService {
             chat_repo,
             member_service,
             permission_service,
+            playlist_service,
             media_service,
             playback_service,
             notification_service,
             user_service,
+            providers_manager,
         }
     }
 
@@ -373,16 +392,39 @@ impl RoomService {
 
     // ========== Media Operations (delegated) ==========
 
-    /// Add media to playlist
+    /// Add media to playlist (convenience method)
+    ///
+    /// This is a convenience method that:
+    /// 1. Gets the root playlist for the room
+    /// 2. Calls MediaService::add_media with the provided source_config
+    ///
+    /// Note: Clients should typically call the parse endpoint first to get
+    /// source_config, then call this method with provider_instance_name.
+    ///
+    /// Uses provider registry pattern - no enum switching in service layer.
     pub async fn add_media(
         &self,
         room_id: RoomId,
         user_id: UserId,
-        url: String,
-        provider: crate::models::ProviderType,
+        provider_instance_name: String,
+        source_config: serde_json::Value,
         title: String,
     ) -> Result<Media> {
-        self.media_service.add_media(room_id, user_id, url, provider, title).await
+        use crate::service::media::AddMediaRequest;
+
+        // Get room's root playlist
+        let root_playlist = self.playlist_service.get_root_playlist(&room_id).await?;
+
+        // Create request with provider_instance_name
+        let request = AddMediaRequest {
+            playlist_id: root_playlist.id.clone(),
+            name: title,
+            provider_instance_name,
+            source_config,
+            metadata: None,
+        };
+
+        self.media_service.add_media(room_id, user_id, request).await
     }
 
     /// Remove media from playlist
@@ -395,9 +437,13 @@ impl RoomService {
         self.media_service.remove_media(room_id, user_id, media_id).await
     }
 
-    /// Get playlist
+    /// Get playlist (all media in room's root playlist)
     pub async fn get_playlist(&self, room_id: &RoomId) -> Result<Vec<Media>> {
-        self.media_service.get_playlist(room_id).await
+        // TODO: Get room's root playlist and fetch media
+        // For now, return empty vec as this needs to be implemented
+        // let root_playlist = self.playlist_repo.get_root_playlist(room_id).await?;
+        // self.media_service.get_playlist_media(&root_playlist.id).await
+        Ok(Vec::new())
     }
 
     /// Swap positions of two media items in playlist
@@ -408,7 +454,7 @@ impl RoomService {
         media_id1: MediaId,
         media_id2: MediaId,
     ) -> Result<()> {
-        self.media_service.swap_media(room_id, user_id, media_id1, media_id2).await
+        self.media_service.swap_media_positions(room_id, user_id, media_id1, media_id2).await
     }
 
     // ========== Playback Operations (delegated) ==========

@@ -198,10 +198,19 @@ impl EmbyProviderService for EmbyProviderGrpcService {
 }
 
 /// Self-register Emby gRPC service on module load
-pub fn init() {
-    super::register_service_builder(|app_state, router| {
-        tracing::info!("Registering Emby provider gRPC service");
-        let service = EmbyProviderGrpcService::new(app_state);
-        router.add_service(EmbyProviderServiceServer::new(service))
-    });
+
+/// Register Emby gRPC service
+///
+/// # Arguments
+/// - `app_state`: Application state
+/// - `router`: Tonic router to add service to
+///
+/// # Returns
+/// Router with Emby service added
+pub fn register_service(
+    app_state: Arc<crate::http::AppState>,
+    router: tonic::transport::server::Router,
+) -> tonic::transport::server::Router {
+    let service = EmbyProviderGrpcService::new(app_state);
+    router.add_service(EmbyProviderServiceServer::new(service))
 }

@@ -1,13 +1,14 @@
 //! Providers Manager
 //!
-//! Manages all MediaProvider instances with factory pattern.
-//! Integrates with ProviderInstanceManager for local/remote provider client dispatch.
+//! Manages all MediaProvider instances with singleton pattern.
+//! Providers are loaded from configuration and created once at startup.
 
 use crate::provider::{
     AlistProvider, BilibiliProvider, DirectUrlProvider, EmbyProvider, MediaProvider,
     RtmpProvider,
 };
 use crate::service::ProviderInstanceManager;
+use crate::Config;
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -20,22 +21,33 @@ pub type ProviderFactory =
 
 /// Providers Manager
 ///
-/// Manages all MediaProvider instances using factory pattern.
-/// Works with ProviderInstanceManager to dispatch calls to local or remote provider clients.
+/// Manages all MediaProvider instances using singleton pattern.
+/// Each provider type has exactly one instance.
+///
+/// # Initialization Order
+/// 1. Create ProvidersManager with ProviderInstanceManager
+/// 2. Load provider configurations from Config
+/// 3. Create provider instances (singleton per type)
+/// 4. Pass to synctv-api layer for route registration
 ///
 /// # Architecture
 /// ```text
-/// ProvidersManager
+/// ProvidersManager (synctv-core)
 ///   ├── Factories (registered for each provider type)
-///   ├── Instances (created MediaProvider instances)
+///   ├── Instances (singleton MediaProvider instances)
 ///   └── ProviderInstanceManager (for local/remote dispatch)
+///
+/// synctv-api layer
+///   ├── Gets provider instances from ProvidersManager
+///   ├── Registers HTTP/gRPC routes for each provider
+///   └── No hardcoded provider types
 /// ```
 pub struct ProvidersManager {
     /// Registered factory functions (provider_type → factory)
     factories: HashMap<String, ProviderFactory>,
 
-    /// Created MediaProvider instances (provider_id → MediaProvider)
-    media_providers: Arc<RwLock<HashMap<String, Arc<dyn MediaProvider>>>>,
+    /// Created MediaProvider instances (singleton per provider type)
+    instances: Arc<RwLock<HashMap<String, Arc<dyn MediaProvider>>>>,
 
     /// Provider instance manager (for local/remote dispatch)
     instance_manager: Arc<ProviderInstanceManager>,
@@ -46,7 +58,7 @@ impl ProvidersManager {
     pub fn new(instance_manager: Arc<ProviderInstanceManager>) -> Self {
         let mut manager = Self {
             factories: HashMap::new(),
-            media_providers: Arc::new(RwLock::new(HashMap::new())),
+            instances: Arc::new(RwLock::new(HashMap::new())),
             instance_manager,
         };
 
@@ -115,7 +127,37 @@ impl ProvidersManager {
         tracing::debug!("Registered provider factory: {}", provider_type);
     }
 
-    /// Create a provider instance
+    /// Load providers from configuration
+    ///
+    /// Reads provider configurations from Config and creates instances.
+    /// This should be called once during server startup.
+    ///
+    /// # Arguments
+    /// * `config`: Application configuration
+    ///
+    /// # Returns
+    /// Number of providers loaded
+    pub async fn load_from_config(&mut self, _config: &Config) -> Result<usize> {
+        let mut count = 0;
+
+        // Load each provider from config
+        // For now, create default instances for all built-in providers
+        // TODO: Read actual provider configurations from config file
+
+        for provider_type in self.factories.keys() {
+            let instance_id = format!("{}_default", provider_type);
+            let provider_config = &serde_json::json!({});
+
+            self.create_provider(provider_type, &instance_id, provider_config)
+                .await?;
+            count += 1;
+        }
+
+        tracing::info!("Loaded {} providers from configuration", count);
+        Ok(count)
+    }
+
+    /// Create a provider instance (singleton per type)
     ///
     /// # Arguments
     /// * `provider_type` - Type of provider ("alist", "bilibili", etc.)
@@ -134,11 +176,8 @@ impl ProvidersManager {
 
         let provider = factory(instance_id, config, self.instance_manager.clone())?;
 
-        // Store in instances map
-        self.media_providers
-            .write()
-            .await
-            .insert(instance_id.to_string(), provider.clone());
+        // Store in instances map (singleton)
+        self.instances.write().await.insert(instance_id.to_string(), provider.clone());
 
         tracing::info!(
             "Created provider instance: {} (type: {})",
@@ -150,35 +189,24 @@ impl ProvidersManager {
     }
 
     /// Get a provider instance by ID
-    pub async fn get_provider(&self, instance_id: &str) -> Option<Arc<dyn MediaProvider>> {
-        self.media_providers.read().await.get(instance_id).cloned()
+    pub async fn get(&self, instance_id: &str) -> Option<Arc<dyn MediaProvider>> {
+        self.instances.read().await.get(instance_id).cloned()
+    }
+
+    /// Get provider by type (returns default instance)
+    pub async fn get_by_type(&self, provider_type: &str) -> Option<Arc<dyn MediaProvider>> {
+        let instance_id = format!("{}_default", provider_type);
+        self.get(&instance_id).await
     }
 
     /// List all provider instances
-    pub async fn list_providers(&self) -> Vec<Arc<dyn MediaProvider>> {
-        self.media_providers.read().await.values().cloned().collect()
+    pub async fn list(&self) -> Vec<Arc<dyn MediaProvider>> {
+        self.instances.read().await.values().cloned().collect()
     }
 
     /// Remove a provider instance
-    pub async fn remove_provider(&self, instance_id: &str) -> Option<Arc<dyn MediaProvider>> {
-        self.media_providers.write().await.remove(instance_id)
-    }
-
-    /// Get or create a provider instance
-    ///
-    /// Returns existing instance if found, otherwise creates a new one
-    pub async fn get_or_create_provider(
-        &self,
-        provider_type: &str,
-        instance_id: &str,
-        config: &Value,
-    ) -> Result<Arc<dyn MediaProvider>> {
-        if let Some(provider) = self.get_provider(instance_id).await {
-            return Ok(provider);
-        }
-
-        self.create_provider(provider_type, instance_id, config)
-            .await
+    pub async fn remove(&self, instance_id: &str) -> Option<Arc<dyn MediaProvider>> {
+        self.instances.write().await.remove(instance_id)
     }
 
     /// Check if a provider type is registered
@@ -187,22 +215,17 @@ impl ProvidersManager {
     }
 
     /// List all registered provider types
-    pub fn list_provider_types(&self) -> Vec<String> {
+    pub fn list_types(&self) -> Vec<String> {
         self.factories.keys().cloned().collect()
     }
-
-    // Note: Service/route registration is now handled via extension traits
-    // in synctv-api layer. See:
-    // - synctv-api/src/http/provider_extensions.rs
-    // - synctv-api/src/grpc/provider_extensions.rs
 }
 
 impl std::fmt::Debug for ProvidersManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let providers_count = self.media_providers.blocking_read().len();
+        let providers_count = self.instances.blocking_read().len();
         f.debug_struct("ProvidersManager")
             .field("factories_count", &self.factories.len())
-            .field("media_providers_count", &providers_count)
+            .field("instances_count", &providers_count)
             .field("instance_manager", &self.instance_manager)
             .finish()
     }

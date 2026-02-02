@@ -257,11 +257,18 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
     }
 }
 
-/// Self-register Bilibili gRPC service on module load
-pub fn init() {
-    super::register_service_builder(|app_state, router| {
-        tracing::info!("Registering Bilibili provider gRPC service");
-        let service = BilibiliProviderGrpcService::new(app_state);
-        router.add_service(BilibiliProviderServiceServer::new(service))
-    });
+/// Register Bilibili gRPC service
+///
+/// # Arguments
+/// - `app_state`: Application state
+/// - `router`: Tonic router to add service to
+///
+/// # Returns
+/// Router with Bilibili service added
+pub fn register_service(
+    app_state: Arc<AppState>,
+    router: Router,
+) -> Router {
+    let service = BilibiliProviderGrpcService::new(app_state);
+    router.add_service(BilibiliProviderServiceServer::new(service))
 }

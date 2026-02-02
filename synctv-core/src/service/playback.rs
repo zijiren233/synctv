@@ -4,11 +4,12 @@
 //! and media switching with optimistic locking for concurrent updates.
 
 use crate::{
-    models::{RoomId, UserId, MediaId, PermissionBits, RoomPlaybackState},
-    repository::RoomPlaybackStateRepository,
+    models::{RoomId, UserId, MediaId, PermissionBits, RoomPlaybackState, RoomSettings, PlayMode, AutoPlaySettings},
+    repository::{RoomPlaybackStateRepository, MediaRepository},
     service::{permission::PermissionService, media::MediaService},
     Error, Result,
 };
+use rand::seq::{IteratorRandom, SliceRandom};
 
 /// Playback management service
 ///
@@ -18,6 +19,7 @@ pub struct PlaybackService {
     playback_repo: RoomPlaybackStateRepository,
     permission_service: PermissionService,
     media_service: MediaService,
+    media_repo: MediaRepository,
 }
 
 impl std::fmt::Debug for PlaybackService {
@@ -32,11 +34,13 @@ impl PlaybackService {
         playback_repo: RoomPlaybackStateRepository,
         permission_service: PermissionService,
         media_service: MediaService,
+        media_repo: MediaRepository,
     ) -> Self {
         Self {
             playback_repo,
             permission_service,
             media_service,
+            media_repo,
         }
     }
 
@@ -137,6 +141,193 @@ impl PlaybackService {
             state.version += 1;
         })
         .await
+    }
+
+    /// Play next media in playlist (auto-play next episode)
+    ///
+    /// This is called when current media finishes playing.
+    /// Returns the new playback state if successful, or None if there's no next media.
+    pub async fn play_next(
+        &self,
+        room_id: &RoomId,
+        settings: &RoomSettings,
+    ) -> Result<Option<RoomPlaybackState>> {
+        // Use new auto_play settings, falling back to legacy fields for compatibility
+        let (enabled, mode) = if settings.auto_play.enabled || settings.auto_play_next {
+            let mode = settings.auto_play.mode;
+            let enabled = settings.auto_play.enabled || settings.auto_play_next;
+
+            // If legacy fields suggest a different mode than the new setting, use legacy
+            let mode = if settings.loop_playlist {
+                PlayMode::RepeatAll
+            } else if settings.shuffle_playlist {
+                PlayMode::Shuffle
+            } else {
+                mode
+            };
+
+            (enabled, mode)
+        } else {
+            (false, PlayMode::Sequential)
+        };
+
+        if !enabled {
+            return Ok(None);
+        }
+
+        // Get current state
+        let state = self.get_state(room_id).await?;
+
+        // Get playlist
+        let playlist = self.media_repo.get_playlist(room_id).await?;
+
+        if playlist.is_empty() {
+            return Ok(None);
+        }
+
+        // Handle different play modes
+        let next_media = match mode {
+            PlayMode::Sequential => {
+                // Find next media by position
+                let current_pos = if let Some(ref current_id) = state.current_media_id {
+                    playlist.iter()
+                        .position(|m| &m.id == current_id)
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+
+                if current_pos + 1 < playlist.len() {
+                    Some(&playlist[current_pos + 1])
+                } else {
+                    None // End of playlist
+                }
+            }
+
+            PlayMode::RepeatOne => {
+                // Repeat current media
+                if let Some(ref current_id) = state.current_media_id {
+                    playlist.iter()
+                        .find(|m| &m.id == current_id)
+                } else {
+                    playlist.first()
+                }
+            }
+
+            PlayMode::RepeatAll => {
+                // Loop back to start
+                let current_pos = if let Some(ref current_id) = state.current_media_id {
+                    playlist.iter()
+                        .position(|m| &m.id == current_id)
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+
+                let next_pos = (current_pos + 1) % playlist.len();
+                Some(&playlist[next_pos])
+            }
+
+            PlayMode::Shuffle => {
+                // Random next media (excluding current)
+                //
+                // NOTE: This is a simplified shuffle implementation that randomly selects
+                // the next media from the playlist (excluding the current one).
+                //
+                // Pros: Simple, efficient, no additional state storage required
+                // Cons: May play some media more frequently than others
+                //
+                // For a production-grade shuffle without repeats, consider implementing
+                // Fisher-Yates shuffle algorithm with persistent state storage (Redis):
+                // 1. Shuffle the entire playlist once
+                // 2. Play through shuffled order
+                // 3. Re-shuffle when all items played
+                // See: /Volumes/workspace/rust/design/13-自动连播设计.md §3.4
+                if let Some(ref current_id) = state.current_media_id {
+                    playlist.iter()
+                        .filter(|m| &m.id != current_id)
+                        .choose(&mut rand::thread_rng())
+                } else {
+                    playlist.first()
+                }
+            }
+        };
+
+        // Switch to next media
+        if let Some(next) = next_media {
+            let new_state = self.update_state(room_id.clone(), |state| {
+                state.current_media_id = Some(next.id.clone());
+                state.position = 0.0;
+                state.is_playing = true;
+                state.updated_at = chrono::Utc::now();
+                state.version += 1;
+            }).await?;
+
+            tracing::info!(
+                room_id = %room_id.as_str(),
+                media_id = %next.id.as_str(),
+                name = %next.name,
+                mode = ?mode,
+                "Auto-played next media"
+            );
+
+            Ok(Some(new_state))
+        } else {
+            tracing::info!(
+                room_id = %room_id.as_str(),
+                mode = ?mode,
+                "Playlist ended"
+            );
+            Ok(None)
+        }
+    }
+
+    /// Check if media has ended and auto-play next if needed
+    ///
+    /// This should be called when playback position is updated.
+    /// It checks if the current position has reached or exceeded the media duration.
+    pub async fn check_and_auto_play(
+        &self,
+        room_id: &RoomId,
+        settings: &RoomSettings,
+        current_position: f64,
+    ) -> Result<Option<RoomPlaybackState>> {
+        // Use new auto_play settings with legacy fallback
+        let enabled = settings.auto_play.enabled || settings.auto_play_next;
+
+        if !enabled {
+            return Ok(None);
+        }
+
+        // Get current media to check duration
+        let state = self.get_state(room_id).await?;
+        let current_media_id = state.current_media_id;
+
+        let current_media = match current_media_id {
+            Some(ref id) => self.media_service.get_media(id).await?.ok_or_else(|| {
+                Error::NotFound("Current media not found".to_string())
+            })?,
+            None => return Ok(None),
+        };
+
+        // Check if media has metadata with duration
+        let duration = if let Some(duration) = current_media.metadata.get("duration") {
+            duration.as_f64()
+        } else {
+            return Ok(None);
+        };
+
+        // Check if position is near end (within 1 second or past end)
+        if let Some(dur) = duration {
+            if current_position >= dur - 1.0 {
+                // Auto-play next media
+                self.play_next(room_id, settings).await
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     /// Update playback state with generic update function
