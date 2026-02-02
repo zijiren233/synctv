@@ -169,10 +169,10 @@ impl AdminService for AdminServiceImpl {
         }))
     }
 
-    async fn update_settings(
+    async fn set_settings(
         &self,
-        request: Request<UpdateSettingsRequest>,
-    ) -> Result<Response<UpdateSettingsResponse>, Status> {
+        request: Request<SetSettingsRequest>,
+    ) -> Result<Response<SetSettingsResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -203,7 +203,7 @@ impl AdminService for AdminServiceImpl {
         }
 
         tracing::info!("Updated {} settings in group '{}'", req.settings.len(), req.group);
-        Ok(Response::new(UpdateSettingsResponse {
+        Ok(Response::new(SetSettingsResponse {
             // Empty response
         }))
     }
@@ -342,10 +342,10 @@ impl AdminService for AdminServiceImpl {
         }))
     }
 
-    async fn update_provider_instance(
+    async fn set_provider_instance(
         &self,
-        request: Request<UpdateProviderInstanceRequest>,
-    ) -> Result<Response<UpdateProviderInstanceResponse>, Status> {
+        request: Request<SetProviderInstanceRequest>,
+    ) -> Result<Response<SetProviderInstanceResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -423,7 +423,7 @@ impl AdminService for AdminServiceImpl {
 
         tracing::info!("Updated provider instance: {}", req.name);
 
-        Ok(Response::new(UpdateProviderInstanceResponse {
+        Ok(Response::new(SetProviderInstanceResponse {
             instance: Some(self.instance_to_proto(&updated_instance)),
         }))
     }
@@ -796,10 +796,10 @@ impl AdminService for AdminServiceImpl {
         }))
     }
 
-    async fn update_user_password(
+    async fn set_user_password(
         &self,
-        request: Request<UpdateUserPasswordRequest>,
-    ) -> Result<Response<UpdateUserPasswordResponse>, Status> {
+        request: Request<SetUserPasswordRequest>,
+    ) -> Result<Response<SetUserPasswordResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -827,13 +827,13 @@ impl AdminService for AdminServiceImpl {
 
         tracing::info!("Password updated for user {} by admin", user_id.as_str());
 
-        Ok(Response::new(UpdateUserPasswordResponse { success: true }))
+        Ok(Response::new(SetUserPasswordResponse { success: true }))
     }
 
-    async fn update_user_username(
+    async fn set_user_username(
         &self,
-        request: Request<UpdateUserUsernameRequest>,
-    ) -> Result<Response<UpdateUserUsernameResponse>, Status> {
+        request: Request<SetUserUsernameRequest>,
+    ) -> Result<Response<SetUserUsernameResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -884,15 +884,15 @@ impl AdminService for AdminServiceImpl {
             updated_at: updated_user.updated_at.timestamp(),
         };
 
-        Ok(Response::new(UpdateUserUsernameResponse {
+        Ok(Response::new(SetUserUsernameResponse {
             user: Some(admin_user),
         }))
     }
 
-    async fn update_user_role(
+    async fn set_user_role(
         &self,
-        request: Request<UpdateUserRoleRequest>,
-    ) -> Result<Response<UpdateUserRoleResponse>, Status> {
+        request: Request<SetUserRoleRequest>,
+    ) -> Result<Response<SetUserRoleResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -945,7 +945,7 @@ impl AdminService for AdminServiceImpl {
             updated_at: updated_user.updated_at.timestamp(),
         };
 
-        Ok(Response::new(UpdateUserRoleResponse {
+        Ok(Response::new(SetUserRoleResponse {
             user: Some(admin_user),
         }))
     }
@@ -1243,10 +1243,10 @@ impl AdminService for AdminServiceImpl {
         Ok(Response::new(response))
     }
 
-    async fn update_room_password(
+    async fn set_room_password(
         &self,
-        request: Request<UpdateRoomPasswordRequest>,
-    ) -> Result<Response<UpdateRoomPasswordResponse>, Status> {
+        request: Request<SetRoomPasswordRequest>,
+    ) -> Result<Response<SetRoomPasswordResponse>, Status> {
         self.check_admin(&request).await?;
 
         // Get user_id from request metadata (set by interceptor)
@@ -1261,9 +1261,9 @@ impl AdminService for AdminServiceImpl {
         let req = request.into_inner();
         let response = self
             .room_service
-            .update_room_password_grpc(req, &user_id)
+            .set_room_password(req, &user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update room password: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to set room password: {}", e)))?;
 
         // Return gRPC response directly (no conversion needed)
         Ok(Response::new(response))
@@ -1736,6 +1736,7 @@ impl AdminService for AdminServiceImpl {
         let room_query_closed = synctv_core::models::RoomListQuery {
             page: 1,
             page_size: 1,
+            status: Some(synctv_core::models::RoomStatus::Banned),
             search: None,
         };
         let room_query_all = synctv_core::models::RoomListQuery {

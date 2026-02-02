@@ -11,6 +11,7 @@
 //! - All logic encapsulated in StreamMessageHandler (rate limiting, filtering, permissions)
 
 use std::sync::Arc;
+use prost::Message;
 use synctv_core::{
     models::{RoomId, UserId, PermissionBits},
     service::{ContentFilter, RateLimitConfig, RateLimiter, RoomService},
@@ -48,7 +49,23 @@ pub struct StreamMessageHandler {
     rate_limiter: Arc<RateLimiter>,
     rate_limit_config: Arc<RateLimitConfig>,
     content_filter: Arc<ContentFilter>,
-    sender: Box<dyn MessageSender>,
+    sender: Arc<dyn MessageSender>,
+}
+
+impl Clone for StreamMessageHandler {
+    fn clone(&self) -> Self {
+        Self {
+            room_id: self.room_id.clone(),
+            user_id: self.user_id.clone(),
+            username: self.username.clone(),
+            room_service: Arc::clone(&self.room_service),
+            cluster_manager: Arc::clone(&self.cluster_manager),
+            rate_limiter: Arc::clone(&self.rate_limiter),
+            rate_limit_config: Arc::clone(&self.rate_limit_config),
+            content_filter: Arc::clone(&self.content_filter),
+            sender: Arc::clone(&self.sender),
+        }
+    }
 }
 
 impl StreamMessageHandler {
@@ -62,7 +79,7 @@ impl StreamMessageHandler {
         rate_limiter: Arc<RateLimiter>,
         rate_limit_config: Arc<RateLimitConfig>,
         content_filter: Arc<ContentFilter>,
-        sender: Box<dyn MessageSender>,
+        sender: Arc<dyn MessageSender>,
     ) -> Self {
         Self {
             room_id,
@@ -81,24 +98,25 @@ impl StreamMessageHandler {
     ///
     /// This method:
     /// 1. Subscribes to cluster events and forwards them to the client
-    /// 2. Returns a receiver for incoming client messages
-    /// 3. The caller should continuously send messages through the receiver
+    /// 2. Spawns a task to handle incoming client messages
+    /// 3. Returns a sender that the caller should use to send ClientMessages to this handler
     ///
-    /// Returns a receiver that the caller should use to send ClientMessages to this handler
+    /// Returns a sender that the caller should use to send ClientMessages
     pub fn start(
         &self,
-    ) -> tokio::sync::mpsc::UnboundedReceiver<ClientMessage> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
+    ) -> tokio::sync::mpsc::UnboundedSender<ClientMessage> {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
 
         // Subscribe to cluster events and forward to client
         let room_id = self.room_id.clone();
+        let user_id = self.user_id.clone();
         let room_id_str = room_id.as_str().to_string();
-        let mut rx_events = self.cluster_manager.message_hub().subscribe(&room_id);
+        let (mut rx_events, _connection_id) = self.cluster_manager.subscribe(room_id, user_id);
         let sender = self.sender.clone();
 
         tokio::spawn(async move {
             while let Some(event) = rx_events.recv().await {
-                if let Some(msg) = Self::cluster_event_to_server_message(&event, &room_id_str) {
+                if let Some(msg) = cluster_event_to_server_message(&event, &room_id_str) {
                     if let Err(e) = sender.send(msg) {
                         tracing::error!("Failed to send message: {}", e);
                         break;
@@ -117,11 +135,11 @@ impl StreamMessageHandler {
             }
         });
 
-        rx
+        tx
     }
 
     /// Handle incoming client message with all validations
-    async fn handle_client_message(&self, msg: &ClientMessage) -> Result<(), String> {
+    pub async fn handle_client_message(&self, msg: &ClientMessage) -> Result<(), String> {
         use crate::proto::client::client_message::Message;
 
         match &msg.message {
@@ -357,9 +375,14 @@ fn cluster_event_to_server_message(
             })
         }
         ClusterEvent::SystemNotification { message, level, .. } => {
+            let code = match level {
+                synctv_cluster::sync::events::NotificationLevel::Info => "INFO",
+                synctv_cluster::sync::events::NotificationLevel::Warning => "WARNING",
+                synctv_cluster::sync::events::NotificationLevel::Error => "ERROR",
+            };
             Some(ServerMessage {
                 message: Some(Message::Error(ErrorMessage {
-                    code: level.to_string().to_uppercase(),
+                    code: code.to_string(),
                     message: message.clone(),
                 })),
             })
@@ -373,8 +396,7 @@ pub struct ProtoCodec;
 impl ProtoCodec {
     /// Encode ClientMessage to binary
     pub fn encode_client_message(msg: &ClientMessage) -> Result<Vec<u8>, String> {
-        msg.encode_to_vec()
-            .map_err(|e| format!("Failed to encode message: {}", e))
+        Ok(msg.encode_to_vec())
     }
 
     /// Decode ClientMessage from binary
@@ -385,8 +407,7 @@ impl ProtoCodec {
 
     /// Encode ServerMessage to binary
     pub fn encode_server_message(msg: &ServerMessage) -> Result<Vec<u8>, String> {
-        msg.encode_to_vec()
-            .map_err(|e| format!("Failed to encode message: {}", e))
+        Ok(msg.encode_to_vec())
     }
 
     /// Decode ServerMessage from binary

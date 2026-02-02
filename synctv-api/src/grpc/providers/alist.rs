@@ -13,7 +13,7 @@ use crate::proto::providers::alist::*;
 /// Alist Provider gRPC Service
 ///
 /// Thin wrapper that delegates to AlistApiImpl.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AlistProviderGrpcService {
     app_state: Arc<AppState>,
 }

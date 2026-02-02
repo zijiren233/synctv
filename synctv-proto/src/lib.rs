@@ -7,14 +7,14 @@
 pub mod client {
     #[allow(clippy::all)]
     #[allow(warnings)]
-    include!("synctv.client.rs");
+    include!("synctv_client.rs");
 }
 
 // Admin API
 pub mod admin {
     #[allow(clippy::all)]
     #[allow(warnings)]
-    include!("synctv.admin.rs");
+    include!("synctv_admin.rs");
 }
 
 // Providers
@@ -22,18 +22,18 @@ pub mod providers {
     pub mod bilibili {
         #[allow(clippy::all)]
         #[allow(warnings)]
-        include!("providers/synctv.provider.bilibili.rs");
+        include!("providers/synctv_provider_bilibili.rs");
     }
 
     pub mod alist {
         #[allow(clippy::all)]
         #[allow(warnings)]
-        include!("providers/synctv.provider.alist.rs");
+        include!("providers/synctv_provider_alist.rs");
     }
 
     pub mod emby {
         #[allow(clippy::all)]
         #[allow(warnings)]
-        include!("providers/synctv.provider.emby.rs");
+        include!("providers/synctv_provider_emby.rs");
     }
 }

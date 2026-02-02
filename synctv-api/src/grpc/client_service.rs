@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::str::FromStr;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
@@ -40,7 +41,7 @@ impl ClientServiceImpl {
     pub fn new(
         user_service: CoreUserService,
         room_service: CoreRoomService,
-        cluster_manager: ClusterManager,
+        cluster_manager: Arc<ClusterManager>,
         rate_limiter: RateLimiter,
         rate_limit_config: RateLimitConfig,
         content_filter: ContentFilter,
@@ -52,7 +53,7 @@ impl ClientServiceImpl {
         Self {
             user_service: Arc::new(user_service),
             room_service: Arc::new(room_service),
-            cluster_manager: Arc::new(cluster_manager),
+            cluster_manager,
             rate_limiter: Arc::new(rate_limiter),
             rate_limit_config: Arc::new(rate_limit_config),
             content_filter: Arc::new(content_filter),
@@ -344,10 +345,10 @@ impl UserService for ClientServiceImpl {
         Ok(Response::new(LogoutResponse { success: true }))
     }
 
-    async fn get_current_user(
+    async fn get_profile(
         &self,
-        request: Request<GetCurrentUserRequest>,
-    ) -> Result<Response<GetCurrentUserResponse>, Status> {
+        request: Request<GetProfileRequest>,
+    ) -> Result<Response<GetProfileResponse>, Status> {
         // Extract user_id from JWT token
         let user_id = self.get_user_id(&request)?;
 
@@ -358,7 +359,7 @@ impl UserService for ClientServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Failed to get user: {}", e)))?;
 
-        Ok(Response::new(GetCurrentUserResponse {
+        Ok(Response::new(GetProfileResponse {
             user: Some(User {
                 id: user.id.to_string(),
                 username: user.username,
@@ -369,10 +370,10 @@ impl UserService for ClientServiceImpl {
         }))
     }
 
-    async fn update_username(
+    async fn set_username(
         &self,
-        request: Request<UpdateUsernameRequest>,
-    ) -> Result<Response<UpdateUsernameResponse>, Status> {
+        request: Request<SetUsernameRequest>,
+    ) -> Result<Response<SetUsernameResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
@@ -413,15 +414,15 @@ impl UserService for ClientServiceImpl {
             created_at: updated_user.created_at.timestamp(),
         };
 
-        Ok(Response::new(UpdateUsernameResponse {
+        Ok(Response::new(SetUsernameResponse {
             user: Some(proto_user),
         }))
     }
 
-    async fn update_password(
+    async fn set_password(
         &self,
-        request: Request<UpdatePasswordRequest>,
-    ) -> Result<Response<UpdatePasswordResponse>, Status> {
+        request: Request<SetPasswordRequest>,
+    ) -> Result<Response<SetPasswordResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
@@ -468,13 +469,13 @@ impl UserService for ClientServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Failed to update password: {}", e)))?;
 
-        Ok(Response::new(UpdatePasswordResponse { success: true }))
+        Ok(Response::new(SetPasswordResponse { success: true }))
     }
 
-    async fn get_my_rooms(
+    async fn list_created_rooms(
         &self,
-        request: Request<GetMyRoomsRequest>,
-    ) -> Result<Response<GetMyRoomsResponse>, Status> {
+        request: Request<ListCreatedRoomsRequest>,
+    ) -> Result<Response<ListCreatedRoomsResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
@@ -511,16 +512,16 @@ impl UserService for ClientServiceImpl {
             })
             .collect();
 
-        Ok(Response::new(GetMyRoomsResponse {
+        Ok(Response::new(ListCreatedRoomsResponse {
             rooms: room_protos,
             total: total as i32,
         }))
     }
 
-    async fn get_joined_rooms(
+    async fn list_participated_rooms(
         &self,
-        request: Request<GetJoinedRoomsRequest>,
-    ) -> Result<Response<GetJoinedRoomsResponse>, Status> {
+        request: Request<ListParticipatedRoomsRequest>,
+    ) -> Result<Response<ListParticipatedRoomsResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
@@ -541,18 +542,13 @@ impl UserService for ClientServiceImpl {
         // Convert to proto format
         let room_with_roles: Vec<RoomWithRole> = rooms_with_details
             .into_iter()
-            .map(|(room, permissions, member_count)| {
-                // Determine role based on creator status and permissions
-                let role = if room.created_by == user_id {
-                    "creator"
-                } else if permissions == synctv_core::models::Role::Admin.permissions() {
-                    "admin"
-                } else if permissions == synctv_core::models::Role::Member.permissions() {
-                    "member"
-                } else if permissions == synctv_core::models::Role::Guest.permissions() {
-                    "guest"
-                } else {
-                    "member"
+            .map(|(room, role, _status, member_count)| {
+                // Convert RoomRole to string
+                let role_str = match role {
+                    synctv_core::models::RoomRole::Creator => "creator",
+                    synctv_core::models::RoomRole::Admin => "admin",
+                    synctv_core::models::RoomRole::Member => "member",
+                    synctv_core::models::RoomRole::Guest => "guest",
                 };
 
                 let room_proto = Room {
@@ -572,13 +568,13 @@ impl UserService for ClientServiceImpl {
 
                 RoomWithRole {
                     room: Some(room_proto),
-                    permissions: permissions.0,
-                    role: role.to_string(),
+                    permissions: role.permissions().0,
+                    role: role_str.to_string(),
                 }
             })
             .collect();
 
-        Ok(Response::new(GetJoinedRoomsResponse {
+        Ok(Response::new(ListParticipatedRoomsResponse {
             rooms: room_with_roles,
             total: total as i32,
         }))
@@ -769,8 +765,8 @@ impl RoomService for ClientServiceImpl {
             .map(|m| RoomMember {
                 room_id: m.room_id.as_str().to_string(),
                 user_id: m.user_id.as_str().to_string(),
-                username: m.username,
-                permissions: m.permissions.0,
+                username: m.username.clone(),
+                permissions: m.effective_permissions(None).0,
                 joined_at: m.joined_at.timestamp(),
                 is_online: m.is_online,
             })
@@ -826,10 +822,10 @@ impl RoomService for ClientServiceImpl {
         Ok(Response::new(DeleteRoomResponse { success: true }))
     }
 
-    async fn update_room_settings(
+    async fn set_room_settings(
         &self,
-        request: Request<UpdateRoomSettingsRequest>,
-    ) -> Result<Response<UpdateRoomSettingsResponse>, Status> {
+        request: Request<SetRoomSettingsRequest>,
+    ) -> Result<Response<SetRoomSettingsResponse>, Status> {
         // Extract user_id from JWT token
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
@@ -843,15 +839,15 @@ impl RoomService for ClientServiceImpl {
             RoomSettings::default()
         };
 
-        // Update settings
+        // Set settings
         let updated_room = self
             .room_service
-            .update_settings(room_id.clone(), user_id, settings)
+            .set_settings(room_id.clone(), user_id, settings)
             .await
             .map_err(|e| match e {
                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
                 synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-                _ => Status::internal("Failed to update room settings"),
+                _ => Status::internal("Failed to set room settings"),
             })?;
 
         // Get member count
@@ -861,7 +857,7 @@ impl RoomService for ClientServiceImpl {
             .await
             .unwrap_or(0);
 
-        Ok(Response::new(UpdateRoomSettingsResponse {
+        Ok(Response::new(SetRoomSettingsResponse {
             room: Some(Room {
                 id: updated_room.id.to_string(),
                 name: updated_room.name,
@@ -898,8 +894,8 @@ impl RoomService for ClientServiceImpl {
             .map(|m| RoomMember {
                 room_id: room_id.to_string(),
                 user_id: m.user_id.to_string(),
-                username: m.username,
-                permissions: m.permissions.0,
+                username: m.username.clone(),
+                permissions: m.effective_permissions(None).0,
                 joined_at: m.joined_at.timestamp(),
                 is_online: m.is_online,
             })
@@ -910,30 +906,32 @@ impl RoomService for ClientServiceImpl {
         }))
     }
 
-    async fn update_member_permission(
+    async fn set_member_permission(
         &self,
-        request: Request<UpdateMemberPermissionRequest>,
-    ) -> Result<Response<UpdateMemberPermissionResponse>, Status> {
+        request: Request<SetMemberPermissionRequest>,
+    ) -> Result<Response<SetMemberPermissionResponse>, Status> {
         // Extract user_id from JWT token
         let user_id = self.get_user_id(&request)?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let target_user_id = UserId::from_string(req.user_id);
 
-        // Update permissions
+        // Set permissions
+        // TODO: This needs proper handling of added vs removed permissions
         let member = self
             .room_service
-            .update_member_permission(
+            .set_member_permission(
                 room_id.clone(),
                 user_id,
                 target_user_id.clone(),
-                PermissionBits(req.permissions),
+                Some(req.permissions),
+                None, // No removed permissions for now
             )
             .await
             .map_err(|e| match e {
                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
                 synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-                _ => Status::internal("Failed to update member permission"),
+                _ => Status::internal("Failed to set member permission"),
             })?;
 
         // Get username
@@ -944,12 +942,12 @@ impl RoomService for ClientServiceImpl {
             .map(|u| u.username)
             .unwrap_or_default();
 
-        Ok(Response::new(UpdateMemberPermissionResponse {
+        Ok(Response::new(SetMemberPermissionResponse {
             member: Some(RoomMember {
                 room_id: room_id.to_string(),
                 user_id: member.user_id.to_string(),
                 username,
-                permissions: member.permissions.0,
+                permissions: member.effective_permissions(None).0,
                 joined_at: member.joined_at.timestamp(),
                 is_online: false,
             }),
@@ -979,28 +977,6 @@ impl RoomService for ClientServiceImpl {
 
         Ok(Response::new(KickMemberResponse { success: true }))
     }
-}
-
-/// gRPC message sender for StreamMessageHandler
-struct GrpcMessageSender {
-    sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
-}
-
-impl GrpcMessageSender {
-    fn new(sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>) -> Self {
-        Self { sender }
-    }
-}
-
-impl MessageSender for GrpcMessageSender {
-    fn send(&self, message: crate::proto::client::ServerMessage) -> Result<(), String> {
-        self.sender
-            .send(message)
-            .map_err(|e| format!("Failed to send message: {}", e))
-    }
-}
-
-impl RoomService for ClientServiceImpl {
     type MessageStreamStream = std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<ServerMessage, Status>> + Send + 'static>,
     >;
@@ -1066,13 +1042,13 @@ impl RoomService for ClientServiceImpl {
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel::<ServerMessage>();
 
         // Create gRPC message sender
-        let grpc_sender = Box::new(GrpcMessageSender::new(outgoing_tx.clone()));
+        let grpc_sender = Arc::new(GrpcMessageSender::new(outgoing_tx.clone()));
 
         // Create StreamMessageHandler with all configuration
         let stream_handler = StreamMessageHandler::new(
             room_id.clone(),
             user_id.clone(),
-            username,
+            username.clone(),
             self.room_service.clone(),
             self.cluster_manager.clone(),
             self.rate_limiter.clone(),
@@ -1081,8 +1057,8 @@ impl RoomService for ClientServiceImpl {
             grpc_sender,
         );
 
-        // Start the handler and get receiver for incoming messages
-        let mut client_msg_rx = stream_handler.start();
+        // Start the handler and get sender for client messages
+        let client_msg_tx = stream_handler.start();
 
         // Clone for cleanup task
         let connection_id_clone = connection_id.clone();
@@ -1090,13 +1066,13 @@ impl RoomService for ClientServiceImpl {
         let cluster_manager_clone = self.cluster_manager.clone();
         let room_id_clone = room_id.clone();
         let user_id_clone = user_id.clone();
-        let username_clone = username.clone();
+        let username_clone = username;
         let outgoing_tx_clone = outgoing_tx.clone();
 
         // Spawn task to handle incoming client messages
         tokio::spawn(async move {
             while let Ok(Some(client_msg)) = client_stream.message().await {
-                if let Err(e) = client_msg_rx.send(client_msg) {
+                if let Err(e) = client_msg_tx.send(client_msg) {
                     tracing::error!("Failed to send message to handler: {}", e);
                     break;
                 }
@@ -1205,6 +1181,25 @@ impl RoomService for ClientServiceImpl {
         Ok(Response::new(GetChatHistoryResponse {
             messages: proto_messages,
         }))
+    }
+}
+
+/// gRPC message sender for StreamMessageHandler
+struct GrpcMessageSender {
+    sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
+}
+
+impl GrpcMessageSender {
+    fn new(sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>) -> Self {
+        Self { sender }
+    }
+}
+
+impl MessageSender for GrpcMessageSender {
+    fn send(&self, message: ServerMessage) -> Result<(), String> {
+        self.sender
+            .send(message)
+            .map_err(|e| format!("Failed to send message: {}", e))
     }
 }
 
@@ -1374,7 +1369,7 @@ async fn handle_client_message_with_rate_limit(
 
             // Check if user is in the room
             room_service
-                .check_permission(stream_handler.get_room_id(), stream_handler.get_user_id(), PermissionBits::SEND_CHAT)
+                .check_permission(stream_handler.get_room_id(), &stream_handler.get_user_id(), PermissionBits::SEND_CHAT)
                 .await
                 .map_err(|e| Status::permission_denied(e.to_string()))?;
 
@@ -1409,7 +1404,7 @@ async fn handle_client_message_with_rate_limit(
 
             // Check permission
             room_service
-                .check_permission(stream_handler.get_room_id(), stream_handler.get_user_id(), PermissionBits::SEND_DANMAKU)
+                .check_permission(stream_handler.get_room_id(), &stream_handler.get_user_id(), PermissionBits::SEND_DANMAKU)
                 .await
                 .map_err(|e| Status::permission_denied(e.to_string()))?;
 
@@ -1458,15 +1453,25 @@ impl MediaService for ClientServiceImpl {
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
 
-        let provider = if req.provider.is_empty() {
-            ProviderType::DirectUrl
+        let provider_instance_name = if req.provider.is_empty() {
+            String::new()
         } else {
-            ProviderType::from_str(&req.provider).unwrap_or(ProviderType::DirectUrl)
+            req.provider.clone()
+        };
+
+        let source_config = serde_json::json!({
+            "url": req.url.clone()
+        });
+
+        let title = if req.title.is_empty() {
+            req.url.clone()
+        } else {
+            req.title.clone()
         };
 
         let media = self
             .room_service
-            .add_media(room_id, user_id, req.url.clone(), provider, req.url)
+            .add_media(room_id, user_id, provider_instance_name, source_config, title)
             .await
             .map_err(|e| match e {
                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
@@ -1477,13 +1482,15 @@ impl MediaService for ClientServiceImpl {
         let proto_media = Some(Media {
             id: media.id.as_str().to_string(),
             room_id: media.room_id.as_str().to_string(),
-            url: media.url,
-            provider: media.provider.as_str().to_string(),
-            title: media.title,
+            url: String::new(), // Deprecated: Use source_config instead
+            provider: media.source_provider.clone(),
+            title: media.name.clone(),
             metadata: serde_json::to_vec(&media.metadata).unwrap_or_default(),
             position: media.position,
             added_at: media.added_at.timestamp(),
-            added_by: media.added_by.as_str().to_string(),
+            added_by: media.creator_id.as_str().to_string(),
+            provider_instance_name: media.provider_instance_name.unwrap_or_default(),
+            source_config: serde_json::to_vec(&media.source_config).unwrap_or_default(),
         });
 
         Ok(Response::new(AddMediaResponse { media: proto_media }))
@@ -1526,17 +1533,39 @@ impl MediaService for ClientServiceImpl {
             .map(|m| Media {
                 id: m.id.as_str().to_string(),
                 room_id: m.room_id.as_str().to_string(),
-                url: m.url,
-                provider: m.provider.as_str().to_string(),
-                title: m.title,
+                url: String::new(), // Deprecated: Use source_config instead
+                provider: m.source_provider.clone(),
+                title: m.name.clone(),
                 metadata: serde_json::to_vec(&m.metadata).unwrap_or_default(),
                 position: m.position,
                 added_at: m.added_at.timestamp(),
-                added_by: m.added_by.as_str().to_string(),
+                added_by: m.creator_id.as_str().to_string(),
+                provider_instance_name: m.provider_instance_name.unwrap_or_default(),
+                source_config: serde_json::to_vec(&m.source_config).unwrap_or_default(),
             })
             .collect();
 
-        Ok(Response::new(GetPlaylistResponse { media: proto_media }))
+        let total = proto_media.len() as i32;
+
+        // TODO: Get actual playlist info from service
+        let playlist = Some(Playlist {
+            id: String::new(),
+            room_id: room_id.as_str().to_string(),
+            name: String::new(),
+            parent_id: String::new(),
+            position: 0,
+            is_folder: false,
+            is_dynamic: false,
+            item_count: total,
+            created_at: 0,
+            updated_at: 0,
+        });
+
+        Ok(Response::new(GetPlaylistResponse {
+            playlist,
+            media: proto_media,
+            total,
+        }))
     }
 
     async fn swap_media(
@@ -1870,6 +1899,42 @@ impl MediaService for ClientServiceImpl {
             expires_at: expires_at.timestamp(),
         }))
     }
+
+    // Playlist Management (stub implementations - TODO: implement properly)
+    async fn create_playlist(
+        &self,
+        request: Request<CreatePlaylistRequest>,
+    ) -> Result<Response<CreatePlaylistResponse>, Status> {
+        Err(Status::unimplemented("Playlist management not yet implemented"))
+    }
+
+    async fn set_playlist(
+        &self,
+        request: Request<SetPlaylistRequest>,
+    ) -> Result<Response<SetPlaylistResponse>, Status> {
+        Err(Status::unimplemented("Playlist management not yet implemented"))
+    }
+
+    async fn delete_playlist(
+        &self,
+        request: Request<DeletePlaylistRequest>,
+    ) -> Result<Response<DeletePlaylistResponse>, Status> {
+        Err(Status::unimplemented("Playlist management not yet implemented"))
+    }
+
+    async fn get_playlists(
+        &self,
+        request: Request<GetPlaylistsRequest>,
+    ) -> Result<Response<GetPlaylistsResponse>, Status> {
+        Err(Status::unimplemented("Playlist management not yet implemented"))
+    }
+
+    async fn set_playing(
+        &self,
+        request: Request<SetPlayingRequest>,
+    ) -> Result<Response<SetPlayingResponse>, Status> {
+        Err(Status::unimplemented("SetPlaying not yet implemented"))
+    }
 }
 
 // ==================== PublicService Implementation ====================
@@ -2127,7 +2192,7 @@ impl EmailService for ClientServiceImpl {
 
         // Mark email as verified
         self.user_service
-            .update_email_verified(&user.id, true)
+            .set_email_verified(&user.id, true)
             .await
             .map_err(|e| Status::internal(format!("Failed to update email verification: {}", e)))?;
 
@@ -2214,7 +2279,7 @@ impl EmailService for ClientServiceImpl {
 
         // Update password
         self.user_service
-            .update_password(&user.id, &req.new_password)
+            .set_password(&user.id, &req.new_password)
             .await
             .map_err(|e| Status::internal(format!("Failed to update password: {}", e)))?;
 

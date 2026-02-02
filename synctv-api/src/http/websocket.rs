@@ -14,6 +14,7 @@ use tracing::{error, info};
 use crate::http::AppState;
 use crate::impls::messaging::{StreamMessageHandler, MessageSender, ProtoCodec};
 use synctv_core::models::{RoomId, UserId};
+use synctv_core::service::{RateLimiter, RateLimitConfig, ContentFilter};
 
 /// WebSocket message sender implementation
 struct WebSocketMessageSender {
@@ -76,30 +77,39 @@ async fn handle_socket(
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
 
     // Create WebSocket sender
-    let ws_sender = Box::new(WebSocketMessageSender::new(tx));
+    let ws_sender = Arc::new(WebSocketMessageSender::new(tx));
 
     // Create StreamMessageHandler with all configuration
     let rid = RoomId::from_string(room_id.clone());
+
+    // Create rate limiter and content filter with default config
+    // Rate limiter without Redis backend (no rate limiting for WebSocket)
+    let rate_limiter = Arc::new(RateLimiter::new(None, "ws".to_string()).unwrap());
+    let rate_limit_config = Arc::new(RateLimitConfig::default());
+    let content_filter = Arc::new(ContentFilter::new());
+
     let stream_handler = StreamMessageHandler::new(
         rid.clone(),
         user_id.clone(),
         username,
         state.room_service.clone(),
         cluster_manager,
-        state.rate_limiter.clone(),
-        state.rate_limit_config.clone(),
-        state.content_filter.clone(),
+        rate_limiter,
+        rate_limit_config,
+        content_filter,
         ws_sender,
     );
 
-    // Start the handler and get receiver for incoming messages
-    let mut client_msg_rx = stream_handler.start();
+    // Start the handler and get sender for client messages
+    let client_msg_tx = stream_handler.start();
+
+    // Split WebSocket into sender and receiver
+    let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Spawn task to handle server messages -> WebSocket
-    let mut send_socket = socket.clone();
     tokio::spawn(async move {
         while let Some(bytes) = rx.recv().await {
-            if let Err(e) = send_socket
+            if let Err(e) = ws_sender
                 .send(axum::extract::ws::Message::Binary(bytes))
                 .await
             {
@@ -110,13 +120,13 @@ async fn handle_socket(
     });
 
     // Handle WebSocket messages -> stream handler
-    while let Some(result) = socket.recv().await {
+    while let Some(result) = ws_receiver.next().await {
         match result {
             Ok(axum::extract::ws::Message::Binary(bytes)) => {
                 // Decode binary proto and send to handler
                 match ProtoCodec::decode_client_message(&bytes) {
                     Ok(client_msg) => {
-                        if let Err(e) = client_msg_rx.send(client_msg) {
+                        if let Err(e) = client_msg_tx.send(client_msg) {
                             error!("Failed to send message to handler: {}", e);
                             break;
                         }

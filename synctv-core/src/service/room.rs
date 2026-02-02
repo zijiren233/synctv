@@ -33,7 +33,7 @@ pub use synctv_proto::admin::{
     GetRoomRequest, GetRoomResponse,
     ListRoomsRequest, ListRoomsResponse,
     DeleteRoomRequest, DeleteRoomResponse,
-    UpdateRoomPasswordRequest, UpdateRoomPasswordResponse,
+    SetRoomPasswordRequest, SetRoomPasswordResponse,
     GetRoomMembersRequest, GetRoomMembersResponse,
     AdminRoom,
 };
@@ -869,7 +869,7 @@ impl RoomService {
 
         self.room_repo.update(&room).await?;
 
-        Ok(UpdateRoomPasswordResponse { success: true })
+        Ok(SetRoomPasswordResponse { success: true })
     }
 
     // ========== Admin Operations ==========

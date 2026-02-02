@@ -34,7 +34,7 @@ pub async fn update_room_settings(
 
     state
         .room_service
-        .update_settings(room_id, user_id, settings)
+        .set_settings(room_id, user_id, settings)
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
@@ -66,7 +66,7 @@ pub async fn get_room_me(
     Ok(Json(RoomMeResponse {
         room_id: room_id.as_str().to_string(),
         user_id: user_id.as_str().to_string(),
-        permissions: member.permissions.0,
+        permissions: member.effective_permissions(None).0,
     }))
 }
 

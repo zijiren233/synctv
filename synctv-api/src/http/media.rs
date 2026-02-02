@@ -2,6 +2,8 @@
 //!
 //! Handles all playlist operations including adding, editing, removing,
 //! reordering, and retrieving media items.
+//!
+//! Uses gRPC proto types for all requests/responses to maintain consistency.
 
 use axum::{
     extract::{Path, Query, State},
@@ -11,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::http::{AppState, AppResult};
+use crate::proto::client::{Media, GetPlaylistResponse, GetPlaybackStateResponse};
+use crate::impls::client::media_to_proto;
 use synctv_core::{
     models::{MediaId, RoomId, UserId},
 };
@@ -27,7 +31,7 @@ pub async fn get_playing_media(
         .get_playing_media(&room_id)
         .await?;
 
-    let response = media.map(|m| media_to_response(&m));
+    let response = media.map(|m| media_to_proto(&m));
     Ok(Json(response))
 }
 
@@ -48,11 +52,13 @@ pub async fn get_playlist(
         .get_playlist_paginated(&room_id, page, page_size)
         .await?;
 
-    Ok(Json(PlaylistResponse {
-        items: playlist.into_iter().map(|m| media_to_response(&m)).collect(),
-        total,
-        page,
-        page_size,
+    // Convert to proto format
+    let media_list: Vec<Media> = playlist.into_iter().map(|m| media_to_proto(&m)).collect();
+
+    Ok(Json(GetPlaylistResponse {
+        playlist: None, // TODO: Get actual playlist info
+        media: media_list,
+        total: total as i32,
     }))
 }
 
@@ -90,7 +96,7 @@ pub async fn add_media(
         .add_media(room_id, user_id, provider_instance_name, source_config, title)
         .await?;
 
-    Ok(Json(media_to_response(&media)))
+    Ok(Json(media_to_proto(&media)))
 }
 
 /// Add multiple media items to playlist
@@ -132,7 +138,7 @@ pub async fn add_media_batch(
         media_items.push(media);
     }
 
-    Ok(Json(media_items.into_iter().map(|m| media_to_response(&m)).collect::<Vec<_>>()))
+    Ok(Json(media_items.into_iter().map(|m| media_to_proto(&m)).collect::<Vec<_>>()))
 }
 
 /// Edit media item
@@ -151,7 +157,7 @@ pub async fn edit_media(
         .edit_media(room_id, user_id, media_id, req.title, req.metadata)
         .await?;
 
-    Ok(Json(media_to_response(&media)))
+    Ok(Json(media_to_proto(&media)))
 }
 
 /// Delete media item
@@ -227,7 +233,20 @@ pub async fn set_playing_media(
         .set_playing_media(room_id, user_id, media_id)
         .await?;
 
-    Ok(Json(playback_state_to_response(&state)))
+    // Convert to proto PlaybackState
+    let proto_state = crate::proto::client::PlaybackState {
+        room_id: state.room_id.as_str().to_string(),
+        playing_media_id: state.playing_media_id.map(|id| id.as_str().to_string()).unwrap_or_default(),
+        position: state.position,
+        speed: state.speed,
+        is_playing: state.is_playing,
+        updated_at: state.updated_at.timestamp(),
+        version: 0,
+    };
+
+    Ok(Json(crate::proto::client::GetPlaybackStateResponse {
+        playback_state: Some(proto_state),
+    }))
 }
 
 // ============== Request/Response Types ==============
@@ -236,14 +255,6 @@ pub async fn set_playing_media(
 pub struct PlaylistQuery {
     pub page: Option<i32>,
     pub page_size: Option<i32>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PlaylistResponse {
-    pub items: Vec<MediaResponse>,
-    pub total: i64,
-    pub page: i32,
-    pub page_size: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -289,55 +300,4 @@ pub struct SwapMediaRequest {
     pub user_id: String,
     pub media_id1: String,
     pub media_id2: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MediaResponse {
-    pub id: String,
-    pub room_id: String,
-    pub name: String,
-    pub url: String,
-    pub provider: String,
-    pub position: i32,
-    pub added_at: i64,
-    pub added_by: String,
-    pub metadata: serde_json::Value,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PlaybackStateResponse {
-    pub is_playing: bool,
-    pub current_time: f64,
-    pub playback_rate: f64,
-    pub playing_media_id: Option<String>,
-}
-
-// ============== Helper Functions ==============
-
-fn media_to_response(media: &synctv_core::models::Media) -> MediaResponse {
-    // Try to extract URL from source_config
-    let url = media.source_config.get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| String::new());
-
-    MediaResponse {
-        id: media.id.as_str().to_string(),
-        room_id: media.room_id.as_str().to_string(),
-        name: media.name.clone(),
-        url,
-        provider: media.source_provider.clone(),
-        position: media.position,
-        added_at: media.added_at.timestamp(),
-        added_by: media.creator_id.as_str().to_string(),
-        metadata: media.metadata.clone(),
-    }
-}
-
-fn playback_state_to_response(state: &synctv_core::models::RoomPlaybackState) -> PlaybackStateResponse {
-    PlaybackStateResponse {
-        is_playing: state.is_playing,
-        current_time: state.current_time,
-        playback_rate: state.playback_rate,
-        playing_media_id: state.playing_media_id.map(|id| id.as_str().to_string()),
-    }
 }

@@ -13,7 +13,7 @@ use crate::proto::providers::bilibili::*;
 /// Bilibili Provider gRPC Service
 ///
 /// Thin wrapper that delegates to BilibiliApiImpl.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BilibiliProviderGrpcService {
     app_state: Arc<AppState>,
 }

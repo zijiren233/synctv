@@ -204,21 +204,20 @@ pub async fn get_joined_rooms(
 
     let response = rooms_with_details
         .into_iter()
-        .map(|(room, permissions, member_count)| {
-            let role = if room.created_by == auth.user_id {
-                "creator".to_string()
-            } else if permissions == synctv_core::models::Role::Admin.permissions() {
-                "admin".to_string()
-            } else {
-                "member".to_string()
-            };
+        .map(|(room, role, status, member_count)| {
+            let role_str = match role {
+                synctv_core::models::RoomRole::Creator => "creator",
+                synctv_core::models::RoomRole::Admin => "admin",
+                synctv_core::models::RoomRole::Member => "member",
+                synctv_core::models::RoomRole::Guest => "guest",
+            }.to_string();
 
             UserRoomItem {
                 id: room.id.as_str().to_string(),
                 name: room.name,
                 created_at: room.created_at.to_rfc3339(),
                 member_count,
-                role,
+                role: role_str,
             }
         })
         .collect();

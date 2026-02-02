@@ -29,19 +29,19 @@ async fn list_instances(State(state): State<AppState>) -> impl IntoResponse {
 
 /// Convert ProviderError to HTTP response
 pub fn error_response(e: ProviderError) -> (StatusCode, Json<serde_json::Value>) {
-    let (status, message) = match e {
-        ProviderError::NetworkError(msg) => (StatusCode::BAD_GATEWAY, msg),
-        ProviderError::ApiError(msg) => (StatusCode::BAD_GATEWAY, msg),
-        ProviderError::ParseError(msg) => (StatusCode::BAD_REQUEST, msg),
-        ProviderError::InvalidConfig(msg) => (StatusCode::BAD_REQUEST, msg),
-        ProviderError::NotFound => (StatusCode::NOT_FOUND, "Resource not found".to_string()),
-        ProviderError::InstanceNotFound(msg) => (StatusCode::NOT_FOUND, msg),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    let (status, message, details) = match &e {
+        ProviderError::NetworkError(msg) => (StatusCode::BAD_GATEWAY, msg.clone(), msg.clone()),
+        ProviderError::ApiError(msg) => (StatusCode::BAD_GATEWAY, msg.clone(), msg.clone()),
+        ProviderError::ParseError(msg) => (StatusCode::BAD_REQUEST, msg.clone(), msg.clone()),
+        ProviderError::InvalidConfig(msg) => (StatusCode::BAD_REQUEST, msg.clone(), msg.clone()),
+        ProviderError::NotFound => (StatusCode::NOT_FOUND, "Resource not found".to_string(), "Resource not found".to_string()),
+        ProviderError::InstanceNotFound(msg) => (StatusCode::NOT_FOUND, msg.clone(), msg.clone()),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "Provider error".to_string(), e.to_string()),
     };
 
     let body = json!({
         "error": message,
-        "details": e.to_string()
+        "details": details
     });
 
     (status, Json(body))

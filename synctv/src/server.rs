@@ -120,7 +120,8 @@ impl SyncTvServer {
         let user_service = self.services.user_service.clone();
         let room_service = self.services.room_service.clone();
         let jwt_service = self.services.jwt_service.clone();
-        let message_hub = self.services.message_hub.clone();
+        let cluster_manager = self.services.cluster_manager.clone()
+            .ok_or_else(|| anyhow::anyhow!("ClusterManager is required for gRPC server"))?;
         let redis_publish_tx = self.services.redis_publish_tx.clone();
         let rate_limiter = self.services.rate_limiter.clone();
         let rate_limit_config = self.services.rate_limit_config.clone();
@@ -142,7 +143,7 @@ impl SyncTvServer {
                 jwt_service,
                 user_service,
                 room_service,
-                message_hub,
+                cluster_manager,
                 redis_publish_tx,
                 rate_limiter,
                 rate_limit_config,

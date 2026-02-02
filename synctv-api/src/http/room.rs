@@ -130,6 +130,11 @@ pub async fn create_room(
         max_members: req.max_members,
         chat_enabled: req.chat_enabled.unwrap_or(true),
         danmaku_enabled: req.danmaku_enabled.unwrap_or(true),
+        default_admin_permissions: 0, // Use global default
+        default_member_permissions: 0, // Use global default
+        guest_permissions: 0, // Use global default
+        require_approval: false,
+        allow_auto_join: true,
     };
 
     // Create room
@@ -731,7 +736,7 @@ pub async fn get_room_members(
 
 /// Update room settings (admin)
 #[derive(Debug, Deserialize)]
-pub struct UpdateRoomSettingsRequest {
+pub struct SetRoomSettingsRequest {
     pub require_password: Option<bool>,
     pub max_members: Option<i32>,
     pub allow_guest_join: Option<bool>,
@@ -742,11 +747,11 @@ pub struct UpdateRoomSettingsRequest {
     pub danmaku_enabled: Option<bool>,
 }
 
-pub async fn update_room_settings_admin(
+pub async fn set_room_settings_admin(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<UpdateRoomSettingsRequest>,
+    Json(req): Json<SetRoomSettingsRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let room_id = RoomId::from_string(room_id);
 

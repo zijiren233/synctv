@@ -29,7 +29,7 @@ use tonic::transport::Server;
 use tonic_reflection::server::Builder as ReflectionBuilder;
 
 use std::sync::Arc;
-use synctv_cluster::sync::{ConnectionManager, PublishRequest, RoomMessageHub};
+use synctv_cluster::sync::{ClusterManager, ConnectionManager, PublishRequest, RoomMessageHub};
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::service::auth::JwtService;
 use synctv_core::service::{
@@ -45,7 +45,7 @@ pub async fn serve(
     jwt_service: JwtService,
     user_service: Arc<CoreUserService>,
     room_service: Arc<CoreRoomService>,
-    message_hub: Arc<RoomMessageHub>,
+    cluster_manager: Arc<ClusterManager>,
     redis_publish_tx: Option<tokio::sync::mpsc::UnboundedSender<PublishRequest>>,
     rate_limiter: RateLimiter,
     rate_limit_config: RateLimitConfig,
@@ -83,11 +83,13 @@ pub async fn serve(
     let room_service_clone =
         Arc::try_unwrap(room_service_for_client).unwrap_or_else(|arc| (*arc).clone());
 
+    // Extract message_hub reference before moving cluster_manager
+    let message_hub_from_cluster = cluster_manager.message_hub().clone();
+
     let client_service = ClientServiceImpl::new(
         user_service_clone,
         room_service_clone,
-        (*message_hub).clone(),
-        redis_publish_tx.clone(),
+        cluster_manager,
         rate_limiter,
         rate_limit_config,
         content_filter,
@@ -179,8 +181,8 @@ pub async fn serve(
             alist_provider,
             bilibili_provider,
             emby_provider,
-            message_hub: message_hub.clone(),
-            cluster_manager: None, // gRPC doesn't use cluster_manager directly
+            cluster_manager: None, // gRPC doesn't expose cluster_manager to HTTP
+            message_hub: message_hub_from_cluster,
             jwt_service: jwt_service_for_provider,
             redis_publish_tx: redis_publish_tx.clone(),
             oauth2_service: None,

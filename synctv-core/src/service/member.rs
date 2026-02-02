@@ -193,7 +193,7 @@ impl MemberService {
         let new_added = current_added | permission;
 
         // Update
-        self.update_member_permissions(room_id, granter_id, target_user_id, Some(new_added), member.removed_permissions)
+        self.set_member_permissions(room_id, granter_id, target_user_id, Some(new_added), member.removed_permissions)
             .await
     }
 
@@ -217,7 +217,7 @@ impl MemberService {
         let new_removed = current_removed | permission;
 
         // Update
-        self.update_member_permissions(room_id, granter_id, target_user_id, member.added_permissions, Some(new_removed))
+        self.set_member_permissions(room_id, granter_id, target_user_id, member.added_permissions, Some(new_removed))
             .await
     }
 

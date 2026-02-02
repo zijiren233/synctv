@@ -149,7 +149,7 @@ pub async fn confirm_email(
     // Mark email as verified
     state
         .user_service
-        .update_email_verified(&user.id, true)
+        .set_email_verified(&user.id, true)
         .await
         .map_err(|e| AppError::internal_server_error(&format!("Failed to update email verification: {}", e)))?;
 
@@ -247,7 +247,7 @@ pub async fn confirm_password_reset(
     // Update password using UserService
     state
         .user_service
-        .update_password(&user.id, &req.new_password)
+        .set_password(&user.id, &req.new_password)
         .await
         .map_err(|e| AppError::internal_server_error(&format!("Failed to update password: {}", e)))?;
 

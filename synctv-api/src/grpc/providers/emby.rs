@@ -13,7 +13,7 @@ use crate::proto::providers::emby::*;
 /// Emby Provider gRPC Service
 ///
 /// Thin wrapper that delegates to EmbyApiImpl.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EmbyProviderGrpcService {
     app_state: Arc<AppState>,
 }

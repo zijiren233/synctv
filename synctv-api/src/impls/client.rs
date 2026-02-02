@@ -58,24 +58,24 @@ impl ClientApiImpl {
         Err("Not implemented".to_string())
     }
 
-    pub async fn get_current_user(
+    pub async fn get_profile(
         &self,
         user_id: &str,
-    ) -> Result<crate::proto::client::GetCurrentUserResponse, String> {
+    ) -> Result<crate::proto::client::GetProfileResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let user = self.user_service.get_user(&uid).await
             .map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::client::GetCurrentUserResponse {
+        Ok(crate::proto::client::GetProfileResponse {
             user: Some(user_to_proto(&user)),
         })
     }
 
-    pub async fn update_username(
+    pub async fn set_username(
         &self,
         user_id: &str,
-        req: crate::proto::client::UpdateUsernameRequest,
-    ) -> Result<crate::proto::client::UpdateUsernameResponse, String> {
+        req: crate::proto::client::SetUsernameRequest,
+    ) -> Result<crate::proto::client::SetUsernameResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let user = self.user_service.get_user(&uid).await
             .map_err(|e| e.to_string())?;
@@ -88,21 +88,21 @@ impl ClientApiImpl {
         let result_user = self.user_service.update_user(&updated_user).await
             .map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::client::UpdateUsernameResponse {
+        Ok(crate::proto::client::SetUsernameResponse {
             user: Some(user_to_proto(&result_user)),
         })
     }
 
-    pub async fn update_password(
+    pub async fn set_password(
         &self,
         user_id: &str,
-        req: crate::proto::client::UpdatePasswordRequest,
-    ) -> Result<crate::proto::client::UpdatePasswordResponse, String> {
+        req: crate::proto::client::SetPasswordRequest,
+    ) -> Result<crate::proto::client::SetPasswordResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
-        self.user_service.update_password(&uid, &req.new_password).await
+        self.user_service.set_password(&uid, &req.new_password).await
             .map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::client::UpdatePasswordResponse {
+        Ok(crate::proto::client::SetPasswordResponse {
             success: true,
         })
     }
@@ -128,14 +128,28 @@ impl ClientApiImpl {
     pub async fn get_joined_rooms(
         &self,
         user_id: &str,
-    ) -> Result<crate::proto::client::GetJoinedRoomsResponse, String> {
+    ) -> Result<crate::proto::client::ListParticipatedRoomsResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let (rooms, total) = self.room_service.list_joined_rooms_with_details(&uid, 1, 100).await
             .map_err(|e| e.to_string())?;
 
-        let room_list: Vec<_> = rooms.into_iter().map(|r| room_to_proto_basic(&r)).collect();
+        let room_list: Vec<_> = rooms.into_iter().map(|(room, role, _status, _member_count)| {
+            let role_str = match role {
+                synctv_core::models::RoomRole::Creator => "creator",
+                synctv_core::models::RoomRole::Admin => "admin",
+                synctv_core::models::RoomRole::Member => "member",
+                synctv_core::models::RoomRole::Guest => "guest",
+            };
+            let permissions = role.permissions().0;
 
-        Ok(crate::proto::client::GetJoinedRoomsResponse {
+            crate::proto::client::RoomWithRole {
+                room: Some(room_to_proto_basic(&room)),
+                permissions,
+                role: role_str.to_string(),
+            }
+        }).collect();
+
+        Ok(crate::proto::client::ListParticipatedRoomsResponse {
             rooms: room_list,
             total: total as i32,
         })
@@ -173,7 +187,7 @@ impl ClientApiImpl {
             .map_err(|e| e.to_string())?;
 
         let playback_state = self.room_service.get_playback_state(&rid).await.ok()
-            .map(playback_state_to_proto);
+            .map(|s| playback_state_to_proto(&s));
 
         Ok(crate::proto::client::GetRoomResponse {
             room: Some(room_to_proto_basic(&room)),
@@ -191,21 +205,23 @@ impl ClientApiImpl {
 
         let password = if req.password.is_empty() { None } else { Some(req.password) };
 
-        let (_room, _member, members) = self.room_service.join_room(rid, uid, password).await
+        let (_room, _member, members) = self.room_service.join_room(rid.clone(), uid, password).await
             .map_err(|e| e.to_string())?;
 
         // Get updated room and playback state
         let room = self.room_service.get_room(&rid).await
             .map_err(|e| e.to_string())?;
         let playback_state = self.room_service.get_playback_state(&rid).await.ok()
-            .map(playback_state_to_proto);
+            .map(|s| playback_state_to_proto(&s));
 
         let proto_members: Vec<_> = members.into_iter().map(|m| {
             crate::proto::client::RoomMember {
+                room_id: m.room_id.as_str().to_string(),
                 user_id: m.user_id.as_str().to_string(),
                 username: m.username.clone(),
-                role: m.role.to_string(),
-                permissions: m.permissions.0,
+                permissions: m.effective_permissions(None).0,
+                joined_at: m.joined_at.timestamp(),
+                is_online: m.is_online,
             }
         }).collect();
 
@@ -252,25 +268,30 @@ impl ClientApiImpl {
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::UpdateRoomSettingsRequest,
-    ) -> Result<crate::proto::client::UpdateRoomSettingsResponse, String> {
+        req: crate::proto::client::SetRoomSettingsRequest,
+    ) -> Result<crate::proto::client::SetRoomSettingsResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
         let settings = if !req.settings.is_empty() {
-            Some(serde_json::from_slice(&req.settings).map_err(|e| e.to_string())?)
+            serde_json::from_slice::<synctv_core::models::RoomSettings>(&req.settings)
+                .map_err(|e| e.to_string())?
         } else {
-            None
+            // Get current settings and deserialize from JsonValue
+            let room = self.room_service.get_room(&rid).await
+                .map_err(|e| e.to_string())?;
+            serde_json::from_value::<synctv_core::models::RoomSettings>(room.settings)
+                .map_err(|e| e.to_string())?
         };
 
-        self.room_service.update_settings(&rid, uid, settings).await
+        self.room_service.set_settings(rid.clone(), uid, settings).await
             .map_err(|e| e.to_string())?;
 
         // Get updated room
         let room = self.room_service.get_room(&rid).await
             .map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::client::UpdateRoomSettingsResponse {
+        Ok(crate::proto::client::SetRoomSettingsResponse {
             room: Some(room_to_proto_basic(&room)),
         })
     }
@@ -397,9 +418,26 @@ impl ClientApiImpl {
             .map_err(|e| e.to_string())?;
 
         let media: Vec<_> = media_list.into_iter().map(|m| media_to_proto(&m)).collect();
+        let total = media.len() as i32;
+
+        // TODO: Get actual playlist info
+        let playlist = Some(crate::proto::client::Playlist {
+            id: String::new(),
+            room_id: rid.as_str().to_string(),
+            name: String::new(),
+            parent_id: String::new(),
+            position: 0,
+            is_folder: false,
+            is_dynamic: false,
+            item_count: total,
+            created_at: 0,
+            updated_at: 0,
+        });
 
         Ok(crate::proto::client::GetPlaylistResponse {
+            playlist,
             media,
+            total,
         })
     }
 
@@ -465,12 +503,12 @@ impl ClientApiImpl {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
-        self.room_service.playback_service().seek(rid, uid, req.position).await
+        self.room_service.playback_service().seek(rid.clone(), uid, req.position).await
             .map_err(|e| e.to_string())?;
 
         let state = self.room_service.get_playback_state(&rid).await.ok();
         Ok(crate::proto::client::SeekResponse {
-            playback_state: state.map(playback_state_to_proto),
+            playback_state: state.map(|s| playback_state_to_proto(&s)),
         })
     }
 
@@ -486,10 +524,12 @@ impl ClientApiImpl {
 
         let proto_members: Vec<_> = members.into_iter().map(|m| {
             crate::proto::client::RoomMember {
+                room_id: m.room_id.as_str().to_string(),
                 user_id: m.user_id.as_str().to_string(),
                 username: m.username.clone(),
-                role: m.role.to_string(),
-                permissions: m.permissions.0,
+                permissions: m.effective_permissions(None).0,
+                joined_at: m.joined_at.timestamp(),
+                is_online: m.is_online,
             }
         }).collect();
 
@@ -502,15 +542,22 @@ impl ClientApiImpl {
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::UpdateMemberPermissionRequest,
-    ) -> Result<crate::proto::client::UpdateMemberPermissionResponse, String> {
+        req: crate::proto::client::SetMemberPermissionRequest,
+    ) -> Result<crate::proto::client::SetMemberPermissionResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
         let target_uid = UserId::from_string(req.user_id.clone());
 
         let permissions = synctv_core::models::PermissionBits(req.permissions);
 
-        self.room_service.update_member_permission(rid, uid, target_uid, permissions).await
+        // TODO: This needs proper handling of added vs removed permissions
+        self.room_service.set_member_permission(
+            rid.clone(),
+            uid,
+            target_uid.clone(),
+            Some(req.permissions),
+            None, // No removed permissions for now
+        ).await
             .map_err(|e| e.to_string())?;
 
         // Get updated member
@@ -520,7 +567,7 @@ impl ClientApiImpl {
             .find(|m| m.user_id == target_uid)
             .ok_or_else(|| "Member not found".to_string())?;
 
-        Ok(crate::proto::client::UpdateMemberPermissionResponse {
+        Ok(crate::proto::client::SetMemberPermissionResponse {
             member: Some(room_member_to_proto(&member)),
         })
     }
@@ -564,33 +611,35 @@ fn room_to_proto_basic(room: &synctv_core::models::Room) -> crate::proto::client
         status: room.status.as_str().to_string(),
         settings: serde_json::to_vec(&room.settings).unwrap_or_default(),
         created_at: room.created_at.timestamp(),
-        member_count: room.member_count,
+        member_count: 0, // TODO: Fetch actual member count
     }
 }
 
-fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::client::Media {
+pub fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::client::Media {
     // Try to extract URL from source_config
     let url = media.source_config.get("url")
         .and_then(|v| v.as_str())
-        .unwrap_or_else(|| String::new());
+        .unwrap_or("");
 
     crate::proto::client::Media {
         id: media.id.as_str().to_string(),
         room_id: media.room_id.as_str().to_string(),
-        url,
+        url: url.to_string(),
         provider: media.source_provider.clone(),
         title: media.name.clone(),
         metadata: serde_json::to_vec(&media.metadata).unwrap_or_default(),
         position: media.position,
         added_at: media.added_at.timestamp(),
         added_by: media.creator_id.as_str().to_string(),
+        provider_instance_name: media.provider_instance_name.clone().unwrap_or_default(),
+        source_config: serde_json::to_vec(&media.source_config).unwrap_or_default(),
     }
 }
 
 fn playback_state_to_proto(state: &synctv_core::models::RoomPlaybackState) -> crate::proto::client::PlaybackState {
     crate::proto::client::PlaybackState {
         room_id: state.room_id.as_str().to_string(),
-        playing_media_id: state.playing_media_id.map(|id| id.as_str().to_string()).unwrap_or_default(),
+        playing_media_id: state.playing_media_id.as_ref().map(|id| id.as_str().to_string()).unwrap_or_default(),
         position: state.position,
         speed: state.speed,
         is_playing: state.is_playing,
@@ -604,7 +653,7 @@ fn room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) -> cra
         room_id: member.room_id.as_str().to_string(),
         user_id: member.user_id.as_str().to_string(),
         username: member.username.clone(),
-        permissions: member.permissions.0,
+        permissions: member.effective_permissions(None).0,
         joined_at: member.joined_at.timestamp(),
         is_online: member.is_online,
     }

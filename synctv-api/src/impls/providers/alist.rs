@@ -11,7 +11,7 @@ use crate::proto::providers::alist::*;
 ///
 /// Contains all business logic for Alist operations.
 /// Methods accept grpc-generated request types and return grpc-generated response types.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AlistApiImpl {
     provider: Arc<AlistProvider>,
 }

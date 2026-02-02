@@ -39,7 +39,7 @@ use tower_http::trace::TraceLayer;
 pub use error::{AppError, AppResult};
 
 /// Shared application state
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AppState {
     pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
@@ -197,7 +197,7 @@ pub fn create_router(
         // Room admin routes
         .route(
             "/api/rooms/:room_id/admin/settings",
-            post(room::update_room_settings_admin),
+            post(room::set_room_settings_admin),
         )
         .route(
             "/api/rooms/:room_id/admin/password",
