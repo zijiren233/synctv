@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::{
     cache::UsernameCache,
-    models::{User, UserId},
+    models::{User, UserId, SignupMethod},
     models::oauth2_client::OAuth2Provider,
     repository::UserRepository,
     service::auth::{hash_password, verify_password, JwtService, TokenType},
@@ -15,7 +15,7 @@ use crate::{
 /// User service for business logic
 #[derive(Clone)]
 pub struct UserService {
-    repository: UserRepository,
+    pub(crate) repository: UserRepository,
     jwt_service: JwtService,
     blacklist_service: TokenBlacklistService,
     username_cache: UsernameCache,
@@ -73,8 +73,8 @@ impl UserService {
         // Hash password
         let password_hash = hash_password(&password).await?;
 
-        // Create user
-        let user = User::new(username.clone(), email.clone(), password_hash);
+        // Create user with email signup method
+        let user = User::new(username.clone(), email.clone(), password_hash, Some(SignupMethod::Email));
         let created_user = self.repository.create(&user).await?;
 
         // Populate username cache
@@ -153,6 +153,11 @@ impl UserService {
             .ok_or_else(|| Error::NotFound("User not found".to_string()))
     }
 
+    /// Get user by email
+    pub async fn get_by_email(&self, email: &str) -> Result<Option<User>> {
+        self.repository.get_by_email(email).await
+    }
+
     /// Update user
     pub async fn update_user(&self, user: &User) -> Result<User> {
         self.repository.update(user).await
@@ -226,8 +231,8 @@ impl UserService {
         // Hash password
         let password_hash = hash_password(&random_password).await?;
 
-        // Create user
-        let user = User::new(username.to_string(), user_email, password_hash);
+        // Create user with OAuth2 signup method
+        let user = User::new(username.to_string(), user_email, password_hash, Some(SignupMethod::OAuth2));
         let created_user = self.repository.create(&user).await?;
 
         // Populate username cache
@@ -331,7 +336,7 @@ impl UserService {
     pub async fn get_usernames(&self, user_ids: &[UserId]) -> Result<HashMap<UserId, String>> {
         // Try batch cache lookup first
         let mut result = self.username_cache.get_batch(user_ids).await?;
-        let mut missing_ids: Vec<UserId> = user_ids
+        let missing_ids: Vec<UserId> = user_ids
             .iter()
             .filter(|id| !result.contains_key(*id))
             .cloned()
@@ -356,6 +361,45 @@ impl UserService {
     /// This should be called when a user's username is changed.
     pub async fn invalidate_username_cache(&self, user_id: &UserId) -> Result<()> {
         self.username_cache.invalidate(user_id).await
+    }
+
+    /// Update user password
+    pub async fn update_password(&self, user_id: &UserId, new_password: &str) -> Result<User> {
+        // Validate new password
+        self.validate_password(new_password)?;
+
+        // Hash new password
+        let password_hash = hash_password(new_password).await?;
+
+        // Update password in database
+        let updated_user = self.repository.update_password(user_id, &password_hash).await?;
+
+        tracing::info!("Password updated for user {}", user_id.as_str());
+
+        Ok(updated_user)
+    }
+
+    /// Update user email verification status
+    pub async fn update_email_verified(&self, user_id: &UserId, email_verified: bool) -> Result<User> {
+        let updated_user = self.repository.update_email_verified(user_id, email_verified).await?;
+
+        tracing::info!(
+            "Email verification status updated to {} for user {}",
+            email_verified,
+            user_id.as_str()
+        );
+
+        Ok(updated_user)
+    }
+
+    /// Get the database pool (for creating dependent services)
+    pub fn pool(&self) -> &PgPool {
+        self.repository.pool()
+    }
+
+    /// Get the username cache (for creating dependent services)
+    pub fn username_cache(&self) -> &UsernameCache {
+        &self.username_cache
     }
 }
 

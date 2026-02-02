@@ -1,6 +1,6 @@
 //! Email verification and sending service
 //!
-//! Handles email verification code generation, sending, and verification.
+//! Handles email verification and password reset email sending.
 
 use chrono::{Duration, Utc};
 use rand::Rng;
@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::{Error, Result};
+use super::email_token::{EmailTokenService, EmailTokenType};
 
 /// Email verification error
 #[derive(Debug, thiserror::Error)]
@@ -231,6 +232,147 @@ impl EmailService {
             "Email Service Mock: To={}, Subject={}, Body={}, SMTP={}:{}",
             to, subject, body, config.smtp_host, config.smtp_port
         );
+
+        // In production, you would use lettre or similar:
+        // let email = lettre::Message::builder()
+        //     .from(format!("{} <{}>", config.from_name, config.from_email).parse()?)
+        //     .to(to.parse()?)
+        //     .subject(subject)
+        //     .body(body)?;
+        // lettre::AsyncTransport::send(&transport, &email).await?;
+
+        Ok(())
+    }
+
+    /// Send verification email
+    ///
+    /// Generates a token and sends verification email
+    /// Returns the token (for testing)
+    pub async fn send_verification_email(
+        &self,
+        email: &str,
+        token_service: &EmailTokenService,
+        user_id: &crate::models::UserId,
+    ) -> Result<String> {
+        // Validate email
+        Self::validate_email(email)?;
+
+        // Generate token
+        let token = token_service
+            .generate_token(user_id, EmailTokenType::EmailVerification)
+            .await?;
+
+        // Send email
+        if let Some(config) = &self.config {
+            if let Err(e) = self
+                .send_verification_email_impl(config, email, &token)
+                .await
+            {
+                tracing::error!("Failed to send verification email: {}", e);
+                return Err(Error::Internal(format!("Failed to send email: {}", e)));
+            }
+        } else {
+            tracing::warn!("Email service not configured, returning token directly");
+        }
+
+        tracing::info!("Sent verification email to {}", email);
+        Ok(token)
+    }
+
+    /// Send password reset email
+    ///
+    /// Generates a token and sends password reset email
+    /// Returns the token (for testing)
+    pub async fn send_password_reset_email(
+        &self,
+        email: &str,
+        token_service: &EmailTokenService,
+        user_id: &crate::models::UserId,
+    ) -> Result<String> {
+        // Validate email
+        Self::validate_email(email)?;
+
+        // Generate token
+        let token = token_service
+            .generate_token(user_id, EmailTokenType::PasswordReset)
+            .await?;
+
+        // Send email
+        if let Some(config) = &self.config {
+            if let Err(e) = self
+                .send_password_reset_email_impl(config, email, &token)
+                .await
+            {
+                tracing::error!("Failed to send password reset email: {}", e);
+                return Err(Error::Internal(format!("Failed to send email: {}", e)));
+            }
+        } else {
+            tracing::warn!("Email service not configured, returning token directly");
+        }
+
+        tracing::info!("Sent password reset email to {}", email);
+        Ok(token)
+    }
+
+    /// Send verification email implementation
+    async fn send_verification_email_impl(
+        &self,
+        config: &EmailConfig,
+        to: &str,
+        token: &str,
+    ) -> std::result::Result<(), EmailError> {
+        let subject = "Verify your SyncTV email";
+        let body = format!(
+            "Welcome to SyncTV!\n\n\
+            Please verify your email address by clicking the link below or entering the code:\n\n\
+            Verification Code: {}\n\n\
+            This code will expire in 24 hours.\n\n\
+            If you didn't create a SyncTV account, please ignore this email.\n\
+            Best regards,\n\
+            The SyncTV Team",
+            token
+        );
+
+        self.send_email_impl(config, to, subject, &body).await
+    }
+
+    /// Send password reset email implementation
+    async fn send_password_reset_email_impl(
+        &self,
+        config: &EmailConfig,
+        to: &str,
+        token: &str,
+    ) -> std::result::Result<(), EmailError> {
+        let subject = "Reset your SyncTV password";
+        let body = format!(
+            "You requested a password reset for your SyncTV account.\n\n\
+            Your password reset code is: {}\n\n\
+            This code will expire in 1 hour.\n\n\
+            If you didn't request a password reset, please ignore this email and your password will remain unchanged.\n\
+            Best regards,\n\
+            The SyncTV Team",
+            token
+        );
+
+        self.send_email_impl(config, to, subject, &body).await
+    }
+
+    /// Send email using SMTP (placeholder - would need lettre crate for actual sending)
+    #[allow(dead_code)]
+    async fn send_email_impl(
+        &self,
+        config: &EmailConfig,
+        to: &str,
+        subject: &str,
+        body: &str,
+    ) -> std::result::Result<(), EmailError> {
+        // Log the email (in production, this would use lettre or similar)
+        tracing::info!(
+            "Email Service Mock: To={}, Subject={}, Body Length={}, SMTP={}:{}",
+            to, subject, body.len(), config.smtp_host, config.smtp_port
+        );
+
+        tracing::debug!("Email body:\n{}", body);
 
         // In production, you would use lettre or similar:
         // let email = lettre::Message::builder()

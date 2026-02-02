@@ -2,11 +2,16 @@
 // HTTP/JSON REST API for backward compatibility and easier integration
 
 pub mod auth;
+pub mod email_verification;
 pub mod error;
 pub mod health;
 pub mod media;
+pub mod media_proxy;
 pub mod middleware;
+pub mod notifications;
 pub mod oauth2;
+pub mod public;
+pub mod publish_key;
 pub mod room;
 pub mod room_extra;
 pub mod user;
@@ -45,6 +50,9 @@ pub struct AppState {
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     pub settings_service: Option<Arc<synctv_core::service::SettingsService>>,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+    pub email_service: Option<Arc<synctv_core::service::EmailService>>,
+    pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
+    pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
 }
 
 /// Create the HTTP router with all routes
@@ -61,6 +69,9 @@ pub fn create_router(
     oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     settings_service: Option<Arc<synctv_core::service::SettingsService>>,
     settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+    email_service: Option<Arc<synctv_core::service::EmailService>>,
+    publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
+    notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
 ) -> axum::Router {
     let state = AppState {
         user_service,
@@ -74,11 +85,24 @@ pub fn create_router(
         oauth2_service,
         settings_service,
         settings_registry,
+        email_service,
+        publish_key_service,
+        notification_service,
     };
 
     let mut router = Router::new()
         // Health check endpoints (for monitoring probes)
         .merge(health::create_health_router())
+        // Public endpoints (no authentication required)
+        .merge(public::create_public_router())
+        // Email verification and password reset
+        .merge(email_verification::create_email_router())
+        // Publish key routes
+        .merge(publish_key::create_publish_key_router())
+        // Notification routes
+        .merge(notifications::create_notification_router())
+        // Media proxy routes
+        .merge(media_proxy::create_media_proxy_router())
         // Authentication routes
         .route("/api/auth/register", post(auth::register))
         .route("/api/auth/login", post(auth::login))
@@ -166,27 +190,3 @@ pub fn create_router(
     // Apply state to all routes (must be last)
     router.with_state(state)
 }
-
-// TODO: Re-enable provider routes when UserProviderCredentialRepository is properly implemented
-/*
-/// Build provider routes by composing individual provider routers
-///
-/// Uses registry pattern for complete decoupling:
-/// - Each provider module self-registers its routes via init()
-/// - No central code needs to know about specific provider types
-/// - Adding new providers requires zero changes here!
-fn build_provider_routes(_state: &AppState) -> Router<AppState> {
-    // Initialize all provider route modules (triggers self-registration)
-    providers::bilibili::init();
-    providers::alist::init();
-    providers::emby::init();
-
-    // Start with common routes
-    let mut router = provider_common::register_common_routes();
-
-    // Collect all registered provider routes (no knowledge of specific types!)
-    router = router.merge(providers::build_provider_routes());
-
-    router
-}
-*/

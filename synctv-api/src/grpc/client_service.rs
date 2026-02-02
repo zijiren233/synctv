@@ -15,9 +15,9 @@ use synctv_core::service::{
 
 // Use synctv_proto for all gRPC traits and types
 use synctv_proto::client::{
-    auth_service_server::AuthService, media_service_server::MediaService,
-    public_service_server::PublicService, room_service_server::RoomService,
-    user_service_server::UserService, *,
+    auth_service_server::AuthService, email_service_server::EmailService,
+    media_service_server::MediaService, public_service_server::PublicService,
+    room_service_server::RoomService, user_service_server::UserService, *,
 };
 
 /// ClientService implementation
@@ -31,6 +31,9 @@ pub struct ClientServiceImpl {
     rate_limit_config: Arc<RateLimitConfig>,
     content_filter: Arc<ContentFilter>,
     connection_manager: Arc<ConnectionManager>,
+    email_service: Option<Arc<synctv_core::service::EmailService>>,
+    email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
+    settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
 }
 
 impl ClientServiceImpl {
@@ -43,6 +46,9 @@ impl ClientServiceImpl {
         rate_limit_config: RateLimitConfig,
         content_filter: ContentFilter,
         connection_manager: ConnectionManager,
+        email_service: Option<Arc<synctv_core::service::EmailService>>,
+        email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
+        settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
     ) -> Self {
         Self {
             user_service: Arc::new(user_service),
@@ -53,6 +59,9 @@ impl ClientServiceImpl {
             rate_limit_config: Arc::new(rate_limit_config),
             content_filter: Arc::new(content_filter),
             connection_manager: Arc::new(connection_manager),
+            email_service,
+            email_token_service,
+            settings_registry,
         }
     }
 
@@ -1938,5 +1947,203 @@ impl PublicService for ClientServiceImpl {
             .collect();
 
         Ok(Response::new(GetHotRoomsResponse { rooms: hot_rooms }))
+    }
+
+    async fn get_public_settings(
+        &self,
+        _request: Request<GetPublicSettingsRequest>,
+    ) -> Result<Response<GetPublicSettingsResponse>, Status> {
+        let settings_registry = self.settings_registry.as_ref()
+            .ok_or_else(|| Status::unimplemented("Settings registry not configured"))?;
+
+        // Get values from settings registry (with fallback to defaults)
+        let signup_enabled = settings_registry.signup_enabled.get()
+            .unwrap_or(true);
+        let allow_room_creation = settings_registry.allow_room_creation.get()
+            .unwrap_or(true);
+        let max_rooms_per_user = settings_registry.max_rooms_per_user.get()
+            .unwrap_or(10);
+        let max_members_per_room = settings_registry.max_members_per_room.get()
+            .unwrap_or(100);
+
+        Ok(Response::new(GetPublicSettingsResponse {
+            signup_enabled,
+            allow_room_creation,
+            max_rooms_per_user,
+            max_members_per_room,
+        }))
+    }
+}
+
+// ==================== EmailService Implementation ====================
+#[tonic::async_trait]
+impl EmailService for ClientServiceImpl {
+    async fn send_verification_email(
+        &self,
+        request: Request<SendVerificationEmailRequest>,
+    ) -> Result<Response<SendVerificationEmailResponse>, Status> {
+        let email_service = self.email_service.as_ref()
+            .ok_or_else(|| Status::unimplemented("Email service not configured"))?;
+        let email_token_service = self.email_token_service.as_ref()
+            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+
+        let req = request.into_inner();
+
+        // Check if user exists with this email
+        let user = self
+            .user_service
+            .get_by_email(&req.email)
+            .await
+            .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
+
+        let user = match user {
+            Some(u) => u,
+            None => {
+                return Ok(Response::new(SendVerificationEmailResponse {
+                    message: "If an account exists with this email, a verification code will be sent.".to_string(),
+                }));
+            }
+        };
+
+        // Generate and send verification email
+        let token = email_service
+            .send_verification_email(&req.email, email_token_service, &user.id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to send email: {}", e)))?;
+
+        tracing::info!("Sent verification email to {}", req.email);
+
+        Ok(Response::new(SendVerificationEmailResponse {
+            message: "Verification code sent to your email".to_string(),
+        }))
+    }
+
+    async fn confirm_email(
+        &self,
+        request: Request<ConfirmEmailRequest>,
+    ) -> Result<Response<ConfirmEmailResponse>, Status> {
+        let email_token_service = self.email_token_service.as_ref()
+            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+
+        let req = request.into_inner();
+
+        // Check if user exists
+        let user = self
+            .user_service
+            .get_by_email(&req.email)
+            .await
+            .map_err(|e| Status::internal(format!("Database error: {}", e)))?
+            .ok_or_else(|| Status::not_found("User not found"))?;
+
+        // Validate token
+        let validated_user_id = email_token_service
+            .validate_token(&req.token, synctv_core::service::EmailTokenType::EmailVerification)
+            .await
+            .map_err(|e| Status::invalid_argument(format!("Invalid token: {}", e)))?;
+
+        // Verify token matches user
+        if validated_user_id != user.id {
+            return Err(Status::invalid_argument("Token does not match email"));
+        }
+
+        // Mark email as verified
+        self.user_service
+            .update_email_verified(&user.id, true)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to update email verification: {}", e)))?;
+
+        tracing::info!("Email verified for user {}", user.id.as_str());
+
+        Ok(Response::new(ConfirmEmailResponse {
+            message: "Email verified successfully".to_string(),
+            user_id: user.id.to_string(),
+        }))
+    }
+
+    async fn request_password_reset(
+        &self,
+        request: Request<RequestPasswordResetRequest>,
+    ) -> Result<Response<RequestPasswordResetResponse>, Status> {
+        let email_service = self.email_service.as_ref()
+            .ok_or_else(|| Status::unimplemented("Email service not configured"))?;
+        let email_token_service = self.email_token_service.as_ref()
+            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+
+        let req = request.into_inner();
+
+        // Check if user exists (don't reveal if not found for security)
+        let user = self
+            .user_service
+            .get_by_email(&req.email)
+            .await
+            .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
+
+        if user.is_none() {
+            // Don't reveal whether email exists
+            return Ok(Response::new(RequestPasswordResetResponse {
+                message: "If an account exists with this email, a password reset code will be sent.".to_string(),
+            }));
+        }
+
+        let user = user.unwrap();
+
+        // Generate and send reset email
+        let _token = email_service
+            .send_password_reset_email(&req.email, email_token_service, &user.id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to send email: {}", e)))?;
+
+        tracing::info!("Password reset requested for user {}", user.id.as_str());
+
+        Ok(Response::new(RequestPasswordResetResponse {
+            message: "Password reset code sent to your email".to_string(),
+        }))
+    }
+
+    async fn confirm_password_reset(
+        &self,
+        request: Request<ConfirmPasswordResetRequest>,
+    ) -> Result<Response<ConfirmPasswordResetResponse>, Status> {
+        let email_token_service = self.email_token_service.as_ref()
+            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+
+        let req = request.into_inner();
+
+        // Check if user exists
+        let user = self
+            .user_service
+            .get_by_email(&req.email)
+            .await
+            .map_err(|e| Status::internal(format!("Database error: {}", e)))?
+            .ok_or_else(|| Status::not_found("User not found"))?;
+
+        // Validate token
+        let validated_user_id = email_token_service
+            .validate_token(&req.token, synctv_core::service::EmailTokenType::PasswordReset)
+            .await
+            .map_err(|e| Status::invalid_argument(format!("Invalid token: {}", e)))?;
+
+        // Verify token matches user
+        if validated_user_id != user.id {
+            return Err(Status::invalid_argument("Token does not match email"));
+        }
+
+        // Validate new password
+        if req.new_password.len() < 8 {
+            return Err(Status::invalid_argument("Password must be at least 8 characters"));
+        }
+
+        // Update password
+        self.user_service
+            .update_password(&user.id, &req.new_password)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to update password: {}", e)))?;
+
+        tracing::info!("Password reset completed for user {}", user.id.as_str());
+
+        Ok(Response::new(ConfirmPasswordResetResponse {
+            message: "Password reset successfully".to_string(),
+            user_id: user.id.to_string(),
+        }))
     }
 }

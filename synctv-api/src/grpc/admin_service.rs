@@ -1440,18 +1440,17 @@ impl AdminService for AdminServiceImpl {
         let req = request.into_inner();
         let room_id = RoomId::from_string(req.room_id);
 
-        // Room approval is not currently used in the system
-        // In the future, this could be used for a moderation workflow
-        // where rooms must be approved before becoming visible
-
-        // Get room to return
+        // Approve the room (changes status from pending to active)
         let room = self
             .room_service
-            .get_room(&room_id)
+            .approve_room(&room_id)
             .await
-            .map_err(|e| Status::not_found(format!("Room not found: {}", e)))?;
+            .map_err(|e| {
+                tracing::error!("Failed to approve room {}: {}", room_id.as_str(), e);
+                Status::internal(format!("Failed to approve room: {}", e))
+            })?;
 
-        tracing::info!("Admin approved room {} (no-op)", room_id.as_str());
+        tracing::info!("Admin approved room {}", room_id.as_str());
 
         // Get member count
         let member_count = self

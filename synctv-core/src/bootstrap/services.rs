@@ -7,11 +7,11 @@ use tracing::{error, info, warn};
 
 use crate::{
     cache::UsernameCache,
-    repository::{UserOAuthProviderRepository, ProviderInstanceRepository, UserProviderCredentialRepository, SettingsRepository},
+    repository::{UserOAuthProviderRepository, ProviderInstanceRepository, UserProviderCredentialRepository, SettingsRepository, NotificationRepository},
     service::{
         ContentFilter, JwtService, OAuth2Service, ProviderInstanceManager, RateLimitConfig,
         RateLimiter, TokenBlacklistService, UserService, RoomService, ProvidersManager,
-        SettingsService, SettingsRegistry,
+        SettingsService, SettingsRegistry, EmailService, EmailTokenService, EmailConfig, PublishKeyService, UserNotificationService,
     },
     Config,
 };
@@ -47,6 +47,14 @@ pub struct Services {
     pub settings_service: Arc<SettingsService>,
     /// Settings registry with type-safe setting variables
     pub settings_registry: Arc<SettingsRegistry>,
+    /// Email service (optional, requires SMTP configuration)
+    pub email_service: Option<Arc<EmailService>>,
+    /// Email token service for verification codes (optional, requires SMTP configuration)
+    pub email_token_service: Option<Arc<EmailTokenService>>,
+    /// Publish key service for RTMP streaming
+    pub publish_key_service: Arc<PublishKeyService>,
+    /// User notification service
+    pub notification_service: Arc<UserNotificationService>,
 }
 
 /// Initialize all core services
@@ -166,6 +174,35 @@ pub async fn init_services(
     settings_registry.init().await?;
     info!("Settings registry initialized");
 
+    // Initialize Email service (optional - requires SMTP configuration)
+    let email_service = init_email_service(&config);
+    if email_service.is_some() {
+        info!("Email service initialized");
+    } else {
+        info!("Email service not configured (set SYNCTV_EMAIL_SMTP_HOST)");
+    }
+
+    // Initialize Email Token service (optional - requires email service)
+    let email_token_service = if email_service.is_some() {
+        Some(Arc::new(EmailTokenService::new(pool.clone())))
+    } else {
+        None
+    };
+    if email_token_service.is_some() {
+        info!("Email token service initialized");
+    } else {
+        info!("Email token service not configured (requires email service)");
+    }
+
+    // Initialize Publish Key service (for RTMP streaming)
+    let publish_key_service = PublishKeyService::with_default_ttl(jwt_service.clone());
+    info!("Publish key service initialized");
+
+    // Initialize User Notification service
+    let notification_repo = NotificationRepository::new(pool.clone());
+    let notification_service = UserNotificationService::new(notification_repo);
+    info!("User notification service initialized");
+
     Ok(Services {
         user_service: Arc::new(user_service),
         room_service: Arc::new(room_service),
@@ -181,6 +218,10 @@ pub async fn init_services(
         oauth2_service,
         settings_service,
         settings_registry: Arc::new(settings_registry),
+        email_service,
+        email_token_service,
+        publish_key_service: Arc::new(publish_key_service),
+        notification_service: Arc::new(notification_service),
     })
 }
 
@@ -301,4 +342,24 @@ fn load_jwt_service(config: &Config) -> Result<JwtService, anyhow::Error> {
             ))
         }
     }
+}
+
+/// Initialize Email service (optional - requires SMTP configuration)
+fn init_email_service(config: &Config) -> Option<Arc<EmailService>> {
+    // Check if SMTP host is configured
+    if config.email.smtp_host.is_empty() {
+        return None;
+    }
+
+    let email_config = EmailConfig {
+        smtp_host: config.email.smtp_host.clone(),
+        smtp_port: config.email.smtp_port,
+        smtp_username: config.email.smtp_username.clone(),
+        smtp_password: config.email.smtp_password.clone(),
+        from_email: config.email.from_email.clone(),
+        from_name: config.email.from_name.clone(),
+        use_tls: config.email.use_tls,
+    };
+
+    Some(Arc::new(EmailService::new(Some(email_config))))
 }

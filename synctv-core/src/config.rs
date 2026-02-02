@@ -13,6 +13,7 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub streaming: StreamingConfig,
     pub oauth2: OAuth2Config,
+    pub email: EmailConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +151,32 @@ impl Default for OAuth2Config {
     }
 }
 
+/// Email configuration for SMTP
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailConfig {
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_username: String,
+    pub smtp_password: String,
+    pub from_email: String,
+    pub from_name: String,
+    pub use_tls: bool,
+}
+
+impl Default for EmailConfig {
+    fn default() -> Self {
+        Self {
+            smtp_host: String::new(),
+            smtp_port: 587,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            from_email: String::new(),
+            from_name: "SyncTV".to_string(),
+            use_tls: true,
+        }
+    }
+}
+
 impl Config {
     /// Load configuration from multiple sources with priority:
     /// 1. Environment variables (highest priority)
@@ -221,6 +248,7 @@ mod tests {
             logging: LoggingConfig::default(),
             streaming: StreamingConfig::default(),
             oauth2: OAuth2Config::default(),
+            email: EmailConfig::default(),
         });
 
         assert!(!config.database_url().is_empty());
@@ -244,6 +272,7 @@ mod tests {
             logging: LoggingConfig::default(),
             streaming: StreamingConfig::default(),
             oauth2: OAuth2Config::default(),
+            email: EmailConfig::default(),
         };
 
         assert_eq!(config.grpc_address(), "127.0.0.1:50051");

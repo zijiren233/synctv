@@ -4,13 +4,23 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE,  -- NULL allowed (e.g., OAuth2 users without email)
     password_hash VARCHAR(255) NOT NULL,
+    signup_method VARCHAR(20),  -- NULL for legacy users, 'email' or 'oauth2' for new users
+    role VARCHAR(20) NOT NULL DEFAULT 'user',
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     permissions BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ NULL,
 
     -- Ensure email is not empty or whitespace-only
-    CONSTRAINT users_email_not_empty CHECK (email IS NULL OR length(trim(email)) > 0)
+    CONSTRAINT users_email_not_empty CHECK (email IS NULL OR length(trim(email)) > 0),
+    -- Signup method constraint (NULL allowed for legacy users)
+    CONSTRAINT users_signup_method_check CHECK (signup_method IS NULL OR signup_method IN ('email', 'oauth2')),
+    -- Role constraint
+    CONSTRAINT users_role_check CHECK (role IN ('root', 'admin', 'user')),
+    -- Status constraint
+    CONSTRAINT users_status_check CHECK (status IN ('active', 'pending', 'banned'))
 );
 
 -- Create indexes
@@ -26,6 +36,9 @@ CREATE INDEX idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NOT N
 CREATE INDEX idx_users_username_lower ON users(LOWER(username)) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_email_lower ON users(LOWER(email)) WHERE deleted_at IS NULL AND email IS NOT NULL;
 CREATE INDEX idx_users_permissions ON users(permissions, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_role ON users(role) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_status ON users(status) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_signup_method ON users(signup_method) WHERE deleted_at IS NULL;
 
 -- Create updated_at trigger
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -44,6 +57,10 @@ COMMENT ON TABLE users IS 'User accounts with soft delete support';
 COMMENT ON COLUMN users.id IS '12-character nanoid';
 COMMENT ON COLUMN users.username IS 'Unique username (NEVER reusable, even after deletion)';
 COMMENT ON COLUMN users.email IS 'User email (NULL allowed for OAuth2 users, non-empty values are unique and never reusable)';
+COMMENT ON COLUMN users.signup_method IS 'Method used to register: email or oauth2';
+COMMENT ON COLUMN users.role IS 'User role: root, admin, or user';
+COMMENT ON COLUMN users.status IS 'User status: active, pending (email verification), or banned';
+COMMENT ON COLUMN users.email_verified IS 'Whether the user email has been verified';
 COMMENT ON COLUMN users.permissions IS '64-bit permission bitmask';
 COMMENT ON COLUMN users.deleted_at IS 'Soft delete timestamp (NULL = active user)';
 COMMENT ON CONSTRAINT users_email_not_empty ON users IS 'Ensures email is either NULL or a non-empty string';

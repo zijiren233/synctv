@@ -50,6 +50,10 @@ pub struct Services {
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     pub settings_service: Arc<synctv_core::service::SettingsService>,
     pub settings_registry: Arc<synctv_core::service::SettingsRegistry>,
+    pub email_service: Option<Arc<synctv_core::service::EmailService>>,
+    pub email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
+    pub publish_key_service: Arc<synctv_core::service::PublishKeyService>,
+    pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
 }
 
 impl Services {
@@ -123,6 +127,8 @@ impl SyncTvServer {
         let user_provider_credential_repository = self.services.user_provider_credential_repository.clone();
         let settings_service = self.services.settings_service.clone();
         let settings_registry = self.services.settings_registry.clone();
+        let email_service = self.services.email_service.clone();
+        let email_token_service = self.services.email_token_service.clone();
 
         let handle = tokio::spawn(async move {
             info!("Starting gRPC server on {}...", config.grpc_address());
@@ -143,6 +149,8 @@ impl SyncTvServer {
                 user_provider_credential_repository,
                 settings_service,
                 Some(settings_registry),
+                email_service,
+                email_token_service,
             )
             .await
             {
@@ -167,6 +175,9 @@ impl SyncTvServer {
         let oauth2_service = self.services.oauth2_service.clone();
         let settings_service = self.services.settings_service.clone();
         let settings_registry = self.services.settings_registry.clone();
+        let email_service = self.services.email_service.clone();
+        let publish_key_service = self.services.publish_key_service.clone();
+        let notification_service = self.services.notification_service.clone();
 
         // Convert streaming state to HTTP state
         let streaming_state = self.streaming_state.as_ref().map(|s| synctv_stream::streaming::StreamingHttpState {
@@ -187,6 +198,9 @@ impl SyncTvServer {
             oauth2_service,
             Some(settings_service),
             Some(settings_registry),
+            email_service,
+            Some(publish_key_service),
+            notification_service,
         );
 
         let handle = tokio::spawn(async move {

@@ -2,7 +2,7 @@ use chrono::Utc;
 use sqlx::{postgres::PgRow, PgPool, Row};
 
 use crate::{
-    models::{PermissionBits, User, UserId, UserListQuery},
+    models::{PermissionBits, SignupMethod, User, UserId, UserListQuery},
     Error, Result,
 };
 
@@ -17,19 +17,25 @@ impl UserRepository {
         Self { pool }
     }
 
+    /// Get the database pool
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     /// Create a new user
     pub async fn create(&self, user: &User) -> Result<User> {
         let row = sqlx::query(
             r#"
-            INSERT INTO users (id, username, email, password_hash, permissions, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id, username, email, password_hash, permissions, created_at, updated_at, deleted_at
+            INSERT INTO users (id, username, email, password_hash, signup_method, permissions, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
             "#,
         )
         .bind(user.id.as_str())
         .bind(&user.username)
         .bind(user.email.as_ref())
         .bind(&user.password_hash)
+        .bind(user.signup_method.map(|m| m.as_str()))
         .bind(user.permissions.0)
         .bind(user.created_at)
         .bind(user.updated_at)
@@ -49,7 +55,7 @@ impl UserRepository {
     pub async fn get_by_id(&self, user_id: &UserId) -> Result<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, email, password_hash, permissions, created_at, updated_at, deleted_at
+            SELECT id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE id = $1 AND deleted_at IS NULL
             "#,
@@ -68,7 +74,7 @@ impl UserRepository {
     pub async fn get_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, email, password_hash, permissions, created_at, updated_at, deleted_at
+            SELECT id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE username = $1 AND deleted_at IS NULL
             "#,
@@ -87,7 +93,7 @@ impl UserRepository {
     pub async fn get_by_email(&self, email: &str) -> Result<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, email, password_hash, permissions, created_at, updated_at, deleted_at
+            SELECT id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE email = $1 AND deleted_at IS NULL
             "#,
@@ -109,7 +115,7 @@ impl UserRepository {
             UPDATE users
             SET username = $2, email = $3, password_hash = $4, permissions = $5, updated_at = $6
             WHERE id = $1 AND deleted_at IS NULL
-            RETURNING id, username, email, password_hash, permissions, created_at, updated_at, deleted_at
+            RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
             "#,
         )
         .bind(user.id.as_str())
@@ -139,6 +145,44 @@ impl UserRepository {
         .await?;
 
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Update user password
+    pub async fn update_password(&self, user_id: &UserId, password_hash: &str) -> Result<User> {
+        let row = sqlx::query(
+            r#"
+            UPDATE users
+            SET password_hash = $2, updated_at = $3
+            WHERE id = $1 AND deleted_at IS NULL
+            RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at
+            "#,
+        )
+        .bind(user_id.as_str())
+        .bind(password_hash)
+        .bind(Utc::now())
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_user(row)
+    }
+
+    /// Update user email verification status
+    pub async fn update_email_verified(&self, user_id: &UserId, email_verified: bool) -> Result<User> {
+        let row = sqlx::query(
+            r#"
+            UPDATE users
+            SET email_verified = $2, updated_at = $3
+            WHERE id = $1 AND deleted_at IS NULL
+            RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
+            "#,
+        )
+        .bind(user_id.as_str())
+        .bind(email_verified)
+        .bind(Utc::now())
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_user_with_email_verified(row)
     }
 
     /// List users with pagination
@@ -179,7 +223,7 @@ impl UserRepository {
         // Get users
         let list_query = format!(
             r#"
-            SELECT id, username, email, password_hash, permissions, created_at, updated_at, deleted_at
+            SELECT id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE deleted_at IS NULL {}
             ORDER BY created_at DESC
@@ -242,11 +286,41 @@ impl UserRepository {
 
     /// Convert database row to User model
     fn row_to_user(&self, row: PgRow) -> Result<User> {
+        let signup_method_str: Option<String> = row.try_get("signup_method")?;
+        let signup_method = signup_method_str.map(|s| SignupMethod::from_str(&s));
+
+        // Try to get email_verified, default to false if column doesn't exist
+        let email_verified = match row.try_get::<bool, _>("email_verified") {
+            Ok(v) => v,
+            Err(_) => false, // Default for backward compatibility
+        };
+
         Ok(User {
             id: UserId::from_string(row.try_get("id")?),
             username: row.try_get("username")?,
             email: row.try_get("email")?,
             password_hash: row.try_get("password_hash")?,
+            signup_method,
+            email_verified,
+            permissions: PermissionBits::new(row.try_get("permissions")?),
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+            deleted_at: row.try_get("deleted_at")?,
+        })
+    }
+
+    /// Convert database row to User model (with email_verified explicitly included)
+    fn row_to_user_with_email_verified(&self, row: PgRow) -> Result<User> {
+        let signup_method_str: Option<String> = row.try_get("signup_method")?;
+        let signup_method = signup_method_str.map(|s| SignupMethod::from_str(&s));
+
+        Ok(User {
+            id: UserId::from_string(row.try_get("id")?),
+            username: row.try_get("username")?,
+            email: row.try_get("email")?,
+            password_hash: row.try_get("password_hash")?,
+            signup_method,
+            email_verified: row.try_get("email_verified")?,
             permissions: PermissionBits::new(row.try_get("permissions")?),
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,

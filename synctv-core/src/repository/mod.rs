@@ -1,5 +1,7 @@
 pub mod chat;
+pub mod email_token;
 pub mod media;
+pub mod notification;
 pub mod playback;
 pub mod provider_instance;
 pub mod room;
@@ -9,7 +11,9 @@ pub mod user;
 pub mod user_oauth_provider;
 
 pub use chat::ChatRepository;
+pub use email_token::EmailTokenRepository;
 pub use media::MediaRepository;
+pub use notification::NotificationRepository;
 pub use playback::RoomPlaybackStateRepository;
 pub use provider_instance::{ProviderInstanceRepository, UserProviderCredentialRepository};
 pub use room::RoomRepository;

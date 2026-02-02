@@ -195,6 +195,10 @@ async fn main() -> Result<()> {
         oauth2_service: synctv_services.oauth2_service.clone(),
         settings_service: synctv_services.settings_service.clone(),
         settings_registry: synctv_services.settings_registry.clone(),
+        email_service: synctv_services.email_service.clone(),
+        email_token_service: synctv_services.email_token_service.clone(),
+        publish_key_service: synctv_services.publish_key_service.clone(),
+        notification_service: Some(synctv_services.notification_service.clone()),
     };
 
     let server = SyncTvServer::new(config, services, streaming_state);

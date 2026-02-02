@@ -22,6 +22,7 @@ pub fn load_config() -> Result<Config> {
             logging: crate::config::LoggingConfig::default(),
             streaming: crate::config::StreamingConfig::default(),
             oauth2: crate::config::OAuth2Config::default(),
+            email: crate::config::EmailConfig::default(),
         }
     });
 

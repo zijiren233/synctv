@@ -1,4 +1,6 @@
 pub mod auth;
+pub mod chat;
+pub mod email_token;
 pub mod oauth2;
 pub mod settings;
 pub mod settings_vars;
@@ -16,10 +18,13 @@ pub mod media;
 pub mod playback;
 pub mod publish_key;
 pub mod notification;
+pub mod user_notification;
 pub mod audit;
 pub mod email;
 
 pub use auth::{hash_password, verify_password, JwtService, TokenType, Claims};
+pub use chat::ChatService;
+pub use email_token::{EmailTokenService, EmailTokenType};
 pub use oauth2::{OAuth2Service, OAuth2State, OAuth2UserInfo};
 pub use settings::{SettingsService, SettingsChangeListener};
 pub use settings_vars::{Setting, SettingsStorage};
@@ -37,5 +42,6 @@ pub use media::MediaService;
 pub use playback::PlaybackService;
 pub use publish_key::{PublishKeyService, PublishKey};
 pub use notification::{NotificationService, RoomEvent};
+pub use user_notification::UserNotificationService;
 pub use audit::{AuditService, AuditAction, AuditTargetType, AuditLog};
 pub use email::{EmailService, EmailConfig};

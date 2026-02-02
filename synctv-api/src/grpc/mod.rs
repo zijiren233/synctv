@@ -26,9 +26,9 @@ pub use message_handler::{MessageHandler, cluster_event_to_server_message};
 // Use synctv_proto for all server traits and message types (single source of truth)
 use synctv_proto::admin_service_server::AdminServiceServer;
 use synctv_proto::client::{
-    auth_service_server::AuthServiceServer, media_service_server::MediaServiceServer,
-    public_service_server::PublicServiceServer, room_service_server::RoomServiceServer,
-    user_service_server::UserServiceServer,
+    auth_service_server::AuthServiceServer, email_service_server::EmailServiceServer,
+    media_service_server::MediaServiceServer, public_service_server::PublicServiceServer,
+    room_service_server::RoomServiceServer, user_service_server::UserServiceServer,
 };
 use tonic::transport::Server;
 use tonic_reflection::server::Builder as ReflectionBuilder;
@@ -39,7 +39,7 @@ use synctv_core::service::auth::JwtService;
 use synctv_core::service::{
     ContentFilter, ProviderInstanceManager, ProvidersManager, RateLimitConfig, RateLimiter,
     RoomService as CoreRoomService, UserService as CoreUserService, SettingsService,
-    SettingsRegistry,
+    SettingsRegistry, EmailService, EmailTokenService,
 };
 use synctv_core::Config;
 
@@ -61,6 +61,8 @@ pub async fn serve(
     user_provider_credential_repository: Arc<synctv_core::repository::UserProviderCredentialRepository>,
     settings_service: Arc<SettingsService>,
     settings_registry: Option<Arc<SettingsRegistry>>,
+    email_service: Option<Arc<EmailService>>,
+    email_token_service: Option<Arc<EmailTokenService>>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
 
@@ -92,6 +94,9 @@ pub async fn serve(
         rate_limit_config,
         content_filter,
         connection_manager,
+        email_service,
+        email_token_service,
+        settings_registry.clone(),
     );
 
     let admin_service = AdminServiceImpl::new(
@@ -129,11 +134,12 @@ pub async fn serve(
     let room_interceptor1 = auth_interceptor.clone();
     let room_interceptor2 = auth_interceptor.clone();
 
-    // Build router - register all 5 client services with appropriate interceptors
+    // Build router - register all client services with appropriate interceptors
     let client_service_clone1 = client_service.clone();
     let client_service_clone2 = client_service.clone();
     let client_service_clone3 = client_service.clone();
     let client_service_clone4 = client_service.clone();
+    let client_service_clone5 = client_service.clone();
 
     let mut router = server_builder
         // AuthService - no authentication required (public: register, login, refresh_token)
@@ -155,6 +161,8 @@ pub async fn serve(
         ))
         // PublicService - no authentication required (public room discovery)
         .add_service(PublicServiceServer::new(client_service_clone4))
+        // EmailService - no authentication required (send codes, confirm with token)
+        .add_service(EmailServiceServer::new(client_service_clone5))
         // AdminService - requires JWT authentication (inject UserContext)
         .add_service(AdminServiceServer::with_interceptor(
             admin_service,
@@ -183,6 +191,9 @@ pub async fn serve(
             oauth2_service: None, // Not used in gRPC provider services
             settings_service: Some(settings_service.clone()),
             settings_registry: None, // Not used in gRPC provider services
+            email_service: None, // Not used in gRPC provider services
+            publish_key_service: None, // Not used in gRPC provider services
+            notification_service: None, // Not used in gRPC provider services
         });
 
         // Initialize all provider modules (triggers self-registration)

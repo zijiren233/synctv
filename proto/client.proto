@@ -77,6 +77,20 @@ service PublicService {
     rpc CheckRoom(CheckRoomRequest) returns (CheckRoomResponse);
     rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
     rpc GetHotRooms(GetHotRoomsRequest) returns (GetHotRoomsResponse);
+    rpc GetPublicSettings(GetPublicSettingsRequest) returns (GetPublicSettingsResponse);
+}
+
+// ==================== Email Service ====================
+// Authentication: None for sending codes, JWT for confirmation
+// Routes: /api/email/*
+service EmailService {
+    // Email verification
+    rpc SendVerificationEmail(SendVerificationEmailRequest) returns (SendVerificationEmailResponse);
+    rpc ConfirmEmail(ConfirmEmailRequest) returns (ConfirmEmailResponse);
+
+    // Password reset
+    rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
+    rpc ConfirmPasswordReset(ConfirmPasswordResetRequest) returns (ConfirmPasswordResetResponse);
 }
 
 // Common Types
@@ -522,4 +536,56 @@ message NewPublishKeyResponse {
     string rtmp_url = 2;     // Full RTMP URL (rtmp://host:port/live)
     string stream_key = 3;   // Stream key (room_id/media_id)
     int64 expires_at = 4;    // Token expiration timestamp
+}
+
+// ==================== Public Settings ====================
+
+message GetPublicSettingsRequest {}
+
+message GetPublicSettingsResponse {
+    bool signup_enabled = 1;
+    bool allow_room_creation = 2;
+    int64 max_rooms_per_user = 3;
+    int64 max_members_per_room = 4;
+}
+
+// ==================== Email Verification ====================
+
+message SendVerificationEmailRequest {
+    string email = 1;
+}
+
+message SendVerificationEmailResponse {
+    string message = 1;
+}
+
+message ConfirmEmailRequest {
+    string email = 1;
+    string token = 2;  // Verification code from email
+}
+
+message ConfirmEmailResponse {
+    string message = 1;
+    string user_id = 2;
+}
+
+// ==================== Password Reset ====================
+
+message RequestPasswordResetRequest {
+    string email = 1;
+}
+
+message RequestPasswordResetResponse {
+    string message = 1;
+}
+
+message ConfirmPasswordResetRequest {
+    string email = 1;
+    string token = 2;       // Reset code from email
+    string new_password = 3;
+}
+
+message ConfirmPasswordResetResponse {
+    string message = 1;
+    string user_id = 2;
 }

@@ -748,6 +748,42 @@ impl RoomService {
         &self.media_service
     }
 
+    // ========== Room Management ==========
+
+    /// Approve a pending room
+    ///
+    /// Changes room status from pending to active.
+    /// Only admins can approve rooms.
+    pub async fn approve_room(&self, room_id: &RoomId) -> Result<Room> {
+        let room = self.room_repo.get_by_id(room_id).await?
+            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+
+        if !room.status.is_pending() {
+            return Err(Error::InvalidInput("Room is not pending approval".to_string()));
+        }
+
+        let updated_room = self.room_repo.update_status(room_id, RoomStatus::Active).await?;
+
+        Ok(updated_room)
+    }
+
+    /// Ban a room
+    ///
+    /// Changes room status to banned.
+    /// Only admins can ban rooms.
+    pub async fn ban_room(&self, room_id: &RoomId) -> Result<Room> {
+        let room = self.room_repo.get_by_id(room_id).await?
+            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+
+        if room.status.is_banned() {
+            return Err(Error::InvalidInput("Room is already banned".to_string()));
+        }
+
+        let updated_room = self.room_repo.update_status(room_id, RoomStatus::Banned).await?;
+
+        Ok(updated_room)
+    }
+
     /// Get reference to playback service
     pub fn playback_service(&self) -> &PlaybackService {
         &self.playback_service

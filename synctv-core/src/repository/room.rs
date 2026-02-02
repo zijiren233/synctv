@@ -3,7 +3,7 @@ use serde_json::Value as JsonValue;
 
 use crate::{
     models::{Room, RoomId, RoomStatus, UserId, RoomListQuery},
-    Result,
+    Error, Result,
 };
 
 /// Room repository for database operations
@@ -364,6 +364,27 @@ impl RoomRepository {
             updated_at: row.try_get("updated_at")?,
             deleted_at: row.try_get("deleted_at")?,
         })
+    }
+
+    /// Update room status
+    pub async fn update_status(&self, room_id: &RoomId, status: RoomStatus) -> Result<Room> {
+        let status_str = self.status_to_str(&status);
+
+        let row = sqlx::query(
+            r#"
+            UPDATE rooms
+            SET status = $1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2 AND deleted_at IS NULL
+            RETURNING id, name, created_by, status, settings, created_at, updated_at, deleted_at
+            "#,
+        )
+        .bind(status_str)
+        .bind(room_id.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Database(e))?;
+
+        self.row_to_room(row)
     }
 
     fn status_to_str(&self, status: &RoomStatus) -> &'static str {
