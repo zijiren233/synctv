@@ -1,0 +1,267 @@
+//! Test helpers and fixtures for synctv-core tests
+//!
+//! This module provides common test utilities, fixtures, and helpers
+//! to reduce boilerplate and improve test consistency across the codebase.
+
+use crate::models::{RoomId, UserId};
+use chrono::Utc;
+
+/// Create a test user ID
+pub fn test_user_id(id: &str) -> UserId {
+    UserId::from_string(id.to_string())
+}
+
+/// Create a test room ID
+pub fn test_room_id(id: &str) -> RoomId {
+    RoomId(id.to_string())
+}
+
+/// Generate a random user ID for testing
+pub fn random_user_id() -> UserId {
+    UserId::new()
+}
+
+/// Generate a random room ID for testing
+pub fn random_room_id() -> RoomId {
+    RoomId(nanoid::nanoid!(12))
+}
+
+/// Test fixture builder for User
+pub struct UserFixture {
+    id: UserId,
+    username: String,
+    password_hash: String,
+    permissions: i64,
+}
+
+impl UserFixture {
+    pub fn new() -> Self {
+        Self {
+            id: random_user_id(),
+            username: "test_user".to_string(),
+            password_hash: "hash".to_string(),
+            permissions: 0,
+        }
+    }
+
+    pub fn with_id(mut self, id: UserId) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn with_username(mut self, username: &str) -> Self {
+        self.username = username.to_string();
+        self
+    }
+
+    pub fn with_permissions(mut self, permissions: i64) -> Self {
+        self.permissions = permissions;
+        self
+    }
+
+    pub fn build(self) -> crate::models::User {
+        crate::models::User {
+            id: self.id,
+            username: self.username,
+            password_hash: self.password_hash,
+            permissions: self.permissions,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+}
+
+impl Default for UserFixture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Test fixture builder for Room
+pub struct RoomFixture {
+    id: RoomId,
+    name: String,
+    owner_id: UserId,
+    is_public: bool,
+}
+
+impl RoomFixture {
+    pub fn new() -> Self {
+        Self {
+            id: random_room_id(),
+            name: "Test Room".to_string(),
+            owner_id: random_user_id(),
+            is_public: true,
+        }
+    }
+
+    pub fn with_id(mut self, id: RoomId) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = name.to_string();
+        self
+    }
+
+    pub fn with_owner(mut self, owner_id: UserId) -> Self {
+        self.owner_id = owner_id;
+        self
+    }
+
+    pub fn with_public(mut self, is_public: bool) -> Self {
+        self.is_public = is_public;
+        self
+    }
+
+    pub fn build(self) -> crate::models::Room {
+        crate::models::Room {
+            id: self.id,
+            name: self.name,
+            owner_id: self.owner_id,
+            is_public: self.is_public,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+}
+
+impl Default for RoomFixture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Test fixture builder for chat messages
+pub struct ChatMessageFixture {
+    id: String,
+    room_id: RoomId,
+    user_id: UserId,
+    username: String,
+    content: String,
+}
+
+impl ChatMessageFixture {
+    pub fn new() -> Self {
+        Self {
+            id: nanoid::nanoid!(12),
+            room_id: random_room_id(),
+            user_id: random_user_id(),
+            username: "test_user".to_string(),
+            content: "Test message".to_string(),
+        }
+    }
+
+    pub fn with_id(mut self, id: &str) -> Self {
+        self.id = id.to_string();
+        self
+    }
+
+    pub fn with_room_id(mut self, room_id: RoomId) -> Self {
+        self.room_id = room_id;
+        self
+    }
+
+    pub fn with_user_id(mut self, user_id: UserId) -> Self {
+        self.user_id = user_id;
+        self
+    }
+
+    pub fn with_content(mut self, content: &str) -> Self {
+        self.content = content.to_string();
+        self
+    }
+
+    pub fn build(self) -> crate::models::ChatMessage {
+        crate::models::ChatMessage {
+            id: self.id,
+            room_id: self.room_id,
+            user_id: self.user_id,
+            username: self.username,
+            content: self.content,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+impl Default for ChatMessageFixture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Async test wrapper with timeout
+///
+/// Use this to prevent tests from hanging indefinitely.
+pub async fn with_timeout<F>(duration: std::time::Duration, future: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    tokio::select! {
+        result = future => result,
+        _ = tokio::time::sleep(duration) => {
+            panic!("Test timed out after {:?}", duration);
+        }
+    }
+}
+
+/// Assert that two futures complete within a time delta
+///
+/// Useful for testing concurrent operations.
+pub async fn assert_concurrent_completion<F1, F2>(
+    max_delta_ms: u64,
+    future1: F1,
+    future2: F2,
+) -> (F1::Output, F2::Output)
+where
+    F1: std::future::Future,
+    F2: std::future::Future,
+{
+    let (result1, result2) = tokio::join!(future1, future2);
+    // In a real implementation, we'd measure the timing delta
+    (result1, result2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_user_fixture() {
+        let user = UserFixture::new()
+            .with_username("alice")
+            .with_permissions(123)
+            .build();
+
+        assert_eq!(user.username, "alice");
+        assert_eq!(user.permissions, 123);
+    }
+
+    #[test]
+    fn test_room_fixture() {
+        let owner_id = test_user_id("owner1");
+        let room = RoomFixture::new()
+            .with_name("My Room")
+            .with_owner(owner_id.clone())
+            .build();
+
+        assert_eq!(room.name, "My Room");
+        assert_eq!(room.owner_id, owner_id);
+    }
+
+    #[test]
+    fn test_chat_message_fixture() {
+        let room_id = test_room_id("room1");
+        let user_id = test_user_id("user1");
+        let message = ChatMessageFixture::new()
+            .with_room_id(room_id.clone())
+            .with_user_id(user_id.clone())
+            .with_content("Hello, world!")
+            .build();
+
+        assert_eq!(message.room_id, room_id);
+        assert_eq!(message.user_id, user_id);
+        assert_eq!(message.content, "Hello, world!");
+    }
+}

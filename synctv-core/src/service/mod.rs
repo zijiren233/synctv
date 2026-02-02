@@ -21,6 +21,7 @@ pub mod notification;
 pub mod user_notification;
 pub mod audit;
 pub mod email;
+pub mod webrtc;
 
 pub use auth::{hash_password, verify_password, JwtService, TokenType, Claims};
 pub use chat::ChatService;
@@ -45,3 +46,4 @@ pub use notification::{NotificationService, RoomEvent};
 pub use user_notification::UserNotificationService;
 pub use audit::{AuditService, AuditAction, AuditTargetType, AuditLog};
 pub use email::{EmailService, EmailConfig};
+pub use webrtc::{SignalingService, WebRTCConfig, MediaType};

@@ -281,9 +281,9 @@ mod tests {
     #[test]
     fn test_filter_danmaku_html() {
         let filter = ContentFilter::new();
-        let result = filter.filter_danmaku("<script>alert(1)</script>弹幕").unwrap();
+        let result = filter.filter_danmaku("<script>alert(1)</script>Danmaku").unwrap();
         assert!(!result.contains("<script>"));
-        assert!(result.contains("弹幕"));
+        assert!(result.contains("Danmaku"));
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         // Valid usernames
         assert!(filter.validate_username("john_doe").is_ok());
         assert!(filter.validate_username("user-123").is_ok());
-        assert!(filter.validate_username("测试用户").is_ok());
+        assert!(filter.validate_username("пользователь").is_ok());
 
         // Invalid: empty
         assert!(filter.validate_username("").is_err());
@@ -339,12 +339,21 @@ mod tests {
     fn test_unicode_support() {
         let filter = ContentFilter::new();
 
-        // Should support Unicode
-        let result = filter.filter_chat("你好世界 🌍").unwrap();
-        assert_eq!(result, "你好世界 🌍");
+        // Should support Unicode (Cyrillic)
+        let result = filter.filter_chat("Привет мир 🌍").unwrap();
+        assert_eq!(result, "Привет мир 🌍");
 
-        let result = filter.filter_danmaku("弹幕测试").unwrap();
-        assert_eq!(result, "弹幕测试");
+        // Should support Unicode (Japanese)
+        let result = filter.filter_danmaku("ダンマクテスト").unwrap();
+        assert_eq!(result, "ダンマクテスト");
+
+        // Should support Unicode (Arabic)
+        let result = filter.filter_chat("مرحبا بالعالم").unwrap();
+        assert_eq!(result, "مرحبا بالعالم");
+
+        // Should support Unicode (Emoji)
+        let result = filter.filter_chat("Hello 👋 World 🌍").unwrap();
+        assert_eq!(result, "Hello 👋 World 🌍");
     }
 
     #[test]

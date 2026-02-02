@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod email_token;
+pub mod filter;
 pub mod media;
 pub mod notification;
 pub mod playback;
@@ -12,6 +13,7 @@ pub mod user_oauth_provider;
 
 pub use chat::ChatRepository;
 pub use email_token::EmailTokenRepository;
+pub use filter::{ColumnRef, Filter, FilterValue};
 pub use media::MediaRepository;
 pub use notification::NotificationRepository;
 pub use playback::RoomPlaybackStateRepository;

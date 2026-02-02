@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::UserId;
 
-/// OAuth2/OIDC provider type (固定类型)
+/// OAuth2/OIDC provider type
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OAuth2Provider {

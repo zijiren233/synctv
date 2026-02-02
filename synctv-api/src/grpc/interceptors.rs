@@ -1,4 +1,5 @@
-use synctv_core::service::auth::JwtService;
+use std::sync::Arc;
+use synctv_core::service::auth::{JwtService, JwtValidator};
 use tonic::{metadata::MetadataMap, Request, Status};
 use tracing::warn;
 use std::fmt::Debug;
@@ -24,41 +25,23 @@ pub struct RoomContext {
 /// Service methods should call helper functions to load entities from database
 #[derive(Clone)]
 pub struct AuthInterceptor {
-    jwt_service: JwtService,
+    jwt_validator: Arc<JwtValidator>,
 }
 
 impl AuthInterceptor {
     pub fn new(jwt_service: JwtService) -> Self {
-        Self { jwt_service }
-    }
-
-    /// Extract Bearer token from Authorization header
-    fn extract_token(&self, metadata: &MetadataMap) -> Result<String, Status> {
-        let auth_header = metadata
-            .get("authorization")
-            .ok_or_else(|| Status::unauthenticated("Missing authorization header"))?
-            .to_str()
-            .map_err(|_| Status::unauthenticated("Invalid authorization header format"))?;
-
-        if !auth_header.starts_with("Bearer ") && !auth_header.starts_with("bearer ") {
-            return Err(Status::unauthenticated(
-                "Invalid authorization header format",
-            ));
+        Self {
+            jwt_validator: Arc::new(JwtValidator::new(Arc::new(jwt_service))),
         }
-
-        Ok(auth_header[7..].to_string())
     }
 
     /// Inject UserContext - validates JWT and extracts user_id
     /// Used for UserService and AdminService
     pub fn inject_user<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
-        // Extract and verify JWT (synchronous)
-        let token = self.extract_token(request.metadata())?;
-
+        // Use unified validator for gRPC validation
         let claims = self
-            .jwt_service
-            .verify_access_token(&token)
-            .map_err(|e| Status::unauthenticated(format!("Token verification failed: {}", e)))?;
+            .jwt_validator
+            .validate_grpc_as_status(request.metadata())?;
 
         // Inject UserContext with user_id
         let user_context = UserContext {
@@ -72,13 +55,10 @@ impl AuthInterceptor {
     /// Inject RoomContext - validates JWT, extracts user_id and room_id from x-room-id header
     /// Used for RoomService and MediaService
     pub fn inject_room<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
-        // Extract and verify JWT (synchronous)
-        let token = self.extract_token(request.metadata())?;
-
+        // Use unified validator for gRPC validation
         let claims = self
-            .jwt_service
-            .verify_access_token(&token)
-            .map_err(|e| Status::unauthenticated(format!("Token verification failed: {}", e)))?;
+            .jwt_validator
+            .validate_grpc_as_status(request.metadata())?;
 
         // Extract room_id from x-room-id header
         let room_id = request

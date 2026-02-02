@@ -10,6 +10,9 @@ pub mod logging;
 pub mod bootstrap;
 pub mod transaction;
 
+// #[cfg(test)]
+// pub mod test_helpers; // Temporarily disabled due to model structure mismatches
+
 pub use config::Config;
 pub use error::{Error, Result};
 pub use transaction::{UnitOfWork, with_transaction};

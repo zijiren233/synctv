@@ -1,0 +1,364 @@
+//! Type-safe SQL query builder using SeaQuery
+//!
+//! This module provides a safe, composable way to build SQL WHERE clauses
+//! using SeaQuery. All queries are properly parameterized to prevent SQL injection.
+
+use sea_query::{Cond, Expr, Iden, Order, SimpleExpr, Value as SeaValue};
+use sea_query::extension::postgres::PgExpr;
+
+/// SQL condition builder
+///
+/// This is a wrapper around SeaQuery's `Cond` that provides a more ergonomic API
+/// for building database queries in a type-safe manner.
+#[derive(Clone, Debug)]
+pub struct Filter {
+    condition: Cond,
+}
+
+impl Filter {
+    /// Create a new filter with no conditions (matches everything)
+    pub fn new() -> Self {
+        Self {
+            condition: Cond::all(),
+        }
+    }
+
+    /// Add an equality condition: column = value
+    pub fn eq(mut self, column: impl Into<ColumnRef>, value: impl Into<FilterValue>) -> Self {
+        let col = column.into();
+        let val = value.into();
+        self.condition = self.condition.add(Expr::col(col).eq(val.into_sea_value()));
+        self
+    }
+
+    /// Add an inequality condition: column != value
+    pub fn ne(mut self, column: impl Into<ColumnRef>, value: impl Into<FilterValue>) -> Self {
+        let col = column.into();
+        let val = value.into();
+        self.condition = self.condition.add(Expr::col(col).ne(val.into_sea_value()));
+        self
+    }
+
+    /// Add a greater than condition: column > value
+    pub fn gt(mut self, column: impl Into<ColumnRef>, value: impl Into<FilterValue>) -> Self {
+        let col = column.into();
+        let val = value.into();
+        self.condition = self.condition.add(Expr::col(col).gt(val.into_sea_value()));
+        self
+    }
+
+    /// Add a greater or equal condition: column >= value
+    pub fn ge(mut self, column: impl Into<ColumnRef>, value: impl Into<FilterValue>) -> Self {
+        let col = column.into();
+        let val = value.into();
+        self.condition = self.condition.add(Expr::col(col).gte(val.into_sea_value()));
+        self
+    }
+
+    /// Add a less than condition: column < value
+    pub fn lt(mut self, column: impl Into<ColumnRef>, value: impl Into<FilterValue>) -> Self {
+        let col = column.into();
+        let val = value.into();
+        self.condition = self.condition.add(Expr::col(col).lt(val.into_sea_value()));
+        self
+    }
+
+    /// Add a less or equal condition: column <= value
+    pub fn le(mut self, column: impl Into<ColumnRef>, value: impl Into<FilterValue>) -> Self {
+        let col = column.into();
+        let val = value.into();
+        self.condition = self.condition.add(Expr::col(col).lte(val.into_sea_value()));
+        self
+    }
+
+    /// Add a LIKE condition: column LIKE pattern
+    pub fn like(mut self, column: impl Into<ColumnRef>, pattern: impl Into<String>) -> Self {
+        let col = column.into();
+        self.condition = self.condition.add(Expr::col(col).like(pattern.into()));
+        self
+    }
+
+    /// Add an ILIKE (case-insensitive) condition: column ILIKE pattern
+    pub fn ilike(mut self, column: impl Into<ColumnRef>, pattern: impl Into<String>) -> Self {
+        let col = column.into();
+        let expr: SimpleExpr = Expr::col(col).ilike(pattern.into()).into();
+        self.condition = self.condition.add(expr);
+        self
+    }
+
+    /// Add an IN condition: column IN (values)
+    pub fn in_list(mut self, column: impl Into<ColumnRef>, values: Vec<FilterValue>) -> Self {
+        let col = column.into();
+        let sea_values: Vec<SeaValue> = values.into_iter().map(|v| v.into_sea_value()).collect();
+        self.condition = self.condition.add(Expr::col(col).is_in(sea_values));
+        self
+    }
+
+    /// Add a BETWEEN condition: column BETWEEN low AND high
+    pub fn between(
+        mut self,
+        column: impl Into<ColumnRef>,
+        low: impl Into<FilterValue>,
+        high: impl Into<FilterValue>,
+    ) -> Self {
+        let col = column.into();
+        let low_val = low.into();
+        let high_val = high.into();
+        self.condition = self.condition.add(
+            Expr::col(col).between(low_val.into_sea_value(), high_val.into_sea_value())
+        );
+        self
+    }
+
+    /// Add an IS NULL condition: column IS NULL
+    pub fn is_null(mut self, column: impl Into<ColumnRef>) -> Self {
+        let col = column.into();
+        self.condition = self.condition.add(Expr::col(col).is_null());
+        self
+    }
+
+    /// Add an IS NOT NULL condition: column IS NOT NULL
+    pub fn is_not_null(mut self, column: impl Into<ColumnRef>) -> Self {
+        let col = column.into();
+        self.condition = self.condition.add(Expr::col(col).is_not_null());
+        self
+    }
+
+    /// Build the SQL condition and return as SeaQuery Cond
+    pub fn build(self) -> Cond {
+        self.condition
+    }
+}
+
+impl Default for Filter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Reference to a database column
+///
+/// This type ensures column names are type-safe and prevents SQL injection.
+#[derive(Clone, Debug)]
+pub enum ColumnRef {
+    /// Simple column reference (e.g., "username")
+    Simple(String),
+    /// Table-qualified column (e.g., "users.username")
+    Qualified { table: String, column: String },
+}
+
+impl From<&str> for ColumnRef {
+    fn from(s: &str) -> Self {
+        ColumnRef::Simple(s.to_string())
+    }
+}
+
+impl From<String> for ColumnRef {
+    fn from(s: String) -> Self {
+        ColumnRef::Simple(s)
+    }
+}
+
+impl Iden for ColumnRef {
+    fn unquoted(&self, s: &mut dyn std::fmt::Write) {
+        match self {
+            ColumnRef::Simple(name) => {
+                write!(s, "{}", name).unwrap();
+            }
+            ColumnRef::Qualified { table, column } => {
+                write!(s, "{}.{}", table, column).unwrap();
+            }
+        }
+    }
+}
+
+/// Value that can be used in filter conditions
+///
+/// This enum wraps values that can be safely parameterized in SQL queries.
+#[derive(Clone, Debug)]
+pub enum FilterValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
+    // Note: DateTime<Utc> can be added via String
+}
+
+impl FilterValue {
+    /// Convert to SeaQuery Value (for parameterized queries)
+    fn into_sea_value(self) -> SeaValue {
+        match self {
+            FilterValue::Null => SeaValue::String(None),
+            FilterValue::Bool(b) => SeaValue::Bool(Some(b)),
+            FilterValue::Int(i) => SeaValue::Int(Some(i as i32)),
+            FilterValue::Float(f) => SeaValue::Float(Some(f as f32)),
+            FilterValue::String(s) => SeaValue::String(Some(Box::new(s))),
+        }
+    }
+}
+
+impl From<bool> for FilterValue {
+    fn from(b: bool) -> Self {
+        FilterValue::Bool(b)
+    }
+}
+
+impl From<i32> for FilterValue {
+    fn from(i: i32) -> Self {
+        FilterValue::Int(i as i64)
+    }
+}
+
+impl From<i64> for FilterValue {
+    fn from(i: i64) -> Self {
+        FilterValue::Int(i)
+    }
+}
+
+impl From<f64> for FilterValue {
+    fn from(f: f64) -> Self {
+        FilterValue::Float(f)
+    }
+}
+
+impl From<&str> for FilterValue {
+    fn from(s: &str) -> Self {
+        FilterValue::String(s.to_string())
+    }
+}
+
+impl From<String> for FilterValue {
+    fn from(s: String) -> Self {
+        FilterValue::String(s)
+    }
+}
+
+impl From<Option<bool>> for FilterValue {
+    fn from(opt: Option<bool>) -> Self {
+        match opt {
+            Some(b) => FilterValue::Bool(b),
+            None => FilterValue::Null,
+        }
+    }
+}
+
+impl From<Option<i32>> for FilterValue {
+    fn from(opt: Option<i32>) -> Self {
+        match opt {
+            Some(i) => FilterValue::Int(i as i64),
+            None => FilterValue::Null,
+        }
+    }
+}
+
+impl From<Option<i64>> for FilterValue {
+    fn from(opt: Option<i64>) -> Self {
+        match opt {
+            Some(i) => FilterValue::Int(i),
+            None => FilterValue::Null,
+        }
+    }
+}
+
+impl From<Option<String>> for FilterValue {
+    fn from(opt: Option<String>) -> Self {
+        match opt {
+            Some(s) => FilterValue::String(s),
+            None => FilterValue::Null,
+        }
+    }
+}
+
+impl From<Option<&str>> for FilterValue {
+    fn from(opt: Option<&str>) -> Self {
+        match opt {
+            Some(s) => FilterValue::String(s.to_string()),
+            None => FilterValue::Null,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_eq() {
+        let filter = Filter::new()
+            .eq("username", "alice")
+            .build();
+
+        let cond_str = format!("{:?}", filter);
+        assert!(cond_str.contains("username"));
+    }
+
+    #[test]
+    fn test_filter_multiple_conditions() {
+        let filter = Filter::new()
+            .eq("status", "active")
+            .ge("age", 18)
+            .is_null("deleted_at")
+            .build();
+
+        // The filter should successfully build
+        let _ = filter;
+    }
+
+    #[test]
+    fn test_filter_like() {
+        let filter = Filter::new()
+            .like("username", "alice%")
+            .build();
+
+        let _ = filter;
+    }
+
+    #[test]
+    fn test_filter_in_list() {
+        let filter = Filter::new()
+            .in_list("id", vec![
+                FilterValue::Int(1),
+                FilterValue::Int(2),
+                FilterValue::Int(3),
+            ])
+            .build();
+
+        let _ = filter;
+    }
+
+    #[test]
+    fn test_filter_between() {
+        let filter = Filter::new()
+            .between("created_at", "2024-01-01", "2024-12-31")
+            .build();
+
+        let _ = filter;
+    }
+
+    #[test]
+    fn test_column_ref_from_str() {
+        let col: ColumnRef = "username".into();
+        match col {
+            ColumnRef::Simple(name) => assert_eq!(name, "username"),
+            _ => panic!("Expected Simple column"),
+        }
+    }
+
+    #[test]
+    fn test_filter_value_from_various_types() {
+        let _: FilterValue = true.into();
+        let _: FilterValue = 42.into();
+        let _: FilterValue = 3.14.into();
+        let _: FilterValue = "test".into();
+        let _: FilterValue = String::from("test").into();
+    }
+
+    #[test]
+    fn test_filter_value_from_option() {
+        let _: FilterValue = Some(true).into();
+        let _: FilterValue = Some(42).into();
+        let _: FilterValue = Some("test").into();
+        let _: FilterValue = None::<bool>.into();
+    }
+}

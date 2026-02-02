@@ -1,0 +1,422 @@
+//! Audit log partition management service
+//!
+//! Automatically manages audit log partition creation and maintenance
+
+use sqlx::PgPool;
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
+
+use crate::{Error, Result};
+
+/// Health check result for audit log partitions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartitionHealth {
+    pub total_partitions: i32,
+    pub total_size_mb: f64,
+    pub total_size_gb: f64,
+    pub missing_partitions: Vec<String>,
+    pub missing_count: i32,
+    pub health_status: String,
+}
+
+/// Statistics for audit log partitions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartitionStats {
+    pub total_partitions: usize,
+    pub total_records: i64,
+    pub partitions: Vec<PartitionInfo>,
+}
+
+/// Information about a single partition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartitionInfo {
+    pub partition: String,
+    pub row_count: i64,
+    pub size_mb: f64,
+}
+
+/// Result of partition creation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartitionCreationResult {
+    pub status: String,
+    pub total_requested: i32,
+    pub success_count: i32,
+    pub partitions: Vec<PartitionCreationDetail>,
+}
+
+/// Details of a single partition creation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartitionCreationDetail {
+    pub partition_name: String,
+    pub start_date: String,
+    pub end_date: String,
+    pub indexes_created: i32,
+    pub status: String,
+}
+
+/// Result of index ensure operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexEnsureResult {
+    pub status: String,
+    pub partitions_updated: i64,
+    pub total_indexes_created: i64,
+    pub partitions: Vec<PartitionInfo>,
+}
+
+/// Audit log partition manager
+pub struct AuditPartitionManager {
+    pool: PgPool,
+}
+
+impl AuditPartitionManager {
+    /// Create a new partition manager
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Ensure existing partitions have indexes
+    ///
+    /// Adds missing indexes to existing partitions (idempotent operation)
+    pub async fn ensure_existing_indexes(&self, partition_count: i32) -> Result<IndexEnsureResult> {
+        info!("Ensuring indexes for last {} partitions", partition_count);
+
+        let result_json = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT ensure_existing_partitions_indexes($1)"
+        )
+        .bind(partition_count)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to ensure indexes: {}", e)))?;
+
+        let result: IndexEnsureResult = serde_json::from_value(result_json)
+            .map_err(|e| Error::Internal(format!("Failed to parse index result: {}", e)))?;
+
+        info!(
+            "Indexes ensured: {} partitions, {} indexes created",
+            result.partitions_updated, result.total_indexes_created
+        );
+
+        Ok(result)
+    }
+
+    /// Ensure partitions exist for the next N months
+    ///
+    /// Should be called on application startup to ensure partitions are available
+    pub async fn ensure_future_partitions(&self, months_ahead: i32) -> Result<PartitionCreationResult> {
+        info!("Ensuring audit log partitions for next {} months", months_ahead);
+
+        let result_json = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT create_audit_logs_partitions($1)"
+        )
+        .bind(months_ahead)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to create partitions: {}", e)))?;
+
+        let result: PartitionCreationResult = serde_json::from_value(result_json)
+            .map_err(|e| Error::Internal(format!("Failed to parse partition result: {}", e)))?;
+
+        info!(
+            "Partitions created: {}/{} successful",
+            result.success_count, result.total_requested
+        );
+
+        Ok(result)
+    }
+
+    /// Create a partition for a specific date
+    pub async fn create_partition(&self, date: chrono::Date<chrono::Utc>) -> Result<PartitionInfo> {
+        info!("Creating audit log partition for date: {}", date);
+
+        let result_json = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT create_audit_logs_partition($1)"
+        )
+        .bind(date)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to create partition: {}", e)))?;
+
+        let partition_name = result_json["partition_name"]
+            .as_str()
+            .ok_or_else(|| Error::Internal("Invalid partition result".to_string()))?;
+
+        Ok(PartitionInfo {
+            partition: partition_name.to_string(),
+            row_count: 0,
+            size_mb: 0.0,
+        })
+    }
+
+    /// Drop old partitions
+    ///
+    /// Removes partitions older than the specified number of months
+    pub async fn drop_old_partitions(&self, keep_months: i32) -> Result<Vec<String>> {
+        info!("Dropping audit log partitions older than {} months", keep_months);
+
+        let result_json = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT drop_old_audit_logs_partitions($1)"
+        )
+        .bind(keep_months)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to drop partitions: {}", e)))?;
+
+        let dropped_count = result_json["dropped_count"]
+            .as_i64()
+            .unwrap_or(0) as i32;
+
+        info!("Successfully dropped {} old partitions", dropped_count);
+
+        let dropped_partitions = result_json["dropped_partitions"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v["partition"].as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(dropped_partitions)
+    }
+
+    /// Check partition health status
+    ///
+    /// Returns missing partitions and overall health status
+    pub async fn check_health(&self) -> Result<PartitionHealth> {
+        let result_json = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT check_audit_logs_partitions()"
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to check partition health: {}", e)))?;
+
+        let health: PartitionHealth = serde_json::from_value(result_json)
+            .map_err(|e| Error::Internal(format!("Failed to parse health result: {}", e)))?;
+
+        match health.health_status.as_str() {
+            "healthy" => {
+                info!("Audit log partitions are healthy: {} partitions", health.total_partitions);
+            }
+            "warning" => {
+                warn!(
+                    "Audit log partitions warning: {} missing partitions",
+                    health.missing_count
+                );
+            }
+            _ => {
+                warn!("Unknown partition health status: {}", health.health_status);
+            }
+        }
+
+        Ok(health)
+    }
+
+    /// Get partition statistics
+    ///
+    /// Returns detailed statistics for all partitions
+    pub async fn get_stats(&self) -> Result<PartitionStats> {
+        let result_json = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT get_audit_logs_stats()"
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to get partition stats: {}", e)))?;
+
+        let stats: PartitionStats = serde_json::from_value(result_json)
+            .map_err(|e| Error::Internal(format!("Failed to parse stats result: {}", e)))?;
+
+        info!(
+            "Audit log stats: {} partitions, {} total records",
+            stats.total_partitions, stats.total_records
+        );
+
+        Ok(stats)
+    }
+
+    /// Start automatic partition management task
+    ///
+    /// Spawns a background task that periodically checks and creates partitions
+    pub fn start_auto_management(&self, check_interval_hours: u64) -> tokio::task::JoinHandle<()> {
+        let manager = self.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(check_interval_hours * 3600));
+
+            loop {
+                interval.tick().await;
+
+                // Check health status
+                match manager.check_health().await {
+                    Ok(health) => {
+                        // Create missing partitions if any
+                        if health.missing_count > 0 {
+                            warn!(
+                                "Found {} missing partitions, creating now",
+                                health.missing_count
+                            );
+                            if let Err(e) = manager.ensure_future_partitions(6).await {
+                                tracing::error!("Failed to create missing partitions: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to check partition health: {}", e);
+                    }
+                }
+            }
+        })
+    }
+}
+
+impl Clone for AuditPartitionManager {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+/// Ensure audit partitions exist on application startup
+///
+/// Should be called during application bootstrap
+pub async fn ensure_audit_partitions_on_startup(pool: &PgPool) -> Result<()> {
+    let manager = AuditPartitionManager::new(pool.clone());
+
+    // Step 1: Ensure existing partitions have indexes (idempotent)
+    manager.ensure_existing_indexes(4).await?;
+
+    // Step 2: Ensure next 6 months have partitions
+    manager.ensure_future_partitions(6).await?;
+
+    // Step 3: Check health status
+    let health = manager.check_health().await?;
+    if health.health_status != "healthy" {
+        warn!("Partition health check: {}", health.health_status);
+    }
+
+    info!("Audit log partition initialization completed");
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_partition_health_deserialization() {
+        let json = r#"{
+            "status": "checked",
+            "total_partitions": 10,
+            "total_size_mb": 1024.5,
+            "total_size_gb": 1.0,
+            "missing_partitions": [
+                {"partition_name": "audit_logs_2026_06", "status": "missing"}
+            ],
+            "missing_count": 1,
+            "health_status": "warning"
+        }"#;
+
+        let health: PartitionHealth = serde_json::from_str(json).unwrap();
+        assert_eq!(health.total_partitions, 10);
+        assert_eq!(health.missing_count, 1);
+        assert_eq!(health.health_status, "warning");
+    }
+
+    #[test]
+    fn test_partition_creation_result_deserialization() {
+        let json = r#"{
+            "status": "completed",
+            "total_requested": 6,
+            "success_count": 6,
+            "partitions": [
+                {
+                    "partition_name": "audit_logs_2026_05",
+                    "start_date": "2026-05-01",
+                    "end_date": "2026-06-01",
+                    "indexes_created": 4,
+                    "status": "success"
+                }
+            ]
+        }"#;
+
+        let result: PartitionCreationResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.total_requested, 6);
+        assert_eq!(result.success_count, 6);
+        assert_eq!(result.partitions.len(), 1);
+        assert_eq!(result.partitions[0].indexes_created, 4);
+    }
+
+    #[test]
+    fn test_index_ensure_result_deserialization() {
+        let json = r#"{
+            "status": "completed",
+            "partitions_updated": 4,
+            "total_indexes_created": 16,
+            "partitions": [
+                {
+                    "partition": "audit_logs_2024_01",
+                    "row_count": 0,
+                    "size_mb": 0.0
+                }
+            ]
+        }"#;
+
+        let result: IndexEnsureResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.partitions_updated, 4);
+        assert_eq!(result.total_indexes_created, 16);
+        assert_eq!(result.partitions.len(), 1);
+    }
+
+    #[test]
+    fn test_partition_info_serialization() {
+        let info = PartitionInfo {
+            partition: "audit_logs_2024_01".to_string(),
+            row_count: 1000,
+            size_mb: 256.5,
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let deserialized: PartitionInfo = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.partition, info.partition);
+        assert_eq!(deserialized.row_count, info.row_count);
+        assert_eq!(deserialized.size_mb, info.size_mb);
+    }
+
+    #[test]
+    fn test_partition_creation_detail_serialization() {
+        let detail = PartitionCreationDetail {
+            partition_name: "audit_logs_2024_01".to_string(),
+            start_date: "2024-01-01".to_string(),
+            end_date: "2024-02-01".to_string(),
+            indexes_created: 4,
+            status: "success".to_string(),
+        };
+
+        let json = serde_json::to_string(&detail).unwrap();
+        let deserialized: PartitionCreationDetail = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.partition_name, detail.partition_name);
+        assert_eq!(deserialized.indexes_created, detail.indexes_created);
+        assert_eq!(deserialized.status, detail.status);
+    }
+
+    #[test]
+    fn test_all_statuses() {
+        // Test all possible health statuses
+        let statuses = vec!["healthy", "warning", "unknown"];
+        for status in statuses {
+            let health = PartitionHealth {
+                total_partitions: 10,
+                total_size_mb: 1024.5,
+                total_size_gb: 1.0,
+                missing_partitions: vec![],
+                missing_count: 0,
+                health_status: status.to_string(),
+            };
+            assert_eq!(health.health_status, status);
+        }
+    }
+}

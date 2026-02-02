@@ -2,10 +2,14 @@
 
 use axum::{
     async_trait,
-    extract::FromRequestParts,
+    extract::{FromRef, FromRequestParts, State},
     http::{request::Parts, HeaderValue},
 };
-use synctv_core::models::id::UserId;
+use std::sync::Arc;
+use synctv_core::{
+    models::id::UserId,
+    service::{JwtService, auth::JwtValidator},
+};
 
 use super::AppError;
 
@@ -15,73 +19,46 @@ pub struct AuthUser {
     pub user_id: UserId,
 }
 
+/// Extension to hold JWT validator in request extensions
+#[derive(Clone)]
+struct JwtValidatorExt(Arc<JwtValidator>);
+
 #[async_trait]
 impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,
+    AppState: FromRef<S>,
 {
     type Rejection = AppError;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // Get AppState from state
+        let app_state = AppState::from_ref(state);
+
+        // Create or extract JWT validator
+        let validator = parts
+            .extensions
+            .get::<JwtValidatorExt>()
+            .map(|v| v.0.clone())
+            .unwrap_or_else(|| {
+                Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())))
+            });
+
         // Extract Authorization header
         let auth_header = parts
             .headers
             .get(axum::http::header::AUTHORIZATION)
             .ok_or_else(|| AppError::unauthorized("Missing Authorization header"))?;
 
-        // Parse Bearer token
-        let token = extract_bearer_token(auth_header).map_err(|e| AppError::unauthorized(e))?;
+        // Parse Bearer token and validate using unified validator
+        let auth_str = auth_header
+            .to_str()
+            .map_err(|e| AppError::unauthorized(format!("Invalid Authorization header: {}", e)))?;
 
-        // Extract user_id from token
-        let user_id_str = extract_user_id_from_token(token)
-            .map_err(|e| AppError::unauthorized(format!("Invalid token: {}", e)))?;
+        let user_id = validator
+            .validate_http_extract_user_id(auth_str)
+            .map_err(|e| AppError::unauthorized(format!("{}", e)))?;
 
-        Ok(AuthUser {
-            user_id: UserId::from_string(user_id_str),
-        })
+        Ok(AuthUser { user_id })
     }
-}
-
-/// Extract bearer token from Authorization header
-fn extract_bearer_token(header: &HeaderValue) -> Result<&str, String> {
-    let auth_str = header
-        .to_str()
-        .map_err(|_| "Invalid Authorization header value".to_string())?;
-
-    if !auth_str.starts_with("Bearer ") {
-        return Err("Authorization header must start with 'Bearer '".to_string());
-    }
-
-    Ok(&auth_str[7..]) // Skip "Bearer "
-}
-
-/// Extract user_id from JWT token
-///
-/// This is a simplified version. In production, use the JWT service to verify the token.
-fn extract_user_id_from_token(token: &str) -> Result<String, String> {
-    use base64::prelude::*;
-
-    // Split token into parts
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return Err("Invalid token format".to_string());
-    }
-
-    // Decode payload (second part)
-    let payload = parts[1];
-    let decoded = BASE64_URL_SAFE_NO_PAD
-        .decode(payload)
-        .map_err(|e| format!("Failed to decode token: {}", e))?;
-
-    // Parse JSON
-    let json: serde_json::Value = serde_json::from_slice(&decoded)
-        .map_err(|e| format!("Failed to parse token JSON: {}", e))?;
-
-    // Extract sub (subject) claim
-    let user_id = json
-        .get("sub")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "Missing sub claim".to_string())?;
-
-    Ok(user_id.to_string())
 }
