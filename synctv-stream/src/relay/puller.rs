@@ -1,15 +1,16 @@
 use anyhow::{Result, anyhow};
 use tracing::{info, warn, error};
-use crate::relay::{StreamRegistry, PublisherInfo};
+use crate::relay::{StreamRegistryTrait, PublisherInfo};
 use crate::grpc::GrpcStreamPuller;
 use streamhub::define::StreamHubEventSender;
+use std::sync::Arc;
 
 /// Puller node - pulls stream from Publisher and serves to local viewers
 pub struct Puller {
     room_id: String,
     media_id: String,
     node_id: String,
-    registry: StreamRegistry,
+    registry: Arc<dyn StreamRegistryTrait>,
     publisher_info: Option<PublisherInfo>,
     stream_hub_event_sender: StreamHubEventSender,
     grpc_puller_handle: Option<tokio::task::JoinHandle<Result<()>>>,
@@ -21,7 +22,7 @@ impl Puller {
         room_id: String,
         media_id: String,
         node_id: String,
-        registry: StreamRegistry,
+        registry: Arc<dyn StreamRegistryTrait>,
         stream_hub_event_sender: StreamHubEventSender,
     ) -> Self {
         Self {
@@ -67,7 +68,7 @@ impl Puller {
             publisher_info.node_id.clone(),
             self.node_id.clone(),
             self.stream_hub_event_sender.clone(),
-            std::sync::Arc::new(self.registry.clone()),
+            self.registry.clone(),
         );
 
         // Spawn puller task
@@ -150,21 +151,17 @@ impl Drop for Puller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::relay::MockStreamRegistry;
 
     #[tokio::test]
     async fn test_puller_creation() {
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 
-        let Some(redis_conn) = try_redis_connection().await else {
-            eprintln!("Redis not available, skipping test");
-            return;
-        };
-
         let puller = Puller::new(
             "room123".to_string(),
             "media123".to_string(),
             "puller-node".to_string(),
-            StreamRegistry::new(redis_conn),
+            Arc::new(MockStreamRegistry::new()),
             stream_hub_event_sender,
         );
 
@@ -176,55 +173,49 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis and active Publisher
     async fn test_puller_start() {
-        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
-        let redis = redis::aio::ConnectionManager::new(redis_client)
-            .await
-            .unwrap();
-        let mut registry = StreamRegistry::new(redis.clone());
+        let mut publishers = std::collections::HashMap::new();
+        publishers.insert(
+            ("room123".to_string(), "media123".to_string()),
+            PublisherInfo {
+                node_id: "publisher-node".to_string(),
+                app_name: "live".to_string(),
+                started_at: chrono::Utc::now(),
+            }
+        );
 
-        // Register a fake publisher
-        registry
-            .register_publisher("room123", "media123", "publisher-node", "live")
-            .await
-            .unwrap();
-
-        // Create a dummy stream hub event sender
+        let registry = Arc::new(MockStreamRegistry::with_publishers(publishers));
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 
-        // Create puller
         let mut puller = Puller::new(
             "room123".to_string(),
             "media123".to_string(),
             "puller-node".to_string(),
-            StreamRegistry::new(redis),
+            registry,
             stream_hub_event_sender,
         );
 
-        // Start pulling
-        // Note: This will fail to connect to publisher-node since it's not actually running
+        // Start pulling - spawns a background task for gRPC connection
         let result = puller.start().await;
-        assert!(result.is_err(), "Should fail to connect to non-existent publisher");
+        assert!(result.is_ok(), "Should spawn gRPC puller task successfully");
 
-        // Cleanup
-        registry.unregister_publisher("room123", "media123").await.unwrap();
+        // Verify that a handle was created for the background task
+        assert!(puller.grpc_puller_handle.is_some(), "Should have gRPC puller handle");
+
+        // Verify publisher info was set
+        assert!(puller.publisher_info.is_some(), "Should have publisher info");
+        assert_eq!(puller.publisher_info.as_ref().unwrap().node_id, "publisher-node");
     }
 
     #[tokio::test]
     async fn test_puller_is_active() {
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 
-        let Some(redis_conn) = try_redis_connection().await else {
-            eprintln!("Redis not available, skipping test");
-            return;
-        };
-
         let mut puller = Puller::new(
             "room123".to_string(),
             "media123".to_string(),
             "puller-node".to_string(),
-            StreamRegistry::new(redis_conn),
+            Arc::new(MockStreamRegistry::new()),
             stream_hub_event_sender,
         );
 
@@ -234,26 +225,25 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis and active Publisher
     async fn test_puller_stop() {
-        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
-        let redis = redis::aio::ConnectionManager::new(redis_client)
-            .await
-            .unwrap();
-        let mut registry = StreamRegistry::new(redis.clone());
+        let mut publishers = std::collections::HashMap::new();
+        publishers.insert(
+            ("room123".to_string(), "media123".to_string()),
+            PublisherInfo {
+                node_id: "publisher-node".to_string(),
+                app_name: "live".to_string(),
+                started_at: chrono::Utc::now(),
+            }
+        );
 
-        registry
-            .register_publisher("room123", "media123", "publisher-node", "live")
-            .await
-            .unwrap();
-
+        let registry = Arc::new(MockStreamRegistry::with_publishers(publishers));
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 
         let mut puller = Puller::new(
             "room123".to_string(),
             "media123".to_string(),
             "puller-node".to_string(),
-            StreamRegistry::new(redis),
+            registry,
             stream_hub_event_sender,
         );
 
@@ -263,39 +253,21 @@ mod tests {
         // Stop should succeed
         let result = puller.stop().await;
         assert!(result.is_ok());
-
-        // Cleanup
-        registry.unregister_publisher("room123", "media123").await.unwrap();
     }
 
     #[tokio::test]
     async fn test_puller_publisher_node_id() {
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 
-        let Some(redis_conn) = try_redis_connection().await else {
-            eprintln!("Redis not available, skipping test");
-            return;
-        };
-
         let puller = Puller::new(
             "room123".to_string(),
             "media123".to_string(),
             "puller-node".to_string(),
-            StreamRegistry::new(redis_conn),
+            Arc::new(MockStreamRegistry::new()),
             stream_hub_event_sender,
         );
 
         // No publisher set, should return None
         assert!(puller.publisher_node_id().is_none());
-    }
-
-    // Helper function for tests that need Redis
-    // Returns None if Redis is not available
-    async fn try_redis_connection() -> Option<redis::aio::ConnectionManager> {
-        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
-        match redis::aio::ConnectionManager::new(redis_client).await {
-            Ok(conn) => Some(conn),
-            Err(_) => None,
-        }
     }
 }

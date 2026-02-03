@@ -13,7 +13,7 @@
 
 use crate::{
     cache::gop_cache::GopCache,
-    relay::{registry::StreamRegistry, publisher_manager::PublisherManager},
+    relay::{registry_trait::StreamRegistryTrait, publisher_manager::PublisherManager},
     error::{StreamResult, StreamError},
 };
 use std::sync::Arc;
@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 pub struct RtmpServer {
     address: String,
     _gop_cache: Arc<GopCache>,
-    registry: StreamRegistry,
+    registry: Arc<dyn StreamRegistryTrait>,
     node_id: String,
     gop_num: usize,
     stream_hub: Arc<Mutex<StreamsHub>>,
@@ -34,7 +34,7 @@ impl RtmpServer {
     pub fn new(
         address: String,
         gop_cache: Arc<GopCache>,
-        registry: StreamRegistry,
+        registry: Arc<dyn StreamRegistryTrait>,
         node_id: String,
         gop_num: usize,
     ) -> Self {

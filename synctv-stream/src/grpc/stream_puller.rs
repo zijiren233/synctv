@@ -211,7 +211,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires actual publisher node
     async fn test_puller_run() {
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 

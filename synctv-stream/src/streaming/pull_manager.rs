@@ -5,7 +5,7 @@
 
 use crate::{
     cache::gop_cache::GopCache,
-    relay::registry::StreamRegistry,
+    relay::registry_trait::StreamRegistryTrait,
     error::StreamResult,
 };
 use tracing as log;
@@ -18,14 +18,14 @@ pub struct PullStreamManager {
     // stream_key -> PullStream
     streams: Arc<DashMap<String, Arc<PullStream>>>,
     gop_cache: Arc<GopCache>,
-    _registry: StreamRegistry,
+    _registry: Arc<dyn StreamRegistryTrait>,
     _local_node_id: String,
 }
 
 impl PullStreamManager {
     pub fn new(
         gop_cache: Arc<GopCache>,
-        registry: StreamRegistry,
+        registry: Arc<dyn StreamRegistryTrait>,
         local_node_id: String,
     ) -> Self {
         Self {

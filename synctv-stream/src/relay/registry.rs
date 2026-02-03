@@ -218,7 +218,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore] // Requires Redis instance
     async fn test_register_publisher_success() {
         let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
         let redis = RedisConnectionManager::new(redis_client).await.unwrap();
@@ -244,7 +243,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis instance
     async fn test_register_publisher_duplicate() {
         let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
         let redis = RedisConnectionManager::new(redis_client).await.unwrap();
@@ -269,7 +267,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis instance
     async fn test_try_register_publisher() {
         let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
         let redis = RedisConnectionManager::new(redis_client).await.unwrap();
@@ -288,7 +285,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis instance
     async fn test_unregister_publisher() {
         let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
         let redis = RedisConnectionManager::new(redis_client).await.unwrap();
@@ -311,7 +307,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis instance
     async fn test_get_publisher_not_found() {
         let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
         let redis = RedisConnectionManager::new(redis_client).await.unwrap();
@@ -323,7 +318,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis instance
     async fn test_list_active_streams() {
         let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
         let redis = RedisConnectionManager::new(redis_client).await.unwrap();
@@ -351,7 +345,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis instance
     async fn test_publisher_info_serialization() {
         let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
         let redis = RedisConnectionManager::new(redis_client).await.unwrap();

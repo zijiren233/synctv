@@ -12,7 +12,7 @@
 
 use crate::{
     cache::gop_cache::GopCache,
-    relay::registry::StreamRegistry,
+    relay::registry_trait::StreamRegistryTrait,
     storage::{HlsStorage, StorageBackend, FileStorage, MemoryStorage},
     streaming::{
         pull_manager::PullStreamManager,
@@ -37,7 +37,7 @@ pub struct StreamingServer {
 
     // Shared components
     gop_cache: Arc<GopCache>,
-    registry: StreamRegistry,
+    registry: Arc<dyn StreamRegistryTrait>,
     node_id: String,
     segment_manager: Option<Arc<SegmentManager>>,
 }
@@ -49,7 +49,7 @@ impl StreamingServer {
         hls_storage_path: String,
         storage_backend: StorageBackend,
         gop_cache: Arc<GopCache>,
-        registry: StreamRegistry,
+        registry: Arc<dyn StreamRegistryTrait>,
         node_id: String,
     ) -> Self {
         // Create pull manager for lazy-load FLV

@@ -7,7 +7,7 @@
 //
 // Based on design doc 17-数据流设计.md § 11.1
 
-use super::registry::StreamRegistry;
+use super::registry_trait::StreamRegistryTrait;
 use anyhow::anyhow;
 use streamhub::{
     define::BroadcastEventReceiver,
@@ -20,7 +20,7 @@ use dashmap::DashMap;
 
 /// Publisher manager that listens to StreamHub events
 pub struct PublisherManager {
-    registry: StreamRegistry,
+    registry: Arc<dyn StreamRegistryTrait>,
     local_node_id: String,
     /// Active publishers (stream_key -> media_id)
     /// Live streaming is media-level, not room-level
@@ -28,7 +28,7 @@ pub struct PublisherManager {
 }
 
 impl PublisherManager {
-    pub fn new(registry: StreamRegistry, local_node_id: String) -> Self {
+    pub fn new(registry: Arc<dyn StreamRegistryTrait>, local_node_id: String) -> Self {
         Self {
             registry,
             local_node_id,
@@ -159,7 +159,7 @@ impl PublisherManager {
             // Parse room_id and media_id from the composite key
             if let Some((room_id, media_id)) = publisher_key.split_once(':') {
                 // Unregister from Redis
-                if let Err(e) = self.registry.unregister_publisher_immut(room_id, media_id).await {
+                if let Err(e) = self.registry.unregister_publisher(room_id, media_id).await {
                     log::error!("Failed to unregister publisher for room {} / media {}: {}", room_id, media_id, e);
                 } else {
                     log::info!("Unregistered publisher for room {} / media {}", room_id, media_id);
@@ -201,16 +201,11 @@ impl PublisherManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use super::super::MockStreamRegistry;
 
     #[tokio::test]
-    #[ignore] // Requires Redis
     async fn test_publisher_manager_creation() {
-        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
-        let redis = redis::aio::ConnectionManager::new(redis_client)
-            .await
-            .expect("Failed to connect to Redis");
-        let registry = StreamRegistry::new(redis);
+        let registry = Arc::new(MockStreamRegistry::new());
         let local_node_id = "test-node-1".to_string();
 
         let manager = PublisherManager::new(registry, local_node_id);
@@ -222,12 +217,7 @@ mod tests {
     async fn test_active_publishers_map() {
         let (event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
 
-        let Some(redis_conn) = try_redis_connection().await else {
-            eprintln!("Redis not available, skipping test");
-            return;
-        };
-
-        let registry = StreamRegistry::new(redis_conn);
+        let registry = Arc::new(MockStreamRegistry::new());
         let manager = PublisherManager::new(registry, "test-node".to_string());
 
         // Verify active publishers map is empty
@@ -236,13 +226,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis and StreamHub event loop
     async fn test_handle_publish_success() {
-        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
-        let redis = redis::aio::ConnectionManager::new(redis_client)
-            .await
-            .expect("Failed to connect to Redis");
-        let registry = StreamRegistry::new(redis);
+        let registry = Arc::new(MockStreamRegistry::new());
         let manager = PublisherManager::new(registry, "test-node-1".to_string());
 
         let identifier = StreamIdentifier::Rtmp {
@@ -259,13 +244,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis
     async fn test_handle_unpublish_success() {
-        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
-        let redis = redis::aio::ConnectionManager::new(redis_client)
-            .await
-            .expect("Failed to connect to Redis");
-        let registry = StreamRegistry::new(redis);
+        let registry = Arc::new(MockStreamRegistry::new());
         let manager = PublisherManager::new(registry, "test-node-1".to_string());
 
         // First, register a publisher
@@ -284,13 +264,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Redis
     async fn test_handle_publish_invalid_format() {
-        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
-        let redis = redis::aio::ConnectionManager::new(redis_client)
-            .await
-            .expect("Failed to connect to Redis");
-        let registry = StreamRegistry::new(redis);
+        let registry = Arc::new(MockStreamRegistry::new());
         let manager = PublisherManager::new(registry, "test-node-1".to_string());
 
         let identifier = StreamIdentifier::Rtmp {
@@ -300,15 +275,5 @@ mod tests {
 
         let result = manager.handle_publish(identifier).await;
         assert!(result.is_err());
-    }
-
-    // Helper function for tests
-    // Returns None if Redis is not available
-    async fn try_redis_connection() -> Option<redis::aio::ConnectionManager> {
-        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
-        match redis::aio::ConnectionManager::new(redis_client).await {
-            Ok(conn) => Some(conn),
-            Err(_) => None,
-        }
     }
 }

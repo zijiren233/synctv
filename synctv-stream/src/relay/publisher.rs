@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{info, warn};
 use crate::cache::{GopCache, GopFrame, FrameType};
-use crate::relay::StreamRegistry;
+use crate::relay::StreamRegistryTrait;
 
 /// Publisher node - accepts RTMP push and serves to Pullers
 pub struct Publisher {
@@ -10,7 +10,7 @@ pub struct Publisher {
     media_id: String,
     node_id: String,
     gop_cache: Arc<GopCache>,
-    registry: StreamRegistry,
+    registry: Arc<dyn StreamRegistryTrait>,
 }
 
 impl Publisher {
@@ -20,7 +20,7 @@ impl Publisher {
         media_id: String,
         node_id: String,
         gop_cache: Arc<GopCache>,
-        registry: StreamRegistry,
+        registry: Arc<dyn StreamRegistryTrait>,
     ) -> Self {
         Self {
             room_id,
@@ -95,16 +95,12 @@ impl Drop for Publisher {
 mod tests {
     use super::*;
     use crate::cache::GopCacheConfig;
+    use crate::relay::MockStreamRegistry;
 
     #[tokio::test]
-    #[ignore] // Requires Redis instance
     async fn test_publisher_creation() {
         let gop_cache = Arc::new(GopCache::new(GopCacheConfig::default()));
-        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
-        let redis = redis::aio::ConnectionManager::new(redis_client)
-            .await
-            .unwrap();
-        let registry = StreamRegistry::new(redis);
+        let registry = Arc::new(MockStreamRegistry::new()) as Arc<dyn StreamRegistryTrait>;
 
         let publisher = Publisher::new(
             "room123".to_string(),
