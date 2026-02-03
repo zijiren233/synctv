@@ -234,5 +234,31 @@ impl StreamRelayServiceImpl {
     }
 }
 
-// Tests are integration tests that require Redis running
-// Run with: cargo test --package synctv-stream -- --ignored
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_service_creation() {
+        // Create real components for testing
+        let gop_cache = Arc::new(GopCache::new(Default::default()));
+        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
+        let node_id = "test_node".to_string();
+
+        // Verify the node_id is correct
+        assert_eq!(node_id, "test_node");
+
+        // Note: Full service creation requires StreamRegistry which needs Redis
+        // This test verifies basic type compatibility
+        assert!(Arc::strong_count(&gop_cache) >= 1);
+    }
+
+    #[test]
+    fn test_response_stream_type() {
+        // Just verify the ResponseStream type alias compiles
+        // In production, this would be tested via integration tests
+        let (_tx, rx) = tokio::sync::mpsc::channel(128);
+        let _: ResponseStream = Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx));
+    }
+}

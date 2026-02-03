@@ -1,8 +1,12 @@
+// RTMP server integration using xiu library
+//
+// The actual RTMP server implementation is in:
+// - /synctv-stream/src/streaming/rtmp.rs
+//
+// This module provides configuration types for convenience.
+
 use anyhow::Result;
 use std::net::SocketAddr;
-use tracing::{info, warn};
-
-use super::stream_handler::StreamHandler;
 
 /// RTMP server configuration
 #[derive(Debug, Clone)]
@@ -13,8 +17,8 @@ pub struct RtmpConfig {
     pub max_streams: usize,
     /// Chunk size for RTMP (default: 4096)
     pub chunk_size: u32,
-    /// Enable GOP cache
-    pub enable_gop_cache: bool,
+    /// Enable GOP cache (number of GOPs to cache)
+    pub gop_num: usize,
 }
 
 impl Default for RtmpConfig {
@@ -23,56 +27,42 @@ impl Default for RtmpConfig {
             listen_addr: "0.0.0.0:1935".parse().unwrap(),
             max_streams: 50,
             chunk_size: 4096,
-            enable_gop_cache: true,
+            gop_num: 2, // Cache last 2 GOPs
         }
     }
 }
 
-/// RTMP server wrapper
+/// RTMP server
 ///
-/// TODO: This is a placeholder implementation. In a production system, this would:
-/// 1. Integrate with xiu's RTMP server or another RTMP library
-/// 2. Handle RTMP handshake and command processing
-/// 3. Call StreamHandler callbacks for publish/unpublish events
-/// 4. Feed data to GOP cache
-/// 5. Distribute streams to viewers
+/// This is a convenience wrapper around the actual RTMP server
+/// implemented in streaming/rtmp.rs.
+///
+/// The actual server uses xiu's rtmp::rtmp::RtmpServer which:
+/// 1. Handles RTMP handshake and protocol
+/// 2. Integrates with StreamHub for event handling
+/// 3. Calls PublisherManager for Redis registration
+/// 4. Supports GOP cache for fast viewer startup
 pub struct RtmpServer {
     config: RtmpConfig,
-    _stream_handler: StreamHandler,
 }
 
 impl RtmpServer {
-    /// Create a new RTMP server
-    pub fn new(config: RtmpConfig, stream_handler: StreamHandler) -> Self {
-        Self {
-            config,
-            _stream_handler: stream_handler,
-        }
+    /// Create a new RTMP server configuration
+    pub fn new(config: RtmpConfig) -> Self {
+        Self { config }
     }
 
-    /// Start the RTMP server
+    /// Get the RTMP server configuration
+    pub fn config(&self) -> &RtmpConfig {
+        &self.config
+    }
+
+    /// Build the server
     ///
-    /// TODO: Implement actual RTMP server. Options:
-    /// 1. Integrate with xiu (complex, requires understanding private API)
-    /// 2. Use rtmp crate directly (if it's reusable)
-    /// 3. Implement custom RTMP handshake (most control, most work)
-    /// 4. Use FFmpeg/GStreamer via FFI (battle-tested, but requires C bindings)
-    pub async fn start(self) -> Result<()> {
-        warn!(
-            "RTMP server placeholder started on {} - NOT FUNCTIONAL YET",
-            self.config.listen_addr
-        );
-
-        info!(
-            "To implement: integrate with xiu or rtmp crate to accept RTMP streams"
-        );
-
-        // Placeholder: keep server "running"
-        // In production, this would start the actual RTMP server
-        tokio::signal::ctrl_c().await?;
-
-        info!("RTMP server stopped");
-        Ok(())
+    /// This returns the configuration needed to create the actual
+    /// server in streaming/rtmp.rs
+    pub fn build(&self) -> (&str, usize) {
+        (self.config.listen_addr.to_string().as_str(), self.config.gop_num)
     }
 }
 
@@ -86,6 +76,18 @@ mod tests {
         assert_eq!(config.listen_addr.port(), 1935);
         assert_eq!(config.max_streams, 50);
         assert_eq!(config.chunk_size, 4096);
-        assert!(config.enable_gop_cache);
+        assert_eq!(config.gop_num, 2);
+    }
+
+    #[test]
+    fn test_rtmp_server_build() {
+        let config = RtmpConfig {
+            listen_addr: "127.0.0.1:1935".parse().unwrap(),
+            ..Default::default()
+        };
+        let server = RtmpServer::new(config);
+        let (addr, gop_num) = server.build();
+        assert_eq!(addr, "127.0.0.1:1935");
+        assert_eq!(gop_num, 2);
     }
 }

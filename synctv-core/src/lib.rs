@@ -9,6 +9,10 @@ pub mod error;
 pub mod logging;
 pub mod bootstrap;
 pub mod transaction;
+pub mod metrics;
+pub mod telemetry;
+pub mod resilience;
+pub mod validation;
 
 // #[cfg(test)]
 // pub mod test_helpers; // Temporarily disabled due to model structure mismatches

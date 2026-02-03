@@ -69,11 +69,19 @@ impl StreamRegistry {
         let key = format!("stream:publisher:{}:{}", room_id, media_id);
         let mut conn = self.redis.clone();
 
-        // Use HSETNX for atomic set-if-not-exists
+        // Create PublisherInfo with default values for registration
+        let info = PublisherInfo {
+            node_id: node_id.to_string(),
+            app_name: "live".to_string(),
+            started_at: Utc::now(),
+        };
+        let info_json = serde_json::to_string(&info)?;
+
+        // Use HSETNX for atomic set-if-not-exists with "publisher" field
         let registered: bool = redis::cmd("HSETNX")
             .arg(&key)
-            .arg("publisher_node")
-            .arg(node_id)
+            .arg("publisher")
+            .arg(info_json)
             .query_async(&mut conn)
             .await
             .map_err(|e| anyhow!(e.to_string()))?;
@@ -121,7 +129,7 @@ impl StreamRegistry {
 
         let _: () = redis::cmd("HDEL")
             .arg(&key)
-            .arg("publisher_node")
+            .arg("publisher")
             .query_async(&mut conn)
             .await
             .map_err(|e| anyhow!(e.to_string()))?;
@@ -131,8 +139,19 @@ impl StreamRegistry {
 
     /// Get publisher info for a media in a room
     pub async fn get_publisher(&mut self, room_id: &str, media_id: &str) -> Result<Option<PublisherInfo>> {
+        self.get_publisher_immut(room_id, media_id).await
+    }
+
+    /// Get publisher info for a media in a room (immutable version)
+    pub async fn get_publisher_immut(&self, room_id: &str, media_id: &str) -> Result<Option<PublisherInfo>> {
         let key = format!("stream:publisher:{}:{}", room_id, media_id);
-        let info_json: Option<String> = self.redis.hget(&key, "publisher").await?;
+        let mut conn = self.redis.clone();
+        let info_json: Option<String> = redis::cmd("HGET")
+            .arg(&key)
+            .arg("publisher")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))?;
 
         match info_json {
             Some(json) => {
@@ -146,14 +165,36 @@ impl StreamRegistry {
 
     /// Check if a stream is active (has a publisher)
     pub async fn is_stream_active(&mut self, room_id: &str, media_id: &str) -> anyhow::Result<bool> {
+        self.is_stream_active_immut(room_id, media_id).await
+    }
+
+    /// Check if a stream is active (immutable version)
+    pub async fn is_stream_active_immut(&self, room_id: &str, media_id: &str) -> anyhow::Result<bool> {
         let key = format!("stream:publisher:{}:{}", room_id, media_id);
-        let exists: bool = self.redis.hexists(&key, "publisher").await?;
+        let mut conn = self.redis.clone();
+        let exists: bool = redis::cmd("HEXISTS")
+            .arg(&key)
+            .arg("publisher")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))?;
         Ok(exists)
     }
 
     /// List all active streams (returns tuples of (room_id, media_id))
     pub async fn list_active_streams(&mut self) -> Result<Vec<(String, String)>> {
-        let keys: Vec<String> = self.redis.keys("stream:publisher:*").await?;
+        self.list_active_streams_immut().await
+    }
+
+    /// List all active streams (immutable version)
+    pub async fn list_active_streams_immut(&self) -> Result<Vec<(String, String)>> {
+        let mut conn = self.redis.clone();
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg("stream:publisher:*")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))?;
+
         let streams: Vec<(String, String)> = keys
             .into_iter()
             .filter_map(|k| {
@@ -178,7 +219,33 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // Requires Redis instance
-    async fn test_register_publisher() {
+    async fn test_register_publisher_success() {
+        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+        let redis = RedisConnectionManager::new(redis_client).await.unwrap();
+        let mut registry = StreamRegistry::new(redis);
+
+        // First registration should succeed
+        let registered = registry
+            .register_publisher("room123", "media456", "node1", "live")
+            .await
+            .unwrap();
+        assert!(registered);
+
+        // Verify publisher exists
+        let publisher = registry.get_publisher("room123", "media456").await.unwrap();
+        assert!(publisher.is_some());
+
+        let pub_info = publisher.unwrap();
+        assert_eq!(pub_info.node_id, "node1");
+        assert_eq!(pub_info.app_name, "live");
+
+        // Cleanup
+        registry.unregister_publisher("room123", "media456").await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Redis instance
+    async fn test_register_publisher_duplicate() {
         let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
         let redis = RedisConnectionManager::new(redis_client).await.unwrap();
         let mut registry = StreamRegistry::new(redis);
@@ -203,21 +270,107 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // Requires Redis instance
-    async fn test_viewer_count() {
+    async fn test_try_register_publisher() {
         let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
         let redis = RedisConnectionManager::new(redis_client).await.unwrap();
         let mut registry = StreamRegistry::new(redis);
 
+        // First try_register should succeed
+        let result = registry.try_register_publisher("room123", "media456", "node1").await.unwrap();
+        assert!(result);
+
+        // Second try_register should return false (already exists)
+        let result = registry.try_register_publisher("room123", "media456", "node2").await.unwrap();
+        assert!(!result);
+
+        // Cleanup
+        registry.unregister_publisher("room123", "media456").await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Redis instance
+    async fn test_unregister_publisher() {
+        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+        let redis = RedisConnectionManager::new(redis_client).await.unwrap();
+        let mut registry = StreamRegistry::new(redis);
+
+        // Register publisher
         registry
-            .register_publisher("room789", "media101", "node1", "live")
+            .register_publisher("room123", "media456", "node1", "live")
             .await
             .unwrap();
 
-        // TODO: Add viewer tracking tests when implemented
-        // let count = registry.increment_viewers("room789", "media101").await.unwrap();
-        // assert_eq!(count, 1);
+        // Verify exists
+        assert!(registry.is_stream_active("room123", "media456").await.unwrap());
+
+        // Unregister
+        registry.unregister_publisher("room123", "media456").await.unwrap();
+
+        // Verify removed
+        assert!(!registry.is_stream_active("room123", "media456").await.unwrap());
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Redis instance
+    async fn test_get_publisher_not_found() {
+        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+        let redis = RedisConnectionManager::new(redis_client).await.unwrap();
+        let mut registry = StreamRegistry::new(redis);
+
+        // Non-existent publisher should return None
+        let result = registry.get_publisher("nonexistent", "media").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Redis instance
+    async fn test_list_active_streams() {
+        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+        let redis = RedisConnectionManager::new(redis_client).await.unwrap();
+        let mut registry = StreamRegistry::new(redis);
+
+        // Register multiple publishers
+        registry
+            .register_publisher("room1", "media1", "node1", "live")
+            .await
+            .unwrap();
+        registry
+            .register_publisher("room2", "media2", "node1", "live")
+            .await
+            .unwrap();
+
+        // List active streams
+        let streams = registry.list_active_streams().await.unwrap();
+        assert_eq!(streams.len(), 2);
+        assert!(streams.contains(&(String::from("room1"), String::from("media1"))));
+        assert!(streams.contains(&(String::from("room2"), String::from("media2"))));
 
         // Cleanup
-        registry.unregister_publisher("room789", "media101").await.unwrap();
+        registry.unregister_publisher("room1", "media1").await.unwrap();
+        registry.unregister_publisher("room2", "media2").await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Redis instance
+    async fn test_publisher_info_serialization() {
+        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+        let redis = RedisConnectionManager::new(redis_client).await.unwrap();
+        let mut registry = StreamRegistry::new(redis);
+
+        // Register publisher
+        registry
+            .register_publisher("room123", "media456", "node1", "live")
+            .await
+            .unwrap();
+
+        // Get publisher and verify serialization/deserialization
+        let publisher = registry.get_publisher("room123", "media456").await.unwrap().unwrap();
+
+        assert_eq!(publisher.node_id, "node1");
+        assert_eq!(publisher.app_name, "live");
+        assert!(publisher.started_at <= chrono::Utc::now());
+
+        // Cleanup
+        registry.unregister_publisher("room123", "media456").await.unwrap();
     }
 }

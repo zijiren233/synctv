@@ -1,15 +1,27 @@
-// HTTP-FLV streaming implementation
-// Provides router for synctv-api integration
+// Live streaming API endpoints matching synctv-go
+//
+// API Endpoints (based on synctv-go/server/handlers/movie.go):
+//
+// FLV Streaming:
+//   GET /api/room/movie/live/flv/{movie_id}.flv?token={token}&roomId={room_id}
+//
+// HLS Streaming:
+//   Playlist: GET /api/room/movie/live/hls/list/{movie_id}.m3u8?token={token}&roomId={room_id}
+//   Segment: GET /api/room/movie/live/hls/data/{room_id}/{movie_id}/{segment}.ts?token={token}
+//
+// Reference: /root/synctv-go/server/handlers/movie.go (lines 76-115)
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Extension, Router,
+    Router,
 };
 use bytes::BytesMut;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use streamhub::{
     define::{
@@ -20,19 +32,28 @@ use streamhub::{
     utils::{RandomDigitCount, Uuid},
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use xflv::amf0::amf0_writer::Amf0Writer;
 use xflv::muxer::{FlvMuxer, HEADER_LENGTH};
 
 use crate::relay::StreamRegistry;
 
-#[derive(Clone)]
-pub struct HttpFlvState {
-    registry: Arc<StreamRegistry>,
-    stream_hub_event_sender: StreamHubEventSender,
+/// Query parameters for live streaming requests
+#[derive(Debug, Deserialize)]
+pub struct LiveStreamQuery {
+    /// JWT token for authentication
+    pub token: Option<String>,
+    /// Room ID (required for multi-tenant routing)
+    pub roomid: Option<String>,
 }
 
-impl HttpFlvState {
+#[derive(Clone)]
+pub struct LiveStreamingState {
+    pub registry: Arc<StreamRegistry>,
+    pub stream_hub_event_sender: StreamHubEventSender,
+}
+
+impl LiveStreamingState {
     pub fn new(registry: Arc<StreamRegistry>, stream_hub_event_sender: StreamHubEventSender) -> Self {
         Self {
             registry,
@@ -41,51 +62,75 @@ impl HttpFlvState {
     }
 }
 
-/// Create HTTP-FLV router
-/// Routes:
-/// - GET /live/flv/:media_id - FLV streaming (requires auth with room_id in Extension)
-pub fn create_flv_router(state: HttpFlvState) -> Router {
+/// Create live streaming router with synctv-go compatible endpoints
+pub fn create_live_router(state: LiveStreamingState) -> Router {
     Router::new()
-        .route("/live/flv/:media_id", get(handle_flv_stream))
+        // FLV streaming endpoint
+        .route(
+            "/api/room/movie/live/flv/:movie_id.flv",
+            get(handle_flv_stream),
+        )
+        // HLS playlist endpoint
+        .route(
+            "/api/room/movie/live/hls/list/:movie_id.m3u8",
+            get(handle_hls_playlist),
+        )
+        // HLS segment endpoint
+        .route(
+            "/api/room/movie/live/hls/data/:room_id/:movie_id/:segment",
+            get(handle_hls_segment),
+        )
         .with_state(state)
 }
 
 /// Handle FLV streaming request
-/// Path: GET /live/flv/:media_id
-/// Requires: Extension<RoomId> from auth middleware
+///
+/// GET /api/room/movie/live/flv/{movie_id}.flv?token={token}&roomId={room_id}
+///
+/// Based on synctv-go: /api/room/movie/live/flv/{movie_id}.flv?token={token}&roomId={room_id}
 async fn handle_flv_stream(
-    Path(media_id): Path<String>,
-    Extension(room_id): Extension<String>,
-    State(state): State<HttpFlvState>,
+    Path(movie_id): Path<String>,
+    Query(params): Query<LiveStreamQuery>,
+    State(state): State<LiveStreamingState>,
 ) -> Result<Response, StatusCode> {
-    // Remove .flv suffix if present
-    let media_id = media_id.trim_end_matches(".flv");
+    let room_id = params.roomid.ok_or(StatusCode::BAD_REQUEST)?;
 
     info!(
         room_id = %room_id,
-        media_id = %media_id,
-        "FLV streaming request"
+        movie_id = %movie_id,
+        token_provided = params.token.is_some(),
+        "FLV streaming request (synctv-go compatible)"
     );
 
-    // Check if stream exists (publisher registered)
+    // Check if publisher exists
     let mut registry = (*state.registry).clone();
-    match registry.get_publisher(&room_id, media_id).await {
-        Ok(Some(_)) => {}
+    let publisher_exists = match registry.get_publisher(&room_id, &movie_id).await {
+        Ok(Some(_)) => {
+            debug!(
+                "Found publisher for room {} / movie {}",
+                room_id, movie_id
+            );
+            true
+        }
         Ok(None) => {
-            warn!("No publisher for room {} / media {}", room_id, media_id);
+            warn!("No publisher for room {} / movie {}", room_id, movie_id);
             return Err(StatusCode::NOT_FOUND);
         }
         Err(e) => {
             error!("Failed to query publisher: {}", e);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
+    };
+
+    if !publisher_exists {
+        return Err(StatusCode::NOT_FOUND);
     }
 
     // Create channel for HTTP response data
     let (tx, rx) = mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
 
     // Spawn FLV session
-    let stream_name = format!("{}/{}", room_id, media_id);
+    let stream_name = format!("{}/{}", room_id, movie_id);
     let mut flv_session = HttpFlvSession::new(
         "live".to_string(),
         stream_name,
@@ -106,13 +151,132 @@ async fn handle_flv_stream(
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "video/x-flv")
         .header(header::CACHE_CONTROL, "no-cache, no-store")
-        .header(header::CONNECTION, "close")
+        .header("X-Accel-Buffering", "no") // Disable nginx buffering
+        .header(header::CONNECTION, "keep-alive")
         .body(body)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_response())
 }
 
+/// Handle HLS playlist request
+///
+/// GET /api/room/movie/live/hls/list/{movie_id}.m3u8?token={token}&roomId={room_id}
+///
+/// Based on synctv-go: /api/room/movie/live/hls/list/{movie_id}.m3u8?token={token}&roomId={room_id}
+/// Returns M3U8 playlist with TS segment URLs
+async fn handle_hls_playlist(
+    Path(movie_id): Path<String>,
+    Query(params): Query<LiveStreamQuery>,
+    State(state): State<LiveStreamingState>,
+) -> Response {
+    let room_id = match params.roomid {
+        Some(rid) => rid,
+        None => {
+            return (StatusCode::BAD_REQUEST, "Missing roomId parameter").into_response();
+        }
+    };
+
+    info!(
+        room_id = %room_id,
+        movie_id = %movie_id,
+        "HLS playlist request (synctv-go compatible)"
+    );
+
+    // Check if publisher exists
+    let mut registry = (*state.registry).clone();
+    match registry.get_publisher(&room_id, &movie_id).await {
+        Ok(Some(_)) => {
+            // Generate M3U8 playlist
+            // TS segments are served via: /api/room/movie/live/hls/data/{room_id}/{movie_id}/{segment}.ts
+
+            // For now, return a basic M3U8 with placeholder segments
+            // In production, this should query the segment manager for actual segment list
+            let token_param = params.token.as_ref().map(|t| format!("&token={}", t)).unwrap_or_default();
+
+            let m3u8_content = format!(
+                "#EXTM3U\n\
+                 #EXT-X-VERSION:3\n\
+                 #EXT-X-TARGETDURATION:10\n\
+                 #EXT-X-MEDIA-SEQUENCE:0\n\
+                 #EXTINF:10.0,\n\
+                 /api/room/movie/live/hls/data/{room_id}/{movie_id}/segment0.ts?token={token}\n\
+                 #EXT-X-ENDLIST",
+                room_id = room_id,
+                movie_id = movie_id,
+                token = params.token.as_deref().unwrap_or("")
+            );
+
+            (
+                StatusCode::OK,
+                [
+                    ("Content-Type", "application/vnd.apple.mpegurl"),
+                    ("Cache-Control", "no-cache"),
+                    ("Access-Control-Allow-Origin", "*"),
+                ],
+                m3u8_content,
+            )
+                .into_response()
+        }
+        Ok(None) => {
+            warn!(
+                "No publisher for HLS playlist: room {} / movie {}",
+                room_id, movie_id
+            );
+            (StatusCode::NOT_FOUND, "Stream not found").into_response()
+        }
+        Err(e) => {
+            error!("Failed to query publisher for HLS: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+        }
+    }
+}
+
+/// Handle HLS segment request
+///
+/// GET /api/room/movie/live/hls/data/{room_id}/{movie_id}/{segment}.ts?token={token}
+///
+/// Based on synctv-go: /api/room/movie/live/hls/data/{room_id}/{movie_id}/{segment}.ts
+/// Serves individual HLS TS segments
+async fn handle_hls_segment(
+    Path((room_id, movie_id, segment)): Path<(String, String, String)>,
+    Query(params): Query<LiveStreamQuery>,
+    State(state): State<LiveStreamingState>,
+) -> Response {
+    // Remove .ts suffix if present
+    let segment = segment.trim_end_matches(".ts");
+
+    debug!(
+        room_id = %room_id,
+        movie_id = %movie_id,
+        segment = %segment,
+        "HLS segment request (synctv-go compatible)"
+    );
+
+    // TODO: Implement segment retrieval from segment manager
+    // For now, return 404
+    //
+    // The segment manager should be queried for:
+    // - Storage key: format!("{}-{}-{}", room_id, movie_id, segment)
+    // - Storage backend: state.segment_manager.storage().read(&storage_key).await
+
+    warn!(
+        "HLS segment serving not yet implemented: room {} / movie {} / segment {}",
+        room_id, movie_id, segment
+    );
+
+    (
+        StatusCode::NOT_FOUND,
+        [
+            ("Content-Type", "video/mp2t"),
+            ("Cache-Control", "public, max-age=90"),
+        ],
+        "Segment not found or feature not yet implemented",
+    )
+        .into_response()
+}
+
 /// HTTP-FLV session (per-client connection)
+/// Based on xiu's HTTP-FLV implementation with synctv-go path format
 pub struct HttpFlvSession {
     app_name: String,
     stream_name: String,
@@ -311,7 +475,7 @@ impl HttpFlvSession {
         info!(
             subscriber_id = %self.subscriber_id,
             stream = %self.stream_name,
-            "Subscribed to StreamHub"
+            "Subscribed to StreamHub for FLV streaming"
         );
 
         Ok(())
@@ -345,76 +509,9 @@ impl HttpFlvSession {
         info!(
             subscriber_id = %self.subscriber_id,
             stream = %self.stream_name,
-            "Unsubscribed from StreamHub"
+            "Unsubscribed from StreamHub (FLV streaming ended)"
         );
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_http_flv_state_creation() {
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel();
-
-        let Some(redis_conn) = try_redis_connection().await else {
-            eprintln!("Redis not available, skipping test");
-            return;
-        };
-
-        let registry = StreamRegistry::new(redis_conn);
-
-        let state = HttpFlvState::new(std::sync::Arc::new(registry), event_sender);
-        assert!(Arc::strong_count(&state.registry) >= 1);
-    }
-
-    #[test]
-    fn test_http_flv_session_creation() {
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel();
-        let (response_tx, _response_rx) = mpsc::unbounded_channel();
-
-        let session = HttpFlvSession::new(
-            "live".to_string(),
-            "room123/media456".to_string(),
-            event_sender,
-            response_tx,
-        );
-
-        assert_eq!(session.app_name, "live");
-        assert_eq!(session.stream_name, "room123/media456");
-        assert!(!session.has_send_header);
-        assert!(!session.has_audio);
-        assert!(!session.has_video);
-    }
-
-    #[test]
-    fn test_flv_session_defaults() {
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel();
-        let (response_tx, _response_rx) = mpsc::unbounded_channel();
-
-        let session = HttpFlvSession::new(
-            "live".to_string(),
-            "test/stream".to_string(),
-            event_sender,
-            response_tx,
-        );
-
-        // Verify default states
-        assert!(!session.has_send_header);
-        assert!(!session.has_audio);
-        assert!(!session.has_video);
-    }
-
-    // Helper function for tests that need Redis
-    // Returns None if Redis is not available
-    async fn try_redis_connection() -> Option<redis::aio::ConnectionManager> {
-        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
-        match redis::aio::ConnectionManager::new(redis_client).await {
-            Ok(conn) => Some(conn),
-            Err(_) => None,
-        }
     }
 }

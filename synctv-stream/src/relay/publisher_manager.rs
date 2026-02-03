@@ -197,3 +197,118 @@ impl PublisherManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    #[ignore] // Requires Redis
+    async fn test_publisher_manager_creation() {
+        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+        let redis = redis::aio::ConnectionManager::new(redis_client)
+            .await
+            .expect("Failed to connect to Redis");
+        let registry = StreamRegistry::new(redis);
+        let local_node_id = "test-node-1".to_string();
+
+        let manager = PublisherManager::new(registry, local_node_id);
+        assert_eq!(manager.local_node_id, "test-node-1");
+        assert!(manager.active_publishers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_active_publishers_map() {
+        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
+
+        let Some(redis_conn) = try_redis_connection().await else {
+            eprintln!("Redis not available, skipping test");
+            return;
+        };
+
+        let registry = StreamRegistry::new(redis_conn);
+        let manager = PublisherManager::new(registry, "test-node".to_string());
+
+        // Verify active publishers map is empty
+        assert!(manager.active_publishers.is_empty());
+        assert_eq!(manager.active_publishers.len(), 0);
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Redis and StreamHub event loop
+    async fn test_handle_publish_success() {
+        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+        let redis = redis::aio::ConnectionManager::new(redis_client)
+            .await
+            .expect("Failed to connect to Redis");
+        let registry = StreamRegistry::new(redis);
+        let manager = PublisherManager::new(registry, "test-node-1".to_string());
+
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name: "room123/media456".to_string(),
+        };
+
+        // Handle publish event
+        let result = manager.handle_publish(identifier).await;
+        assert!(result.is_ok());
+
+        // Verify publisher was tracked
+        assert!(manager.active_publishers.contains_key("room123/media456"));
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Redis
+    async fn test_handle_unpublish_success() {
+        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+        let redis = redis::aio::ConnectionManager::new(redis_client)
+            .await
+            .expect("Failed to connect to Redis");
+        let registry = StreamRegistry::new(redis);
+        let manager = PublisherManager::new(registry, "test-node-1".to_string());
+
+        // First, register a publisher
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name: "room123/media456".to_string(),
+        };
+        let _ = manager.handle_publish(identifier.clone()).await;
+
+        // Then unpublish
+        let result = manager.handle_unpublish(identifier).await;
+        assert!(result.is_ok());
+
+        // Verify publisher was removed from tracking
+        assert!(!manager.active_publishers.contains_key("room123/media456"));
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires Redis
+    async fn test_handle_publish_invalid_format() {
+        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+        let redis = redis::aio::ConnectionManager::new(redis_client)
+            .await
+            .expect("Failed to connect to Redis");
+        let registry = StreamRegistry::new(redis);
+        let manager = PublisherManager::new(registry, "test-node-1".to_string());
+
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name: "invalid_format".to_string(), // Missing room_id/media_id separator
+        };
+
+        let result = manager.handle_publish(identifier).await;
+        assert!(result.is_err());
+    }
+
+    // Helper function for tests
+    // Returns None if Redis is not available
+    async fn try_redis_connection() -> Option<redis::aio::ConnectionManager> {
+        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+        match redis::aio::ConnectionManager::new(redis_client).await {
+            Ok(conn) => Some(conn),
+            Err(_) => None,
+        }
+    }
+}

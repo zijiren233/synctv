@@ -4,6 +4,7 @@ mod server;
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{error, info};
+use tokio::sync::mpsc;
 
 use synctv_core::{
     logging,
@@ -147,6 +148,10 @@ async fn main() -> Result<()> {
                             synctv_services.jwt_service.clone(),
                         ));
 
+                        // Create StreamHub event sender for RTMP server
+                        let (stream_hub_event_sender, _stream_hub_event_receiver) =
+                            mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
+
                         // Start RTMP server in background
                         let rtmp_address = format!("{}:{}", config.server.host, config.streaming.rtmp_port);
                         let mut rtmp_server = synctv_stream::RtmpStreamingServer::new(
@@ -155,6 +160,7 @@ async fn main() -> Result<()> {
                             registry.clone(),
                             node_id,
                             rtmp_auth,
+                            stream_hub_event_sender,
                         );
 
                         tokio::spawn(async move {

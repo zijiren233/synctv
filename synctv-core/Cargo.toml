@@ -65,6 +65,12 @@ regex.workspace = true
 
 # HTTP Client
 reqwest.workspace = true
+http = "1.0"
+
+# Resilience
+tower = "0.5"
+tower-http = { version = "0.5", features = ["timeout", "trace"] }
+futures-util = "0.3"
 
 # Time
 chrono.workspace = true
@@ -76,6 +82,7 @@ log.workspace = true
 
 # Configuration
 config.workspace = true
+prometheus = "0.14.0"
 
 [dev-dependencies]
 mockall.workspace = true

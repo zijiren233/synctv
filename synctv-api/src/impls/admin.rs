@@ -4,6 +4,7 @@
 //! Used by both HTTP and gRPC handlers.
 
 use std::sync::Arc;
+use std::str::FromStr;
 use synctv_core::models::{UserId, RoomId};
 use synctv_core::service::{RoomService, UserService, SettingsService, EmailService};
 
@@ -348,10 +349,10 @@ fn admin_room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) 
         username: member.username.clone(),
         role: role_str.to_string(),
         permissions: member.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
-        added_permissions: member.added_permissions.0,
-        removed_permissions: member.removed_permissions.0,
-        admin_added_permissions: member.admin_added_permissions.0,
-        admin_removed_permissions: member.admin_removed_permissions.0,
+        added_permissions: member.added_permissions,
+        removed_permissions: member.removed_permissions,
+        admin_added_permissions: member.admin_added_permissions,
+        admin_removed_permissions: member.admin_removed_permissions,
         joined_at: member.joined_at.timestamp(),
         is_online: member.is_online,
     }

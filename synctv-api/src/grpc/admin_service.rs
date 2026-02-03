@@ -2028,4 +2028,141 @@ impl AdminService for AdminServiceImpl {
             additional_stats,
         }))
     }
+
+    // =========================
+    // Room Settings Management
+    // =========================
+
+    async fn get_room_settings(
+        &self,
+        request: Request<GetRoomSettingsRequest>,
+    ) -> Result<Response<GetRoomSettingsResponse>, Status> {
+        self.check_admin(&request).await?;
+        let req = request.into_inner();
+        let room_id = synctv_core::models::RoomId::from_string(req.room_id);
+
+        // Get room settings
+        let settings = self
+            .room_service
+            .get_room_settings(&room_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get room settings: {}", e)))?;
+
+        // Serialize settings to JSON bytes
+        let settings_json = serde_json::to_vec(&settings)
+            .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
+
+        Ok(Response::new(GetRoomSettingsResponse {
+            settings: settings_json,
+        }))
+    }
+
+    async fn set_room_settings(
+        &self,
+        request: Request<SetRoomSettingsRequest>,
+    ) -> Result<Response<SetRoomSettingsResponse>, Status> {
+        self.check_admin(&request).await?;
+        let req = request.into_inner();
+        let room_id = synctv_core::models::RoomId::from_string(req.room_id);
+
+        // Parse settings from JSON bytes
+        let settings: synctv_core::models::RoomSettings = serde_json::from_slice(&req.settings)
+            .map_err(|e| Status::invalid_argument(format!("Invalid settings JSON: {}", e)))?;
+
+        // Set room settings
+        let updated_settings = self
+            .room_service
+            .set_room_settings(&room_id, &settings)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to set room settings: {}", e)))?;
+
+        // Get the room to return in response
+        let room = self
+            .room_service
+            .get_room(&room_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get room: {}", e)))?;
+
+        Ok(Response::new(SetRoomSettingsResponse {
+            room: Some(crate::proto::admin::AdminRoom {
+                id: room.id.as_str().to_string(),
+                name: room.name.clone(),
+                creator_id: room.created_by.as_str().to_string(),
+                creator_username: String::new(),
+                status: room.status.as_str().to_string(),
+                settings: serde_json::to_vec(&updated_settings).unwrap_or_default(),
+                member_count: 0,
+                created_at: room.created_at.timestamp(),
+                updated_at: room.updated_at.timestamp(),
+            }),
+        }))
+    }
+
+    async fn update_room_setting(
+        &self,
+        request: Request<UpdateRoomSettingRequest>,
+    ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
+        self.check_admin(&request).await?;
+        let req = request.into_inner();
+        let room_id = synctv_core::models::RoomId::from_string(req.room_id);
+
+        // Parse the value as JSON
+        let value: serde_json::Value = serde_json::from_slice(&req.value)
+            .map_err(|e| Status::invalid_argument(format!("Invalid JSON value: {}", e)))?;
+
+        // Update single setting
+        let settings_json = self
+            .room_service
+            .update_room_setting(&room_id, &req.key, &value)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to update room setting: {}", e)))?;
+
+        Ok(Response::new(UpdateRoomSettingResponse {
+            settings: settings_json.into_bytes(),
+        }))
+    }
+
+    async fn reset_room_settings(
+        &self,
+        request: Request<ResetRoomSettingsRequest>,
+    ) -> Result<Response<ResetRoomSettingsResponse>, Status> {
+        self.check_admin(&request).await?;
+        let req = request.into_inner();
+        let room_id = synctv_core::models::RoomId::from_string(req.room_id);
+
+        // Reset room settings to default
+        let _settings_json = self
+            .room_service
+            .reset_room_settings(&room_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to reset room settings: {}", e)))?;
+
+        // Get the room to return in response
+        let room = self
+            .room_service
+            .get_room(&room_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get room: {}", e)))?;
+
+        // Get the updated settings
+        let settings = self
+            .room_service
+            .get_room_settings(&room_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get room settings: {}", e)))?;
+
+        Ok(Response::new(ResetRoomSettingsResponse {
+            room: Some(crate::proto::admin::AdminRoom {
+                id: room.id.as_str().to_string(),
+                name: room.name.clone(),
+                creator_id: room.created_by.as_str().to_string(),
+                creator_username: String::new(),
+                status: room.status.as_str().to_string(),
+                settings: serde_json::to_vec(&settings).unwrap_or_default(),
+                member_count: 0,
+                created_at: room.created_at.timestamp(),
+                updated_at: room.updated_at.timestamp(),
+            }),
+        }))
+    }
 }

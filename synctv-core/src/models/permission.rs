@@ -46,6 +46,9 @@ impl PermissionBits {
     /// Clear playlist
     pub const CLEAR_PLAYLIST: u64 = 1 << 7;
 
+    /// Start live stream (RTMP push)
+    pub const START_LIVE: u64 = 1 << 8;
+
     // ===== Playback Control Permissions (10-19) =====
 
     /// Play control (play/pause/seek)
@@ -171,6 +174,7 @@ impl PermissionBits {
         | Self::EDIT_MOVIE_ANY
         | Self::REORDER_PLAYLIST
         | Self::CLEAR_PLAYLIST
+        | Self::START_LIVE
         | Self::PLAY_CONTROL
         | Self::CHANGE_CURRENT_MOVIE
         | Self::CHANGE_PLAYBACK_RATE

@@ -20,6 +20,9 @@ synctv-cluster.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 
+# Streaming
+streamhub.workspace = true
+
 # HTTP Framework
 axum.workspace = true
 

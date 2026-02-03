@@ -585,3 +585,154 @@ impl From<streamhub::errors::StreamHubError> for HlsRemuxerError {
         HlsRemuxerError::SubscribeError
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_segment_info_creation() {
+        let segment = SegmentInfo {
+            sequence: 1,
+            duration: 10000,
+            ts_name: "test_segment".to_string(),
+            storage_key: "live/room123/test_segment".to_string(),
+            discontinuity: false,
+            created_at: Instant::now(),
+        };
+
+        assert_eq!(segment.sequence, 1);
+        assert_eq!(segment.duration, 10000);
+        assert!(!segment.discontinuity);
+    }
+
+    #[test]
+    fn test_stream_processor_state_generate_m3u8() {
+        let mut state = StreamProcessorState {
+            app_name: "live".to_string(),
+            stream_name: "room123/media456".to_string(),
+            segments: VecDeque::new(),
+            is_ended: false,
+        };
+
+        // Add some segments
+        state.segments.push_back(SegmentInfo {
+            sequence: 0,
+            duration: 10000,
+            ts_name: "segment0.ts".to_string(),
+            storage_key: "live/room123/segment0.ts".to_string(),
+            discontinuity: false,
+            created_at: Instant::now(),
+        });
+
+        state.segments.push_back(SegmentInfo {
+            sequence: 1,
+            duration: 10000,
+            ts_name: "segment1.ts".to_string(),
+            storage_key: "live/room123/segment1.ts".to_string(),
+            discontinuity: false,
+            created_at: Instant::now(),
+        });
+
+        // Generate M3U8
+        let m3u8 = state.generate_m3u8(|ts_name| format!("/api/hls/{}", ts_name));
+
+        // Verify M3U8 content
+        assert!(m3u8.contains("#EXTM3U"));
+        assert!(m3u8.contains("#EXT-X-VERSION:3"));
+        assert!(m3u8.contains("#EXT-X-TARGETDURATION:"));
+        assert!(m3u8.contains("#EXT-X-MEDIA-SEQUENCE:0"));
+        assert!(m3u8.contains("segment0.ts"));
+        assert!(m3u8.contains("segment1.ts"));
+    }
+
+    #[test]
+    fn test_stream_processor_state_with_discontinuity() {
+        let mut state = StreamProcessorState {
+            app_name: "live".to_string(),
+            stream_name: "room123/media456".to_string(),
+            segments: VecDeque::new(),
+            is_ended: false,
+        };
+
+        // Add segment with discontinuity
+        state.segments.push_back(SegmentInfo {
+            sequence: 0,
+            duration: 10000,
+            ts_name: "segment0.ts".to_string(),
+            storage_key: "live/room123/segment0.ts".to_string(),
+            discontinuity: true,
+            created_at: Instant::now(),
+        });
+
+        // Generate M3U8
+        let m3u8 = state.generate_m3u8(|ts_name| format!("/api/hls/{}", ts_name));
+
+        // Verify discontinuity tag is present
+        assert!(m3u8.contains("#EXT-X-DISCONTINUITY"));
+    }
+
+    #[test]
+    fn test_stream_processor_state_ended() {
+        let mut state = StreamProcessorState {
+            app_name: "live".to_string(),
+            stream_name: "room123/media456".to_string(),
+            segments: VecDeque::new(),
+            is_ended: true,
+        };
+
+        // Add a segment
+        state.segments.push_back(SegmentInfo {
+            sequence: 0,
+            duration: 10000,
+            ts_name: "segment0.ts".to_string(),
+            storage_key: "live/room123/segment0.ts".to_string(),
+            discontinuity: false,
+            created_at: Instant::now(),
+        });
+
+        // Generate M3U8
+        let m3u8 = state.generate_m3u8(|ts_name| format!("/api/hls/{}", ts_name));
+
+        // Verify ENDLIST tag is present
+        assert!(m3u8.contains("#EXT-X-ENDLIST"));
+    }
+
+    #[test]
+    fn test_stream_processor_state_custom_url_generator() {
+        let mut state = StreamProcessorState {
+            app_name: "live".to_string(),
+            stream_name: "room123/media456".to_string(),
+            segments: VecDeque::new(),
+            is_ended: false,
+        };
+
+        // Add segment
+        state.segments.push_back(SegmentInfo {
+            sequence: 0,
+            duration: 10000,
+            ts_name: "segment0.ts".to_string(),
+            storage_key: "live/room123/segment0.ts".to_string(),
+            discontinuity: false,
+            created_at: Instant::now(),
+        });
+
+        // Generate M3U8 with custom URL generator (e.g., adding auth token)
+        let m3u8 = state.generate_m3u8(|ts_name| {
+            format!("/api/room/live/hls/data/room123/media456/{}?token=abc123", ts_name)
+        });
+
+        // Verify custom URL format is used
+        assert!(m3u8.contains("?token=abc123"));
+        assert!(m3u8.contains("/api/room/live/hls/data/room123/media456/"));
+    }
+
+    #[test]
+    fn test_hls_remuxer_error_display() {
+        let error = HlsRemuxerError::DemuxError("test error".to_string());
+        assert_eq!(error.to_string(), "Demux error: test error");
+
+        let error = HlsRemuxerError::StorageError("storage failed".to_string());
+        assert_eq!(error.to_string(), "Storage error: storage failed");
+    }
+}

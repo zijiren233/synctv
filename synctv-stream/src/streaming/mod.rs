@@ -8,6 +8,7 @@ pub mod httpflv;
 pub mod hls;
 pub mod http_server;
 pub mod live_router;
+pub mod live_api;
 
 pub use server::StreamingServer;
 pub use handler::SyncTvStreamHandler;
@@ -17,3 +18,4 @@ pub use hls_remuxer::{CustomHlsRemuxer, StreamRegistry, StreamProcessorState};
 pub use http_server::{create_streaming_router, StreamingHttpState};
 pub use httpflv::{create_flv_router, HttpFlvState};
 pub use live_router::{create_live_router, LiveStreamingState};
+pub use live_api::{create_live_router as create_synctv_go_live_router, LiveStreamingState as LiveApiState};

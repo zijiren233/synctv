@@ -178,7 +178,12 @@ impl ClientServiceImpl {
                         room_id: room_id.as_str().to_string(),
                         user_id: user_id.as_str().to_string(),
                         username,
+                        role: "member".to_string(),
                         permissions: permissions.0,
+                        added_permissions: 0,
+                        removed_permissions: 0,
+                        admin_added_permissions: 0,
+                        admin_removed_permissions: 0,
                         joined_at: chrono::Utc::now().timestamp(),
                         is_online: true,
                     }),
@@ -853,13 +858,26 @@ impl RoomService for ClientServiceImpl {
 
         let proto_members: Vec<RoomMember> = members
             .into_iter()
-            .map(|m| RoomMember {
-                room_id: m.room_id.as_str().to_string(),
-                user_id: m.user_id.as_str().to_string(),
-                username: m.username.clone(),
-                permissions: m.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
-                joined_at: m.joined_at.timestamp(),
-                is_online: m.is_online,
+            .map(|m| {
+                let role_str = match m.role {
+                    synctv_core::models::RoomRole::Creator => "creator",
+                    synctv_core::models::RoomRole::Admin => "admin",
+                    synctv_core::models::RoomRole::Member => "member",
+                    synctv_core::models::RoomRole::Guest => "guest",
+                };
+                RoomMember {
+                    room_id: m.room_id.as_str().to_string(),
+                    user_id: m.user_id.as_str().to_string(),
+                    username: m.username.clone(),
+                    role: role_str.to_string(),
+                    permissions: m.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
+                    added_permissions: m.added_permissions,
+                    removed_permissions: m.removed_permissions,
+                    admin_added_permissions: m.admin_added_permissions,
+                    admin_removed_permissions: m.admin_removed_permissions,
+                    joined_at: m.joined_at.timestamp(),
+                    is_online: m.is_online,
+                }
             })
             .collect();
 
@@ -1142,13 +1160,26 @@ impl RoomService for ClientServiceImpl {
         // Convert to response
         let member_list = members
             .into_iter()
-            .map(|m| RoomMember {
-                room_id: room_id.to_string(),
-                user_id: m.user_id.to_string(),
-                username: m.username.clone(),
-                permissions: m.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
-                joined_at: m.joined_at.timestamp(),
-                is_online: m.is_online,
+            .map(|m| {
+                let role_str = match m.role {
+                    synctv_core::models::RoomRole::Creator => "creator",
+                    synctv_core::models::RoomRole::Admin => "admin",
+                    synctv_core::models::RoomRole::Member => "member",
+                    synctv_core::models::RoomRole::Guest => "guest",
+                };
+                RoomMember {
+                    room_id: room_id.to_string(),
+                    user_id: m.user_id.to_string(),
+                    username: m.username.clone(),
+                    role: role_str.to_string(),
+                    permissions: m.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
+                    added_permissions: m.added_permissions,
+                    removed_permissions: m.removed_permissions,
+                    admin_added_permissions: m.admin_added_permissions,
+                    admin_removed_permissions: m.admin_removed_permissions,
+                    joined_at: m.joined_at.timestamp(),
+                    is_online: m.is_online,
+                }
             })
             .collect();
 
@@ -1172,15 +1203,15 @@ impl RoomService for ClientServiceImpl {
         let use_admin = req.admin_added_permissions > 0 || req.admin_removed_permissions > 0;
 
         let added = if use_admin {
-            if req.admin_added_permissions > 0 { Some(req.admin_added_permissions) } else { None }
+            req.admin_added_permissions
         } else {
-            if req.added_permissions > 0 { Some(req.added_permissions) } else { None }
+            req.added_permissions
         };
 
         let removed = if use_admin {
-            if req.admin_removed_permissions > 0 { Some(req.admin_removed_permissions) } else { None }
+            req.admin_removed_permissions
         } else {
-            if req.removed_permissions > 0 { Some(req.removed_permissions) } else { None }
+            req.removed_permissions
         };
 
         // Set member permissions
@@ -1208,12 +1239,25 @@ impl RoomService for ClientServiceImpl {
             .map(|u| u.username)
             .unwrap_or_default();
 
+        // Convert role to string
+        let role_str = match member.role {
+            synctv_core::models::RoomRole::Creator => "creator",
+            synctv_core::models::RoomRole::Admin => "admin",
+            synctv_core::models::RoomRole::Member => "member",
+            synctv_core::models::RoomRole::Guest => "guest",
+        };
+
         Ok(Response::new(SetMemberPermissionResponse {
             member: Some(RoomMember {
                 room_id: room_id.to_string(),
                 user_id: member.user_id.to_string(),
                 username,
+                role: role_str.to_string(),
                 permissions: member.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
+                added_permissions: member.added_permissions,
+                removed_permissions: member.removed_permissions,
+                admin_added_permissions: member.admin_added_permissions,
+                admin_removed_permissions: member.admin_removed_permissions,
                 joined_at: member.joined_at.timestamp(),
                 is_online: false,
             }),
@@ -1243,6 +1287,70 @@ impl RoomService for ClientServiceImpl {
 
         Ok(Response::new(KickMemberResponse { success: true }))
     }
+
+    async fn get_room_settings(
+        &self,
+        request: Request<GetRoomSettingsRequest>,
+    ) -> Result<Response<GetRoomSettingsResponse>, Status> {
+        let room_id = self.get_room_id(&request)?;
+
+        // Get room settings
+        let settings = self
+            .room_service
+            .get_room_settings(&room_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get room settings: {}", e)))?;
+
+        // Serialize settings to JSON bytes
+        let settings_json = serde_json::to_vec(&settings)
+            .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
+
+        Ok(Response::new(GetRoomSettingsResponse {
+            settings: settings_json,
+        }))
+    }
+
+    async fn update_room_setting(
+        &self,
+        request: Request<UpdateRoomSettingRequest>,
+    ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
+
+        // Parse the value as JSON
+        let value: serde_json::Value = serde_json::from_slice(&req.value)
+            .map_err(|e| Status::invalid_argument(format!("Invalid JSON value: {}", e)))?;
+
+        // Update single setting
+        let settings_json = self
+            .room_service
+            .update_room_setting(&room_id, &req.key, &value)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to update room setting: {}", e)))?;
+
+        Ok(Response::new(UpdateRoomSettingResponse {
+            settings: settings_json.into_bytes(),
+        }))
+    }
+
+    async fn reset_room_settings(
+        &self,
+        request: Request<ResetRoomSettingsRequest>,
+    ) -> Result<Response<ResetRoomSettingsResponse>, Status> {
+        let room_id = self.get_room_id(&request)?;
+
+        // Reset room settings to default
+        let settings_json = self
+            .room_service
+            .reset_room_settings(&room_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to reset room settings: {}", e)))?;
+
+        Ok(Response::new(ResetRoomSettingsResponse {
+            settings: settings_json.into_bytes(),
+        }))
+    }
+
     type MessageStreamStream = std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<ServerMessage, Status>> + Send + 'static>,
     >;

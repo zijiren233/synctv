@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 use rtmp::session::common::RtmpStreamHandler;
 
 use super::proto::{stream_relay_service_client::StreamRelayServiceClient, PullRtmpStreamRequest};
-use crate::relay::StreamRegistry;
+use crate::relay::StreamRegistryTrait;
 
 /// gRPC Stream Puller
 /// Pulls RTMP stream from remote Publisher node via gRPC and publishes to local StreamHub
@@ -33,7 +33,7 @@ impl GrpcStreamPuller {
         publisher_node_addr: String,
         _node_id: String,
         stream_hub_event_sender: StreamHubEventSender,
-        _registry: Arc<StreamRegistry>,
+        _registry: Arc<dyn StreamRegistryTrait>,
     ) -> Self {
         Self {
             room_id,
@@ -183,5 +183,49 @@ impl GrpcStreamPuller {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::relay::MockStreamRegistry;
+
+    #[tokio::test]
+    async fn test_puller_creation() {
+        let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
+
+        let puller = GrpcStreamPuller::new(
+            "room123".to_string(),
+            "media456".to_string(),
+            "publisher-node:50051".to_string(),
+            "node-1".to_string(),
+            stream_hub_event_sender,
+            std::sync::Arc::new(MockStreamRegistry::new()),
+        );
+
+        assert_eq!(puller.room_id, "room123");
+        assert_eq!(puller.media_id, "media456");
+        assert_eq!(puller.publisher_node_addr, "publisher-node:50051");
+        assert!(puller.publisher_info.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires actual publisher node
+    async fn test_puller_run() {
+        let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
+
+        let puller = GrpcStreamPuller::new(
+            "room123".to_string(),
+            "media456".to_string(),
+            "localhost:50051".to_string(),
+            "node-1".to_string(),
+            stream_hub_event_sender,
+            std::sync::Arc::new(MockStreamRegistry::new()),
+        );
+
+        // This will fail to connect since there's no actual publisher
+        let result = puller.run().await;
+        assert!(result.is_err());
     }
 }

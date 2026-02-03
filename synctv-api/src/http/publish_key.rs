@@ -1,6 +1,7 @@
 //! Publish key API endpoints
 //!
 //! HTTP endpoints for generating RTMP publish keys for live streaming.
+//! Streaming is scoped to individual media items, not rooms.
 
 use axum::{
     extract::{Path, State},
@@ -13,13 +14,6 @@ use tracing::info;
 
 use crate::http::{AppState, AppError, AppResult, middleware::AuthUser};
 use synctv_core::models::{MediaId, RoomId};
-
-/// Request to generate a publish key
-#[derive(Debug, Deserialize)]
-pub struct GeneratePublishKeyRequest {
-    /// Optional media/stream ID
-    pub media_id: Option<String>,
-}
 
 /// Publish key response
 #[derive(Debug, Serialize)]
@@ -42,48 +36,61 @@ pub struct PublishKeyResponse {
 
 /// Create publish key routes
 pub fn create_publish_key_router() -> Router<AppState> {
-    Router::new().route("/api/rooms/:room_id/publish-key", post(generate_publish_key))
+    Router::new().route(
+        "/rooms/:room_id/movies/:media_id/live/publish-key",
+        post(generate_publish_key),
+    )
 }
 
 /// Generate a publish key for RTMP streaming
 ///
-/// POST /api/rooms/:room_id/publish-key
+/// POST /rooms/:room_id/movies/:media_id/live/publish-key
 /// Requires authentication
 ///
-/// Generates a JWT token that can be used to authenticate RTMP push.
-/// The token includes room_id, media_id, user_id, and expiration time.
+/// Generates a JWT token for a specific media item.
+/// Stream name format: {room_id}/{media_id}
+///
+/// Based on synctv-go implementation:
+/// - Endpoint: POST /api/room/movie/:movieId/live/publishKey
+/// - Multiple concurrent streams per room (one per media item)
+/// - Each media item can have independent RTMP stream
+#[axum::debug_handler]
 pub async fn generate_publish_key(
     State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<GeneratePublishKeyRequest>,
+    Path((room_id, media_id)): Path<(String, String)>,
     auth_user: AuthUser,
 ) -> AppResult<Json<PublishKeyResponse>> {
     let room_id = RoomId::from_string(room_id);
+    let media_id = MediaId::from_string(media_id);
     let user_id = auth_user.user_id;
 
     // Get PublishKeyService from state
     let publish_key_service = state.publish_key_service.as_ref()
         .ok_or_else(|| AppError::internal_server_error("Publish key service not configured"))?;
 
-    // Use media_id from request or generate a default one
-    let media_id = req.media_id
-        .unwrap_or_else(|| format!("stream_{}", nanoid::nanoid!(8)));
-    let media_id = MediaId::from_string(media_id);
+    // Check permission to start live stream
+    state
+        .room_service
+        .check_permission(&room_id, &user_id, synctv_core::models::PermissionBits::START_LIVE)
+        .await
+        .map_err(|e| AppError::forbidden(format!("Permission denied: {}", e)))?;
 
-    // Generate publish key
+    // Generate publish key for this specific media item
     let publish_key = publish_key_service
         .generate_publish_key(room_id.clone(), media_id.clone(), user_id.clone())
         .await
         .map_err(|e| AppError::internal_server_error(format!("Failed to generate publish key: {}", e)))?;
 
     // Construct RTMP URL and stream key
-    let rtmp_url = format!("rtmp://localhost:1935/live/{}", publish_key.room_id);
+    // Stream name format: {room_id}/{media_id}
+    let rtmp_url = format!("rtmp://localhost:1935/live/{}", room_id.as_str());
     let stream_key = publish_key.token.clone();
 
     info!(
         room_id = publish_key.room_id,
+        media_id = publish_key.media_id,
         user_id = publish_key.user_id,
-        "Generated publish key"
+        "Generated publish key for media stream"
     );
 
     Ok(Json(PublishKeyResponse {

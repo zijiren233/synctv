@@ -636,8 +636,13 @@ impl ClientApiImpl {
         if !req.role.is_empty() {
             let new_role = synctv_core::models::RoomRole::from_str(&req.role)
                 .map_err(|e| e.to_string())?;
-            // TODO: Add role update service method
-            // For now, just update permissions
+            // Update the member role
+            self.room_service.member_service().set_member_role(
+                rid.clone(),
+                uid.clone(),
+                target_uid.clone(),
+                new_role,
+            ).await.map_err(|e| e.to_string())?;
         }
 
         // Determine which permission set to use based on current role
@@ -645,15 +650,15 @@ impl ClientApiImpl {
         let use_admin_perms = req.admin_added_permissions > 0 || req.admin_removed_permissions > 0;
 
         let added = if use_admin_perms {
-            if req.admin_added_permissions > 0 { Some(req.admin_added_permissions) } else { None }
+            req.admin_added_permissions
         } else {
-            if req.added_permissions > 0 { Some(req.added_permissions) } else { None }
+            req.added_permissions
         };
 
         let removed = if use_admin_perms {
-            if req.admin_removed_permissions > 0 { Some(req.admin_removed_permissions) } else { None }
+            req.admin_removed_permissions
         } else {
-            if req.removed_permissions > 0 { Some(req.removed_permissions) } else { None }
+            req.removed_permissions
         };
 
         self.room_service.set_member_permission(
@@ -673,7 +678,7 @@ impl ClientApiImpl {
             .ok_or_else(|| "Member not found".to_string())?;
 
         Ok(crate::proto::client::SetMemberPermissionResponse {
-            member: Some(room_member_to_proto(&member)),
+            member: Some(room_member_to_proto(member)),
         })
     }
 
@@ -770,7 +775,7 @@ fn playback_state_to_proto(state: &synctv_core::models::RoomPlaybackState) -> cr
     }
 }
 
-fn room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) -> crate::proto::client::RoomMember {
+fn room_member_to_proto(member: synctv_core::models::RoomMemberWithUser) -> crate::proto::client::RoomMember {
     let role_str = match member.role {
         synctv_core::models::RoomRole::Creator => "creator",
         synctv_core::models::RoomRole::Admin => "admin",
@@ -784,10 +789,10 @@ fn room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) -> cra
         username: member.username.clone(),
         role: role_str.to_string(),
         permissions: member.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
-        added_permissions: member.added_permissions.0,
-        removed_permissions: member.removed_permissions.0,
-        admin_added_permissions: member.admin_added_permissions.0,
-        admin_removed_permissions: member.admin_removed_permissions.0,
+        added_permissions: member.added_permissions,
+        removed_permissions: member.removed_permissions,
+        admin_added_permissions: member.admin_added_permissions,
+        admin_removed_permissions: member.admin_removed_permissions,
         joined_at: member.joined_at.timestamp(),
         is_online: member.is_online,
     }

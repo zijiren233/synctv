@@ -1,27 +1,30 @@
 use crate::{
     cache::gop_cache::GopCache,
-    relay::registry::StreamRegistry,
+    relay::registry_trait::StreamRegistryTrait,
     error::StreamResult,
     rtmp::auth::RtmpAuthCallback,
 };
 use std::sync::Arc;
+use streamhub::define::StreamHubEventSender;
 use tokio::net::TcpListener;
 
 pub struct RtmpStreamingServer {
     rtmp_address: String,
     gop_cache: Arc<GopCache>,
-    registry: StreamRegistry,
+    registry: Arc<dyn StreamRegistryTrait>,
     node_id: String,
     auth_callback: Arc<dyn RtmpAuthCallback>,
+    stream_hub_event_sender: StreamHubEventSender,
 }
 
 impl RtmpStreamingServer {
     pub fn new(
         rtmp_address: String,
         gop_cache: Arc<GopCache>,
-        registry: StreamRegistry,
+        registry: Arc<dyn StreamRegistryTrait>,
         node_id: String,
         auth_callback: Arc<dyn RtmpAuthCallback>,
+        stream_hub_event_sender: StreamHubEventSender,
     ) -> Self {
         Self {
             rtmp_address,
@@ -29,6 +32,7 @@ impl RtmpStreamingServer {
             registry,
             node_id,
             auth_callback,
+            stream_hub_event_sender,
         }
     }
 
@@ -51,6 +55,7 @@ impl RtmpStreamingServer {
             let registry = self.registry.clone();
             let node_id = self.node_id.clone();
             let auth_callback = Arc::clone(&self.auth_callback);
+            let stream_hub_event_sender = self.stream_hub_event_sender.clone();
 
             tokio::spawn(async move {
                 let mut session = crate::rtmp::session::SyncTvRtmpSession::new(
@@ -60,6 +65,7 @@ impl RtmpStreamingServer {
                     registry,
                     node_id,
                     auth_callback,
+                    stream_hub_event_sender,
                 );
 
                 if let Err(err) = session.run().await {

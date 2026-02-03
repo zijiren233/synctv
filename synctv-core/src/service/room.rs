@@ -303,6 +303,93 @@ impl RoomService {
         self.room_settings_repo.get(room_id).await
     }
 
+    /// Set room settings (replace entire settings object)
+    pub async fn set_room_settings(&self, room_id: &RoomId, settings: &RoomSettings) -> Result<RoomSettings> {
+        self.room_settings_repo.set_settings(room_id, settings).await?;
+        // Return the updated settings
+        self.room_settings_repo.get(room_id).await
+    }
+
+    /// Update single room setting
+    pub async fn update_room_setting(&self, room_id: &RoomId, key: &str, value: &serde_json::Value) -> Result<String> {
+        use crate::models::{AutoPlaySettings, PlayMode, room_settings::*};
+
+        let mut settings = self.room_settings_repo.get(room_id).await?;
+
+        // Update the specific setting based on key
+        match key {
+            "chat_enabled" => {
+                if let Some(bool_val) = value.as_bool() {
+                    settings.chat_enabled = ChatEnabled(bool_val);
+                }
+            }
+            "danmaku_enabled" => {
+                if let Some(bool_val) = value.as_bool() {
+                    settings.danmaku_enabled = DanmakuEnabled(bool_val);
+                }
+            }
+            "auto_play" => {
+                if let Some(bool_val) = value.as_bool() {
+                    settings.auto_play = AutoPlay::new(AutoPlaySettings {
+                        enabled: bool_val,
+                        mode: PlayMode::default(),
+                        delay: 0,
+                    });
+                }
+            }
+            "allow_guest_join" => {
+                if let Some(bool_val) = value.as_bool() {
+                    settings.allow_guest_join = AllowGuestJoin(bool_val);
+                }
+            }
+            "require_password" => {
+                if let Some(bool_val) = value.as_bool() {
+                    settings.require_password = RequirePassword(bool_val);
+                }
+            }
+            "max_members" => {
+                if let Some(num_val) = value.as_u64() {
+                    settings.max_members = MaxMembers(num_val);
+                }
+            }
+            "auto_play_next" => {
+                if let Some(bool_val) = value.as_bool() {
+                    settings.auto_play_next = AutoPlayNext(bool_val);
+                }
+            }
+            "loop_playlist" => {
+                if let Some(bool_val) = value.as_bool() {
+                    settings.loop_playlist = LoopPlaylist(bool_val);
+                }
+            }
+            "shuffle_playlist" => {
+                if let Some(bool_val) = value.as_bool() {
+                    settings.shuffle_playlist = ShufflePlaylist(bool_val);
+                }
+            }
+            _ => {
+                return Err(Error::InvalidInput(format!("Unknown setting key: {}", key)));
+            }
+        }
+
+        // Save the updated settings
+        self.room_settings_repo.set_settings(room_id, &settings).await?;
+
+        // Return updated settings as JSON string
+        serde_json::to_string(&settings)
+            .map_err(|e| Error::Internal(format!("Failed to serialize settings: {}", e)))
+    }
+
+    /// Reset room settings to default values
+    pub async fn reset_room_settings(&self, room_id: &RoomId) -> Result<String> {
+        let default_settings = RoomSettings::default();
+        self.room_settings_repo.set_settings(room_id, &default_settings).await?;
+
+        // Return default settings as JSON string
+        serde_json::to_string(&default_settings)
+            .map_err(|e| Error::Internal(format!("Failed to serialize settings: {}", e)))
+    }
+
     /// Check room password
     pub async fn check_room_password(&self, room_id: &RoomId, password: &str) -> Result<bool> {
         let password_hash = self.room_settings_repo.get_password_hash(room_id).await?;
