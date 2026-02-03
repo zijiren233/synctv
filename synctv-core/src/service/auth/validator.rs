@@ -197,9 +197,10 @@ mod tests {
 
     fn create_test_token(jwt_service: &JwtService, user_id: &str) -> String {
         use super::super::jwt::TokenType;
+        use crate::models::UserRole;
         let user_id = UserId::from_string(user_id.to_string());
         jwt_service
-            .sign_token(&user_id, 0, TokenType::Access)
+            .sign_token(&user_id, UserRole::User, TokenType::Access)
             .unwrap()
     }
 

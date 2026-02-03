@@ -236,25 +236,6 @@ impl RoomCache {
         self.l1_cache.invalidate_all();
         tracing::debug!("L1 room cache cleared");
     }
-
-    /// Get cache statistics
-    pub async fn stats(&self) -> RoomCacheStats {
-        RoomCacheStats {
-            l1_size: self.l1_cache.entry_count(),
-            l1_hit_count: 0, // Not tracked by moka cache
-            l1_miss_count: 0, // Not tracked by moka cache
-            l1_hit_rate: 0.0, // Not tracked by moka cache
-        }
-    }
-}
-
-/// Room cache statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoomCacheStats {
-    pub l1_size: u64,
-    pub l1_hit_count: u64,
-    pub l1_miss_count: u64,
-    pub l1_hit_rate: f64,
 }
 
 impl std::fmt::Debug for RoomCache {
@@ -327,25 +308,5 @@ mod tests {
         assert_eq!(result.get(&room1).map(|r| &r.name), Some(&"Room 1".to_string()));
         assert_eq!(result.get(&room2), None);
         assert_eq!(result.get(&room3).map(|r| &r.name), Some(&"Room 3".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_stats() {
-        let cache = RoomCache::new(None, 100, 5, 0, "test:".to_string()).unwrap();
-
-        let room_id = create_test_room_id("room1");
-        let room = create_test_room("room1", "Test Room", "user1");
-
-        // Miss
-        cache.get(&room_id).await.unwrap();
-
-        // Set and hit
-        cache.set(&room_id, room).await.unwrap();
-        cache.get(&room_id).await.unwrap();
-
-        let stats = cache.stats().await;
-        assert_eq!(stats.l1_miss_count, 1);
-        assert_eq!(stats.l1_hit_count, 1);
-        assert_eq!(stats.l1_size, 1);
     }
 }

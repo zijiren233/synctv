@@ -274,7 +274,7 @@ mod tests {
         let claims = jwt.verify_access_token(&token).unwrap();
 
         assert_eq!(claims.sub, user_id.as_str());
-        assert_eq!(claims.role(), Ok(UserRole::Admin));
+        assert_eq!(claims.role().unwrap(), UserRole::Admin);
         assert!(claims.is_access_token());
     }
 
@@ -288,7 +288,7 @@ mod tests {
         let claims = jwt.verify_refresh_token(&token).unwrap();
 
         assert_eq!(claims.sub, user_id.as_str());
-        assert_eq!(claims.role(), Ok(UserRole::User));
+        assert_eq!(claims.role().unwrap(), UserRole::User);
         assert!(claims.is_refresh_token());
     }
 
@@ -318,7 +318,7 @@ mod tests {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
 
-        let token = jwt.sign_token(&user_id, 0, TokenType::Access).unwrap();
+        let token = jwt.sign_token(&user_id, UserRole::User, TokenType::Access).unwrap();
         let mut parts: Vec<&str> = token.split('.').collect();
         parts[1] = "tampered_payload";
         let tampered_token = parts.join(".");

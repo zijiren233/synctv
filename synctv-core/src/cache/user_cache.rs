@@ -236,25 +236,6 @@ impl UserCache {
         self.l1_cache.invalidate_all();
         tracing::debug!("L1 user cache cleared");
     }
-
-    /// Get cache statistics
-    pub async fn stats(&self) -> UserCacheStats {
-        UserCacheStats {
-            l1_size: self.l1_cache.entry_count(),
-            l1_hit_count: 0, // Not tracked by moka cache
-            l1_miss_count: 0, // Not tracked by moka cache
-            l1_hit_rate: 0.0, // Not tracked by moka cache
-        }
-    }
-}
-
-/// User cache statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserCacheStats {
-    pub l1_size: u64,
-    pub l1_hit_count: u64,
-    pub l1_miss_count: u64,
-    pub l1_hit_rate: f64,
 }
 
 impl std::fmt::Debug for UserCache {
@@ -327,25 +308,5 @@ mod tests {
         assert_eq!(result.get(&user1).map(|u| &u.username), Some(&"alice".to_string()));
         assert_eq!(result.get(&user2), None);
         assert_eq!(result.get(&user3).map(|u| &u.username), Some(&"charlie".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_stats() {
-        let cache = UserCache::new(None, 100, 5, 0, "test:".to_string()).unwrap();
-
-        let user_id = create_test_user_id("user1");
-        let user = create_test_user("user1", "alice");
-
-        // Miss
-        cache.get(&user_id).await.unwrap();
-
-        // Set and hit
-        cache.set(&user_id, user).await.unwrap();
-        cache.get(&user_id).await.unwrap();
-
-        let stats = cache.stats().await;
-        assert_eq!(stats.l1_miss_count, 1);
-        assert_eq!(stats.l1_hit_count, 1);
-        assert_eq!(stats.l1_size, 1);
     }
 }

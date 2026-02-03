@@ -320,14 +320,14 @@ mod tests {
     fn test_permission_grant_revoke() {
         let mut perms = PermissionBits::empty();
         perms.grant(PermissionBits::SEND_CHAT);
-        perms.grant(PermissionBits::SEND_DANMAKU);
+        perms.grant(PermissionBits::ADD_MOVIE);
 
         assert!(perms.has(PermissionBits::SEND_CHAT));
-        assert!(perms.has(PermissionBits::SEND_DANMAKU));
+        assert!(perms.has(PermissionBits::ADD_MOVIE));
 
         perms.revoke(PermissionBits::SEND_CHAT);
         assert!(!perms.has(PermissionBits::SEND_CHAT));
-        assert!(perms.has(PermissionBits::SEND_DANMAKU));
+        assert!(perms.has(PermissionBits::ADD_MOVIE));
     }
 
     #[test]
