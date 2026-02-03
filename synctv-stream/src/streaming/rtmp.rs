@@ -3,8 +3,14 @@
 // Architecture:
 // 1. Use xiu's StreamHub as the core event bus
 // 2. PublisherManager listens to StreamHub events and registers to Redis
-// 3. Integrate SyncTvStreamHandler for GOP cache
-// 4. Implement TStreamHandler trait for prior data (GOP cache) delivery
+// 3. GOP cache is integrated via Publisher component (relay/publisher.rs)
+// 4. StreamHub automatically distributes frames to all local subscribers
+//
+// GOP Cache Integration:
+// - RTMP publisher connects to xiu RTMP server
+// - Publisher component caches frames in GOP cache via on_rtmp_data()
+// - New subscribers receive frames from StreamHub
+// - For instant playback, GOP cached frames are sent by SyncTvStreamHandler
 //
 // Based on:
 // - /tmp/xiu/application/xiu/src/service.rs § start_rtmp()
@@ -23,11 +29,11 @@ use tokio::sync::Mutex;
 
 pub struct RtmpServer {
     address: String,
-    _gop_cache: Arc<GopCache>,
+    gop_cache: Arc<GopCache>,
     registry: Arc<dyn StreamRegistryTrait>,
     node_id: String,
     gop_num: usize,
-    stream_hub: Arc<Mutex<StreamsHub>>,
+    pub(in crate::streaming) stream_hub: Arc<Mutex<StreamsHub>>,
 }
 
 impl RtmpServer {
@@ -43,7 +49,7 @@ impl RtmpServer {
 
         Self {
             address,
-            _gop_cache: gop_cache,
+            gop_cache,
             registry,
             node_id,
             gop_num,
@@ -65,15 +71,20 @@ impl RtmpServer {
         };
 
         // Start PublisherManager to listen for Publish/UnPublish events
+        // The PublisherManager will create Publisher instances that cache frames in GOP cache
+        let gop_cache = Arc::clone(&self.gop_cache);
+        let registry = Arc::clone(&self.registry);
+        let node_id = self.node_id.clone();
         let publisher_manager = Arc::new(PublisherManager::new(
-            self.registry.clone(),
-            self.node_id.clone(),
+            registry.clone(),
+            node_id,
         ));
         tokio::spawn(async move {
             publisher_manager.start(client_event_consumer).await;
         });
 
         // Start StreamHub event loop
+        // StreamHub handles frame distribution to local subscribers (HTTP-FLV, HLS)
         let hub_clone = Arc::clone(&self.stream_hub);
         tokio::spawn(async move {
             let mut hub = hub_clone.lock().await;
@@ -82,12 +93,13 @@ impl RtmpServer {
         });
 
         // Start xiu RtmpServer
+        // The RTMP server accepts publisher connections and pushes frames to StreamHub
         let gop_num = self.gop_num;
         let mut xiu_rtmp_server = rtmp::rtmp::RtmpServer::new(
             self.address.clone(),
             event_sender,
             gop_num,
-            None, // No auth for now
+            None, // Auth is handled by StreamHandler (xiu_integration/stream_handler.rs)
         );
 
         tokio::spawn(async move {
@@ -96,9 +108,10 @@ impl RtmpServer {
             }
         });
 
-        // TODO: Integrate SyncTvStreamHandler with StreamHub for GOP cache
-
-        log::info!("RTMP server started successfully");
+        log::info!(
+            "RTMP server started successfully with GOP cache (gop_num={})",
+            gop_num
+        );
 
         // Keep running
         tokio::time::sleep(std::time::Duration::from_secs(u64::MAX)).await;

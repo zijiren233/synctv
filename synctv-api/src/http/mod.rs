@@ -5,6 +5,7 @@ pub mod auth;
 pub mod email_verification;
 pub mod error;
 pub mod health;
+pub mod live;
 pub mod media;
 pub mod media_proxy;
 pub mod middleware;
@@ -31,7 +32,7 @@ use synctv_cluster::sync::PublishRequest;
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::repository::{ProviderInstanceRepository, UserProviderCredentialRepository};
 use synctv_core::service::{ProviderInstanceManager, RoomService, UserService};
-use synctv_stream::streaming::StreamingHttpState;
+use synctv_stream::api::LiveStreamingInfrastructure;
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -53,13 +54,13 @@ pub struct RouterConfig {
     pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     pub jwt_service: synctv_core::service::JwtService,
     pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
-    pub streaming_state: Option<StreamingHttpState>,
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     pub settings_service: Option<Arc<synctv_core::service::SettingsService>>,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
     pub email_service: Option<Arc<synctv_core::service::EmailService>>,
     pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
+    pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
 }
 
 /// Shared application state
@@ -82,6 +83,7 @@ pub struct AppState {
     pub email_service: Option<Arc<synctv_core::service::EmailService>>,
     pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
+    pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
     // Unified API implementation layer
     pub client_api: Arc<crate::impls::ClientApiImpl>,
     pub admin_api: Option<Arc<crate::impls::AdminApiImpl>>,
@@ -102,13 +104,13 @@ pub fn create_router(
     cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     jwt_service: synctv_core::service::JwtService,
     redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
-    _streaming_state: Option<StreamingHttpState>,
     oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     settings_service: Option<Arc<synctv_core::service::SettingsService>>,
     settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
     email_service: Option<Arc<synctv_core::service::EmailService>>,
     publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
+    live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
 ) -> axum::Router {
     // Create the unified API implementation layer
     let client_api = Arc::new(crate::impls::ClientApiImpl::new(
@@ -148,6 +150,7 @@ pub fn create_router(
         email_service,
         publish_key_service,
         notification_service,
+        live_streaming_infrastructure,
         client_api,
         admin_api,
     };
@@ -267,6 +270,15 @@ pub fn create_router(
             "/api/rooms/:room_id/playback",
             get(room::get_playback_state),
         )
+        // Live streaming routes (if infrastructure is configured)
+        // Matches synctv-go path patterns: /api/room/movie/live/...
+        .merge(
+            Router::new()
+                .nest(
+                    "/api/room/movie/live",
+                    live::create_live_router(),
+                )
+        )
         // WebSocket endpoint for real-time messaging
         .route(
             "/ws/rooms/:room_id",
@@ -276,9 +288,6 @@ pub fn create_router(
         .nest("/api/providers/bilibili", providers::bilibili::bilibili_routes())
         .nest("/api/providers/alist", providers::alist::alist_routes())
         .nest("/api/providers/emby", providers::emby::emby_routes());
-
-    // Note: Streaming routes (/live, /hls) are not merged here because they use StreamingHttpState
-    // which is incompatible with our AppState. They should be run on a separate port or service.
 
     // Apply layers before state
     let router = router
@@ -309,12 +318,12 @@ pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
         config.cluster_manager,
         config.jwt_service,
         config.redis_publish_tx,
-        config.streaming_state,
         config.oauth2_service,
         config.settings_service,
         config.settings_registry,
         config.email_service,
         config.publish_key_service,
         config.notification_service,
+        config.live_streaming_infrastructure,
     )
 }

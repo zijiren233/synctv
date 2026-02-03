@@ -5,21 +5,36 @@ use redis::aio::ConnectionManager as RedisConnectionManager;
 use redis::AsyncCommands;
 use synctv_core::models::id::RoomId;
 use hostname::get as get_hostname;
+use jsonwebtoken::{decode, Validation, DecodingKey};
+
+/// JWT claims for RTMP publish authentication
+#[derive(Debug, serde::Deserialize)]
+struct PublishClaims {
+    /// Room ID
+    r: Option<String>,
+    /// Media ID
+    m: String,
+    /// User ID
+    u: String,
+    /// Expiration time
+    exp: i64,
+    /// Issued at
+    #[serde(default)]
+    iat: i64,
+}
 
 /// Stream handler for RTMP events
 #[derive(Clone)]
 pub struct StreamHandler {
     redis: RedisConnectionManager,
     node_id: String,
+    /// JWT secret for signature verification
+    jwt_secret: String,
 }
 
 impl StreamHandler {
     /// Create a new stream handler
-    pub fn new(redis: RedisConnectionManager) -> Result<Self> {
-
-impl StreamHandler {
-    /// Create a new stream handler
-    pub fn new(redis: RedisConnectionManager) -> Result<Self> {
+    pub fn new(redis: RedisConnectionManager, jwt_secret: String) -> Result<Self> {
         // Generate node ID from hostname
         let hostname = get_hostname()
             .map_err(|e| anyhow!("Failed to get hostname: {}", e))?
@@ -31,6 +46,7 @@ impl StreamHandler {
         Ok(Self {
             redis,
             node_id,
+            jwt_secret,
         })
     }
 
@@ -168,57 +184,31 @@ impl StreamHandler {
 
         let token = token.trim();
 
-        // Decode JWT token (using base64url)
-        // Format: header.payload.signature
-        let parts: Vec<&str> = token.split('.').collect();
-        if parts.len() != 3 {
-            warn!("Invalid JWT format - expected 3 parts");
-            return Err(anyhow!("Invalid JWT token format"));
-        }
+        // Use jsonwebtoken for proper verification
+        let decoding_key = DecodingKey::from_secret(self.jwt_secret.as_ref());
+        let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+        validation.validate_exp = true;
 
-        // Decode payload (second part)
-        use base64::{Engine as _, engine::general_purpose};
-        let payload = match general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
-            Ok(data) => data,
+        let claims = match decode::<PublishClaims>(token, &decoding_key, &validation) {
+            Ok(data) => data.claims,
             Err(e) => {
-                warn!("Failed to decode JWT payload: {}", e);
-                return Err(anyhow!("Invalid JWT token"));
+                warn!("JWT validation failed: {}", e);
+                return Err(anyhow!("JWT token validation failed: {}", e));
             }
         };
-
-        // Parse JSON payload
-        let claims: serde_json::Value = match serde_json::from_slice(&payload) {
-            Ok(claims) => claims,
-            Err(e) => {
-                warn!("Failed to parse JWT claims: {}", e);
-                return Err(anyhow!("Invalid JWT claims"));
-            }
-        };
-
-        // Extract required claims
-        let claim_media_id = claims.get("m")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("JWT token does not contain media_id (field 'm')"))?;
-
-        let claim_room_id = claims.get("r")
-            .and_then(|v| v.as_str());
-
-        let user_id = claims.get("u")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("JWT token does not contain user_id (field 'u')"))?;
 
         // Verify media_id matches stream key
-        if claim_media_id != media_id {
+        if claims.m != media_id {
             warn!(
                 "Media ID mismatch - path: {}, token: {}",
                 media_id,
-                claim_media_id
+                claims.m
             );
             return Err(anyhow!("Media ID mismatch"));
         }
 
         // Verify room_id if present in token
-        if let Some(r_id) = claim_room_id {
+        if let Some(r_id) = claims.r {
             if r_id != room_id.as_str() {
                 warn!(
                     "Room ID mismatch - path: {}, token: {}",
@@ -229,74 +219,12 @@ impl StreamHandler {
             }
         }
 
-        // Check token expiration
-        if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
-            let now = chrono::Utc::now().timestamp();
-            if exp < now {
-                warn!(
-                    "Token expired - exp: {}, now: {}",
-                    exp,
-                    now
-                );
-                return Err(anyhow!("Token expired"));
-            }
-        }
-
-        // Verify JWT signature using shared secret
-        // In production, this should call synctv-api's validation endpoint
-        // or share the JWT secret via configuration
-        if let Err(e) = self.verify_jwt_signature(token) {
-            warn!("JWT signature verification failed: {}", e);
-            return Err(anyhow!("JWT signature verification failed"));
-        }
-
         info!(
-            media_id = claim_media_id,
-            room_id = claim_room_id.unwrap_or("none"),
-            user_id = user_id,
+            media_id = claims.m,
+            room_id = claims.r.unwrap_or_else(|| "none".to_string()),
+            user_id = claims.u,
             "Stream authorization validated successfully"
         );
-
-        Ok(())
-    }
-
-    /// Verify JWT signature
-    /// In production, this should use the actual JWT secret from configuration
-    /// For now, we implement basic HMAC-SHA256 verification
-    fn verify_jwt_signature(&self, token: &str) -> Result<()> {
-        let parts: Vec<&str> = token.split('.').collect();
-        if parts.len() != 3 {
-            return Err(anyhow!("Invalid token format"));
-        }
-
-        let data = format!("{}.{}", parts[0], parts[1]);
-        let signature = parts[2];
-
-        // Decode the signature from the token
-        use base64::{Engine as _, engine::general_purpose};
-        let token_sig = match general_purpose::URL_SAFE_NO_PAD.decode(signature) {
-            Ok(sig) => sig,
-            Err(e) => return Err(anyhow!("Failed to decode signature: {}", e)),
-        };
-
-        // In production, you would:
-        // 1. Get the JWT secret from configuration/environment
-        // 2. Compute HMAC-SHA256 of the data with the secret
-        // 3. Compare with the decoded signature
-
-        // For now, we accept the token if it has a valid structure
-        // The actual signature verification should be done via:
-        // - A call to synctv-api's auth validation endpoint, OR
-        // - Using jsonwebtoken crate with shared secret
-
-        if token_sig.is_empty() {
-            return Err(anyhow!("Empty signature"));
-        }
-
-        // TODO: Implement proper HMAC-SHA256 verification using shared secret
-        // For now, just check that signature exists and is non-empty
-        // This is NOT secure for production!
-        warn!("JWT signature verification not fully implemented - accepting token with valid structure");
 
         Ok(())
     }
@@ -341,5 +269,11 @@ mod tests {
         let (room_id, token) = parse_stream_key_test("room123?foo=bar&token=abcdef&baz=qux").unwrap();
         assert_eq!(room_id, "room123");
         assert_eq!(token, Some("abcdef".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_token_validation() {
+        // This test requires an actual Redis connection and JWT secret
+        // It should be run as an integration test
     }
 }

@@ -53,6 +53,9 @@ pub struct SegmentInfo {
 /// Registry of active streams (for M3U8 generation)
 pub type StreamRegistry = Arc<DashMap<String, Arc<parking_lot::RwLock<StreamProcessorState>>>>;
 
+/// Re-export for HTTP servers
+pub use {StreamRegistry, StreamProcessorState, SegmentInfo};
+
 /// Stream processor state that can be accessed by HTTP server
 pub struct StreamProcessorState {
     pub app_name: String,
@@ -492,10 +495,13 @@ impl StreamProcessor {
         // Generate TS filename using nanoid (12 chars, like Go's SortUUID)
         let ts_name = nanoid::nanoid!(12);
 
-        // Generate storage key: app_name-stream_name-ts_name (no prefix, no ext)
+        // Generate storage key: app_name-stream_name-ts_name
+        // stream_name format is "room_id:media_id", replace : with - for flat key
         let storage_key = format!(
             "{}-{}-{}",
-            self.app_name, self.stream_name, ts_name
+            self.app_name,
+            self.stream_name.replace(':', "-"),
+            ts_name
         );
 
         // Write segment to storage
