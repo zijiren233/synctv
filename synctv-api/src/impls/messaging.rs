@@ -6,9 +6,10 @@
 //! Architecture:
 //! - Binary proto encoding/decoding
 //! - Shared business logic in impls layer
-//! - Transport-agnostic message handling via MessageSender trait
+//! - Transport-agnostic message handling via MessageSender and StreamMessage traits
 //! - Cluster-aware broadcasting (local + Redis)
 //! - All logic encapsulated in StreamMessageHandler (rate limiting, filtering, permissions)
+//! - Complete IO abstraction via StreamMessage trait for both sending and receiving
 
 use std::sync::Arc;
 use prost::Message;
@@ -17,7 +18,6 @@ use synctv_core::{
     service::{ContentFilter, RateLimitConfig, RateLimiter, RoomService},
 };
 use synctv_cluster::sync::{ClusterEvent, ClusterManager};
-use tokio::sync::mpsc;
 
 use crate::proto::client::{ClientMessage, ServerMessage};
 
@@ -27,6 +27,32 @@ use crate::proto::client::{ClientMessage, ServerMessage};
 pub trait MessageSender: Send + Sync {
     /// Send a server message to the client
     fn send(&self, message: ServerMessage) -> Result<(), String>;
+}
+
+/// Unified IO abstraction for bidirectional messaging
+///
+/// This trait encapsulates both sending and receiving operations for real-time communication.
+/// Implemented by both WebSocket and gRPC streaming transports, allowing complete code reuse.
+///
+/// The key insight is that WebSocket and gRPC streaming are conceptually identical:
+/// - Both are bidirectional byte streams
+/// - Both use proto encoding
+/// - Both need the same business logic (rate limiting, permissions, broadcasting)
+///
+/// By implementing this trait, we ensure that ALL connection handling logic lives in impls/,
+/// with the transport layer (http/, grpc/) providing only the IO implementation.
+#[async_trait::async_trait]
+pub trait StreamMessage: Send + Sync {
+    /// Receive a client message (blocking/async)
+    ///
+    /// Returns None when the connection is closed
+    async fn recv(&mut self) -> Option<Result<ClientMessage, String>>;
+
+    /// Send a server message
+    fn send(&self, message: ServerMessage) -> Result<(), String>;
+
+    /// Check if connection is still alive
+    fn is_alive(&self) -> bool;
 }
 
 /// Per-connection stream message handler with complete logic encapsulation
@@ -70,6 +96,7 @@ impl Clone for StreamMessageHandler {
 
 impl StreamMessageHandler {
     /// Create a new stream message handler
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         room_id: RoomId,
         user_id: UserId,
@@ -92,6 +119,126 @@ impl StreamMessageHandler {
             content_filter,
             sender,
         }
+    }
+
+    /// Run the complete message loop using unified IO abstraction
+    ///
+    /// This is the NEW recommended method that handles both sending and receiving
+    /// in a single unified loop using the StreamMessage trait.
+    ///
+    /// This method:
+    /// 1. Subscribes to cluster events and forwards them to the client
+    /// 2. Receives client messages via the StreamMessage trait
+    /// 3. Handles rate limiting, content filtering, and permissions
+    /// 4. Broadcasts events to the cluster
+    /// 5. Handles cleanup on disconnect
+    ///
+    /// The caller only needs to provide a StreamMessage implementation (WebSocket or gRPC).
+    pub async fn run<S: StreamMessage>(&self, stream: &mut S) -> Result<(), String> {
+        let room_id_str = self.room_id.as_str().to_string();
+
+        // Subscribe to cluster events
+        let (mut event_rx, _connection_id) = self.cluster_manager.subscribe(
+            self.room_id.clone(),
+            self.user_id.clone()
+        );
+
+        // Send initial user joined notification
+        stream.send(self.create_user_joined_message(&room_id_str))?;
+
+        // Main message loop using tokio::select! for concurrent operations
+        loop {
+            tokio::select! {
+                // Incoming client message
+                client_msg_result = stream.recv() => {
+                    match client_msg_result {
+                        Some(Ok(msg)) => {
+                            if let Err(e) = self.handle_client_message(&msg).await {
+                                tracing::error!("Failed to handle client message: {}", e);
+                                // Don't break on individual message errors, continue processing
+                            }
+                        }
+                        Some(Err(e)) => {
+                            tracing::error!("Error receiving message: {}", e);
+                            break;
+                        }
+                        None => {
+                            tracing::info!("Client disconnected gracefully");
+                            break;
+                        }
+                    }
+                }
+
+                // Cluster event (broadcast to client)
+                event = event_rx.recv() => {
+                    match event {
+                        Some(event) => {
+                            if let Some(msg) = cluster_event_to_server_message(&event, &room_id_str) {
+                                if let Err(e) = stream.send(msg) {
+                                    tracing::error!("Failed to send server message: {}", e);
+                                    break;
+                                }
+                            }
+                        }
+                        None => {
+                            tracing::error!("Cluster event channel closed");
+                            break;
+                        }
+                    }
+                }
+
+                // Heartbeat/health check every 30 seconds
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                    if !stream.is_alive() {
+                        tracing::info!("Connection no longer alive");
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Cleanup: notify cluster that user left
+        self.cleanup(&room_id_str).await;
+
+        Ok(())
+    }
+
+    /// Create initial user joined message
+    fn create_user_joined_message(&self, room_id: &str) -> ServerMessage {
+        use crate::proto::client::server_message::Message;
+        use crate::proto::client::{UserJoinedRoom, RoomMember};
+
+        ServerMessage {
+            message: Some(Message::UserJoined(UserJoinedRoom {
+                room_id: room_id.to_string(),
+                member: Some(RoomMember {
+                    room_id: room_id.to_string(),
+                    user_id: self.user_id.as_str().to_string(),
+                    username: self.username.clone(),
+                    permissions: 0, // Will be filled by actual permissions
+                    joined_at: chrono::Utc::now().timestamp(),
+                    is_online: true,
+                }),
+            })),
+        }
+    }
+
+    /// Cleanup on disconnect
+    async fn cleanup(&self, room_id: &str) {
+        // Notify cluster that user left
+        let event = ClusterEvent::UserLeft {
+            room_id: self.room_id.clone(),
+            user_id: self.user_id.clone(),
+            username: self.username.clone(),
+            timestamp: chrono::Utc::now(),
+        };
+        let _ = self.cluster_manager.broadcast(event);
+
+        tracing::info!(
+            "Cleanup complete for user {} in room {}",
+            self.username,
+            room_id
+        );
     }
 
     /// Start the message handling loop

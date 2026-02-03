@@ -2,13 +2,13 @@
 
 use axum::{
     async_trait,
-    extract::{FromRef, FromRequestParts, State},
-    http::{request::Parts, HeaderValue},
+    extract::{FromRef, FromRequestParts},
+    http::request::Parts,
 };
 use std::sync::Arc;
 use synctv_core::{
     models::id::UserId,
-    service::{JwtService, auth::JwtValidator},
+    service::auth::JwtValidator,
 };
 
 use super::{AppError, AppState};

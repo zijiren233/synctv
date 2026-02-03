@@ -108,13 +108,14 @@ mod tests {
 
         // Register a fake publisher
         registry
-            .register_publisher("room123", "publisher-node", "live")
+            .register_publisher("room123", "media123", "publisher-node", "live")
             .await
             .unwrap();
 
         // Create puller
         let mut puller = Puller::new(
             "room123".to_string(),
+            "media123".to_string(),
             "puller-node".to_string(),
             StreamRegistry::new(redis),
         );
@@ -126,6 +127,6 @@ mod tests {
 
         // Cleanup
         puller.stop().await.unwrap();
-        registry.unregister_publisher("room123").await.unwrap();
+        registry.unregister_publisher("room123", "media123").await.unwrap();
     }
 }

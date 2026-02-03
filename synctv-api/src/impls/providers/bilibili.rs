@@ -4,7 +4,6 @@
 //! Used by both HTTP and gRPC handlers.
 
 use std::sync::Arc;
-use std::collections::HashMap;
 use synctv_core::provider::BilibiliProvider;
 use crate::proto::providers::bilibili::*;
 

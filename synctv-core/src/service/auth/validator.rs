@@ -173,6 +173,7 @@ impl JwtValidator {
     ///
     /// # Errors
     /// - tonic::Status::unauthenticated for any validation failure
+    #[allow(clippy::result_large_err)]
     pub fn validate_grpc_as_status(&self, metadata: &MetadataMap) -> std::result::Result<Claims, Status> {
         let token = self
             .extract_grpc_token(metadata)
@@ -180,7 +181,6 @@ impl JwtValidator {
 
         self.jwt_service
             .verify_access_token(&token)
-            .map(|claims| claims)
             .map_err(|e| Status::unauthenticated(format!("Token verification failed: {}", e)))
     }
 }

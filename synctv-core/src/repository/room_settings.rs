@@ -9,9 +9,7 @@
 //! - Settings are loaded and merged with defaults
 //! - Uses serde for automatic serialization/deserialization
 
-use std::sync::Arc;
-use std::collections::HashMap;
-use sqlx::{PgPool, postgres::PgRow, Row};
+use sqlx::{PgPool, Row};
 
 use crate::{
     models::{RoomId, RoomSettings},

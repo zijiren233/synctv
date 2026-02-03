@@ -247,6 +247,7 @@ impl NodeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
 
     #[test]
     fn test_node_info_stale() {

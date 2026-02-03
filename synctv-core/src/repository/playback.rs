@@ -115,7 +115,6 @@ impl RoomPlaybackStateRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]

@@ -34,6 +34,9 @@ use std::sync::{Arc, RwLock};
 use super::SettingsService;
 use anyhow::Result;
 
+/// Type alias for validator function to reduce type complexity
+type ValidatorFn<T> = Arc<dyn Fn(&T) -> Result<()> + Send + Sync>;
+
 /// Trait for setting operations (type-erased)
 ///
 /// This trait provides a unified interface for working with a single setting
@@ -174,7 +177,7 @@ where
     cache: Arc<RwLock<Option<T>>>,
     raw_cache: Arc<RwLock<Option<String>>>,
     default_value: T,
-    validator: Arc<RwLock<Option<Arc<dyn Fn(&T) -> Result<()> + Send + Sync>>>>,
+    validator: Arc<RwLock<Option<ValidatorFn<T>>>>,
     _phantom: std::marker::PhantomData<T>,
 }
 

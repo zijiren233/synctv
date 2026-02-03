@@ -219,7 +219,7 @@ async fn handle_oauth2_callback(
     }
 
     // Generate tokens
-    let (access_token, refresh_token) = generate_tokens(&state.jwt_service, &user).await?;
+    let (access_token, _refresh_token) = generate_tokens(&state.jwt_service, &user).await?;
 
     info!(
         "OAuth2 login successful for user {} via {}",
@@ -269,10 +269,10 @@ pub async fn bind_provider(
 /// DELETE /api/oauth2/:instance/bind
 pub async fn unbind_provider(
     State(state): State<AppState>,
-    Path(instance_name): Path<String>,
+    Path(_instance_name): Path<String>,
 ) -> AppResult<Json<serde_json::Value>> {
     // Check if OAuth2 service exists
-    let oauth2_service = state.oauth2_service.as_ref().ok_or_else(|| {
+    let _oauth2_service = state.oauth2_service.as_ref().ok_or_else(|| {
         super::AppError::bad_request("OAuth2 is not configured on this server")
     })?;
 

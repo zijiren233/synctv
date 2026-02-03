@@ -206,7 +206,7 @@ impl PlaylistService {
     pub async fn delete_playlist(
         &self,
         room_id: RoomId,
-        user_id: UserId,
+        _user_id: UserId,
         playlist_id: PlaylistId,
     ) -> Result<()> {
         // Check permission (admin or creator)
@@ -270,7 +270,6 @@ impl PlaylistService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]

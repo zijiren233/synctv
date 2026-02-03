@@ -142,7 +142,7 @@ impl AlistInterface for GrpcAlistClient {
 // ============================================================================
 
 /// Wrapper types to provide cleaner API for MediaProvider
-
+///
 /// Alist file info for MediaProvider
 #[derive(Debug, Clone)]
 pub struct AlistFileInfo {

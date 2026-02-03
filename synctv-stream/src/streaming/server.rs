@@ -39,7 +39,6 @@ pub struct StreamingServer {
     gop_cache: Arc<GopCache>,
     registry: StreamRegistry,
     node_id: String,
-    pull_manager: Arc<PullStreamManager>,
     segment_manager: Option<Arc<SegmentManager>>,
 }
 
@@ -54,7 +53,7 @@ impl StreamingServer {
         node_id: String,
     ) -> Self {
         // Create pull manager for lazy-load FLV
-        let pull_manager = Arc::new(PullStreamManager::new(
+        let _pull_manager = Arc::new(PullStreamManager::new(
             Arc::clone(&gop_cache),
             registry.clone(),
             node_id.clone(),
@@ -68,7 +67,6 @@ impl StreamingServer {
             gop_cache,
             registry,
             node_id,
-            pull_manager,
             segment_manager: None,
         }
     }

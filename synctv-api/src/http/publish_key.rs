@@ -4,7 +4,7 @@
 
 use axum::{
     extract::{Path, State},
-    response::{IntoResponse, Json},
+    response::Json,
     routing::post,
     Router,
 };
@@ -76,7 +76,7 @@ pub async fn generate_publish_key(
     let publish_key = publish_key_service
         .generate_publish_key(room_id.clone(), media_id.clone(), user_id.clone())
         .await
-        .map_err(|e| AppError::internal_server_error(&format!("Failed to generate publish key: {}", e)))?;
+        .map_err(|e| AppError::internal_server_error(format!("Failed to generate publish key: {}", e)))?;
 
     // Construct RTMP URL and stream key
     let rtmp_url = format!("rtmp://localhost:1935/live/{}", publish_key.room_id);

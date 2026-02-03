@@ -77,7 +77,7 @@ impl ConfigLoader {
             } else {
                 current = current.and_then(|v| {
                     v.as_mapping()
-                        .and_then(|m| m.get(&serde_yaml::Value::String(part.to_string())))
+                        .and_then(|m| m.get(serde_yaml::Value::String(part.to_string())))
                 });
             }
         }
@@ -113,7 +113,7 @@ impl ConfigLoader {
 
         // Check for explicit `type` field
         if let Some(map) = value.as_mapping() {
-            if let Some(type_value) = map.get(&serde_yaml::Value::String("type".to_string())) {
+            if let Some(type_value) = map.get(serde_yaml::Value::String("type".to_string())) {
                 if let Some(type_str) = type_value.as_str() {
                     return Ok(type_str.to_string());
                 }

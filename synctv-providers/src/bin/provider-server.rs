@@ -13,7 +13,6 @@ use synctv_providers::grpc::{
 };
 use tonic::transport::Server;
 use tracing::{info, Level};
-use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

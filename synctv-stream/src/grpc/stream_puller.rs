@@ -22,9 +22,7 @@ pub struct GrpcStreamPuller {
     room_id: String,
     media_id: String,
     publisher_node_addr: String,
-    node_id: String,
     stream_hub_event_sender: StreamHubEventSender,
-    registry: Arc<StreamRegistry>,
     publisher_info: Option<PublisherInfo>,
 }
 
@@ -33,17 +31,15 @@ impl GrpcStreamPuller {
         room_id: String,
         media_id: String,
         publisher_node_addr: String,
-        node_id: String,
+        _node_id: String,
         stream_hub_event_sender: StreamHubEventSender,
-        registry: Arc<StreamRegistry>,
+        _registry: Arc<StreamRegistry>,
     ) -> Self {
         Self {
             room_id,
             media_id,
             publisher_node_addr,
-            node_id,
             stream_hub_event_sender,
-            registry,
             publisher_info: None,
         }
     }

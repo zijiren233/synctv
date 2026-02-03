@@ -4,7 +4,7 @@
 
 use sqlx::{PgPool, Row};
 use crate::{
-    models::{Playlist, PlaylistId, RoomId, UserId},
+    models::{Playlist, PlaylistId, RoomId},
     Result,
 };
 
@@ -102,7 +102,7 @@ impl PlaylistRepository {
 
     /// Create a new playlist
     pub async fn create(&self, playlist: &Playlist) -> Result<Playlist> {
-        let source_provider_str = playlist.source_provider.as_ref().map(|p| p.as_str());
+        let source_provider_str = playlist.source_provider.as_deref();
         let row = sqlx::query(
             r#"
             INSERT INTO playlists (id, room_id, creator_id, name, parent_id, position,
@@ -148,7 +148,7 @@ impl PlaylistRepository {
 
     /// Update playlist
     pub async fn update(&self, playlist: &Playlist) -> Result<Playlist> {
-        let source_provider_str = playlist.source_provider.as_ref().map(|p| p.as_str());
+        let source_provider_str = playlist.source_provider.as_deref();
         let row = sqlx::query(
             r#"
             UPDATE playlists
@@ -190,7 +190,7 @@ impl PlaylistRepository {
             creator_id: crate::models::UserId::from_string(row.try_get("creator_id")?),
             name: row.try_get("name")?,
             parent_id: row.try_get::<Option<String>, _>("parent_id")?
-                .map(|id| crate::models::PlaylistId::from_string(id)),
+                .map(crate::models::PlaylistId::from_string),
             position: row.try_get("position")?,
             source_provider: row.try_get("source_provider")?,
             source_config: row.try_get("source_config")?,

@@ -8,8 +8,10 @@ use super::permission::{PermissionBits, Role as RoomRole};
 /// Member status in room (independent of role)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum MemberStatus {
     /// Active member
+    #[default]
     Active,
     /// Pending approval (if room requires approval)
     Pending,
@@ -17,11 +19,6 @@ pub enum MemberStatus {
     Banned,
 }
 
-impl Default for MemberStatus {
-    fn default() -> Self {
-        Self::Active
-    }
-}
 
 impl MemberStatus {
     pub fn as_str(&self) -> &'static str {

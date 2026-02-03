@@ -150,5 +150,4 @@ impl EmailTokenRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 }

@@ -107,19 +107,3 @@ impl TStreamHandler for SyncTvStreamHandler {
         // No-op for now
     }
 }
-
-fn is_video_data(data: &[u8]) -> bool {
-    if data.is_empty() {
-        return false;
-    }
-
-    // FLV video tag detection
-    // Video frame type is in the first byte (bits 4-7)
-    let frame_type = (data[0] >> 4) & 0x0F;
-    // Video codec ID is in the first byte (bits 0-3)
-    let codec_id = data[0] & 0x0F;
-
-    // H.264/AVC codec ID is 7
-    // Frame types: 1=keyframe, 2=inter frame, 3=disposable, 4=generated, 5=video info/command
-    frame_type <= 5 && codec_id == 7
-}

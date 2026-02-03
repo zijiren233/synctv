@@ -3,7 +3,6 @@
 //! Handles core room CRUD operations and coordinates with domain services.
 
 use sqlx::PgPool;
-use serde_json::json;
 use chrono::{DateTime, Utc};
 
 use crate::{
@@ -58,7 +57,6 @@ pub struct RoomService {
     playback_service: PlaybackService,
     notification_service: NotificationService,
     user_service: UserService,
-    providers_manager: Arc<ProvidersManager>,
 }
 
 impl std::fmt::Debug for RoomService {
@@ -118,7 +116,6 @@ impl RoomService {
             playback_service,
             notification_service,
             user_service,
-            providers_manager,
         }
     }
 
@@ -994,7 +991,6 @@ impl RoomService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]

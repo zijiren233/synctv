@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::str::FromStr;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
@@ -8,7 +7,7 @@ use tonic::{Request, Response, Status};
 use synctv_cluster::sync::{ClusterEvent, ClusterManager, ConnectionManager};
 use crate::impls::messaging::{StreamMessageHandler, MessageSender};
 use synctv_core::models::{
-    MediaId, PermissionBits, ProviderType, RoomId, RoomListQuery, RoomSettings, RoomStatus, UserId,
+    MediaId, PermissionBits, RoomId, RoomListQuery, RoomSettings, RoomStatus, UserId,
 };
 use synctv_core::service::{
     ContentFilter, RateLimitConfig, RateLimiter, RoomService as CoreRoomService,
@@ -21,6 +20,21 @@ use crate::proto::client::{
     media_service_server::MediaService, public_service_server::PublicService,
     room_service_server::RoomService, user_service_server::UserService, *,
 };
+
+/// Configuration for ClientService
+#[derive(Clone)]
+pub struct ClientServiceConfig {
+    pub user_service: CoreUserService,
+    pub room_service: CoreRoomService,
+    pub cluster_manager: Arc<ClusterManager>,
+    pub rate_limiter: RateLimiter,
+    pub rate_limit_config: RateLimitConfig,
+    pub content_filter: ContentFilter,
+    pub connection_manager: ConnectionManager,
+    pub email_service: Option<Arc<synctv_core::service::EmailService>>,
+    pub email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
+    pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+}
 
 /// ClientService implementation
 #[derive(Clone)]
@@ -38,6 +52,7 @@ pub struct ClientServiceImpl {
 }
 
 impl ClientServiceImpl {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         user_service: CoreUserService,
         room_service: CoreRoomService,
@@ -64,7 +79,24 @@ impl ClientServiceImpl {
         }
     }
 
+    /// Create ClientService from configuration struct
+    pub fn from_config(config: ClientServiceConfig) -> Self {
+        Self {
+            user_service: Arc::new(config.user_service),
+            room_service: Arc::new(config.room_service),
+            cluster_manager: config.cluster_manager,
+            rate_limiter: Arc::new(config.rate_limiter),
+            rate_limit_config: Arc::new(config.rate_limit_config),
+            content_filter: Arc::new(config.content_filter),
+            connection_manager: Arc::new(config.connection_manager),
+            email_service: config.email_service,
+            email_token_service: config.email_token_service,
+            settings_registry: config.settings_registry,
+        }
+    }
+
     /// Extract user_id from UserContext (injected by inject_user interceptor)
+    #[allow(clippy::result_large_err)]
     fn get_user_id(&self, request: &Request<impl std::fmt::Debug>) -> Result<UserId, Status> {
         let user_context = request
             .extensions()
@@ -75,6 +107,7 @@ impl ClientServiceImpl {
     }
 
     /// Extract RoomContext (injected by inject_room interceptor)
+    #[allow(clippy::result_large_err)]
     fn get_room_context(
         &self,
         request: &Request<impl std::fmt::Debug>,
@@ -88,12 +121,14 @@ impl ClientServiceImpl {
     }
 
     /// Extract room_id from RoomContext
+    #[allow(clippy::result_large_err)]
     fn get_room_id(&self, request: &Request<impl std::fmt::Debug>) -> Result<RoomId, Status> {
         let room_context = self.get_room_context(request)?;
         Ok(RoomId::from_string(room_context.room_id))
     }
 
     /// Handle incoming client message from bidirectional stream
+    #[allow(dead_code)]
     fn convert_event_to_server_message(event: ClusterEvent) -> Option<ServerMessage> {
         match event {
             ClusterEvent::ChatMessage {
@@ -909,159 +944,159 @@ impl RoomService for ClientServiceImpl {
         }))
     }
 
-    async fn get_room_settings(
-        &self,
-        request: Request<GetRoomSettingsRequest>,
-    ) -> Result<Response<GetRoomSettingsResponse>, Status> {
-        let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Get settings (with caching)
-        let settings = self
-            .room_service
-            .get_room_settings(&room_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
-
-        let settings_bytes = serde_json::to_vec(&settings)
-            .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
-
-        Ok(Response::new(GetRoomSettingsResponse {
-            settings: settings_bytes,
-        }))
-    }
-
-    async fn update_room_setting(
-        &self,
-        request: Request<UpdateRoomSettingRequest>,
-    ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
-        // Extract user_id from JWT token
-        let user_id = self.get_user_id(&request)?;
-        let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Get current settings
-        let mut settings = self
-            .room_service
-            .get_room_settings(&room_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
-
-        // Update specific field based on key
-        match req.key.as_str() {
-            "require_password" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.require_password = value;
-                }
-            }
-            "auto_play_next" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.auto_play_next = value;
-                }
-            }
-            "auto_play" => {
-                if let Ok(value) = serde_json::from_slice::<synctv_core::models::AutoPlaySettings>(&req.value) {
-                    settings.auto_play = value;
-                }
-            }
-            "loop_playlist" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.loop_playlist = value;
-                }
-            }
-            "shuffle_playlist" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.shuffle_playlist = value;
-                }
-            }
-            "allow_guest_join" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.allow_guest_join = value;
-                }
-            }
-            "max_members" => {
-                if let Ok(value) = serde_json::from_slice::<i32>(&req.value) {
-                    settings.max_members = Some(value);
-                }
-            }
-            "chat_enabled" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.chat_enabled = value;
-                }
-            }
-            "danmaku_enabled" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.danmaku_enabled = value;
-                }
-            }
-            "require_approval" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.require_approval = value;
-                }
-            }
-            "allow_auto_join" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.allow_auto_join = value;
-                }
-            }
-            _ => {
-                return Err(Status::invalid_argument(format!("Unknown setting key: {}", req.key)));
-            }
-        }
-
-        // Save updated settings
-        self.room_service
-            .set_settings(room_id.clone(), user_id, settings)
-            .await
-            .map_err(|e| match e {
-                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
-                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-                _ => Status::internal("Failed to update setting"),
-            })?;
-
-        // Load updated settings
-        let updated_settings = self
-            .room_service
-            .get_room_settings(&room_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to get updated settings: {}", e)))?;
-
-        let settings_bytes = serde_json::to_vec(&updated_settings)
-            .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
-
-        Ok(Response::new(UpdateRoomSettingResponse {
-            settings: settings_bytes,
-        }))
-    }
-
-    async fn reset_room_settings(
-        &self,
-        request: Request<ResetRoomSettingsRequest>,
-    ) -> Result<Response<ResetRoomSettingsResponse>, Status> {
-        // Extract user_id from JWT token
-        let user_id = self.get_user_id(&request)?;
-        let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Reset to default
-        let default_settings = synctv_core::models::RoomSettings::default();
-
-        self.room_service
-            .set_settings(room_id.clone(), user_id, default_settings)
-            .await
-            .map_err(|e| match e {
-                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
-                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-                _ => Status::internal("Failed to reset settings"),
-            })?;
-
-        let settings_bytes = serde_json::to_vec(&default_settings)
-            .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
-
-        Ok(Response::new(ResetRoomSettingsResponse {
-            settings: settings_bytes,
-        }))
-    }
+//     async fn get_room_settings(
+//         &self,
+//         request: Request<GetRoomSettingsRequest>,
+//     ) -> Result<Response<GetRoomSettingsResponse>, Status> {
+//         let req = request.into_inner();
+//         let room_id = RoomId::from_string(req.room_id);
+// 
+//         // Get settings (with caching)
+//         let settings = self
+//             .room_service
+//             .get_room_settings(&room_id)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
+// 
+//         let settings_bytes = serde_json::to_vec(&settings)
+//             .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
+// 
+//         Ok(Response::new(GetRoomSettingsResponse {
+//             settings: settings_bytes,
+//         }))
+//     }
+// 
+//     async fn update_room_setting(
+//         &self,
+//         request: Request<UpdateRoomSettingRequest>,
+//     ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
+//         // Extract user_id from JWT token
+//         let user_id = self.get_user_id(&request)?;
+//         let req = request.into_inner();
+//         let room_id = RoomId::from_string(req.room_id);
+// 
+//         // Get current settings
+//         let mut settings = self
+//             .room_service
+//             .get_room_settings(&room_id)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
+// 
+//         // Update specific field based on key
+//         match req.key.as_str() {
+//             "require_password" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.require_password = value;
+//                 }
+//             }
+//             "auto_play_next" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.auto_play_next = value;
+//                 }
+//             }
+//             "auto_play" => {
+//                 if let Ok(value) = serde_json::from_slice::<synctv_core::models::AutoPlaySettings>(&req.value) {
+//                     settings.auto_play = value;
+//                 }
+//             }
+//             "loop_playlist" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.loop_playlist = value;
+//                 }
+//             }
+//             "shuffle_playlist" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.shuffle_playlist = value;
+//                 }
+//             }
+//             "allow_guest_join" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.allow_guest_join = value;
+//                 }
+//             }
+//             "max_members" => {
+//                 if let Ok(value) = serde_json::from_slice::<i32>(&req.value) {
+//                     settings.max_members = Some(value);
+//                 }
+//             }
+//             "chat_enabled" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.chat_enabled = value;
+//                 }
+//             }
+//             "danmaku_enabled" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.danmaku_enabled = value;
+//                 }
+//             }
+//             "require_approval" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.require_approval = value;
+//                 }
+//             }
+//             "allow_auto_join" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.allow_auto_join = value;
+//                 }
+//             }
+//             _ => {
+//                 return Err(Status::invalid_argument(format!("Unknown setting key: {}", req.key)));
+//             }
+//         }
+// 
+//         // Save updated settings
+//         self.room_service
+//             .set_settings(room_id.clone(), user_id, settings)
+//             .await
+//             .map_err(|e| match e {
+//                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
+//                 synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+//                 _ => Status::internal("Failed to update setting"),
+//             })?;
+// 
+//         // Load updated settings
+//         let updated_settings = self
+//             .room_service
+//             .get_room_settings(&room_id)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to get updated settings: {}", e)))?;
+// 
+//         let settings_bytes = serde_json::to_vec(&updated_settings)
+//             .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
+// 
+//         Ok(Response::new(UpdateRoomSettingResponse {
+//             settings: settings_bytes,
+//         }))
+//     }
+// 
+//     async fn reset_room_settings(
+//         &self,
+//         request: Request<ResetRoomSettingsRequest>,
+//     ) -> Result<Response<ResetRoomSettingsResponse>, Status> {
+//         // Extract user_id from JWT token
+//         let user_id = self.get_user_id(&request)?;
+//         let req = request.into_inner();
+//         let room_id = RoomId::from_string(req.room_id);
+// 
+//         // Reset to default
+//         let default_settings = synctv_core::models::RoomSettings::default();
+// 
+//         self.room_service
+//             .set_settings(room_id.clone(), user_id, default_settings)
+//             .await
+//             .map_err(|e| match e {
+//                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
+//                 synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+//                 _ => Status::internal("Failed to reset settings"),
+//             })?;
+// 
+//         let settings_bytes = serde_json::to_vec(&default_settings)
+//             .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
+// 
+//         Ok(Response::new(ResetRoomSettingsResponse {
+//             settings: settings_bytes,
+//         }))
+//     }
 
     async fn get_room_members(
         &self,
@@ -1255,7 +1290,7 @@ impl RoomService for ClientServiceImpl {
         let room_id_clone = room_id.clone();
         let user_id_clone = user_id.clone();
         let username_clone = username;
-        let outgoing_tx_clone = outgoing_tx.clone();
+        let _outgoing_tx_clone = outgoing_tx.clone();
 
         // Spawn task to handle incoming client messages
         tokio::spawn(async move {
@@ -1389,245 +1424,6 @@ impl MessageSender for GrpcMessageSender {
             .send(message)
             .map_err(|e| format!("Failed to send message: {}", e))
     }
-}
-
-// Add helper method for message handling with known room_id
-impl ClientServiceImpl {
-    async fn handle_client_message_with_room(
-        msg: ClientMessage,
-        cluster_manager: &ClusterManager,
-        room_service: &CoreRoomService,
-        user_id: &UserId,
-        username: &str,
-        room_id: &RoomId,
-        connection_id: &str,
-        outgoing_tx: &tokio::sync::mpsc::UnboundedSender<ServerMessage>,
-        rate_limiter: &RateLimiter,
-        rate_limit_config: &RateLimitConfig,
-        content_filter: &ContentFilter,
-        connection_manager: &ConnectionManager,
-    ) -> Result<(), Status> {
-        use chrono::Utc;
-
-        // Record message activity
-        connection_manager.record_message(connection_id);
-
-        match msg.message {
-            Some(client_message::Message::Chat(chat)) => {
-                // room_id already known from metadata
-
-                // Check rate limit
-                let rate_limit_key = format!("user:{}:chat", user_id.as_str());
-                rate_limiter
-                    .check_rate_limit(
-                        &rate_limit_key,
-                        rate_limit_config.chat_per_second,
-                        rate_limit_config.window_seconds,
-                    )
-                    .await
-                    .map_err(|e| Status::resource_exhausted(e.to_string()))?;
-
-                // Filter and sanitize content
-                let sanitized_content = content_filter
-                    .filter_chat(&chat.content)
-                    .map_err(|e| Status::invalid_argument(e.to_string()))?;
-
-                // Check if user is in the room
-                room_service
-                    .check_permission(room_id, user_id, PermissionBits::SEND_CHAT)
-                    .await
-                    .map_err(|e| Status::permission_denied(e.to_string()))?;
-
-                // Persist chat message to database
-                if let Err(e) = room_service
-                    .save_chat_message(room_id.clone(), user_id.clone(), sanitized_content.clone())
-                    .await
-                {
-                    tracing::error!("Failed to persist chat message: {}", e);
-                }
-
-                // Create and broadcast chat event with sanitized content
-                let event = ClusterEvent::ChatMessage {
-                    room_id: room_id.clone(),
-                    user_id: user_id.clone(),
-                    username: username.to_string(),
-                    message: sanitized_content,
-                    timestamp: Utc::now(),
-                };
-
-                // Broadcast to cluster (handles both local and Redis)
-                cluster_manager.broadcast(event);
-            }
-
-            Some(client_message::Message::Danmaku(danmaku)) => {
-                // room_id already known from metadata
-
-                // Check rate limit
-                let rate_limit_key = format!("user:{}:danmaku", user_id.as_str());
-                rate_limiter
-                    .check_rate_limit(
-                        &rate_limit_key,
-                        rate_limit_config.danmaku_per_second,
-                        rate_limit_config.window_seconds,
-                    )
-                    .await
-                    .map_err(|e| Status::resource_exhausted(e.to_string()))?;
-
-                // Filter and sanitize danmaku content
-                let sanitized_content = content_filter
-                    .filter_danmaku(&danmaku.content)
-                    .map_err(|e| Status::invalid_argument(e.to_string()))?;
-
-                // Check permission
-                room_service
-                    .check_permission(room_id, user_id, PermissionBits::SEND_DANMAKU)
-                    .await
-                    .map_err(|e| Status::permission_denied(e.to_string()))?;
-
-                // Create and broadcast danmaku event with sanitized content
-                let event = ClusterEvent::Danmaku {
-                    room_id: room_id.clone(),
-                    user_id: user_id.clone(),
-                    username: username.to_string(),
-                    message: sanitized_content,
-                    position: danmaku.position as f64,
-                    timestamp: Utc::now(),
-                };
-
-                // Broadcast to cluster (handles both local and Redis)
-                cluster_manager.broadcast(event);
-            }
-
-            Some(client_message::Message::Heartbeat(heartbeat)) => {
-                // Send heartbeat acknowledgement
-                let ack = ServerMessage {
-                    message: Some(server_message::Message::HeartbeatAck(HeartbeatAck {
-                        timestamp: heartbeat.timestamp,
-                    })),
-                };
-                outgoing_tx
-                    .send(ack)
-                    .map_err(|_| Status::internal("Failed to send heartbeat ack"))?;
-            }
-
-            None => {
-                return Err(Status::invalid_argument("Empty message"));
-            }
-        }
-
-        Ok(())
-    }
-}
-
-// ==================== Helper function for gRPC message handling ====================
-
-/// Handle client message with rate limiting and content filtering
-/// Then delegate to StreamMessageHandler for actual processing
-async fn handle_client_message_with_rate_limit(
-    msg: ClientMessage,
-    stream_handler: &StreamMessageHandler,
-    rate_limiter: &RateLimiter,
-    rate_limit_config: &RateLimitConfig,
-    content_filter: &ContentFilter,
-    room_service: &CoreRoomService,
-    connection_manager: &ConnectionManager,
-    connection_id: &str,
-    outgoing_tx: &tokio::sync::mpsc::UnboundedSender<ServerMessage>,
-) -> Result<(), Status> {
-    // Record message activity
-    connection_manager.record_message(connection_id);
-
-    match msg.message {
-        Some(client_message::Message::Chat(chat)) => {
-            // Check rate limit
-            let rate_limit_key = format!("user:{}:chat", stream_handler.get_user_id().as_str());
-            rate_limiter
-                .check_rate_limit(
-                    &rate_limit_key,
-                    rate_limit_config.chat_per_second,
-                    rate_limit_config.window_seconds,
-                )
-                .await
-                .map_err(|e| Status::resource_exhausted(e.to_string()))?;
-
-            // Filter and sanitize content
-            let sanitized_content = content_filter
-                .filter_chat(&chat.content)
-                .map_err(|e| Status::invalid_argument(e.to_string()))?;
-
-            // Check if user is in the room
-            room_service
-                .check_permission(stream_handler.get_room_id(), &stream_handler.get_user_id(), PermissionBits::SEND_CHAT)
-                .await
-                .map_err(|e| Status::permission_denied(e.to_string()))?;
-
-            // Create modified message with sanitized content
-            let sanitized_msg = ClientMessage {
-                message: Some(client_message::Message::Chat(crate::proto::client::ChatMessageSend {
-                    content: sanitized_content,
-                })),
-            };
-
-            // Delegate to StreamMessageHandler
-            stream_handler.handle_client_message(&sanitized_msg).await
-                .map_err(|e| Status::internal(e.to_string()))?;
-        }
-
-        Some(client_message::Message::Danmaku(danmaku)) => {
-            // Check rate limit
-            let rate_limit_key = format!("user:{}:danmaku", stream_handler.get_user_id().as_str());
-            rate_limiter
-                .check_rate_limit(
-                    &rate_limit_key,
-                    rate_limit_config.danmaku_per_second,
-                    rate_limit_config.window_seconds,
-                )
-                .await
-                .map_err(|e| Status::resource_exhausted(e.to_string()))?;
-
-            // Filter and sanitize danmaku content
-            let sanitized_content = content_filter
-                .filter_danmaku(&danmaku.content)
-                .map_err(|e| Status::invalid_argument(e.to_string()))?;
-
-            // Check permission
-            room_service
-                .check_permission(stream_handler.get_room_id(), &stream_handler.get_user_id(), PermissionBits::SEND_DANMAKU)
-                .await
-                .map_err(|e| Status::permission_denied(e.to_string()))?;
-
-            // Create modified message with sanitized content
-            let sanitized_msg = ClientMessage {
-                message: Some(client_message::Message::Danmaku(crate::proto::client::DanmakuMessageSend {
-                    content: sanitized_content,
-                    color: danmaku.color,
-                    position: danmaku.position,
-                })),
-            };
-
-            // Delegate to StreamMessageHandler
-            stream_handler.handle_client_message(&sanitized_msg).await
-                .map_err(|e| Status::internal(e.to_string()))?;
-        }
-
-        Some(client_message::Message::Heartbeat(heartbeat)) => {
-            // Send heartbeat acknowledgement
-            let ack = ServerMessage {
-                message: Some(server_message::Message::HeartbeatAck(crate::proto::client::HeartbeatAck {
-                    timestamp: heartbeat.timestamp,
-                })),
-            };
-            outgoing_tx
-                .send(ack)
-                .map_err(|_| Status::internal("Failed to send heartbeat ack"))?;
-        }
-
-        None => {
-            return Err(Status::invalid_argument("Empty message"));
-        }
-    }
-
-    Ok(())
 }
 
 // ==================== MediaService Implementation ====================
@@ -2091,35 +1887,35 @@ impl MediaService for ClientServiceImpl {
     // Playlist Management (stub implementations - TODO: implement properly)
     async fn create_playlist(
         &self,
-        request: Request<CreatePlaylistRequest>,
+        _request: Request<CreatePlaylistRequest>,
     ) -> Result<Response<CreatePlaylistResponse>, Status> {
         Err(Status::unimplemented("Playlist management not yet implemented"))
     }
 
     async fn set_playlist(
         &self,
-        request: Request<SetPlaylistRequest>,
+        _request: Request<SetPlaylistRequest>,
     ) -> Result<Response<SetPlaylistResponse>, Status> {
         Err(Status::unimplemented("Playlist management not yet implemented"))
     }
 
     async fn delete_playlist(
         &self,
-        request: Request<DeletePlaylistRequest>,
+        _request: Request<DeletePlaylistRequest>,
     ) -> Result<Response<DeletePlaylistResponse>, Status> {
         Err(Status::unimplemented("Playlist management not yet implemented"))
     }
 
     async fn get_playlists(
         &self,
-        request: Request<GetPlaylistsRequest>,
+        _request: Request<GetPlaylistsRequest>,
     ) -> Result<Response<GetPlaylistsResponse>, Status> {
         Err(Status::unimplemented("Playlist management not yet implemented"))
     }
 
     async fn set_playing(
         &self,
-        request: Request<SetPlayingRequest>,
+        _request: Request<SetPlayingRequest>,
     ) -> Result<Response<SetPlayingResponse>, Status> {
         Err(Status::unimplemented("SetPlaying not yet implemented"))
     }
@@ -2141,7 +1937,7 @@ impl PublicService for ClientServiceImpl {
                     .get_room_settings(&room_id)
                     .await
                     .unwrap_or_default();
-                let requires_password = settings.require_password;
+                let requires_password = settings.require_password.0;
 
                 Ok(Response::new(CheckRoomResponse {
                     exists: true,
@@ -2346,7 +2142,7 @@ impl EmailService for ClientServiceImpl {
         };
 
         // Generate and send verification email
-        let token = email_service
+        let _token = email_service
             .send_verification_email(&req.email, email_token_service, &user.id)
             .await
             .map_err(|e| Status::internal(format!("Failed to send email: {}", e)))?;

@@ -4,7 +4,7 @@ use serde_json::Value as JsonValue;
 use std::fmt::Display;
 
 use super::id::{RoomId, UserId};
-use super::permission::{PermissionBits, Role as RoomRole};
+use super::permission::PermissionBits;
 use crate::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,8 +42,10 @@ impl RoomStatus {
 /// Playback mode for auto-play
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PlayMode {
     /// Sequential play (stop after last item)
+    #[default]
     Sequential,
     /// Repeat single item
     RepeatOne,
@@ -53,11 +55,6 @@ pub enum PlayMode {
     Shuffle,
 }
 
-impl Default for PlayMode {
-    fn default() -> Self {
-        Self::Sequential
-    }
-}
 
 /// Auto-play settings
 #[derive(Debug, Clone, Serialize, Deserialize)]

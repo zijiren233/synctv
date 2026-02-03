@@ -2,10 +2,10 @@
 //!
 //! Shared functionality across all provider routes
 
-use axum::{extract::State, response::IntoResponse, routing::get, Json, Router, response::Response};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
+use axum::{extract::State, routing::get, Json, Router, response::IntoResponse};
 use axum::http::StatusCode;
+use serde::Deserialize;
+use serde_json::json;
 use synctv_core::provider::ProviderError;
 
 use super::AppState;
@@ -58,9 +58,8 @@ pub fn parse_provider_error(error_msg: &str) -> ProviderError {
         ProviderError::NotFound
     } else if lower.contains("parse") || lower.contains("invalid") {
         ProviderError::ParseError(error_msg.to_string())
-    } else if lower.contains("unauthorized") || lower.contains("authentication") {
-        ProviderError::ApiError(error_msg.to_string())
     } else {
+        // Unauthorized, authentication, or any other error
         ProviderError::ApiError(error_msg.to_string())
     }
 }
@@ -75,16 +74,5 @@ pub struct InstanceQuery {
 impl InstanceQuery {
     pub fn as_deref(&self) -> Option<&str> {
         self.instance_name.as_deref()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_provider_common_routes_compile() {
-        // Ensure routes can be built
-        assert!(true);
     }
 }

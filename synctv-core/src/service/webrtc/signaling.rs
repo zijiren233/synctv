@@ -4,14 +4,13 @@
 //! Manages the offer/answer exchange and ICE candidate exchange.
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::{models::UserId, Error, Result};
 use super::{
-    session::{SessionId, SessionManager, SessionState, Session},
-    peer::{Peer, PeerManager, PeerConnectionState},
-    {SessionDescription, SdpType, IceCandidate, MediaType, WebRTCConfig},
+    session::{SessionId, SessionManager, SessionState},
+    peer::{Peer, PeerConnectionState},
+    {SessionDescription, IceCandidate, MediaType, WebRTCConfig},
 };
 use crate::models::RoomId;
 
@@ -78,7 +77,7 @@ impl SignalingService {
     ) -> Result<CreateSessionResponse> {
         // Check if a session already exists for this room
         let room_id_typed = RoomId::from_string(room_id.clone());
-        if let Ok(_) = self.session_manager.get_session_by_room(&room_id_typed).await {
+        if self.session_manager.get_session_by_room(&room_id_typed).await.is_ok() {
             return Err(Error::AlreadyExists("Session already exists for this room".to_string()));
         }
 
@@ -106,7 +105,7 @@ impl SignalingService {
         username: String,
     ) -> Result<JoinSessionResponse> {
         let session_id = SessionId::from_string(session_id.to_string());
-        let mut session = self.session_manager.get_session(&session_id).await?;
+        let session = self.session_manager.get_session(&session_id).await?;
 
         // Check if session is full
         if session.is_full() {
@@ -114,7 +113,7 @@ impl SignalingService {
         }
 
         // Check if user is already in the session
-        if let Ok(_) = session.peer_manager.get_peer_by_user_id(&user_id).await {
+        if session.peer_manager.get_peer_by_user_id(&user_id).await.is_ok() {
             return Err(Error::AlreadyExists("User already in session".to_string()));
         }
 
@@ -147,7 +146,7 @@ impl SignalingService {
         offer: SessionDescription,
     ) -> Result<HandleOfferResponse> {
         let session_id = SessionId::from_string(session_id.to_string());
-        let mut session = self.session_manager.get_session(&session_id).await?;
+        let session = self.session_manager.get_session(&session_id).await?;
 
         // Update peer with local description
         let _peer = session
@@ -171,7 +170,7 @@ impl SignalingService {
         answer: SessionDescription,
     ) -> Result<HandleAnswerResponse> {
         let session_id = SessionId::from_string(session_id.to_string());
-        let mut session = self.session_manager.get_session(&session_id).await?;
+        let session = self.session_manager.get_session(&session_id).await?;
 
         // Update peer with remote description
         let _peer = session
@@ -195,10 +194,10 @@ impl SignalingService {
         candidate: IceCandidate,
     ) -> Result<HandleIceCandidateResponse> {
         let session_id = SessionId::from_string(session_id.to_string());
-        let mut session = self.session_manager.get_session(&session_id).await?;
+        let session = self.session_manager.get_session(&session_id).await?;
 
         // Add ICE candidate to peer
-        let peer = session
+        let _peer = session
             .peer_manager
             .update_peer(peer_id, |peer| {
                 peer.add_ice_candidate(candidate.clone());

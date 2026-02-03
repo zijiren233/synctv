@@ -30,32 +30,80 @@ impl ClientApiImpl {
 
     pub async fn register(
         &self,
-        _req: crate::proto::client::RegisterRequest,
+        req: crate::proto::client::RegisterRequest,
     ) -> Result<crate::proto::client::RegisterResponse, String> {
-        // TODO: Implement using user_service.register()
-        Err("Not implemented".to_string())
+        // Validate input
+        if req.username.is_empty() {
+            return Err("Username cannot be empty".to_string());
+        }
+        if req.password.len() < 6 {
+            return Err("Password must be at least 6 characters".to_string());
+        }
+
+        let email = if req.email.is_empty() {
+            Some(format!("{}@temp.local", req.username))
+        } else {
+            Some(req.email.clone())
+        };
+
+        // Register user (returns tuple: (User, access_token, refresh_token))
+        let (user, access_token, refresh_token) = self
+            .user_service
+            .register(req.username, email, req.password)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::client::RegisterResponse {
+            user: Some(user_to_proto(&user)),
+            access_token,
+            refresh_token,
+        })
     }
 
     pub async fn login(
         &self,
-        _req: crate::proto::client::LoginRequest,
+        req: crate::proto::client::LoginRequest,
     ) -> Result<crate::proto::client::LoginResponse, String> {
-        // TODO: Implement using user_service.login()
-        Err("Not implemented".to_string())
+        // Login user (returns tuple: (User, access_token, refresh_token))
+        let (user, access_token, refresh_token) = self
+            .user_service
+            .login(req.username, req.password)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::client::LoginResponse {
+            user: Some(user_to_proto(&user)),
+            access_token,
+            refresh_token,
+        })
     }
 
     pub async fn refresh_token(
         &self,
-        _req: crate::proto::client::RefreshTokenRequest,
+        req: crate::proto::client::RefreshTokenRequest,
     ) -> Result<crate::proto::client::RefreshTokenResponse, String> {
-        Err("Not implemented".to_string())
+        // Refresh tokens (returns tuple: (new_access_token, new_refresh_token))
+        let (_access_token, _refresh_token) = self
+            .user_service
+            .refresh_token(req.refresh_token)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Note: The proto RefreshTokenResponse doesn't include user info
+        // If needed, we could extract user_id from the new token and fetch user info
+        Ok(crate::proto::client::RefreshTokenResponse {
+            access_token: _access_token,
+            refresh_token: _refresh_token,
+        })
     }
 
     pub async fn logout(
         &self,
         _req: crate::proto::client::LogoutRequest,
     ) -> Result<crate::proto::client::LogoutResponse, String> {
-        Err("Not implemented".to_string())
+        // Logout is typically handled client-side by deleting the token
+        // If we had a token blacklist, we would add the token here
+        Ok(crate::proto::client::LogoutResponse { success: true })
     }
 
     pub async fn get_profile(
@@ -329,7 +377,7 @@ impl ClientApiImpl {
                 let username = username_map
                     .get(m.user_id.as_str())
                     .cloned()
-                    .unwrap_or_else(|| format!("user_{}", m.user_id.as_str().to_string()));
+                    .unwrap_or_else(|| format!("user_{}", m.user_id.as_str()));
 
                 crate::proto::client::ChatMessageReceive {
                     id: m.id.clone(),
@@ -358,7 +406,7 @@ impl ClientApiImpl {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
-        let provider = if req.provider.is_empty() {
+        let _provider = if req.provider.is_empty() {
             ProviderType::DirectUrl
         } else {
             ProviderType::from_str(&req.provider)
@@ -371,7 +419,7 @@ impl ClientApiImpl {
         });
 
         // Extract title from URL or use default
-        let title = req.url.split('/').last().unwrap_or("Unknown").to_string();
+        let title = req.url.split('/').next_back().unwrap_or("Unknown").to_string();
 
         // For direct URL, provider_instance_name is empty
         let provider_instance_name = String::new();
@@ -510,6 +558,58 @@ impl ClientApiImpl {
         })
     }
 
+    pub async fn change_speed(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::ChangeSpeedRequest,
+    ) -> Result<crate::proto::client::ChangeSpeedResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        self.room_service.playback_service().change_speed(rid.clone(), uid, req.speed).await
+            .map_err(|e| e.to_string())?;
+
+        let state = self.room_service.get_playback_state(&rid).await.ok();
+        Ok(crate::proto::client::ChangeSpeedResponse {
+            playback_state: state.map(|s| playback_state_to_proto(&s)),
+        })
+    }
+
+    pub async fn switch_media(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::SwitchMediaRequest,
+    ) -> Result<crate::proto::client::SwitchMediaResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+        let media_id = synctv_core::models::MediaId::from_string(req.media_id);
+
+        self.room_service.playback_service().switch_media(rid.clone(), uid, media_id).await
+            .map_err(|e| e.to_string())?;
+
+        let state = self.room_service.get_playback_state(&rid).await.ok();
+        Ok(crate::proto::client::SwitchMediaResponse {
+            playback_state: state.map(|s| playback_state_to_proto(&s)),
+        })
+    }
+
+    pub async fn get_playback_state(
+        &self,
+        room_id: &str,
+        _req: crate::proto::client::GetPlaybackStateRequest,
+    ) -> Result<crate::proto::client::GetPlaybackStateResponse, String> {
+        let rid = RoomId::from_string(room_id.to_string());
+
+        let state = self.room_service.get_playback_state(&rid).await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::client::GetPlaybackStateResponse {
+            playback_state: Some(playback_state_to_proto(&state)),
+        })
+    }
+
     // === Member Operations ===
 
     pub async fn get_room_members(
@@ -546,7 +646,7 @@ impl ClientApiImpl {
         let rid = RoomId::from_string(room_id.to_string());
         let target_uid = UserId::from_string(req.user_id.clone());
 
-        let permissions = synctv_core::models::PermissionBits(req.permissions);
+        let _permissions = synctv_core::models::PermissionBits(req.permissions);
 
         // TODO: This needs proper handling of added vs removed permissions
         self.room_service.set_member_permission(

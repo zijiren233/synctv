@@ -76,24 +76,3 @@ pub struct PlaylistWithCount {
     pub children_count: i64,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_source_provider_from_str() {
-        assert_eq!(SourceProvider::from_str("bilibili"), Some(SourceProvider::Bilibili));
-        assert_eq!(SourceProvider::from_str("BILIBILI"), Some(SourceProvider::Bilibili));
-        assert_eq!(SourceProvider::from_str("alist"), Some(SourceProvider::Alist));
-        assert_eq!(SourceProvider::from_str("direct_url"), Some(SourceProvider::DirectUrl));
-        assert_eq!(SourceProvider::from_str("rtmp"), Some(SourceProvider::Rtmp));
-        assert_eq!(SourceProvider::from_str("invalid"), None);
-    }
-
-    #[test]
-    fn test_source_provider_is_live() {
-        assert!(SourceProvider::Rtmp.is_live());
-        assert!(!SourceProvider::Bilibili.is_live());
-        assert!(!SourceProvider::Alist.is_live());
-    }
-}

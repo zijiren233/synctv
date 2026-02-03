@@ -5,12 +5,10 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 use crate::http::{AppState, AppResult, AppError};
 use synctv_core::{
     models::{RoomId, RoomSettings, UserId},
-    service::RoomService,
 };
 
 /// Update room settings

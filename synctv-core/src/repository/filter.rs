@@ -3,7 +3,7 @@
 //! This module provides a safe, composable way to build SQL WHERE clauses
 //! using SeaQuery. All queries are properly parameterized to prevent SQL injection.
 
-use sea_query::{Cond, Expr, Iden, Order, SimpleExpr, Value as SeaValue};
+use sea_query::{Cond, Expr, Iden, SimpleExpr, Value as SeaValue};
 use sea_query::extension::postgres::PgExpr;
 
 /// SQL condition builder
@@ -81,7 +81,7 @@ impl Filter {
     /// Add an ILIKE (case-insensitive) condition: column ILIKE pattern
     pub fn ilike(mut self, column: impl Into<ColumnRef>, pattern: impl Into<String>) -> Self {
         let col = column.into();
-        let expr: SimpleExpr = Expr::col(col).ilike(pattern.into()).into();
+        let expr: SimpleExpr = Expr::col(col).ilike(pattern.into());
         self.condition = self.condition.add(expr);
         self
     }
@@ -349,7 +349,7 @@ mod tests {
     fn test_filter_value_from_various_types() {
         let _: FilterValue = true.into();
         let _: FilterValue = 42.into();
-        let _: FilterValue = 3.14.into();
+        let _: FilterValue = std::f64::consts::PI.into();
         let _: FilterValue = "test".into();
         let _: FilterValue = String::from("test").into();
     }

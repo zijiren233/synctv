@@ -1,24 +1,22 @@
 // Room management HTTP handlers
+//
+// This layer now uses proto types and delegates to the impls layer for business logic
 
 use axum::{
     extract::{Path, State},
     Json,
 };
-use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use synctv_core::models::{
     id::{MediaId, RoomId},
-    media::ProviderType,
     permission::PermissionBits,
-    room::RoomSettings,
 };
 
 use super::{middleware::AuthUser, AppResult, AppState};
+use crate::proto::client::*;
 
-/// Create room request
-#[derive(Debug, Deserialize)]
-pub struct CreateRoomRequest {
-    pub name: String,
+/// Room settings for HTTP requests
+#[derive(Debug, Clone, Default)]
+pub struct RoomSettingsRequest {
     pub password: Option<String>,
     pub max_members: Option<i32>,
     pub allow_guest_join: Option<bool>,
@@ -29,169 +27,108 @@ pub struct CreateRoomRequest {
     pub danmaku_enabled: Option<bool>,
 }
 
-/// Join room request
-#[derive(Debug, Deserialize)]
-pub struct JoinRoomRequest {
-    pub password: Option<String>,
+/// Helper function to convert HTTP-style room settings request to proto settings bytes
+#[allow(clippy::too_many_arguments)]
+fn build_room_settings_bytes(
+    password: &Option<String>,
+    max_members: Option<i32>,
+    allow_guest_join: Option<bool>,
+    auto_play_next: Option<bool>,
+    loop_playlist: Option<bool>,
+    shuffle_playlist: Option<bool>,
+    chat_enabled: Option<bool>,
+    danmaku_enabled: Option<bool>,
+) -> Result<Vec<u8>, String> {
+    use serde_json::json;
+
+    let settings = json!({
+        "require_password": password.is_some(),
+        "max_members": max_members,
+        "allow_guest_join": allow_guest_join.unwrap_or(false),
+        "auto_play_next": auto_play_next.unwrap_or(true),
+        "loop_playlist": loop_playlist.unwrap_or(false),
+        "shuffle_playlist": shuffle_playlist.unwrap_or(false),
+        "chat_enabled": chat_enabled.unwrap_or(true),
+        "danmaku_enabled": danmaku_enabled.unwrap_or(true),
+    });
+
+    serde_json::to_vec(&settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))
 }
 
-/// Add media request
-#[derive(Debug, Deserialize)]
-pub struct AddMediaRequest {
-    pub title: String,
-    pub url: String,
-    pub provider: String,
-}
-
-/// Playback control requests
-#[derive(Debug, Deserialize)]
-pub struct PlayRequest {
-    pub media_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SeekRequest {
-    pub position: f64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ChangeSpeedRequest {
-    pub speed: f64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SwitchMediaRequest {
-    pub media_id: String,
-}
-
-/// Room response
-#[derive(Debug, Serialize)]
-pub struct RoomResponse {
-    pub id: String,
-    pub name: String,
-    pub created_by: String,
-    pub status: String,
-    pub settings: serde_json::Value,
-    pub created_at: String,
-}
-
-/// Media response
-#[derive(Debug, Serialize)]
-pub struct MediaResponse {
-    pub id: String,
-    pub title: String,
-    pub url: String,
-    pub provider: String,
-    pub position: i32,
-    pub metadata: serde_json::Value,
-    pub added_at: String,
-    pub added_by: String,
-}
-
-/// Playback state response
-#[derive(Debug, Serialize)]
-pub struct PlaybackStateResponse {
-    pub is_playing: bool,
-    pub playing_media_id: Option<String>,
-    pub position: f64,
-    pub speed: f64,
-    pub updated_at: String,
-}
+// ==================== Room Management Endpoints ====================
 
 /// Create a new room
 pub async fn create_room(
     auth: AuthUser,
     State(state): State<AppState>,
-    Json(req): Json<CreateRoomRequest>,
-) -> AppResult<Json<RoomResponse>> {
-    // Validate input
-    if req.name.is_empty() {
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<CreateRoomResponse>> {
+    // Extract fields from JSON request
+    let name = req.get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| super::AppError::bad_request("Missing name field"))?
+        .to_string();
+
+    if name.is_empty() {
         return Err(super::AppError::bad_request("Room name cannot be empty"));
     }
 
-    // Build room settings
-    let settings = synctv_core::models::RoomSettings {
-        require_password: req.password.is_some(),
-        auto_play_next: req.auto_play_next.unwrap_or(true),
-        auto_play: synctv_core::models::AutoPlaySettings {
-            enabled: req.auto_play_next.unwrap_or(true),
-            mode: if req.loop_playlist.unwrap_or(false) {
-                synctv_core::models::PlayMode::RepeatAll
-            } else if req.shuffle_playlist.unwrap_or(false) {
-                synctv_core::models::PlayMode::Shuffle
-            } else {
-                synctv_core::models::PlayMode::Sequential
-            },
-            delay: 0,
-        },
-        loop_playlist: req.loop_playlist.unwrap_or(false),
-        shuffle_playlist: req.shuffle_playlist.unwrap_or(false),
-        allow_guest_join: req.allow_guest_join.unwrap_or(false),
-        max_members: req.max_members,
-        chat_enabled: req.chat_enabled.unwrap_or(true),
-        danmaku_enabled: req.danmaku_enabled.unwrap_or(true),
-        // Permission overrides (None = use global defaults from SettingsRegistry)
-        admin_added_permissions: None,
-        admin_removed_permissions: None,
-        member_added_permissions: None,
-        member_removed_permissions: None,
-        guest_added_permissions: None,
-        guest_removed_permissions: None,
-        require_approval: false,
-        allow_auto_join: true,
+    let password = req.get("password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let max_members = req.get("max_members").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let allow_guest_join = req.get("allow_guest_join").and_then(|v| v.as_bool());
+    let auto_play_next = req.get("auto_play_next").and_then(|v| v.as_bool());
+    let loop_playlist = req.get("loop_playlist").and_then(|v| v.as_bool());
+    let shuffle_playlist = req.get("shuffle_playlist").and_then(|v| v.as_bool());
+    let chat_enabled = req.get("chat_enabled").and_then(|v| v.as_bool());
+    let danmaku_enabled = req.get("danmaku_enabled").and_then(|v| v.as_bool());
+
+    // Build settings JSON
+    let settings_bytes = build_room_settings_bytes(
+        &if password.is_empty() { None } else { Some(password.clone()) },
+        max_members,
+        allow_guest_join,
+        auto_play_next,
+        loop_playlist,
+        shuffle_playlist,
+        chat_enabled,
+        danmaku_enabled,
+    ).map_err(super::AppError::bad_request)?;
+
+    // Create proto request
+    let proto_req = CreateRoomRequest {
+        name,
+        password,
+        settings: settings_bytes,
     };
 
-    // Create room
-    let (room, _member) = state
-        .room_service
-        .create_room(req.name, auth.user_id.clone(), req.password, Some(settings))
-        .await?;
+    // Call impls layer
+    let response = state
+        .client_api
+        .create_room(&auth.user_id.to_string(), proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Load settings for the response
-    let room_settings = state.room_service.get_room_settings(&room.id).await?;
-    let settings_json = serde_json::to_value(&room_settings)
-        .unwrap_or(serde_json::json!({}));
-
-    Ok(Json(RoomResponse {
-        id: room.id.as_str().to_string(),
-        name: room.name,
-        created_by: room.created_by.as_str().to_string(),
-        status: room.status.as_str().to_string(),
-        settings: settings_json,
-        created_at: room.created_at.to_rfc3339(),
-    }))
+    Ok(Json(response))
 }
 
 /// Get room information
 pub async fn get_room(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<RoomResponse>> {
-    let room_id = RoomId::from_string(room_id);
+) -> AppResult<Json<GetRoomResponse>> {
+    let response = state
+        .client_api
+        .get_room(&room_id)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Check if user is a member (will fail if not)
-    state
-        .room_service
-        .check_permission(&room_id, &auth.user_id, PermissionBits::SEND_CHAT)
-        .await?;
-
-    // Get room
-    let room = state.room_service.get_room(&room_id).await?;
-
-    // Load settings for the response
-    let room_settings = state.room_service.get_room_settings(&room_id).await?;
-    let settings_json = serde_json::to_value(&room_settings)
-        .unwrap_or(serde_json::json!({}));
-
-    Ok(Json(RoomResponse {
-        id: room.id.as_str().to_string(),
-        name: room.name,
-        created_by: room.created_by.as_str().to_string(),
-        status: room.status.as_str().to_string(),
-        settings: settings_json,
-        created_at: room.created_at.to_rfc3339(),
-    }))
+    Ok(Json(response))
 }
 
 /// Join a room
@@ -199,20 +136,25 @@ pub async fn join_room(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<JoinRoomRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<JoinRoomResponse>> {
+    let password = req.get("password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
-    // Join room
-    state
-        .room_service
-        .join_room(room_id, auth.user_id, req.password)
-        .await?;
+    let proto_req = JoinRoomRequest {
+        room_id: room_id.clone(),
+        password,
+    };
 
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Joined room successfully"
-    })))
+    let response = state
+        .client_api
+        .join_room(&auth.user_id.to_string(), proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
 }
 
 /// Leave a room
@@ -220,16 +162,15 @@ pub async fn leave_room(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+) -> AppResult<Json<LeaveRoomResponse>> {
+    let proto_req = LeaveRoomRequest { room_id };
+    let response = state
+        .client_api
+        .leave_room(&auth.user_id.to_string(), proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Leave room
-    state.room_service.leave_room(room_id, auth.user_id).await?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Left room successfully"
-    })))
+    Ok(Json(response))
 }
 
 /// Delete a room
@@ -237,70 +178,65 @@ pub async fn delete_room(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+) -> AppResult<Json<DeleteRoomResponse>> {
+    let proto_req = DeleteRoomRequest { room_id };
+    let response = state
+        .client_api
+        .delete_room(&auth.user_id.to_string(), proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Delete room (only creator can delete)
-    state
-        .room_service
-        .delete_room(room_id, auth.user_id)
-        .await?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Room deleted successfully"
-    })))
+    Ok(Json(response))
 }
+
+// ==================== Media Management Endpoints ====================
 
 /// Add media to playlist
 pub async fn add_media(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<AddMediaRequest>,
-) -> AppResult<Json<MediaResponse>> {
-    let room_id = RoomId::from_string(room_id);
-
-    // Build source_config from URL
-    let source_config = serde_json::json!({
-        "url": req.url
-    });
-
-    // Determine provider instance name (empty for direct URL)
-    let provider_instance_name = if req.provider.is_empty() {
-        String::new()
-    } else {
-        req.provider.clone()
-    };
-
-    // Extract title from URL or use provided title
-    let title = if req.title.is_empty() {
-        req.url.split('/').last().unwrap_or("Unknown").to_string()
-    } else {
-        req.title.clone()
-    };
-
-    // Add media (permission check is done inside service)
-    let media = state
-        .room_service
-        .add_media(room_id, auth.user_id, provider_instance_name, source_config, title)
-        .await?;
-
-    // Extract URL from source_config
-    let url = media.source_config.get("url")
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<AddMediaResponse>> {
+    let url = req.get("url")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
+        .ok_or_else(|| super::AppError::bad_request("Missing url field"))?
+        .to_string();
 
-    Ok(Json(MediaResponse {
-        id: media.id.as_str().to_string(),
-        title: media.name.clone(),
-        url: url.to_string(),
-        provider: media.source_provider.clone(),
-        position: media.position,
-        metadata: media.metadata.clone(),
-        added_at: media.added_at.to_rfc3339(),
-        added_by: media.creator_id.as_str().to_string(),
-    }))
+    let provider = req.get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let title = req.get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            // Extract title from URL
+            url.split('/').next_back().unwrap_or("Unknown").to_string()
+        });
+
+    // Build source config JSON
+    let source_config = serde_json::json!({"url": url});
+    let source_config_bytes = serde_json::to_vec(&source_config)
+        .map_err(|e| super::AppError::bad_request(format!("Invalid source config: {}", e)))?;
+
+    let proto_req = AddMediaRequest {
+        playlist_id: String::new(), // Default/empty playlist
+        url,
+        provider,
+        provider_instance_name: String::new(),
+        source_config: source_config_bytes,
+        title,
+    };
+
+    let response = state
+        .client_api
+        .add_media(&auth.user_id.to_string(), &room_id, proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
 }
 
 /// Remove media from playlist
@@ -308,95 +244,80 @@ pub async fn remove_media(
     auth: AuthUser,
     State(state): State<AppState>,
     Path((room_id, media_id)): Path<(String, String)>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
-    let media_id = MediaId::from_string(media_id);
+) -> AppResult<Json<RemoveMediaResponse>> {
+    let proto_req = RemoveMediaRequest { media_id };
+    let response = state
+        .client_api
+        .remove_media(&auth.user_id.to_string(), &room_id, proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Remove media (permission check is done inside service)
-    state
-        .room_service
-        .remove_media(room_id, auth.user_id, media_id)
-        .await?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Media removed successfully"
-    })))
+    Ok(Json(response))
 }
 
 /// Get playlist
 pub async fn get_playlist(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<Vec<MediaResponse>>> {
-    let room_id = RoomId::from_string(room_id);
-
-    // Check if user is a member
-    state
-        .room_service
-        .check_permission(&room_id, &auth.user_id, PermissionBits::SEND_CHAT)
-        .await?;
-
-    // Get playlist
-    let media = state.room_service.get_playlist(&room_id).await?;
-
-    let response = media
-        .into_iter()
-        .map(|m| {
-            let url = m.source_config.get("url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            MediaResponse {
-                id: m.id.as_str().to_string(),
-                title: m.name.clone(),
-                url: url.to_string(),
-                provider: m.source_provider.clone(),
-                position: m.position,
-                metadata: m.metadata.clone(),
-                added_at: m.added_at.to_rfc3339(),
-                added_by: m.creator_id.as_str().to_string(),
-            }
-        })
-        .collect();
+) -> AppResult<Json<GetPlaylistResponse>> {
+    let response = state
+        .client_api
+        .get_playlist(&room_id)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
     Ok(Json(response))
 }
+
+/// Swap media items
+pub async fn swap_media_items(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<SwapMediaResponse>> {
+    let media_id1 = req.get("media_id1")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| super::AppError::bad_request("Missing media_id1 field"))?
+        .to_string();
+
+    let media_id2 = req.get("media_id2")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| super::AppError::bad_request("Missing media_id2 field"))?
+        .to_string();
+
+    let proto_req = SwapMediaRequest {
+        room_id: room_id.clone(),
+        media_id1,
+        media_id2,
+    };
+
+    let response = state
+        .client_api
+        .swap_media(&auth.user_id.to_string(), proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+// ==================== Playback Control Endpoints ====================
 
 /// Play (resume playback)
 pub async fn play(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<PlayRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+) -> AppResult<Json<PlayResponse>> {
+    let proto_req = PlayRequest {};
+    let response = state
+        .client_api
+        .play(&auth.user_id.to_string(), &room_id, proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Update playback state
-    let media_id_opt = req
-        .media_id
-        .as_ref()
-        .map(|s| MediaId::from_string(s.clone()));
-
-    state
-        .room_service
-        .update_playback(
-            room_id,
-            auth.user_id,
-            |state| {
-                if let Some(mid) = media_id_opt {
-                    state.switch_media(mid);
-                }
-                state.play();
-            },
-            PermissionBits::PLAY_PAUSE,
-        )
-        .await?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Playback started"
-    })))
+    Ok(Json(response))
 }
 
 /// Pause playback
@@ -404,24 +325,14 @@ pub async fn pause(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+) -> AppResult<Json<PauseResponse>> {
+    let response = state
+        .client_api
+        .pause(&auth.user_id.to_string(), &room_id)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Update playback state
-    state
-        .room_service
-        .update_playback(
-            room_id,
-            auth.user_id,
-            |state| state.pause(),
-            PermissionBits::PLAY_PAUSE,
-        )
-        .await?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Playback paused"
-    })))
+    Ok(Json(response))
 }
 
 /// Seek to position
@@ -429,26 +340,20 @@ pub async fn seek(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<SeekRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<SeekResponse>> {
+    let position = req.get("position")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| super::AppError::bad_request("Missing or invalid position field"))?;
 
-    // Update playback state
-    let position = req.position;
-    state
-        .room_service
-        .update_playback(
-            room_id,
-            auth.user_id,
-            move |state| state.seek(position),
-            PermissionBits::SEEK,
-        )
-        .await?;
+    let proto_req = SeekRequest { position };
+    let response = state
+        .client_api
+        .seek(&auth.user_id.to_string(), &room_id, proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Position updated"
-    })))
+    Ok(Json(response))
 }
 
 /// Change playback speed
@@ -456,26 +361,20 @@ pub async fn change_speed(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<ChangeSpeedRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<ChangeSpeedResponse>> {
+    let speed = req.get("speed")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| super::AppError::bad_request("Missing or invalid speed field"))?;
 
-    // Update playback state
-    let speed = req.speed;
-    state
-        .room_service
-        .update_playback(
-            room_id,
-            auth.user_id,
-            move |state| state.change_speed(speed),
-            PermissionBits::CHANGE_SPEED,
-        )
-        .await?;
+    let proto_req = ChangeSpeedRequest { speed };
+    let response = state
+        .client_api
+        .change_speed(&auth.user_id.to_string(), &room_id, proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Playback speed updated"
-    })))
+    Ok(Json(response))
 }
 
 /// Switch to a different media
@@ -483,54 +382,54 @@ pub async fn switch_media(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<SwitchMediaRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
-    let media_id = MediaId::from_string(req.media_id);
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<SwitchMediaResponse>> {
+    let media_id = req.get("media_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| super::AppError::bad_request("Missing media_id field"))?
+        .to_string();
 
-    // Update playback state
-    state
-        .room_service
-        .update_playback(
-            room_id,
-            auth.user_id,
-            move |state| state.switch_media(media_id),
-            PermissionBits::SWITCH_MEDIA,
-        )
-        .await?;
+    let proto_req = SwitchMediaRequest { media_id };
+    let response = state
+        .client_api
+        .switch_media(&auth.user_id.to_string(), &room_id, proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Switched to new media"
-    })))
+    Ok(Json(response))
 }
 
 /// Get playback state
 pub async fn get_playback_state(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<PlaybackStateResponse>> {
-    let room_id = RoomId::from_string(room_id);
+) -> AppResult<Json<GetPlaybackStateResponse>> {
+    let proto_req = GetPlaybackStateRequest {};
+    let response = state
+        .client_api
+        .get_playback_state(&room_id, proto_req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Check if user is a member
-    state
-        .room_service
-        .check_permission(&room_id, &auth.user_id, PermissionBits::SEND_CHAT)
-        .await?;
+    Ok(Json(response))
+}
 
-    // Get playback state
-    let state_data = state.room_service.get_playback_state(&room_id).await?;
+// ==================== Room Members Endpoints ====================
 
-    Ok(Json(PlaybackStateResponse {
-        is_playing: state_data.is_playing,
-        playing_media_id: state_data
-            .playing_media_id
-            .map(|id| id.as_str().to_string()),
-        position: state_data.position,
-        speed: state_data.speed,
-        updated_at: state_data.updated_at.to_rfc3339(),
-    }))
+/// Get room members
+pub async fn get_room_members(
+    _auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> AppResult<Json<GetRoomMembersResponse>> {
+    let response = state
+        .client_api
+        .get_room_members(&room_id)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
 }
 
 // ==================== Room Discovery & Public Endpoints ====================
@@ -539,320 +438,113 @@ pub async fn get_playback_state(
 pub async fn check_room(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+) -> AppResult<Json<CheckRoomResponse>> {
+    let room_id_obj = RoomId::from_string(room_id.clone());
 
-    match state.room_service.get_room(&room_id).await {
+    let (exists, requires_password, name) = match state.room_service.get_room(&room_id_obj).await {
         Ok(room) => {
-            let settings = state.room_service.get_room_settings(&room_id).await
+            let settings = state.room_service.get_room_settings(&room_id_obj).await
                 .unwrap_or_default();
-            let requires_password = settings.require_password;
-            Ok(Json(serde_json::json!({
-                "exists": true,
-                "requires_password": requires_password,
-                "name": room.name
-            })))
+            (true, settings.require_password.0, room.name.clone())
         }
-        Err(_) => Ok(Json(serde_json::json!({
-            "exists": false,
-            "requires_password": false,
-            "name": null
-        })))
-    }
-}
+        Err(_) => (false, false, String::new()),
+    };
 
-/// Room list response
-#[derive(Debug, Serialize)]
-pub struct RoomListResponse {
-    pub rooms: Vec<RoomListItem>,
-    pub total: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RoomListItem {
-    pub id: String,
-    pub name: String,
-    pub created_by: String,
-    pub member_count: i32,
-    pub created_at: String,
+    Ok(Json(CheckRoomResponse {
+        exists,
+        requires_password,
+        name,
+    }))
 }
 
 /// List rooms (public endpoint)
 pub async fn list_rooms(
     State(state): State<AppState>,
-) -> AppResult<Json<RoomListResponse>> {
-    let query = synctv_core::models::RoomListQuery {
+) -> AppResult<Json<ListRoomsResponse>> {
+    let proto_req = ListRoomsRequest {
         page: 1,
         page_size: 50,
-        search: None,
-        status: Some(synctv_core::models::RoomStatus::Active),
     };
-
-    let (rooms_with_count, total) = state
-        .room_service
-        .list_rooms_with_count(&query)
+    let response = state
+        .client_api
+        .list_rooms(proto_req)
         .await
-        .map_err(|e| super::AppError::internal(format!("Failed to list rooms: {}", e)))?;
+        .map_err(super::AppError::internal_server_error)?;
 
-    let rooms = rooms_with_count
-        .into_iter()
-        .map(|rwc| RoomListItem {
-            id: rwc.room.id.as_str().to_string(),
-            name: rwc.room.name,
-            created_by: rwc.room.created_by.as_str().to_string(),
-            member_count: rwc.member_count,
-            created_at: rwc.room.created_at.to_rfc3339(),
-        })
-        .collect();
-
-    Ok(Json(RoomListResponse { rooms, total }))
+    Ok(Json(response))
 }
 
 /// Get hot rooms (sorted by activity)
 pub async fn hot_rooms(
     State(state): State<AppState>,
-) -> AppResult<Json<Vec<RoomListItem>>> {
-    let query = synctv_core::models::RoomListQuery {
+) -> AppResult<Json<ListRoomsResponse>> {
+    let proto_req = ListRoomsRequest {
         page: 1,
         page_size: 100,
-        search: None,
-        status: Some(synctv_core::models::RoomStatus::Active),
     };
-
-    let (rooms_with_count, _total) = state
-        .room_service
-        .list_rooms_with_count(&query)
+    let mut response = state
+        .client_api
+        .list_rooms(proto_req)
         .await
-        .map_err(|e| super::AppError::internal(format!("Failed to list rooms: {}", e)))?;
+        .map_err(super::AppError::internal_server_error)?;
 
     // Sort by member count (hot rooms)
-    let mut rooms: Vec<_> = rooms_with_count
-        .into_iter()
-        .map(|rwc| RoomListItem {
-            id: rwc.room.id.as_str().to_string(),
-            name: rwc.room.name,
-            created_by: rwc.room.created_by.as_str().to_string(),
-            member_count: rwc.member_count,
-            created_at: rwc.room.created_at.to_rfc3339(),
-        })
-        .collect();
-
-    rooms.sort_by(|a, b| b.member_count.cmp(&a.member_count));
+    response.rooms.sort_by(|a, b| b.member_count.cmp(&a.member_count));
 
     // Return top 20
-    Ok(Json(rooms.into_iter().take(20).collect()))
-}
+    response.rooms = response.rooms.into_iter().take(20).collect();
+    response.total = response.rooms.len() as i32;
 
-/// Room settings response (public)
-#[derive(Debug, Serialize)]
-pub struct RoomSettingsResponse {
-    pub name: String,
-    pub settings: serde_json::Value,
-}
-
-/// Get room public settings
-pub async fn get_room_settings(
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-) -> AppResult<Json<RoomSettingsResponse>> {
-    let room_id = RoomId::from_string(room_id);
-
-    let room = state
-        .room_service
-        .get_room(&room_id)
-        .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
-
-    // Load settings from service layer
-    let room_settings = state.room_service.get_room_settings(&room_id).await
-        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {}", e)))?;
-
-    // Convert to JSON and hide password hash
-    let mut settings_json = serde_json::to_value(&room_settings)
-        .map_err(|e| super::AppError::internal(format!("Failed to serialize settings: {}", e)))?;
-
-    if let Some(obj) = settings_json.as_object_mut() {
-        obj.remove("password");
-    }
-
-    Ok(Json(RoomSettingsResponse {
-        name: room.name,
-        settings: settings_json,
-    }))
-}
-
-/// Check room password
-#[derive(Debug, Deserialize)]
-pub struct CheckPasswordRequest {
-    pub password: String,
-}
-
-pub async fn check_password(
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<CheckPasswordRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
-
-    // Verify room exists
-    state
-        .room_service
-        .get_room(&room_id)
-        .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
-
-    let is_valid = state
-        .room_service
-        .check_room_password(&room_id, &req.password)
-        .await
-        .map_err(|e| super::AppError::internal(format!("Password verification failed: {}", e)))?;
-
-    Ok(Json(serde_json::json!({
-        "valid": is_valid
-    })))
-}
-
-// ==================== Room Members Endpoints ====================
-
-/// Room member response
-/// Get room members
-///
-/// This handler now uses the gRPC-typed service method, making it a lightweight wrapper.
-/// The service layer uses crate::proto::admin::GetRoomMembersRequest/Response from admin.proto
-/// which have complete request structures with room_id included.
-pub async fn get_room_members(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-) -> AppResult<Json<crate::proto::admin::GetRoomMembersResponse>> {
-    // Construct gRPC request with room_id from path parameter
-    let request = crate::proto::admin::GetRoomMembersRequest { room_id };
-
-    // Call service layer with gRPC types - returns gRPC response directly
-    let response = state
-        .room_service
-        .get_room_members_grpc(request, &auth.user_id)
-        .await
-        .map_err(|e| super::AppError::internal(format!("Failed to get members: {}", e)))?;
-
-    // Return gRPC response (Axum will JSON-serialize it)
     Ok(Json(response))
 }
 
-// ==================== Room Admin Endpoints ====================
+// ==================== Room Settings Endpoints ====================
 
-/// Update room settings (admin)
-#[derive(Debug, Deserialize)]
-pub struct SetRoomSettingsRequest {
-    pub require_password: Option<bool>,
-    pub max_members: Option<i32>,
-    pub allow_guest_join: Option<bool>,
-    pub auto_play_next: Option<bool>,
-    pub loop_playlist: Option<bool>,
-    pub shuffle_playlist: Option<bool>,
-    pub chat_enabled: Option<bool>,
-    pub danmaku_enabled: Option<bool>,
-}
-
+/// Update room settings
 pub async fn set_room_settings_admin(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<SetRoomSettingsRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<SetRoomSettingsResponse>> {
+    // Build settings JSON from request fields
+    let settings_json = req.clone();
+    let settings_bytes = serde_json::to_vec(&settings_json)
+        .map_err(|e| super::AppError::bad_request(format!("Invalid settings JSON: {}", e)))?;
 
-    // Check if user is admin or creator
-    state
-        .room_service
-        .check_permission(&room_id, &auth.user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
-        .await?;
+    let proto_req = SetRoomSettingsRequest {
+        room_id: room_id.clone(),
+        settings: settings_bytes,
+    };
 
-    // Verify room exists
-    state
-        .room_service
-        .get_room(&room_id)
+    let response = state
+        .client_api
+        .update_room_settings(&auth.user_id.to_string(), &room_id, proto_req)
         .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Load current settings
-    let mut settings = state
-        .room_service
-        .get_room_settings(&room_id)
-        .await
-        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {}", e)))?;
-
-    // Update settings from request
-    if let Some(v) = req.require_password {
-        settings.require_password = v;
-    }
-    if let Some(v) = req.max_members {
-        settings.max_members = Some(v);
-    }
-    if let Some(v) = req.allow_guest_join {
-        settings.allow_guest_join = v;
-    }
-    if let Some(v) = req.auto_play_next {
-        settings.auto_play_next = v;
-    }
-    if let Some(v) = req.loop_playlist {
-        settings.loop_playlist = v;
-    }
-    if let Some(v) = req.shuffle_playlist {
-        settings.shuffle_playlist = v;
-    }
-    if let Some(v) = req.chat_enabled {
-        settings.chat_enabled = v;
-    }
-    if let Some(v) = req.danmaku_enabled {
-        settings.danmaku_enabled = v;
-    }
-
-    // Save updated settings
-    state
-        .room_service
-        .set_settings(room_id.clone(), auth.user_id.clone(), settings)
-        .await
-        .map_err(|e| super::AppError::internal(format!("Failed to update settings: {}", e)))?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Settings updated successfully"
-    })))
+    Ok(Json(response))
 }
 
-/// Set room password (admin)
-#[derive(Debug, Deserialize)]
-pub struct SetPasswordRequest {
-    pub password: Option<String>,
-}
-
+/// Set room password
 pub async fn set_room_password(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<SetPasswordRequest>,
+    Json(req): Json<serde_json::Value>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+    let password = req.get("password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let room_id_obj = RoomId::from_string(room_id.clone());
 
     // Check if user is admin or creator
     state
         .room_service
-        .check_permission(&room_id, &auth.user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
+        .check_permission(&room_id_obj, &auth.user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
         .await?;
-
-    // Hash password if provided
-    let password = req.password.unwrap_or_default();
-
-    // Load current settings
-    let mut settings = state
-        .room_service
-        .get_room_settings(&room_id)
-        .await
-        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {}", e)))?;
-
-    // Update require_password flag
-    settings.require_password = !password.is_empty();
 
     // Hash password if provided
     let password_hash = if password.is_empty() {
@@ -864,17 +556,10 @@ pub async fn set_room_password(
         Some(hash)
     };
 
-    // Save updated settings
-    state
-        .room_service
-        .set_settings(room_id.clone(), auth.user_id.clone(), settings)
-        .await
-        .map_err(|e| super::AppError::internal(format!("Failed to update settings: {}", e)))?;
-
     // Update password hash
     state
         .room_service
-        .update_room_password(&room_id, password_hash)
+        .update_room_password(&room_id_obj, password_hash)
         .await
         .map_err(|e| super::AppError::internal(format!("Failed to update password: {}", e)))?;
 
@@ -884,81 +569,181 @@ pub async fn set_room_password(
     })))
 }
 
-// ==================== Media Management Endpoints ====================
+/// Check room password
+pub async fn check_password(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<serde_json::Value>> {
+    let password = req.get("password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
-/// Edit media request
-#[derive(Debug, Deserialize)]
-pub struct EditMediaRequest {
-    pub title: Option<String>,
-    pub url: Option<String>,
+    let room_id_obj = RoomId::from_string(room_id);
+
+    // Verify room exists
+    state
+        .room_service
+        .get_room(&room_id_obj)
+        .await
+        .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
+
+    let is_valid = state
+        .room_service
+        .check_room_password(&room_id_obj, &password)
+        .await
+        .map_err(|e| super::AppError::internal(format!("Password verification failed: {}", e)))?;
+
+    Ok(Json(serde_json::json!({
+        "valid": is_valid
+    })))
 }
 
+/// Get room public settings
+pub async fn get_room_settings(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    let room_id_obj = RoomId::from_string(room_id);
+
+    let room = state
+        .room_service
+        .get_room(&room_id_obj)
+        .await
+        .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
+
+    // Load settings from service layer
+    let room_settings = state.room_service.get_room_settings(&room_id_obj).await
+        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {}", e)))?;
+
+    // Convert to JSON and hide password hash
+    let mut settings_json = serde_json::to_value(&room_settings)
+        .map_err(|e| super::AppError::internal(format!("Failed to serialize settings: {}", e)))?;
+
+    if let Some(obj) = settings_json.as_object_mut() {
+        obj.remove("password");
+    }
+
+    Ok(Json(serde_json::json!({
+        "name": room.name,
+        "settings": settings_json
+    })))
+}
+
+/// Push multiple media items to playlist
+pub async fn push_media_batch(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<Vec<AddMediaResponse>>> {
+    let room_id_obj = RoomId::from_string(room_id.clone());
+
+    // Check permission
+    state
+        .room_service
+        .check_permission(&room_id_obj, &auth.user_id, PermissionBits::ADD_MEDIA)
+        .await?;
+
+    let items = req.get("items")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| super::AppError::bad_request("Missing items array"))?;
+
+    let mut results = Vec::new();
+    for item in items {
+        let url = item.get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| super::AppError::bad_request("Missing url in item"))?
+            .to_string();
+
+        let provider = item.get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let title = item.get("title")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                // Extract title from URL
+                url.split('/').next_back().unwrap_or("Unknown").to_string()
+            });
+
+        // Build source config JSON
+        let source_config = serde_json::json!({"url": url});
+        let source_config_bytes = serde_json::to_vec(&source_config)
+            .map_err(|e| super::AppError::bad_request(format!("Invalid source config: {}", e)))?;
+
+        let proto_req = AddMediaRequest {
+            playlist_id: String::new(),
+            url,
+            provider,
+            provider_instance_name: String::new(),
+            source_config: source_config_bytes,
+            title,
+        };
+
+        let response = state
+            .client_api
+            .add_media(&auth.user_id.to_string(), &room_id, proto_req)
+            .await
+            .map_err(super::AppError::internal_server_error)?;
+
+        results.push(response);
+    }
+
+    Ok(Json(results))
+}
+
+/// Edit media
 pub async fn edit_media(
     auth: AuthUser,
     State(state): State<AppState>,
     Path((room_id, media_id)): Path<(String, String)>,
-    Json(req): Json<EditMediaRequest>,
-) -> AppResult<Json<MediaResponse>> {
-    let room_id = RoomId::from_string(room_id);
-    let media_id = MediaId::from_string(media_id);
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<AddMediaResponse>> {
+    let room_id_obj = RoomId::from_string(room_id.clone());
+    let media_id_obj = MediaId::from_string(media_id.clone());
 
-    // Build metadata from URL if provided
-    let metadata = if let Some(url) = &req.url {
-        Some(serde_json::json!({"url": url}))
-    } else {
-        None
-    };
+    // Build metadata from request
+    let title = req.get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let url = req.get("url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // Build metadata JSON
+    let metadata = url.as_ref().map(|url| serde_json::json!({"url": url}));
 
     // Edit media (permission check is done inside service)
     let media = state
         .room_service
-        .edit_media(room_id, auth.user_id, media_id, req.title, metadata)
-        .await?;
+        .edit_media(room_id_obj, auth.user_id, media_id_obj, title, metadata)
+        .await
+        .map_err(|e| super::AppError::internal_server_error(format!("Failed to edit media: {}", e)))?;
 
-    // Extract URL from source_config
-    let url = media.source_config.get("url")
+    // Convert to response
+    let media_url = media.source_config.get("url")
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    Ok(Json(MediaResponse {
-        id: media.id.as_str().to_string(),
-        title: media.name.clone(),
-        url: url.to_string(),
-        provider: media.source_provider.clone(),
-        position: media.position,
-        metadata: media.metadata.clone(),
-        added_at: media.added_at.to_rfc3339(),
-        added_by: media.creator_id.as_str().to_string(),
+    Ok(Json(AddMediaResponse {
+        media: Some(crate::proto::client::Media {
+            id: media.id.as_str().to_string(),
+            room_id: media.room_id.as_str().to_string(),
+            url: media_url.to_string(),
+            provider: media.source_provider.clone(),
+            title: media.name.clone(),
+            metadata: serde_json::to_vec(&media.metadata).unwrap_or_default(),
+            position: media.position,
+            added_at: media.added_at.timestamp(),
+            added_by: media.creator_id.as_str().to_string(),
+            provider_instance_name: media.provider_instance_name.clone().unwrap_or_default(),
+            source_config: serde_json::to_vec(&media.source_config).unwrap_or_default(),
+        }),
     }))
-}
-
-/// Swap media items
-#[derive(Debug, Deserialize)]
-pub struct SwapMediaRequest {
-    pub media_id1: String,
-    pub media_id2: String,
-}
-
-pub async fn swap_media_items(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<SwapMediaRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
-    let media_id1 = MediaId::from_string(req.media_id1);
-    let media_id2 = MediaId::from_string(req.media_id2);
-
-    state
-        .room_service
-        .swap_media(room_id, auth.user_id, media_id1, media_id2)
-        .await
-        .map_err(|e| super::AppError::internal(format!("Failed to swap media: {}", e)))?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Media swapped successfully"
-    })))
 }
 
 /// Clear playlist
@@ -967,84 +752,26 @@ pub async fn clear_playlist(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let room_id = RoomId::from_string(room_id);
+    let room_id_obj = RoomId::from_string(room_id);
 
     // Check permission
     state
         .room_service
-        .check_permission(&room_id, &auth.user_id, PermissionBits::ADD_MEDIA)
+        .check_permission(&room_id_obj, &auth.user_id, PermissionBits::ADD_MEDIA)
         .await?;
 
-    // Clear playlist (requires adding clear_playlist method to RoomService)
-    // For now, return success
+    // Get current playlist
+    let media_list = state.room_service.get_playlist(&room_id_obj).await
+        .map_err(|e| super::AppError::internal_server_error(format!("Failed to get playlist: {}", e)))?;
+
+    // Remove all media
+    for media in media_list {
+        state.room_service.remove_media(room_id_obj.clone(), auth.user_id.clone(), media.id.clone()).await
+            .map_err(|e| super::AppError::internal_server_error(format!("Failed to remove media: {}", e)))?;
+    }
+
     Ok(Json(serde_json::json!({
         "success": true,
         "message": "Playlist cleared successfully"
     })))
-}
-
-/// Push multiple media items
-#[derive(Debug, Deserialize)]
-pub struct PushMediaBatchRequest {
-    pub items: Vec<AddMediaRequest>,
-}
-
-pub async fn push_media_batch(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<PushMediaBatchRequest>,
-) -> AppResult<Json<Vec<MediaResponse>>> {
-    let room_id = RoomId::from_string(room_id);
-
-    let mut results = Vec::new();
-    for item in req.items {
-        // Build source_config from URL
-        let source_config = serde_json::json!({
-            "url": item.url
-        });
-
-        // Determine provider instance name (empty for direct URL)
-        let provider_instance_name = if item.provider.is_empty() {
-            String::new()
-        } else {
-            item.provider.clone()
-        };
-
-        // Extract title from URL or use provided title
-        let title = if item.title.is_empty() {
-            item.url.split('/').last().unwrap_or("Unknown").to_string()
-        } else {
-            item.title.clone()
-        };
-
-        let media = state
-            .room_service
-            .add_media(
-                room_id.clone(),
-                auth.user_id.clone(),
-                provider_instance_name,
-                source_config,
-                title,
-            )
-            .await?;
-
-        // Extract URL from source_config
-        let url = media.source_config.get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        results.push(MediaResponse {
-            id: media.id.as_str().to_string(),
-            title: media.name.clone(),
-            url: url.to_string(),
-            provider: media.source_provider.clone(),
-            position: media.position,
-            metadata: media.metadata.clone(),
-            added_at: media.added_at.to_rfc3339(),
-            added_by: media.creator_id.as_str().to_string(),
-        });
-    }
-
-    Ok(Json(results))
 }

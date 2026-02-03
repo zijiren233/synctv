@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    models::{RoomId, UserId, PermissionBits, Room, RoomSettings},
+    models::{RoomId, UserId, PermissionBits, RoomSettings},
     repository::{RoomMemberRepository, RoomRepository, RoomSettingsRepository},
     service::SettingsRegistry,
     Error, Result,
@@ -18,7 +18,6 @@ use crate::{
 #[derive(Clone)]
 pub struct PermissionService {
     member_repo: RoomMemberRepository,
-    room_repo: RoomRepository,
     room_settings_repo: Option<RoomSettingsRepository>,
     cache: Arc<moka::future::Cache<String, PermissionBits>>,
     settings_registry: Option<Arc<SettingsRegistry>>,
@@ -34,14 +33,13 @@ impl PermissionService {
     /// Create a new permission service with caching
     pub fn new(
         member_repo: RoomMemberRepository,
-        room_repo: RoomRepository,
+        _room_repo: RoomRepository,
         settings_registry: Option<Arc<SettingsRegistry>>,
         cache_size: u64,
         cache_ttl_secs: u64,
     ) -> Self {
         Self {
             member_repo,
-            room_repo,
             room_settings_repo: None, // Will be set later if needed
             cache: Arc::new(
                 moka::future::CacheBuilder::new(cache_size)
@@ -55,12 +53,11 @@ impl PermissionService {
     /// Create a permission service without caching
     pub fn without_cache(
         member_repo: RoomMemberRepository,
-        room_repo: RoomRepository,
+        _room_repo: RoomRepository,
         settings_registry: Option<Arc<SettingsRegistry>>,
     ) -> Self {
         Self {
             member_repo,
-            room_repo,
             room_settings_repo: None,
             cache: Arc::new(
                 moka::future::CacheBuilder::new(1)

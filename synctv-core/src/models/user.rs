@@ -20,7 +20,8 @@ impl SignupMethod {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    /// Parse signup method from string name (defaults to email for unknown values)
+    pub fn from_str_name(s: &str) -> Self {
         match s {
             "email" => SignupMethod::Email,
             "oauth2" => SignupMethod::OAuth2,

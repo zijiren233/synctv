@@ -1517,277 +1517,277 @@ impl AdminService for AdminServiceImpl {
         }))
     }
 
-    async fn get_room_settings(
-        &self,
-        request: Request<GetRoomSettingsRequest>,
-    ) -> Result<Response<GetRoomSettingsResponse>, Status> {
-        self.check_admin(&request).await?;
-        let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Get settings (with caching)
-        let settings = self
-            .room_service
-            .get_room_settings(&room_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
-
-        let settings_bytes = serde_json::to_vec(&settings)
-            .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
-
-        Ok(Response::new(GetRoomSettingsResponse {
-            settings: settings_bytes,
-        }))
-    }
-
-    async fn set_room_settings(
-        &self,
-        request: Request<SetRoomSettingsRequest>,
-    ) -> Result<Response<SetRoomSettingsResponse>, Status> {
-        self.check_admin(&request).await?;
-
-        // Get user_id from request metadata
-        let user_context = request
-            .extensions()
-            .get::<super::interceptors::UserContext>()
-            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
-
-        let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
-
-        let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Parse settings from JSON bytes
-        let settings = if !req.settings.is_empty() {
-            serde_json::from_slice(&req.settings)
-                .map_err(|e| Status::invalid_argument(format!("Invalid settings: {}", e)))?
-        } else {
-            synctv_core::models::RoomSettings::default()
-        };
-
-        // Set settings
-        let updated_room = self
-            .room_service
-            .set_settings(room_id.clone(), user_id, settings)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to set settings: {}", e)))?;
-
-        // Get member count
-        let member_count = self
-            .room_service
-            .get_member_count(&room_id)
-            .await
-            .unwrap_or(0);
-
-        // Get creator username
-        let creator_username = self
-            .user_service
-            .get_user(&updated_room.created_by)
-            .await
-            .map(|u| u.username)
-            .unwrap_or_default();
-
-        // Load updated settings
-        let room_settings = self.room_service
-            .get_room_settings(&room_id)
-            .await
-            .unwrap_or_default();
-
-        let admin_room = AdminRoom {
-            id: updated_room.id.to_string(),
-            name: updated_room.name,
-            creator_id: updated_room.created_by.to_string(),
-            creator_username,
-            status: match updated_room.status {
-                synctv_core::models::RoomStatus::Pending => "pending".to_string(),
-                synctv_core::models::RoomStatus::Active => "active".to_string(),
-                synctv_core::models::RoomStatus::Banned => "banned".to_string(),
-            },
-            settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
-            member_count,
-            created_at: updated_room.created_at.timestamp(),
-            updated_at: updated_room.updated_at.timestamp(),
-        };
-
-        Ok(Response::new(SetRoomSettingsResponse {
-            room: Some(admin_room),
-        }))
-    }
-
-    async fn update_room_setting(
-        &self,
-        request: Request<UpdateRoomSettingRequest>,
-    ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
-        self.check_admin(&request).await?;
-
-        // Get user_id from request metadata
-        let user_context = request
-            .extensions()
-            .get::<super::interceptors::UserContext>()
-            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
-
-        let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
-
-        let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Get current settings
-        let mut settings = self
-            .room_service
-            .get_room_settings(&room_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
-
-        // Update specific field based on key
-        match req.key.as_str() {
-            "require_password" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.require_password = value;
-                }
-            }
-            "auto_play_next" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.auto_play_next = value;
-                }
-            }
-            "auto_play" => {
-                if let Ok(value) = serde_json::from_slice::<synctv_core::models::AutoPlaySettings>(&req.value) {
-                    settings.auto_play = value;
-                }
-            }
-            "loop_playlist" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.loop_playlist = value;
-                }
-            }
-            "shuffle_playlist" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.shuffle_playlist = value;
-                }
-            }
-            "allow_guest_join" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.allow_guest_join = value;
-                }
-            }
-            "max_members" => {
-                if let Ok(value) = serde_json::from_slice::<i32>(&req.value) {
-                    settings.max_members = Some(value);
-                }
-            }
-            "chat_enabled" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.chat_enabled = value;
-                }
-            }
-            "danmaku_enabled" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.danmaku_enabled = value;
-                }
-            }
-            "require_approval" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.require_approval = value;
-                }
-            }
-            "allow_auto_join" => {
-                if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-                    settings.allow_auto_join = value;
-                }
-            }
-            _ => {
-                return Err(Status::invalid_argument(format!("Unknown setting key: {}", req.key)));
-            }
-        }
-
-        // Save updated settings
-        self.room_service
-            .set_settings(room_id.clone(), user_id, settings)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to update setting: {}", e)))?;
-
-        // Load updated settings
-        let updated_settings = self
-            .room_service
-            .get_room_settings(&room_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to get updated settings: {}", e)))?;
-
-        let settings_bytes = serde_json::to_vec(&updated_settings)
-            .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
-
-        Ok(Response::new(UpdateRoomSettingResponse {
-            settings: settings_bytes,
-        }))
-    }
-
-    async fn reset_room_settings(
-        &self,
-        request: Request<ResetRoomSettingsRequest>,
-    ) -> Result<Response<ResetRoomSettingsResponse>, Status> {
-        self.check_admin(&request).await?;
-
-        // Get user_id from request metadata
-        let user_context = request
-            .extensions()
-            .get::<super::interceptors::UserContext>()
-            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
-
-        let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
-
-        let req = request.into_inner();
-        let room_id = RoomId::from_string(req.room_id);
-
-        // Reset to default
-        let default_settings = synctv_core::models::RoomSettings::default();
-
-        self.room_service
-            .set_settings(room_id.clone(), user_id, default_settings)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to reset settings: {}", e)))?;
-
-        // Get updated room
-        let updated_room = self
-            .room_service
-            .get_room(&room_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to get room: {}", e)))?;
-
-        // Get member count
-        let member_count = self
-            .room_service
-            .get_member_count(&room_id)
-            .await
-            .unwrap_or(0);
-
-        // Get creator username
-        let creator_username = self
-            .user_service
-            .get_user(&updated_room.created_by)
-            .await
-            .map(|u| u.username)
-            .unwrap_or_default();
-
-        let admin_room = AdminRoom {
-            id: updated_room.id.to_string(),
-            name: updated_room.name,
-            creator_id: updated_room.created_by.to_string(),
-            creator_username,
-            status: match updated_room.status {
-                synctv_core::models::RoomStatus::Pending => "pending".to_string(),
-                synctv_core::models::RoomStatus::Active => "active".to_string(),
-                synctv_core::models::RoomStatus::Banned => "banned".to_string(),
-            },
-            settings: serde_json::to_vec(&default_settings).unwrap_or_default(),
-            member_count,
-            created_at: updated_room.created_at.timestamp(),
-            updated_at: updated_room.updated_at.timestamp(),
-        };
-
-        Ok(Response::new(ResetRoomSettingsResponse {
-            room: Some(admin_room),
-        }))
-    }
+//     async fn get_room_settings(
+//         &self,
+//         request: Request<GetRoomSettingsRequest>,
+//     ) -> Result<Response<GetRoomSettingsResponse>, Status> {
+//         self.check_admin(&request).await?;
+//         let req = request.into_inner();
+//         let room_id = RoomId::from_string(req.room_id);
+// 
+//         // Get settings (with caching)
+//         let settings = self
+//             .room_service
+//             .get_room_settings(&room_id)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
+// 
+//         let settings_bytes = serde_json::to_vec(&settings)
+//             .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
+// 
+//         Ok(Response::new(GetRoomSettingsResponse {
+//             settings: settings_bytes,
+//         }))
+//     }
+// 
+//     async fn set_room_settings(
+//         &self,
+//         request: Request<SetRoomSettingsRequest>,
+//     ) -> Result<Response<SetRoomSettingsResponse>, Status> {
+//         self.check_admin(&request).await?;
+// 
+//         // Get user_id from request metadata
+//         let user_context = request
+//             .extensions()
+//             .get::<super::interceptors::UserContext>()
+//             .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+// 
+//         let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
+// 
+//         let req = request.into_inner();
+//         let room_id = RoomId::from_string(req.room_id);
+// 
+//         // Parse settings from JSON bytes
+//         let settings = if !req.settings.is_empty() {
+//             serde_json::from_slice(&req.settings)
+//                 .map_err(|e| Status::invalid_argument(format!("Invalid settings: {}", e)))?
+//         } else {
+//             synctv_core::models::RoomSettings::default()
+//         };
+// 
+//         // Set settings
+//         let updated_room = self
+//             .room_service
+//             .set_settings(room_id.clone(), user_id, settings)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to set settings: {}", e)))?;
+// 
+//         // Get member count
+//         let member_count = self
+//             .room_service
+//             .get_member_count(&room_id)
+//             .await
+//             .unwrap_or(0);
+// 
+//         // Get creator username
+//         let creator_username = self
+//             .user_service
+//             .get_user(&updated_room.created_by)
+//             .await
+//             .map(|u| u.username)
+//             .unwrap_or_default();
+// 
+//         // Load updated settings
+//         let room_settings = self.room_service
+//             .get_room_settings(&room_id)
+//             .await
+//             .unwrap_or_default();
+// 
+//         let admin_room = AdminRoom {
+//             id: updated_room.id.to_string(),
+//             name: updated_room.name,
+//             creator_id: updated_room.created_by.to_string(),
+//             creator_username,
+//             status: match updated_room.status {
+//                 synctv_core::models::RoomStatus::Pending => "pending".to_string(),
+//                 synctv_core::models::RoomStatus::Active => "active".to_string(),
+//                 synctv_core::models::RoomStatus::Banned => "banned".to_string(),
+//             },
+//             settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
+//             member_count,
+//             created_at: updated_room.created_at.timestamp(),
+//             updated_at: updated_room.updated_at.timestamp(),
+//         };
+// 
+//         Ok(Response::new(SetRoomSettingsResponse {
+//             room: Some(admin_room),
+//         }))
+//     }
+// 
+//     async fn update_room_setting(
+//         &self,
+//         request: Request<UpdateRoomSettingRequest>,
+//     ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
+//         self.check_admin(&request).await?;
+// 
+//         // Get user_id from request metadata
+//         let user_context = request
+//             .extensions()
+//             .get::<super::interceptors::UserContext>()
+//             .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+// 
+//         let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
+// 
+//         let req = request.into_inner();
+//         let room_id = RoomId::from_string(req.room_id);
+// 
+//         // Get current settings
+//         let mut settings = self
+//             .room_service
+//             .get_room_settings(&room_id)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
+// 
+//         // Update specific field based on key
+//         match req.key.as_str() {
+//             "require_password" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.require_password = value;
+//                 }
+//             }
+//             "auto_play_next" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.auto_play_next = value;
+//                 }
+//             }
+//             "auto_play" => {
+//                 if let Ok(value) = serde_json::from_slice::<synctv_core::models::AutoPlaySettings>(&req.value) {
+//                     settings.auto_play = value;
+//                 }
+//             }
+//             "loop_playlist" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.loop_playlist = value;
+//                 }
+//             }
+//             "shuffle_playlist" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.shuffle_playlist = value;
+//                 }
+//             }
+//             "allow_guest_join" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.allow_guest_join = value;
+//                 }
+//             }
+//             "max_members" => {
+//                 if let Ok(value) = serde_json::from_slice::<i32>(&req.value) {
+//                     settings.max_members = Some(value);
+//                 }
+//             }
+//             "chat_enabled" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.chat_enabled = value;
+//                 }
+//             }
+//             "danmaku_enabled" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.danmaku_enabled = value;
+//                 }
+//             }
+//             "require_approval" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.require_approval = value;
+//                 }
+//             }
+//             "allow_auto_join" => {
+//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
+//                     settings.allow_auto_join = value;
+//                 }
+//             }
+//             _ => {
+//                 return Err(Status::invalid_argument(format!("Unknown setting key: {}", req.key)));
+//             }
+//         }
+// 
+//         // Save updated settings
+//         self.room_service
+//             .set_settings(room_id.clone(), user_id, settings)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to update setting: {}", e)))?;
+// 
+//         // Load updated settings
+//         let updated_settings = self
+//             .room_service
+//             .get_room_settings(&room_id)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to get updated settings: {}", e)))?;
+// 
+//         let settings_bytes = serde_json::to_vec(&updated_settings)
+//             .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
+// 
+//         Ok(Response::new(UpdateRoomSettingResponse {
+//             settings: settings_bytes,
+//         }))
+//     }
+// 
+//     async fn reset_room_settings(
+//         &self,
+//         request: Request<ResetRoomSettingsRequest>,
+//     ) -> Result<Response<ResetRoomSettingsResponse>, Status> {
+//         self.check_admin(&request).await?;
+// 
+//         // Get user_id from request metadata
+//         let user_context = request
+//             .extensions()
+//             .get::<super::interceptors::UserContext>()
+//             .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+// 
+//         let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
+// 
+//         let req = request.into_inner();
+//         let room_id = RoomId::from_string(req.room_id);
+// 
+//         // Reset to default
+//         let default_settings = synctv_core::models::RoomSettings::default();
+// 
+//         self.room_service
+//             .set_settings(room_id.clone(), user_id, default_settings)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to reset settings: {}", e)))?;
+// 
+//         // Get updated room
+//         let updated_room = self
+//             .room_service
+//             .get_room(&room_id)
+//             .await
+//             .map_err(|e| Status::internal(format!("Failed to get room: {}", e)))?;
+// 
+//         // Get member count
+//         let member_count = self
+//             .room_service
+//             .get_member_count(&room_id)
+//             .await
+//             .unwrap_or(0);
+// 
+//         // Get creator username
+//         let creator_username = self
+//             .user_service
+//             .get_user(&updated_room.created_by)
+//             .await
+//             .map(|u| u.username)
+//             .unwrap_or_default();
+// 
+//         let admin_room = AdminRoom {
+//             id: updated_room.id.to_string(),
+//             name: updated_room.name,
+//             creator_id: updated_room.created_by.to_string(),
+//             creator_username,
+//             status: match updated_room.status {
+//                 synctv_core::models::RoomStatus::Pending => "pending".to_string(),
+//                 synctv_core::models::RoomStatus::Active => "active".to_string(),
+//                 synctv_core::models::RoomStatus::Banned => "banned".to_string(),
+//             },
+//             settings: serde_json::to_vec(&default_settings).unwrap_or_default(),
+//             member_count,
+//             created_at: updated_room.created_at.timestamp(),
+//             updated_at: updated_room.updated_at.timestamp(),
+//         };
+// 
+//         Ok(Response::new(ResetRoomSettingsResponse {
+//             room: Some(admin_room),
+//         }))
+//     }
 
     async fn get_room_members(
         &self,

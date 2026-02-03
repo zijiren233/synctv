@@ -61,6 +61,19 @@ pub struct Media {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
+/// Parameters for creating media from a provider
+#[derive(Debug, Clone)]
+pub struct FromProviderParams {
+    pub playlist_id: PlaylistId,
+    pub room_id: RoomId,
+    pub creator_id: UserId,
+    pub name: String,
+    pub source_config: JsonValue,
+    pub provider_name: String,
+    pub provider_instance_name: String,
+    pub position: i32,
+}
+
 impl Media {
     /// Create media from provider instance (registry pattern)
     ///
@@ -76,6 +89,7 @@ impl Media {
     /// let provider = providers_manager.get_provider("bilibili_main").await?;
     /// let media = Media::from_provider(..., provider.name(), "bilibili_main", ...);
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub fn from_provider(
         playlist_id: PlaylistId,
         room_id: RoomId,
@@ -97,6 +111,24 @@ impl Media {
             source_config,
             metadata: JsonValue::default(),
             provider_instance_name: Some(provider_instance_name),
+            added_at: Utc::now(),
+            deleted_at: None,
+        }
+    }
+
+    /// Create media from provider with parameters struct
+    pub fn from_provider_with_params(params: FromProviderParams) -> Self {
+        Self {
+            id: MediaId::new(),
+            playlist_id: params.playlist_id,
+            room_id: params.room_id,
+            creator_id: params.creator_id,
+            name: params.name,
+            position: params.position,
+            source_provider: params.provider_name,
+            source_config: params.source_config,
+            metadata: JsonValue::default(),
+            provider_instance_name: Some(params.provider_instance_name),
             added_at: Utc::now(),
             deleted_at: None,
         }

@@ -159,7 +159,7 @@ macro_rules! room_setting {
 
             fn parse_from_str(value: &str) -> Result<$ty> {
                 value.parse::<$ty>().map_err(|_| {
-                    crate::Error::InvalidInput(format!("Invalid value for {}: {}", $key, value))
+                    $crate::Error::InvalidInput(format!("Invalid value for {}: {}", $key, value))
                 })
             }
 
@@ -252,6 +252,7 @@ use crate::models::room::AutoPlaySettings;
 /// Auto play settings (complex type)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
+#[derive(Default)]
 pub struct AutoPlay {
     pub value: AutoPlaySettings,
 }
@@ -322,13 +323,6 @@ fn _auto_play_register() {
     RoomSettingsRegistry::register("auto_play", std::sync::Arc::new(default_instance));
 }
 
-impl std::default::Default for AutoPlay {
-    fn default() -> Self {
-        Self {
-            value: AutoPlaySettings::default(),
-        }
-    }
-}
 
 use serde::{Deserialize, Serialize};
 
@@ -393,7 +387,7 @@ mod tests {
     fn test_bool_setting() {
         let setting = ChatEnabled(true);
         assert_eq!(ChatEnabled::KEY, "chat_enabled");
-        assert_eq!(*setting.value(), true);
+        assert!(*setting.value());
     }
 
     #[test]
@@ -450,7 +444,7 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let deserialized: RoomSettings = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(deserialized.chat_enabled.0, false);
+        assert!(!deserialized.chat_enabled.0);
         assert_eq!(deserialized.max_members.0, 100);
     }
 }

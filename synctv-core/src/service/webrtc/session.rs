@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use std::collections::HashMap;
 
 use crate::{models::RoomId, Error, Result};
-use super::{Peer, PeerManager, MediaType};
+use super::{PeerManager, MediaType};
 
 /// Unique session identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -28,6 +28,12 @@ impl SessionId {
     /// Get session ID as string reference
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Default for SessionId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

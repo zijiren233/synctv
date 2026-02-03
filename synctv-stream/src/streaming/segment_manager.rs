@@ -140,7 +140,7 @@ mod tests {
             retention: Duration::from_millis(50),
         };
 
-        let manager = SegmentManager::new(storage.clone(), config);
+        let _manager = SegmentManager::new(storage.clone(), config);
 
         // Manual cleanup
         let deleted = storage.cleanup(Duration::from_millis(50))

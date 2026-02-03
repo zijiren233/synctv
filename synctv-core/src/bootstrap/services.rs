@@ -157,12 +157,7 @@ pub async fn init_services(
     let settings_service = SettingsService::new(settings_repo);
     settings_service.initialize().await?;
     info!("Settings service initialized with {} groups", {
-        let groups = settings_service.get_all().await;
-        if groups.is_ok() {
-            groups.unwrap().len()
-        } else {
-            0
-        }
+        settings_service.get_all().await.map(|g| g.len()).unwrap_or(0)
     });
 
     // Wrap settings_service in Arc before creating registry
@@ -175,7 +170,7 @@ pub async fn init_services(
     info!("Settings registry initialized");
 
     // Initialize Email service (optional - requires SMTP configuration)
-    let email_service = init_email_service(&config);
+    let email_service = init_email_service(config);
     if email_service.is_some() {
         info!("Email service initialized");
     } else {
@@ -267,7 +262,7 @@ async fn init_oauth2_service(
 
         // Get provider type from config (check for explicit "type" field)
         let provider_type = if let Some(map) = full_config.as_mapping() {
-            map.get(&serde_yaml::Value::String("type".to_string()))
+            map.get(serde_yaml::Value::String("type".to_string()))
                 .and_then(|v| v.as_str())
                 .unwrap_or(&instance_name)
                 .to_string()

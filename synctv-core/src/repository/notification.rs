@@ -46,7 +46,7 @@ impl NotificationRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(self.row_to_notification(row)?)
+        self.row_to_notification(row)
     }
 
     /// Get notification by ID

@@ -230,21 +230,4 @@ impl SyncTvServer {
 
         Ok(handle)
     }
-
-    /// Shutdown all servers gracefully
-    pub async fn shutdown(self) -> anyhow::Result<()> {
-        info!("Shutting down servers...");
-
-        // Cancel server tasks
-        if let Some(handle) = self.grpc_handle {
-            handle.abort();
-        }
-
-        if let Some(handle) = self.http_handle {
-            handle.abort();
-        }
-
-        info!("All servers shut down");
-        Ok(())
-    }
 }

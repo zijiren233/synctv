@@ -133,7 +133,7 @@ impl ConnectionManager {
         // Add to user connections
         self.user_connections
             .entry(user_id.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(connection_id.clone());
 
         // Update metrics
@@ -172,7 +172,7 @@ impl ConnectionManager {
         // Add to room connections
         self.room_connections
             .entry(room_id.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(connection_id.to_string());
 
         debug!(

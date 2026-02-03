@@ -260,7 +260,7 @@ mod tests {
         let instance_manager = Arc::new(ProviderInstanceManager::new(repo));
         let manager = ProvidersManager::new(instance_manager);
 
-        let types = manager.list_provider_types();
+        let types = manager.list_types();
         assert!(types.contains(&"alist".to_string()));
         assert!(types.contains(&"bilibili".to_string()));
         assert_eq!(types.len(), 5); // alist, bilibili, emby, rtmp, direct_url

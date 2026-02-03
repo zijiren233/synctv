@@ -59,7 +59,7 @@ impl RoomMessageHub {
         // Add to room subscribers
         self.rooms
             .entry(room_id.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(subscriber);
 
         // Track connection for cleanup

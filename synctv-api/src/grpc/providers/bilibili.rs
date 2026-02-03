@@ -7,7 +7,7 @@ use crate::http::AppState;
 use crate::impls::BilibiliApiImpl;
 
 // Import generated proto types from synctv_proto
-use crate::proto::providers::bilibili::bilibili_provider_service_server::{BilibiliProviderService, BilibiliProviderServiceServer};
+use crate::proto::providers::bilibili::bilibili_provider_service_server::BilibiliProviderService;
 use crate::proto::providers::bilibili::*;
 
 /// Bilibili Provider gRPC Service
@@ -41,7 +41,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         api.parse(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn login_qr(&self, request: Request<LoginQrRequest>) -> Result<Response<QrCodeResponse>, Status> {
@@ -59,7 +59,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         api.login_qr(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn check_qr(&self, request: Request<CheckQrRequest>) -> Result<Response<QrStatusResponse>, Status> {
@@ -77,7 +77,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         api.check_qr(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn get_captcha(&self, request: Request<GetCaptchaRequest>) -> Result<Response<CaptchaResponse>, Status> {
@@ -95,7 +95,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         api.get_captcha(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn send_sms(&self, request: Request<SendSmsRequest>) -> Result<Response<SendSmsResponse>, Status> {
@@ -113,7 +113,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         api.send_sms(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn login_sms(&self, request: Request<LoginSmsRequest>) -> Result<Response<LoginSmsResponse>, Status> {
@@ -131,7 +131,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         api.login_sms(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn get_user_info(&self, request: Request<UserInfoRequest>) -> Result<Response<UserInfoResponse>, Status> {
@@ -149,7 +149,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         api.get_user_info(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn logout(&self, request: Request<LogoutRequest>) -> Result<Response<LogoutResponse>, Status> {
@@ -161,6 +161,6 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         api.logout(req)
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 }

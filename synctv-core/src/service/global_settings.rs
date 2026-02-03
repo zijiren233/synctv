@@ -108,13 +108,3 @@ impl SettingsRegistry {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_registry_compile() {
-        // Just verify the types compile
-        assert!(true);
-    }
-}

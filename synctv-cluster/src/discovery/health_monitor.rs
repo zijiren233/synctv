@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::{interval, Instant};
+use tokio::time::interval;
 
 use super::node_registry::NodeRegistry;
 use crate::error::Result;
@@ -52,7 +52,6 @@ impl HealthMonitor {
                 match registry.get_all_nodes().await {
                     Ok(nodes) => {
                         let mut status = health_status.write().await;
-                        let now = Instant::now();
                         let node_ids: Vec<String> = nodes.iter().map(|n| n.node_id.clone()).collect();
 
                         for node in nodes {
@@ -122,7 +121,6 @@ impl HealthMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires Redis"]

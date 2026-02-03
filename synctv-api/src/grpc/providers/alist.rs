@@ -7,7 +7,7 @@ use crate::http::AppState;
 use crate::impls::AlistApiImpl;
 
 // Import generated proto types from synctv_proto
-use crate::proto::providers::alist::alist_provider_service_server::{AlistProviderService, AlistProviderServiceServer};
+use crate::proto::providers::alist::alist_provider_service_server::AlistProviderService;
 use crate::proto::providers::alist::*;
 
 /// Alist Provider gRPC Service
@@ -41,7 +41,7 @@ impl AlistProviderService for AlistProviderGrpcService {
         api.login(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn list(&self, request: Request<ListRequest>) -> Result<Response<ListResponse>, Status> {
@@ -59,7 +59,7 @@ impl AlistProviderService for AlistProviderGrpcService {
         api.list(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn get_me(&self, request: Request<GetMeRequest>) -> Result<Response<GetMeResponse>, Status> {
@@ -77,7 +77,7 @@ impl AlistProviderService for AlistProviderGrpcService {
         api.get_me(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn logout(&self, request: Request<LogoutRequest>) -> Result<Response<LogoutResponse>, Status> {
@@ -89,7 +89,7 @@ impl AlistProviderService for AlistProviderGrpcService {
         api.logout(req)
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(Status::internal)
     }
 
     async fn get_binds(&self, request: Request<GetBindsRequest>) -> Result<Response<GetBindsResponse>, Status> {

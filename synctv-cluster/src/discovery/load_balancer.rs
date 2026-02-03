@@ -101,7 +101,6 @@ impl LoadBalancer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires Redis"]

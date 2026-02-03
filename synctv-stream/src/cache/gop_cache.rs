@@ -285,7 +285,7 @@ mod tests {
         let cache = GopCache::new(config);
 
         // Add 3 GOPs (should evict the first one)
-        for i in 0..3 {
+        for _i in 0..3 {
             cache.add_frame("stream1", create_test_frame(true, 100));
             cache.add_frame("stream1", create_test_frame(false, 50));
         }

@@ -117,13 +117,11 @@ async fn handle_hls_playlist(
     };
 
     // 3. Generate HLS playlist
-    let playlist = format!(
-        "#EXTM3U\n\
+    let playlist = "#EXTM3U\n\
          #EXT-X-VERSION:3\n\
          #EXT-X-TARGETDURATION:10\n\
          #EXT-X-MEDIA-SEQUENCE:0\n\
-         # TODO: Implement HLS segment generation\n"
-    );
+         # TODO: Implement HLS segment generation\n".to_string();
 
     Ok(Response::builder()
         .status(StatusCode::OK)

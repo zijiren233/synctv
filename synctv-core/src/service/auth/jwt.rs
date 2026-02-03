@@ -85,7 +85,6 @@ impl JwtService {
     #[cfg(test)]
     pub fn generate_keys() -> (Vec<u8>, Vec<u8>) {
         use rsa::{pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding}, RsaPrivateKey};
-        use rsa::pkcs8::DecodePrivateKey;
 
         let mut rng = rand::thread_rng();
         let bits = 2048;

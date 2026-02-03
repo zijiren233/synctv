@@ -7,7 +7,6 @@
 use redis::{AsyncCommands, Client};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::{models::UserId, Error, Result};
 
@@ -46,7 +45,7 @@ impl UserCache {
         key_prefix: String,
     ) -> Result<Self> {
         let l1_cache = moka::future::CacheBuilder::new(l1_max_capacity)
-            .time_to_live(std::time::Duration::from_secs(l1_ttl_minutes as u64 * 60))
+            .time_to_live(std::time::Duration::from_secs(l1_ttl_minutes * 60))
             .build();
 
         Ok(Self {

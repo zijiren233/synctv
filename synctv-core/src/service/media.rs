@@ -11,7 +11,7 @@ use crate::{
     models::{Media, MediaId, PlaylistId, RoomId, UserId, PermissionBits},
     repository::{MediaRepository, PlaylistRepository},
     service::{permission::PermissionService, ProvidersManager},
-    provider::{MediaProvider, ProviderContext},
+    provider::ProviderContext,
     Error, Result,
 };
 use serde_json::Value as JsonValue;
@@ -400,7 +400,6 @@ impl MediaService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]

@@ -250,13 +250,12 @@ pub async fn send_danmaku(
 
 /// Helper to create chat service
 fn create_chat_service(state: &AppState) -> synctv_core::service::ChatService {
-    use synctv_core::repository::{ChatRepository, UserRepository};
+    use synctv_core::repository::ChatRepository;
     use std::sync::Arc;
 
     let pool = state.user_service.pool().clone();
     synctv_core::service::ChatService::new(
-        Arc::new(ChatRepository::new(pool.clone())),
-        Arc::new(UserRepository::new(pool)),
+        Arc::new(ChatRepository::new(pool)),
         synctv_core::service::RateLimiter::new(None, "synctv:".to_string()).unwrap(),
         synctv_core::service::ContentFilter::new(),
         state.user_service.username_cache().clone(),

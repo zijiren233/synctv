@@ -28,7 +28,7 @@ pub struct PublishKey {
 
 /// Claims for RTMP publish token
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PublishClaims {
+pub struct PublishClaims {
     /// Room ID
     pub room_id: String,
     /// Media ID
@@ -202,13 +202,3 @@ impl PublishKeyService {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_default_ttl() {
-        // Test placeholder
-        assert!(24 > 0);
-    }
-}

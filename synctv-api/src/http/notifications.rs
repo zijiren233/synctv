@@ -14,7 +14,7 @@ use crate::http::error::AppResult;
 use crate::http::middleware::AuthUser;
 use crate::http::AppState;
 use synctv_core::models::notification::{
-    Notification, NotificationListQuery, NotificationType,
+    Notification, NotificationListQuery,
 };
 
 /// List notifications response

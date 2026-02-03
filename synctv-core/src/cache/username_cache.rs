@@ -29,7 +29,6 @@ struct MemoryCache {
 #[derive(Clone)]
 struct CacheEntry {
     username: String,
-    timestamp: i64,
 }
 
 impl UsernameCache {
@@ -281,22 +280,9 @@ impl MemoryCache {
         self.entries.get(user_id).map(|entry| entry.username.clone())
     }
 
-    /// Get username and update access order (requires mutable access)
-    fn get(&mut self, user_id: &UserId) -> Option<String> {
-        if let Some(entry) = self.entries.get(user_id) {
-            // Update access order (move to end = most recently used)
-            self.access_order.retain(|id| id != user_id);
-            self.access_order.push(user_id.clone());
-            Some(entry.username.clone())
-        } else {
-            None
-        }
-    }
-
     fn put(&mut self, user_id: UserId, username: String) {
         let entry = CacheEntry {
             username,
-            timestamp: chrono::Utc::now().timestamp(),
         };
 
         // Update access order

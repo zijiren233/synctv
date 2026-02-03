@@ -31,12 +31,36 @@ use synctv_cluster::sync::PublishRequest;
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::repository::{ProviderInstanceRepository, UserProviderCredentialRepository};
 use synctv_core::service::{ProviderInstanceManager, RoomService, UserService};
-use synctv_stream::streaming::{create_streaming_router, StreamingHttpState};
+use synctv_stream::streaming::StreamingHttpState;
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub use error::{AppError, AppResult};
+
+/// Configuration for creating the HTTP router
+#[derive(Clone)]
+pub struct RouterConfig {
+    pub user_service: Arc<UserService>,
+    pub room_service: Arc<RoomService>,
+    pub provider_instance_manager: Arc<ProviderInstanceManager>,
+    pub provider_instance_repository: Arc<ProviderInstanceRepository>,
+    pub user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
+    pub alist_provider: Arc<AlistProvider>,
+    pub bilibili_provider: Arc<BilibiliProvider>,
+    pub emby_provider: Arc<EmbyProvider>,
+    pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
+    pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
+    pub jwt_service: synctv_core::service::JwtService,
+    pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
+    pub streaming_state: Option<StreamingHttpState>,
+    pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
+    pub settings_service: Option<Arc<synctv_core::service::SettingsService>>,
+    pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+    pub email_service: Option<Arc<synctv_core::service::EmailService>>,
+    pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
+    pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
+}
 
 /// Shared application state
 #[derive(Clone)]
@@ -64,11 +88,12 @@ pub struct AppState {
 }
 
 /// Create the HTTP router with all routes
+#[allow(clippy::too_many_arguments)]
 pub fn create_router(
     user_service: Arc<UserService>,
     room_service: Arc<RoomService>,
     provider_instance_manager: Arc<ProviderInstanceManager>,
-    provider_instance_repository: Arc<ProviderInstanceRepository>,
+    _provider_instance_repository: Arc<ProviderInstanceRepository>,
     user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
     alist_provider: Arc<AlistProvider>,
     bilibili_provider: Arc<BilibiliProvider>,
@@ -77,7 +102,7 @@ pub fn create_router(
     cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     jwt_service: synctv_core::service::JwtService,
     redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
-    streaming_state: Option<StreamingHttpState>,
+    _streaming_state: Option<StreamingHttpState>,
     oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     settings_service: Option<Arc<synctv_core::service::SettingsService>>,
     settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
@@ -130,7 +155,7 @@ pub fn create_router(
     // Note: If admin_api is None, admin endpoints won't work
     // This is acceptable for configurations without email/settings services
 
-    let mut router = Router::new()
+    let router = Router::new()
         // Health check endpoints (for monitoring probes)
         .merge(health::create_health_router())
         // Public endpoints (no authentication required)
@@ -171,7 +196,7 @@ pub fn create_router(
         .route("/api/user/logout", post(user::logout))
         .route("/api/user/username", post(user::update_username))
         .route("/api/user/password", post(user::update_password))
-        .route("/api/user/rooms", get(user::get_my_rooms))
+        .route("/api/user/rooms", get(user::get_joined_rooms))
         .route("/api/user/rooms/joined", get(user::get_joined_rooms))
         .route(
             "/api/user/rooms/:room_id",
@@ -224,7 +249,7 @@ pub fn create_router(
         )
         .route(
             "/api/rooms/:room_id/media/clear",
-            post(room::clear_playlist),
+            post(media::clear_playlist),
         )
         // Playback control routes
         .route("/api/rooms/:room_id/playback/play", post(room::play))
@@ -267,4 +292,29 @@ pub fn create_router(
 
     // Apply state to all routes (must be last)
     router.with_state(state)
+}
+
+/// Create the HTTP router from configuration struct
+pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
+    create_router(
+        config.user_service,
+        config.room_service,
+        config.provider_instance_manager,
+        config.provider_instance_repository,
+        config.user_provider_credential_repository,
+        config.alist_provider,
+        config.bilibili_provider,
+        config.emby_provider,
+        config.message_hub,
+        config.cluster_manager,
+        config.jwt_service,
+        config.redis_publish_tx,
+        config.streaming_state,
+        config.oauth2_service,
+        config.settings_service,
+        config.settings_registry,
+        config.email_service,
+        config.publish_key_service,
+        config.notification_service,
+    )
 }

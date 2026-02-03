@@ -1,5 +1,4 @@
 use sqlx::{PgPool, postgres::PgRow, Row};
-use serde_json::Value as JsonValue;
 
 use crate::{
     models::{Room, RoomId, RoomStatus, UserId, RoomListQuery},
@@ -373,7 +372,7 @@ impl RoomRepository {
         .bind(room_id.as_str())
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         self.row_to_room(row)
     }
@@ -398,7 +397,6 @@ impl RoomRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]

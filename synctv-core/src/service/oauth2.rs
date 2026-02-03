@@ -89,28 +89,6 @@ impl OAuth2Service {
         info!("Registered OAuth2 provider: {} (type: {})", instance_name, provider_type.as_str());
     }
 
-    /// Get provider by instance name
-    async fn get_provider(&self, instance_name: &str) -> Result<(Box<dyn OAuth2ProviderTrait>, OAuth2Provider)> {
-        let providers = self.providers.read().await;
-        let provider_types = self.provider_types.read().await;
-
-        let provider = providers.get(instance_name)
-            .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {}", instance_name)))?;
-
-        // Note: We can't return the provider directly because it's borrowed
-        // Instead, we need to clone the provider type and create a new approach
-        let provider_type = provider_types.get(instance_name)
-            .ok_or_else(|| Error::InvalidInput(format!("Provider type not found: {}", instance_name)))?;
-
-        // For now, we'll use a different approach - store the provider types separately
-        // and get the provider each time we need it
-        // This is a limitation of trait objects - we can't clone them
-
-        // We need to refactor this - for now, let's return an error
-        // The actual implementation should restructure how providers are accessed
-        Err(Error::Internal("Provider access pattern needs refactoring".to_string()))
-    }
-
     /// Generate authorization URL
     pub async fn get_authorization_url(
         &self,

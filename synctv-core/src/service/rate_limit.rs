@@ -235,7 +235,7 @@ mod tests {
             limiter
                 .check_rate_limit(key, 10, 1)
                 .await
-                .expect(&format!("Request {} should succeed", i));
+                .unwrap_or_else(|_| panic!("Request {} should succeed", i));
         }
 
         // 11th request should fail

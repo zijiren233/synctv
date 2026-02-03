@@ -49,7 +49,8 @@ impl OAuth2Provider {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Parse OAuth2 provider type from string name (case-insensitive)
+    pub fn from_str_name(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "qq" => Some(Self::QQ),
             "github" => Some(Self::GitHub),
@@ -100,7 +101,7 @@ pub struct UserOAuthProviderMapping {
 impl UserOAuthProviderMapping {
     /// Get the provider as OAuth2Provider enum
     pub fn provider_enum(&self) -> Option<OAuth2Provider> {
-        OAuth2Provider::from_str(&self.provider)
+        OAuth2Provider::from_str_name(&self.provider)
     }
 }
 

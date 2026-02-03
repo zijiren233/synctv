@@ -9,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use std::sync::Arc;
 
 use crate::http::error::AppResult;
 use crate::http::middleware::AuthUser;

@@ -37,13 +37,13 @@ impl RtmpStreamingServer {
             .map_err(|e| crate::error::StreamError::InvalidAddress(format!("Invalid RTMP address: {}", e)))?;
 
         let listener = TcpListener::bind(socket_addr).await
-            .map_err(|e| crate::error::StreamError::IoError(e))?;
+            .map_err(crate::error::StreamError::IoError)?;
 
         tracing::info!("RTMP server listening on rtmp://{}", socket_addr);
 
         loop {
             let (tcp_stream, remote_addr) = listener.accept().await
-                .map_err(|e| crate::error::StreamError::IoError(e))?;
+                .map_err(crate::error::StreamError::IoError)?;
 
             tracing::info!("New RTMP connection from {}", remote_addr);
 

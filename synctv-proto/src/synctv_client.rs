@@ -603,6 +603,7 @@ pub struct ServerMessage {
 pub mod server_message {
     #[derive(serde::Serialize, serde::Deserialize)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
+    #[allow(clippy::large_enum_variant)]
     pub enum Message {
         #[prost(message, tag = "1")]
         Chat(super::ChatMessageReceive),

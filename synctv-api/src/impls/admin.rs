@@ -4,7 +4,6 @@
 //! Used by both HTTP and gRPC handlers.
 
 use std::sync::Arc;
-use std::str::FromStr;
 use synctv_core::models::{UserId, RoomId};
 use synctv_core::service::{RoomService, UserService, SettingsService, EmailService};
 

@@ -307,7 +307,7 @@ impl RoomSettingsService {
 
         // Send notification to room members
         let settings_value: serde_json::Value = serde_json::from_str(&settings_json)
-            .unwrap_or_else(|_| serde_json::json!(null));
+            .unwrap_or(serde_json::json!(null));
 
         let _ = self.notification_service
             .notify_settings_updated(room_id, settings_value)
@@ -363,7 +363,6 @@ pub struct CacheStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]

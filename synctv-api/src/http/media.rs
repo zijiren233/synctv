@@ -9,11 +9,10 @@ use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Json},
 };
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use serde::Deserialize;
 
 use crate::http::{AppState, AppResult};
-use crate::proto::client::{Media, GetPlaylistResponse, GetPlaybackStateResponse};
+use crate::proto::client::{Media, GetPlaylistResponse};
 use crate::impls::client::media_to_proto;
 use synctv_core::{
     models::{MediaId, RoomId, UserId},
@@ -86,7 +85,7 @@ pub async fn add_media(
 
     // Extract title from URL or use provided title
     let title = if req.title.is_empty() {
-        req.url.split('/').last().unwrap_or("Unknown").to_string()
+        req.url.split('/').next_back().unwrap_or("Unknown").to_string()
     } else {
         req.title
     };
@@ -125,7 +124,7 @@ pub async fn add_media_batch(
 
         // Extract title from URL or use provided title
         let title = if item.title.is_empty() {
-            item.url.split('/').last().unwrap_or("Unknown").to_string()
+            item.url.split('/').next_back().unwrap_or("Unknown").to_string()
         } else {
             item.title
         };

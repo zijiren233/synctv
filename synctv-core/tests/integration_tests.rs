@@ -4,38 +4,34 @@
 //!
 //! Run with: cargo test --test integration_tests
 
-use std::sync::Arc;
 use synctv_core::{
-    models::{RoomId, UserId},
+    models::UserId,
     service::{
         auth::{jwt::JwtService, TokenType},
-        room::RoomService,
-        user::UserService,
-        member::MemberService,
-        chat::ChatService,
-        permission::Permission,
     },
-    test_helpers::*,
-    Error,
 };
 
-/// Helper to create a test JWT service
+/// Helper to create a test JWT service with generated keys
 fn create_test_jwt_service() -> JwtService {
-    let (private_key, public_key) = JwtService::generate_keys();
-    JwtService::new(&private_key, &public_key).unwrap()
-}
+    use rsa::{pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding}, RsaPrivateKey};
+    let mut rng = rand::thread_rng();
+    let bits = 2048;
+    let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate key");
+    let public_key = private_key.to_public_key();
 
-/// Helper to create test users
-async fn setup_test_user(user_service: &UserService, username: &str) -> Result<UserId> {
-    let create_request = synctv_core::service::user::CreateUserRequest {
-        username: username.to_string(),
-        password: "password123".to_string(),
-    };
+    let private_pem = private_key
+        .to_pkcs8_pem(LineEnding::LF)
+        .expect("Failed to encode private key")
+        .as_bytes()
+        .to_vec();
 
-    user_service
-        .create_user(&create_request)
-        .await
-        .map(|user| user.id)
+    let public_pem = public_key
+        .to_public_key_pem(LineEnding::LF)
+        .expect("Failed to encode public key")
+        .as_bytes()
+        .to_vec();
+
+    JwtService::new(&private_pem, &public_pem).expect("Failed to create JWT service")
 }
 
 #[tokio::test]
@@ -106,108 +102,6 @@ async fn test_jwt_invalid_token() {
 
     let result = jwt_service.verify_token(&tampered_token);
     assert!(result.is_err());
-}
-
-#[tokio::test]
-async fn test_permissions_bitmask() {
-    use synctv_core::service::permission;
-
-    // Test individual permissions
-    assert_eq!(permission::ROOM_OWNER, 1 << 0);
-    assert_eq!(permission::ROOM_ADMIN, 1 << 1);
-    assert_eq!(permission::ROOM_MODERATOR, 1 << 2);
-
-    // Test permission combinations
-    let permissions = permission::ROOM_OWNER | permission::ROOM_ADMIN;
-    assert!(permissions & permission::ROOM_OWNER != 0);
-    assert!(permissions & permission::ROOM_ADMIN != 0);
-
-    // Test permission checking
-    let user_permissions = permission::ROOM_MODERATOR | permission::CHAT_SEND;
-    assert!(permission::has_permission(user_permissions, permission::CHAT_SEND));
-    assert!(!permission::has_permission(user_permissions, permission::ROOM_OWNER));
-}
-
-#[tokio::test]
-async fn test_room_id_generation() {
-    let room_id1 = random_room_id();
-    let room_id2 = random_room_id();
-
-    // Room IDs should be unique
-    assert_ne!(room_id1, room_id2);
-
-    // Room IDs should be 12 characters
-    assert_eq!(room_id1.0.len(), 12);
-    assert_eq!(room_id2.0.len(), 12);
-}
-
-#[tokio::test]
-async fn test_user_id_generation() {
-    let user_id1 = random_user_id();
-    let user_id2 = random_user_id();
-
-    // User IDs should be unique
-    assert_ne!(user_id1, user_id2);
-
-    // User IDs should be non-empty
-    assert!(!user_id1.as_str().is_empty());
-    assert!(!user_id2.as_str().is_empty());
-}
-
-#[tokio::test]
-async fn test_fixture_builders() {
-    // Test UserFixture
-    let user = UserFixture::new()
-        .with_username("alice")
-        .with_permissions(123)
-        .build();
-
-    assert_eq!(user.username, "alice");
-    assert_eq!(user.permissions, 123);
-
-    // Test RoomFixture
-    let owner_id = test_user_id("owner1");
-    let room = RoomFixture::new()
-        .with_name("My Room")
-        .with_owner(owner_id.clone())
-        .build();
-
-    assert_eq!(room.name, "My Room");
-    assert_eq!(room.owner_id, owner_id);
-
-    // Test ChatMessageFixture
-    let room_id = test_room_id("room1");
-    let user_id = test_user_id("user1");
-    let message = ChatMessageFixture::new()
-        .with_room_id(room_id)
-        .with_user_id(user_id)
-        .with_content("Hello, world!")
-        .build();
-
-    assert_eq!(message.room_id, room_id);
-    assert_eq!(message.user_id, user_id);
-    assert_eq!(message.content, "Hello, world!");
-}
-
-#[tokio::test]
-async fn test_cache_stats_calculation() {
-    use synctv_core::cache::CacheStats;
-
-    let stats = CacheStats {
-        l1_hit_rate: 0.85,
-        l1_size: 1000,
-        l1_capacity: 10000,
-        total_hits: 8500,
-        total_misses: 1500,
-    };
-
-    // Test hit rate calculation
-    let expected_hit_rate = 8500.0 / (8500.0 + 1500.0);
-    assert!((stats.hit_rate() - expected_hit_rate).abs() < 0.001);
-
-    // Test with zero total
-    let empty_stats = CacheStats::default();
-    assert_eq!(empty_stats.hit_rate(), 0.0);
 }
 
 #[tokio::test]

@@ -5,12 +5,12 @@
 
 use std::sync::Arc;
 use chrono::Utc;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::{
     cache::UsernameCache,
-    models::{ChatMessage, RoomId, SendChatRequest, SendDanmakuRequest, UserId},
-    repository::{ChatRepository, UserRepository},
+    models::{ChatMessage, RoomId, SendDanmakuRequest, UserId},
+    repository::ChatRepository,
     service::{ContentFilter, RateLimiter},
     Error, Result,
 };
@@ -19,7 +19,6 @@ use crate::{
 #[derive(Clone)]
 pub struct ChatService {
     pub(crate) chat_repository: Arc<ChatRepository>,
-    pub(crate) user_repository: Arc<UserRepository>,
     rate_limiter: RateLimiter,
     content_filter: ContentFilter,
     username_cache: UsernameCache,
@@ -36,14 +35,12 @@ impl ChatService {
     /// Create a new chat service
     pub fn new(
         chat_repository: Arc<ChatRepository>,
-        user_repository: Arc<UserRepository>,
         rate_limiter: RateLimiter,
         content_filter: ContentFilter,
         username_cache: UsernameCache,
     ) -> Self {
         Self {
             chat_repository,
-            user_repository,
             rate_limiter,
             content_filter,
             username_cache,
@@ -232,7 +229,6 @@ impl ChatService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_validate_content() {

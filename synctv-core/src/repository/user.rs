@@ -287,13 +287,10 @@ impl UserRepository {
     /// Convert database row to User model
     fn row_to_user(&self, row: PgRow) -> Result<User> {
         let signup_method_str: Option<String> = row.try_get("signup_method")?;
-        let signup_method = signup_method_str.map(|s| SignupMethod::from_str(&s));
+        let signup_method = signup_method_str.map(|s| SignupMethod::from_str_name(&s));
 
         // Try to get email_verified, default to false if column doesn't exist
-        let email_verified = match row.try_get::<bool, _>("email_verified") {
-            Ok(v) => v,
-            Err(_) => false, // Default for backward compatibility
-        };
+        let email_verified = row.try_get::<bool, _>("email_verified").unwrap_or_default();
 
         Ok(User {
             id: UserId::from_string(row.try_get("id")?),
@@ -312,7 +309,7 @@ impl UserRepository {
     /// Convert database row to User model (with email_verified explicitly included)
     fn row_to_user_with_email_verified(&self, row: PgRow) -> Result<User> {
         let signup_method_str: Option<String> = row.try_get("signup_method")?;
-        let signup_method = signup_method_str.map(|s| SignupMethod::from_str(&s));
+        let signup_method = signup_method_str.map(|s| SignupMethod::from_str_name(&s));
 
         Ok(User {
             id: UserId::from_string(row.try_get("id")?),
@@ -331,7 +328,6 @@ impl UserRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Integration tests would require a real database
     // These are placeholder tests that demonstrate the API

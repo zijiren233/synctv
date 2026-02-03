@@ -8,7 +8,6 @@ use tonic::{Request, Response, Status};
 use super::synctv::cluster::cluster_service_server::ClusterService;
 use super::synctv::cluster::*;
 use crate::discovery::{NodeInfo as DiscoveryNodeInfo, NodeRegistry};
-use crate::Result;
 
 /// Cluster gRPC service
 ///
@@ -16,27 +15,14 @@ use crate::Result;
 #[derive(Clone)]
 pub struct ClusterServer {
     node_registry: Arc<NodeRegistry>,
-    node_id: String,
 }
 
 impl ClusterServer {
     /// Create a new cluster server
-    pub fn new(node_registry: Arc<NodeRegistry>, node_id: String) -> Self {
+    pub fn new(node_registry: Arc<NodeRegistry>, _node_id: String) -> Self {
         Self {
             node_registry,
-            node_id,
         }
-    }
-
-    /// Convert proto NodeInfo to discovery NodeInfo
-    fn proto_to_discovery_node(&self, proto: &NodeInfo) -> Result<DiscoveryNodeInfo> {
-        Ok(DiscoveryNodeInfo {
-            node_id: proto.node_id.clone(),
-            grpc_address: proto.address.clone(),
-            http_address: String::new(), // Not in proto yet
-            last_heartbeat: chrono::Utc::now(),
-            metadata: std::collections::HashMap::new(),
-        })
     }
 
     /// Convert discovery NodeInfo to proto NodeInfo

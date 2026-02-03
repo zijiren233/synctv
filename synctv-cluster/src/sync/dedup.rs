@@ -9,8 +9,6 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use synctv_core::models::id::RoomId;
-use tokio::sync::RwLock;
 
 /// Deduplication key for events
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
@@ -129,18 +127,19 @@ impl MessageDeduplicator {
     fn cleanup_expired(&self) {
         let now = Instant::now();
 
-        self.entries.retain(|key, entry| {
-            if entry.expires_at > now {
-                true
-            } else {
-                false
-            }
+        self.entries.retain(|_key, entry| {
+            entry.expires_at > now
         });
     }
 
     /// Get the number of tracked events
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Check if there are any tracked events
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     /// Clear all tracked events (for testing)
@@ -159,7 +158,7 @@ impl Default for MessageDeduplicator {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use synctv_core::models::id::UserId;
+    use synctv_core::models::id::{RoomId, UserId};
 
     #[test]
     fn test_dedup_basic() {

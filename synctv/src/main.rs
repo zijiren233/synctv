@@ -10,7 +10,7 @@ use synctv_core::{
     bootstrap::{load_config, init_database, init_services},
     provider::{AlistProvider, BilibiliProvider, EmbyProvider},
 };
-use synctv_cluster::sync::{RoomMessageHub, ConnectionManager, RedisPubSub, ClusterManager, ClusterConfig};
+use synctv_cluster::sync::{RoomMessageHub, ConnectionManager, ClusterManager, ClusterConfig};
 
 use server::{SyncTvServer, Services, StreamingState};
 

@@ -2,7 +2,6 @@
 //!
 //! Design reference: /Volumes/workspace/rust/design/04-数据库设计.md §2.4.2
 
-use serde_json::Value as JsonValue;
 use sqlx::{postgres::PgRow, PgPool, Row};
 
 use crate::{
@@ -344,7 +343,6 @@ impl MediaRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]

@@ -23,6 +23,19 @@ pub struct AuditLog {
     pub created_at: DateTime<Utc>,
 }
 
+/// Parameters for logging an audit event
+#[derive(Debug, Clone)]
+pub struct AuditEventParams {
+    pub actor_id: String,
+    pub actor_username: String,
+    pub action: AuditAction,
+    pub target_type: AuditTargetType,
+    pub target_id: Option<String>,
+    pub details: serde_json::Value,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+}
+
 /// Audit actions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -72,6 +85,7 @@ impl AuditService {
     }
 
     /// Log an audit event
+    #[allow(clippy::too_many_arguments)]
     pub async fn log(
         &self,
         actor_id: String,
@@ -120,7 +134,7 @@ impl AuditService {
             .bind(&details_str)
             .bind(&audit_log.ip_address)
             .bind(&audit_log.user_agent)
-            .bind(&audit_log.created_at)
+            .bind(audit_log.created_at)
             .execute(&self.pool)
             .await?;
 
@@ -132,6 +146,21 @@ impl AuditService {
         );
 
         Ok(())
+    }
+
+    /// Log an audit event with parameters struct
+    pub async fn log_with_params(&self, params: AuditEventParams) -> Result<()> {
+        self.log(
+            params.actor_id,
+            params.actor_username,
+            params.action,
+            params.target_type,
+            params.target_id,
+            params.details,
+            params.ip_address,
+            params.user_agent,
+        )
+        .await
     }
 
     /// Log user creation

@@ -26,10 +26,9 @@ use crate::proto::client::{
     room_service_server::RoomServiceServer, user_service_server::UserServiceServer,
 };
 use tonic::transport::Server;
-use tonic_reflection::server::Builder as ReflectionBuilder;
 
 use std::sync::Arc;
-use synctv_cluster::sync::{ClusterManager, ConnectionManager, PublishRequest, RoomMessageHub};
+use synctv_cluster::sync::{ClusterManager, ConnectionManager, PublishRequest};
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::service::auth::JwtService;
 use synctv_core::service::{
@@ -39,7 +38,31 @@ use synctv_core::service::{
 };
 use synctv_core::Config;
 
+/// Configuration for the gRPC server
+#[derive(Clone)]
+pub struct GrpcServerConfig<'a> {
+    pub config: &'a Config,
+    pub jwt_service: JwtService,
+    pub user_service: Arc<CoreUserService>,
+    pub room_service: Arc<CoreRoomService>,
+    pub cluster_manager: Arc<ClusterManager>,
+    pub redis_publish_tx: Option<tokio::sync::mpsc::UnboundedSender<PublishRequest>>,
+    pub rate_limiter: RateLimiter,
+    pub rate_limit_config: RateLimitConfig,
+    pub content_filter: ContentFilter,
+    pub connection_manager: ConnectionManager,
+    pub providers_manager: Option<Arc<ProvidersManager>>,
+    pub provider_instance_manager: Arc<ProviderInstanceManager>,
+    pub provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
+    pub user_provider_credential_repository: Arc<synctv_core::repository::UserProviderCredentialRepository>,
+    pub settings_service: Arc<SettingsService>,
+    pub settings_registry: Option<Arc<SettingsRegistry>>,
+    pub email_service: Option<Arc<EmailService>>,
+    pub email_token_service: Option<Arc<EmailTokenService>>,
+}
+
 /// Build and start the gRPC server
+#[allow(clippy::too_many_arguments)]
 pub async fn serve(
     config: &Config,
     jwt_service: JwtService,
@@ -53,7 +76,7 @@ pub async fn serve(
     connection_manager: ConnectionManager,
     providers_manager: Option<Arc<ProvidersManager>>,
     provider_instance_manager: Arc<ProviderInstanceManager>,
-    provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
+    _provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
     user_provider_credential_repository: Arc<
         synctv_core::repository::UserProviderCredentialRepository,
     >,
@@ -221,4 +244,29 @@ pub async fn serve(
         .map_err(|e| anyhow::anyhow!("gRPC server error: {}", e))?;
 
     Ok(())
+}
+
+/// Build and start the gRPC server from configuration struct
+pub async fn serve_from_config(config: GrpcServerConfig<'_>) -> anyhow::Result<()> {
+    serve(
+        config.config,
+        config.jwt_service,
+        config.user_service,
+        config.room_service,
+        config.cluster_manager,
+        config.redis_publish_tx,
+        config.rate_limiter,
+        config.rate_limit_config,
+        config.content_filter,
+        config.connection_manager,
+        config.providers_manager,
+        config.provider_instance_manager,
+        config.provider_instance_repository,
+        config.user_provider_credential_repository,
+        config.settings_service,
+        config.settings_registry,
+        config.email_service,
+        config.email_token_service,
+    )
+    .await
 }

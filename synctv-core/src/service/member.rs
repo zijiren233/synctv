@@ -408,7 +408,7 @@ impl MemberService {
     ) -> Result<()> {
         // Check admin permission
         self.permission_service
-            .check_permission(&room_id, &admin_id, PermissionBits::KICK_USER)
+            .check_permission(&room_id.clone(), &admin_id, PermissionBits::KICK_USER)
             .await?;
 
         // Ban member
@@ -433,7 +433,7 @@ impl MemberService {
     ) -> Result<()> {
         // Check admin permission
         self.permission_service
-            .check_permission(&room_id, &admin_id, PermissionBits::KICK_USER)
+            .check_permission(&room_id.clone(), &admin_id, PermissionBits::KICK_USER)
             .await?;
 
         // Unban member
@@ -501,7 +501,7 @@ impl MemberService {
     ) -> Result<RoomMember> {
         // Check admin permission
         self.permission_service
-            .check_permission(&room_id, &admin_id, PermissionBits::KICK_USER)
+            .check_permission(&room_id.clone(), &admin_id, PermissionBits::KICK_USER)
             .await?;
 
         // Get current member
@@ -533,7 +533,7 @@ impl MemberService {
     ) -> Result<Vec<RoomMemberWithUser>> {
         // Check admin permission
         self.permission_service
-            .check_permission(&room_id, &admin_id, PermissionBits::KICK_USER)
+            .check_permission(&room_id.clone(), &admin_id, PermissionBits::KICK_USER)
             .await?;
 
         // Get all members regardless of left_at status
@@ -543,7 +543,6 @@ impl MemberService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]

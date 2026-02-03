@@ -113,7 +113,7 @@ impl HlsStorage for OssStorage {
         self.operator
             .write(&object_key, data)
             .await
-            .map_err(|e| Error::new(ErrorKind::Other, format!("OSS write failed: {}", e)))?;
+            .map_err(|e| Error::other(format!("OSS write failed: {}", e)))?;
 
         log::trace!("Wrote to OSS: {} ({} bytes) for key: {}", object_key, size, key);
 
@@ -144,7 +144,7 @@ impl HlsStorage for OssStorage {
         self.operator
             .delete(&object_key)
             .await
-            .map_err(|e| Error::new(ErrorKind::Other, format!("OSS delete failed: {}", e)))?;
+            .map_err(|e| Error::other(format!("OSS delete failed: {}", e)))?;
 
         log::trace!("Deleted from OSS: {} for key: {}", object_key, key);
 
@@ -181,13 +181,13 @@ impl HlsStorage for OssStorage {
         let lister = self.operator
             .lister(&base_path)
             .await
-            .map_err(|e| Error::new(ErrorKind::Other, format!("OSS list failed: {}", e)))?;
+            .map_err(|e| Error::other(format!("OSS list failed: {}", e)))?;
 
         // Iterate through objects and delete old ones
         use futures::TryStreamExt;
         let mut entries = lister;
         while let Some(entry) = entries.try_next().await
-            .map_err(|e| Error::new(ErrorKind::Other, format!("OSS list iteration failed: {}", e)))? {
+            .map_err(|e| Error::other(format!("OSS list iteration failed: {}", e)))? {
 
             let path = entry.path();
 
@@ -239,7 +239,7 @@ impl HlsStorage for OssStorage {
         let presigned_req = self.operator
             .presign_read(&object_key, expires_in)
             .await
-            .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to presign URL: {}", e)))?;
+            .map_err(|e| Error::other(format!("Failed to presign URL: {}", e)))?;
 
         // Get the presigned URL
         let url = presigned_req.uri().to_string();

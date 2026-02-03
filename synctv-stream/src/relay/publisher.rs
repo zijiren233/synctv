@@ -108,6 +108,7 @@ mod tests {
 
         let publisher = Publisher::new(
             "room123".to_string(),
+            "media123".to_string(),
             "node1".to_string(),
             gop_cache,
             registry,

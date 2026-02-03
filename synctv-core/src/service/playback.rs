@@ -4,12 +4,12 @@
 //! and media switching with optimistic locking for concurrent updates.
 
 use crate::{
-    models::{RoomId, UserId, MediaId, PermissionBits, RoomPlaybackState, RoomSettings, PlayMode, AutoPlaySettings},
+    models::{RoomId, UserId, MediaId, PermissionBits, RoomPlaybackState, RoomSettings, PlayMode},
     repository::{RoomPlaybackStateRepository, MediaRepository},
     service::{permission::PermissionService, media::MediaService},
     Error, Result,
 };
-use rand::seq::{IteratorRandom, SliceRandom};
+use rand::seq::IteratorRandom;
 
 /// Playback management service
 ///
@@ -99,7 +99,7 @@ impl PlaybackService {
             .await?;
 
         // Validate speed range
-        if speed < 0.25 || speed > 4.0 {
+        if !(0.25..=4.0).contains(&speed) {
             return Err(Error::InvalidInput("Speed must be between 0.25 and 4.0".to_string()));
         }
 
@@ -458,7 +458,6 @@ impl PlaybackService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]

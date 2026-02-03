@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use synctv_core::service::auth::{JwtService, JwtValidator};
-use tonic::{metadata::MetadataMap, Request, Status};
+use tonic::{Request, Status};
 use tracing::warn;
 use std::fmt::Debug;
 
@@ -37,6 +37,7 @@ impl AuthInterceptor {
 
     /// Inject UserContext - validates JWT and extracts user_id
     /// Used for UserService and AdminService
+    #[allow(clippy::result_large_err)]
     pub fn inject_user<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
         // Use unified validator for gRPC validation
         let claims = self
@@ -54,6 +55,7 @@ impl AuthInterceptor {
 
     /// Inject RoomContext - validates JWT, extracts user_id and room_id from x-room-id header
     /// Used for RoomService and MediaService
+    #[allow(clippy::result_large_err)]
     pub fn inject_room<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
         // Use unified validator for gRPC validation
         let claims = self
@@ -151,6 +153,7 @@ impl ValidationInterceptor {
     }
 
     /// Validate request size
+    #[allow(clippy::result_large_err)]
     pub fn validate<T>(&self, method: &'static str, request: &Request<T>) -> Result<(), Status> {
         // Get content-length if available
         if let Some(content_length) = request.metadata().get("content-length") {

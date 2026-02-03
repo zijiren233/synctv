@@ -121,7 +121,7 @@ impl BloomFilter {
         // GrowableBloom doesn't expose exact memory usage
         let bits_per_element = -self.config.false_positive_probability.ln() / std::f64::consts::LN_2.powi(2);
         let num_bits = (self.config.expected_elements as f64 * bits_per_element).ceil() as usize;
-        (num_bits + 7) / 8 // Convert to bytes
+        num_bits.div_ceil(8) // Convert to bytes
     }
 
     /// Get the current configuration
@@ -152,6 +152,12 @@ impl BloomFilter {
             size_bytes,
             fp_rate: self.false_positive_rate(),
         }
+    }
+}
+
+impl Default for BloomFilter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -427,7 +433,7 @@ mod tests {
 
         // With 1% false positive rate and 1000 elements
         // We expect approximately: m = -1000 * ln(0.01) / (ln(2)^2) ≈ 9586 bits
-        assert!(bits >= 9000 && bits <= 10000);
+        assert!((9000..=10000).contains(&bits));
     }
 
     #[tokio::test]
