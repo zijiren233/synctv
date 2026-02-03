@@ -15,7 +15,7 @@
 // - SegmentManager: Business logic (retention policy, cleanup scheduling)
 // - HLS layer: M3U8 generation and HTTP serving
 
-use crate::storage::HlsStorage;
+use crate::libraries::storage::HlsStorage;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -113,7 +113,7 @@ impl SegmentManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::MemoryStorage;
+    use crate::libraries::storage::MemoryStorage;
     use bytes::Bytes;
     use std::time::Duration;
 

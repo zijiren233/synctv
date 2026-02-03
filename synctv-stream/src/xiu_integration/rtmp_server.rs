@@ -61,8 +61,8 @@ impl RtmpServer {
     ///
     /// This returns the configuration needed to create the actual
     /// server in streaming/rtmp.rs
-    pub fn build(&self) -> (&str, usize) {
-        (self.config.listen_addr.to_string().as_str(), self.config.gop_num)
+    pub fn build(&self) -> (String, usize) {
+        (self.config.listen_addr.to_string(), self.config.gop_num)
     }
 }
 
@@ -87,7 +87,7 @@ mod tests {
         };
         let server = RtmpServer::new(config);
         let (addr, gop_num) = server.build();
-        assert_eq!(addr, "127.0.0.1:1935");
+        assert_eq!(addr, "127.0.0.1:1935".to_string());
         assert_eq!(gop_num, 2);
     }
 }

@@ -11,10 +11,8 @@
 // - Automatic segment cleanup
 
 use crate::{
-    streaming::{
-        segment_manager::SegmentManager,
-        hls_remuxer::{CustomHlsRemuxer, StreamRegistry},
-    },
+    streaming::SegmentManager,
+    protocols::hls::remuxer::{CustomHlsRemuxer, StreamRegistry},
     error::StreamResult,
 };
 use axum::{

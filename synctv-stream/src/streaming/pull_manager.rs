@@ -4,7 +4,7 @@
 // Key feature: Create pull streams only when clients request FLV (not on publisher events)
 
 use crate::{
-    cache::gop_cache::GopCache,
+    libraries::gop_cache::GopCache,
     relay::{registry_trait::StreamRegistryTrait, puller::Puller},
     error::StreamResult,
     grpc::GrpcStreamPuller,
@@ -298,7 +298,7 @@ impl PullStream {
     }
 
     /// Get cached GOP frames for instant playback
-    pub fn get_cached_frames(&self) -> Vec<crate::cache::gop_cache::GopFrame> {
+    pub fn get_cached_frames(&self) -> Vec<crate::libraries::gop_cache::GopFrame> {
         let stream_key = self.stream_key();
         self.gop_cache.get_frames(&stream_key)
     }
@@ -307,7 +307,7 @@ impl PullStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::GopCacheConfig;
+    use crate::libraries::GopCacheConfig;
     use crate::relay::MockStreamRegistry;
     use std::collections::HashMap;
 
@@ -344,8 +344,6 @@ mod tests {
             stream_hub_event_sender,
         );
 
-        assert!(pull_stream.is_ok());
-        let pull_stream = pull_stream.unwrap();
         assert_eq!(pull_stream.room_id, "room-123");
         assert_eq!(pull_stream.media_id, "media-456");
         assert_eq!(pull_stream.publisher_node, "publisher-node");
@@ -365,7 +363,7 @@ mod tests {
             gop_cache,
             registry,
             stream_hub_event_sender,
-        ).unwrap();
+        );
 
         assert_eq!(pull_stream.subscriber_count(), 0);
 
@@ -393,7 +391,7 @@ mod tests {
             gop_cache,
             registry,
             stream_hub_event_sender,
-        ).unwrap();
+        );
 
         assert_eq!(pull_stream.stream_key(), "room-123:media-456");
     }

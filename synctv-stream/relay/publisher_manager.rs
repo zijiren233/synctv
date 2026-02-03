@@ -215,7 +215,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_active_publishers_map() {
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
+        let (_event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
 
         let registry = Arc::new(MockStreamRegistry::new());
         let manager = PublisherManager::new(registry, "test-node".to_string());

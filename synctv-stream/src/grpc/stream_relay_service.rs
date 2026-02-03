@@ -11,7 +11,7 @@ use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
 use super::proto::*;
-use crate::cache::GopCache;
+use crate::libraries::GopCache;
 use crate::relay::StreamRegistry;
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<RtmpPacket, Status>> + Send>>;
@@ -137,8 +137,8 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
             // 1. Send GOP cache first (fast start)
             for frame in cached_frames {
                 let frame_type = match frame.frame_type {
-                    crate::cache::gop_cache::FrameType::Video => FrameType::Video as i32,
-                    crate::cache::gop_cache::FrameType::Audio => FrameType::Audio as i32,
+                    crate::libraries::gop_cache::FrameType::Video => FrameType::Video as i32,
+                    crate::libraries::gop_cache::FrameType::Audio => FrameType::Audio as i32,
                 };
 
                 let packet = RtmpPacket {
@@ -243,7 +243,7 @@ mod tests {
     async fn test_service_creation() {
         // Create real components for testing
         let gop_cache = Arc::new(GopCache::new(Default::default()));
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
+        let (_event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
         let node_id = "test_node".to_string();
 
         // Verify the node_id is correct

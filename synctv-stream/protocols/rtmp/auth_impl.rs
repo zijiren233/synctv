@@ -9,7 +9,7 @@
 // The token uses HS256 (HMAC) with a shared secret, not RS256.
 // For now, we'll use PublishKeyService which already handles token validation.
 
-use crate::rtmp::auth::{RtmpAuthCallback, Channel};
+use crate::protocols::rtmp::auth::{RtmpAuthCallback, Channel};
 use crate::error::{StreamError, StreamResult};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -145,7 +145,7 @@ impl RtmpAuthCallback for RtmpAuthCallbackImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rtmp::auth::{Channel, NoAuthCallback};
+    use crate::protocols::rtmp::auth::{Channel, NoAuthCallback};
     use std::sync::Arc;
 
     // Mock PublishKeyService for testing

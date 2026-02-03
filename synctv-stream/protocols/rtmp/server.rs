@@ -1,8 +1,8 @@
 use crate::{
-    cache::gop_cache::GopCache,
+    libraries::gop_cache::GopCache,
     relay::registry_trait::StreamRegistryTrait,
     error::StreamResult,
-    rtmp::auth::RtmpAuthCallback,
+    protocols::rtmp::auth::RtmpAuthCallback,
 };
 use std::sync::Arc;
 use streamhub::define::StreamHubEventSender;
@@ -58,7 +58,7 @@ impl RtmpStreamingServer {
             let stream_hub_event_sender = self.stream_hub_event_sender.clone();
 
             tokio::spawn(async move {
-                let mut session = crate::rtmp::session::SyncTvRtmpSession::new(
+                let mut session = crate::protocols::rtmp::session::SyncTvRtmpSession::new(
                     tcp_stream,
                     remote_addr,
                     gop_cache,

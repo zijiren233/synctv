@@ -10,40 +10,33 @@
 // All streams are scoped to room_id:media_id (media-level streaming).
 
 pub mod grpc;
-pub mod rtmp;
 pub mod xiu_integration;
 pub mod error;
 
-// Libraries
-pub mod libraries {
-    pub mod gop_cache;
-    pub mod storage;
-}
+// Libraries (defined in sibling directory)
+#[path = "../libraries/mod.rs"]
+pub mod libraries;
 
-// Protocols
-pub mod protocols {
-    pub mod rtmp;
-    pub mod httpflv;
-    pub mod hls;
-}
+// Protocols (defined in sibling directory)
+#[path = "../protocols/mod.rs"]
+pub mod protocols;
 
-// Relay (multi-node)
+// Relay (defined in sibling directory)
+#[path = "../relay/mod.rs"]
 pub mod relay;
 
-// API for synctv-api
+// API (defined in sibling directory)
+#[path = "../api/mod.rs"]
 pub mod api;
 
-// Server orchestration
+// Server orchestration (in src/)
 pub mod streaming;
 
 // Re-exports for convenience
 pub use libraries::gop_cache::GopCache;
 pub use libraries::storage::HlsStorage;
-pub use protocols::rtmp::RtmpServer;
+pub use xiu_integration::RtmpServer;
 pub use protocols::httpflv::HttpFlvSession;
 pub use protocols::hls::{HlsServer, CustomHlsRemuxer, StreamRegistry};
 pub use api::{LiveStreamingInfrastructure, FlvStreamingApi, HlsStreamingApi};
 pub use streaming::{StreamingServer, PullStreamManager, SegmentManager};
-
-// xiu integration
-pub use xiu_integration::RtmpStreamingServer;

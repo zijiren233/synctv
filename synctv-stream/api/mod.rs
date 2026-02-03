@@ -5,14 +5,9 @@
 
 pub mod streaming;
 
+// Re-export public types from streaming module
 pub use streaming::{
     LiveStreamingInfrastructure,
     FlvStreamingApi,
     HlsStreamingApi,
-    HttpFlvSession,
-    PullStreamManager,
-    SegmentManager,
-    GopCache,
-    HlsStorage,
-    StreamRegistry as HlsStreamRegistry,
 };

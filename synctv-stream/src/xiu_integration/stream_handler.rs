@@ -208,7 +208,7 @@ impl StreamHandler {
         }
 
         // Verify room_id if present in token
-        if let Some(r_id) = claims.r {
+        if let Some(ref r_id) = claims.r {
             if r_id != room_id.as_str() {
                 warn!(
                     "Room ID mismatch - path: {}, token: {}",
@@ -221,7 +221,7 @@ impl StreamHandler {
 
         info!(
             media_id = claims.m,
-            room_id = claims.r.unwrap_or_else(|| "none".to_string()),
+            room_id = claims.r.as_ref().map(|s| s.as_str()).unwrap_or("none"),
             user_id = claims.u,
             "Stream authorization validated successfully"
         );

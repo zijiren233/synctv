@@ -4,7 +4,7 @@ use tracing::{info, warn};
 use bytes::Bytes;
 use tokio::sync::mpsc;
 use streamhub::define::{StreamHubEventSender};
-use crate::cache::{GopCache, GopFrame};
+use crate::libraries::{GopCache, GopFrame};
 use crate::relay::StreamRegistryTrait;
 use crate::grpc::{FrameType, RtmpPacket, PullRtmpStreamRequest, StreamRelayService};
 use tonic::{Request, Response, Status};
@@ -27,7 +27,7 @@ pub struct Publisher {
     /// Event sender for StreamHub (for Publish/UnPublish events)
     stream_hub_sender: Option<StreamHubEventSender>,
     /// Channel for gRPC relay to Puller nodes
-    relay_senders: Arc<tokio::sync::Mutex<HashMap<String, mpsc::UnboundedSender<Result<RtmpPacket, Status>>>>,
+    relay_senders: Arc<tokio::sync::Mutex<HashMap<String, mpsc::UnboundedSender<Result<RtmpPacket, Status>>>>>,
 }
 
 impl Publisher {
@@ -66,9 +66,9 @@ impl Publisher {
             timestamp,
             is_keyframe,
             frame_type: if is_video {
-                crate::cache::FrameType::Video
+                crate::libraries::FrameType::Video
             } else {
-                crate::cache::FrameType::Audio
+                crate::libraries::FrameType::Audio
             },
         };
 
@@ -177,7 +177,7 @@ impl Drop for Publisher {
 /// gRPC service implementation for stream relay
 /// This is used by Puller nodes to connect and receive stream data
 pub struct PublisherRelayService {
-    publishers: Arc<tokio::sync::Mutex<HashMap<String, Arc<parking_lot::Mutex<Publisher>>>>,
+    publishers: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<Publisher>>>>>,
 }
 
 impl PublisherRelayService {
@@ -187,7 +187,7 @@ impl PublisherRelayService {
         }
     }
 
-    pub async fn register_publisher(&self, key: String, publisher: Arc<parking_lot::Mutex<Publisher>>) {
+    pub async fn register_publisher(&self, key: String, publisher: Arc<tokio::sync::Mutex<Publisher>>) {
         let mut publishers = self.publishers.lock().await;
         publishers.insert(key, publisher);
     }
@@ -225,11 +225,10 @@ impl StreamRelayService for PublisherRelayService {
 
         // Create a unique client ID for this connection
         let client_id = nanoid::nanoid!();
-        let receiver = tokio::spawn(async move {
-            let pub_lock = publisher;
-            let mut publisher = pub_lock.lock();
-            publisher.register_relay_client(client_id.clone()).await
-        }).await.map_err(|e| Status::internal(format!("Failed to register relay: {}", e)))?;
+
+        // Register relay client (now using tokio::sync::Mutex which is Send-safe)
+        let publisher = publisher.lock().await;
+        let receiver = publisher.register_relay_client(client_id.clone()).await;
 
         let stream = UnboundedReceiverStream::new(receiver);
 
@@ -240,7 +239,7 @@ impl StreamRelayService for PublisherRelayService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::GopCacheConfig;
+    use crate::libraries::GopCacheConfig;
     use crate::relay::MockStreamRegistry;
 
     #[tokio::test]
@@ -298,7 +297,7 @@ mod tests {
 
         // Test client registration
         let client_id = "test_client".to_string();
-        let mut rx = publisher.register_relay_client(client_id.clone()).await;
+        let _rx = publisher.register_relay_client(client_id.clone()).await;
 
         // Verify client is registered
         let senders = publisher.relay_senders.lock().await;

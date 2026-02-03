@@ -12,7 +12,6 @@ pub use pull_manager::PullStreamManager;
 pub use segment_manager::{SegmentManager, CleanupConfig};
 
 // Re-export from protocols
-pub use crate::protocols::rtmp::RtmpServer;
 pub use crate::protocols::httpflv::HttpFlvSession;
 pub use crate::protocols::hls::{HlsServer, CustomHlsRemuxer, StreamRegistry};
 

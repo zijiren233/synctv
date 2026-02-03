@@ -53,9 +53,6 @@ pub struct SegmentInfo {
 /// Registry of active streams (for M3U8 generation)
 pub type StreamRegistry = Arc<DashMap<String, Arc<parking_lot::RwLock<StreamProcessorState>>>>;
 
-/// Re-export for HTTP servers
-pub use {StreamRegistry, StreamProcessorState, SegmentInfo};
-
 /// Stream processor state that can be accessed by HTTP server
 pub struct StreamProcessorState {
     pub app_name: String,

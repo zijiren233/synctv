@@ -1,6 +1,6 @@
 // Integration layer between xiu's StreamHub and SyncTV's GOP cache
 
-use crate::cache::gop_cache::{GopCache, GopFrame};
+use crate::libraries::gop_cache::{GopCache, GopFrame};
 use std::sync::Arc;
 use streamhub::define::{FrameData, TStreamHandler, DataSender, SubscribeType};
 use streamhub::errors::StreamHubError;
@@ -29,14 +29,14 @@ impl SyncTvStreamHandler {
                 } else {
                     false
                 };
-                (*timestamp, data.clone().freeze(), is_keyframe, crate::cache::gop_cache::FrameType::Video)
+                (*timestamp, data.clone().freeze(), is_keyframe, crate::libraries::gop_cache::FrameType::Video)
             }
             FrameData::Audio { timestamp, data } => {
-                (*timestamp, data.clone().freeze(), false, crate::cache::gop_cache::FrameType::Audio)
+                (*timestamp, data.clone().freeze(), false, crate::libraries::gop_cache::FrameType::Audio)
             }
             FrameData::MetaData { timestamp, data } => {
                 // Metadata frames treated as video for now
-                (*timestamp, data.clone().freeze(), false, crate::cache::gop_cache::FrameType::Video)
+                (*timestamp, data.clone().freeze(), false, crate::libraries::gop_cache::FrameType::Video)
             }
             _ => return,
         };
@@ -81,11 +81,11 @@ impl TStreamHandler for SyncTvStreamHandler {
             // Convert GopFrame back to FrameData
             // Determine if audio or video based on frame_type
             let frame_data = match gop_frame.frame_type {
-                crate::cache::gop_cache::FrameType::Video => FrameData::Video {
+                crate::libraries::gop_cache::FrameType::Video => FrameData::Video {
                     timestamp: gop_frame.timestamp,
                     data: gop_frame.data.into(),
                 },
-                crate::cache::gop_cache::FrameType::Audio => FrameData::Audio {
+                crate::libraries::gop_cache::FrameType::Audio => FrameData::Audio {
                     timestamp: gop_frame.timestamp,
                     data: gop_frame.data.into(),
                 },

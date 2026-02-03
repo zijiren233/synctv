@@ -20,9 +20,9 @@ use crate::{
     streaming::{
         pull_manager::PullStreamManager,
         segment_manager::SegmentManager,
-        protocols::hls::remuxer::StreamRegistry as HlsStreamRegistry,
-        protocols::httpflv::HttpFlvSession,
     },
+    protocols::hls::remuxer::StreamRegistry as HlsStreamRegistry,
+    protocols::httpflv::HttpFlvSession,
     error::StreamResult,
 };
 use anyhow::Result;
@@ -318,6 +318,7 @@ impl HlsStreamingApi {
         // Get segment from storage
         if let Some(segment_manager) = &infrastructure.segment_manager {
             // Build storage key: app_name-stream_name-ts_name
+            // stream_name format is "room_id:media_id", replace : with - for flat key
             let stream_name = format!("{}:{}", room_id, media_id);
             let storage_key = format!("live-{}-{}", stream_name.replace(':', "-"), segment_name);
 
@@ -375,10 +376,3 @@ impl HlsStreamingApi {
         }).await
     }
 }
-
-/// Re-exports for convenience
-pub use {
-    FlvStreamingApi,
-    HlsStreamingApi,
-    LiveStreamingInfrastructure,
-};

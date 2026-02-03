@@ -1,7 +1,7 @@
 use crate::{
-    cache::gop_cache::{GopCache, GopFrame, FrameType as GopFrameType},
+    libraries::gop_cache::{GopCache, GopFrame, FrameType as GopFrameType},
     relay::{StreamRegistry, registry_trait::StreamRegistryTrait},
-    rtmp::auth::RtmpAuthCallback,
+    protocols::rtmp::auth::RtmpAuthCallback,
     error::{StreamResult, StreamError},
 };
 use streamhub::{
@@ -325,7 +325,7 @@ impl Drop for SyncTvRtmpSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rtmp::auth::NoAuthCallback;
+    use crate::protocols::rtmp::auth::NoAuthCallback;
     use crate::relay::MockStreamRegistry;
     use std::net::SocketAddr;
 
@@ -385,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_channel_struct_from_auth() {
-        use crate::rtmp::auth::Channel;
+        use crate::protocols::rtmp::auth::Channel;
         let channel = Channel {
             room_id: "test_room".to_string(),
             channel_name: "test_movie".to_string(),
