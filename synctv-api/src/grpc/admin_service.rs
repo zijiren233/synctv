@@ -75,7 +75,7 @@ impl AdminServiceImpl {
         }
     }
 
-    /// Check if user has admin permissions (load from database)
+    /// Check if user has admin role (load from database)
     async fn check_admin(&self, request: &Request<impl std::fmt::Debug>) -> Result<(), Status> {
         let user_context = request
             .extensions()
@@ -84,22 +84,21 @@ impl AdminServiceImpl {
 
         let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
 
-        // Load user from database to get current permissions
+        // Load user from database to get current role
         let user = self
             .user_service
             .get_user(&user_id)
             .await
             .map_err(|_| Status::internal("Failed to get user"))?;
 
-        // Check if user has admin permission (bit 63)
-        const ADMIN_PERMISSION: i64 = 1 << 63;
-        if (user.permissions.0 & ADMIN_PERMISSION) == 0 {
-            return Err(Status::permission_denied("Admin permission required"));
+        // Check if user has admin role
+        if !user.role.is_admin_or_above() {
+            return Err(Status::permission_denied("Admin role required"));
         }
         Ok(())
     }
 
-    /// Check if user has root permissions (load from database)
+    /// Check if user has root role (load from database)
     async fn check_root(&self, request: &Request<impl std::fmt::Debug>) -> Result<(), Status> {
         let user_context = request
             .extensions()
@@ -108,17 +107,16 @@ impl AdminServiceImpl {
 
         let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
 
-        // Load user from database to get current permissions
+        // Load user from database to get current role
         let user = self
             .user_service
             .get_user(&user_id)
             .await
             .map_err(|_| Status::internal("Failed to get user"))?;
 
-        // Check if user has root permission (bit 62)
-        const ROOT_PERMISSION: i64 = 1 << 62;
-        if (user.permissions.0 & ROOT_PERMISSION) == 0 {
-            return Err(Status::permission_denied("Root permission required"));
+        // Check if user has root role
+        if !matches!(user.role, synctv_core::models::UserRole::Root) {
+            return Err(Status::permission_denied("Root role required"));
         }
         Ok(())
     }
@@ -582,20 +580,20 @@ impl AdminService for AdminServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Failed to create user: {}", e)))?;
 
-        // If role is specified, update permissions
+        // If role is specified, update role
         if !req.role.is_empty() && req.role != "user" {
             let mut updated_user = user.clone();
-            updated_user.permissions = match req.role.as_str() {
-                "admin" => synctv_core::models::PermissionBits(1 << 63), // Admin permission
-                "root" => synctv_core::models::PermissionBits((1 << 63) | (1 << 62)), // Admin + Root
-                _ => user.permissions,
+            updated_user.role = match req.role.as_str() {
+                "admin" => synctv_core::models::UserRole::Admin,
+                "root" => synctv_core::models::UserRole::Root,
+                _ => user.role,
             };
 
             self.user_service
                 .update_user(&updated_user)
                 .await
                 .map_err(|e| {
-                    Status::internal(format!("Failed to update user permissions: {}", e))
+                    Status::internal(format!("Failed to update user role: {}", e))
                 })?;
         }
 
@@ -604,9 +602,12 @@ impl AdminService for AdminServiceImpl {
             id: user.id.to_string(),
             username: user.username,
             email: user.email.unwrap_or_default(),
-            permissions: user.permissions.0,
-            role: req.role.clone(),
-            status: "active".to_string(),
+            role: if !req.role.is_empty() {
+                req.role.clone()
+            } else {
+                user.role.to_string()
+            },
+            status: user.status.as_str().to_string(),
             created_at: user.created_at.timestamp(),
             updated_at: user.updated_at.timestamp(),
         };
@@ -691,23 +692,16 @@ impl AdminService for AdminServiceImpl {
                     let user_status = if u.deleted_at.is_some() {
                         "banned"
                     } else {
-                        "active"
+                        u.status.as_str()
                     };
                     if user_status != req.status {
                         return false;
                     }
                 }
 
-                // Filter by role if specified (check permissions)
+                // Filter by role if specified
                 if !req.role.is_empty() {
-                    let user_role = if (u.permissions.0 & (1 << 62)) != 0 {
-                        "root"
-                    } else if (u.permissions.0 & (1 << 63)) != 0 {
-                        "admin"
-                    } else {
-                        "user"
-                    };
-                    if user_role != req.role {
+                    if u.role.as_str() != req.role {
                         return false;
                     }
                 }
@@ -715,25 +709,18 @@ impl AdminService for AdminServiceImpl {
                 true
             })
             .map(|u| {
-                let role = if (u.permissions.0 & (1 << 62)) != 0 {
-                    "root".to_string()
-                } else if (u.permissions.0 & (1 << 63)) != 0 {
-                    "admin".to_string()
-                } else {
-                    "user".to_string()
-                };
+                let role = u.role.to_string();
 
                 let status = if u.deleted_at.is_some() {
                     "banned".to_string()
                 } else {
-                    "active".to_string()
+                    u.status.as_str().to_string()
                 };
 
                 AdminUser {
                     id: u.id.to_string(),
                     username: u.username,
                     email: u.email.unwrap_or_default(),
-                    permissions: u.permissions.0,
                     role,
                     status,
                     created_at: u.created_at.timestamp(),
@@ -764,29 +751,17 @@ impl AdminService for AdminServiceImpl {
             .await
             .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
 
-        // Determine role
-        let role = if (user.permissions.0 & (1 << 62)) != 0 {
-            "root"
-        } else if (user.permissions.0 & (1 << 63)) != 0 {
-            "admin"
-        } else {
-            "user"
-        };
-
-        // Determine status
-        let status = if user.deleted_at.is_some() {
-            "banned"
-        } else {
-            "active"
-        };
-
+        // Convert to AdminUser proto
         let admin_user = AdminUser {
             id: user.id.to_string(),
             username: user.username,
             email: user.email.unwrap_or_default(),
-            permissions: user.permissions.0,
-            role: role.to_string(),
-            status: status.to_string(),
+            role: user.role.to_string(),
+            status: if user.deleted_at.is_some() {
+                "banned".to_string()
+            } else {
+                user.status.as_str().to_string()
+            },
             created_at: user.created_at.timestamp(),
             updated_at: user.updated_at.timestamp(),
         };
@@ -867,18 +842,11 @@ impl AdminService for AdminServiceImpl {
             id: updated_user.id.to_string(),
             username: updated_user.username,
             email: updated_user.email.unwrap_or_default(),
-            permissions: updated_user.permissions.0,
-            role: if (updated_user.permissions.0 & (1 << 62)) != 0 {
-                "root".to_string()
-            } else if (updated_user.permissions.0 & (1 << 63)) != 0 {
-                "admin".to_string()
-            } else {
-                "user".to_string()
-            },
+            role: updated_user.role.to_string(),
             status: if updated_user.deleted_at.is_some() {
                 "banned".to_string()
             } else {
-                "active".to_string()
+                updated_user.status.as_str().to_string()
             },
             created_at: updated_user.created_at.timestamp(),
             updated_at: updated_user.updated_at.timestamp(),
@@ -905,11 +873,11 @@ impl AdminService for AdminServiceImpl {
             .await
             .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
 
-        // Update permissions based on role
-        user.permissions = match req.role.as_str() {
-            "user" => synctv_core::models::PermissionBits(0), // No special permissions
-            "admin" => synctv_core::models::PermissionBits(1 << 63), // Admin permission
-            "root" => synctv_core::models::PermissionBits((1 << 63) | (1 << 62)), // Admin + Root
+        // Update role
+        user.role = match req.role.as_str() {
+            "user" => synctv_core::models::UserRole::User,
+            "admin" => synctv_core::models::UserRole::Admin,
+            "root" => synctv_core::models::UserRole::Root,
             _ => {
                 return Err(Status::invalid_argument(
                     "Invalid role. Must be user, admin, or root",
@@ -934,12 +902,11 @@ impl AdminService for AdminServiceImpl {
             id: updated_user.id.to_string(),
             username: updated_user.username,
             email: updated_user.email.unwrap_or_default(),
-            permissions: updated_user.permissions.0,
             role: req.role.clone(),
             status: if updated_user.deleted_at.is_some() {
                 "banned".to_string()
             } else {
-                "active".to_string()
+                updated_user.status.as_str().to_string()
             },
             created_at: updated_user.created_at.timestamp(),
             updated_at: updated_user.updated_at.timestamp(),
@@ -987,14 +954,7 @@ impl AdminService for AdminServiceImpl {
             id: updated_user.id.to_string(),
             username: updated_user.username,
             email: updated_user.email.unwrap_or_default(),
-            permissions: updated_user.permissions.0,
-            role: if (updated_user.permissions.0 & (1 << 62)) != 0 {
-                "root".to_string()
-            } else if (updated_user.permissions.0 & (1 << 63)) != 0 {
-                "admin".to_string()
-            } else {
-                "user".to_string()
-            },
+            role: updated_user.role.to_string(),
             status: "banned".to_string(),
             created_at: updated_user.created_at.timestamp(),
             updated_at: updated_user.updated_at.timestamp(),
@@ -1042,14 +1002,7 @@ impl AdminService for AdminServiceImpl {
             id: updated_user.id.to_string(),
             username: updated_user.username,
             email: updated_user.email.unwrap_or_default(),
-            permissions: updated_user.permissions.0,
-            role: if (updated_user.permissions.0 & (1 << 62)) != 0 {
-                "root".to_string()
-            } else if (updated_user.permissions.0 & (1 << 63)) != 0 {
-                "admin".to_string()
-            } else {
-                "user".to_string()
-            },
+            role: updated_user.role.to_string(),
             status: "active".to_string(),
             created_at: updated_user.created_at.timestamp(),
             updated_at: updated_user.updated_at.timestamp(),
@@ -1167,7 +1120,7 @@ impl AdminService for AdminServiceImpl {
             .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
 
         // Note: The current implementation doesn't have a "pending" status
-        // This method could be used to grant default permissions to a user
+        // This method could be used to approve users pending verification
         // For now, it's a no-op that confirms the user exists and is active
 
         if user.deleted_at.is_some() {
@@ -1181,15 +1134,8 @@ impl AdminService for AdminServiceImpl {
             id: user.id.to_string(),
             username: user.username,
             email: user.email.unwrap_or_default(),
-            permissions: user.permissions.0,
-            role: if (user.permissions.0 & (1 << 62)) != 0 {
-                "root".to_string()
-            } else if (user.permissions.0 & (1 << 63)) != 0 {
-                "admin".to_string()
-            } else {
-                "user".to_string()
-            },
-            status: "active".to_string(),
+            role: user.role.to_string(),
+            status: user.status.as_str().to_string(),
             created_at: user.created_at.timestamp(),
             updated_at: user.updated_at.timestamp(),
         };
@@ -1837,13 +1783,12 @@ impl AdminService for AdminServiceImpl {
             .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
 
         // Check if already admin
-        const ADMIN_PERMISSION: i64 = 1 << 63;
-        if (user.permissions.0 & ADMIN_PERMISSION) != 0 {
-            return Err(Status::invalid_argument("User is already an admin"));
+        if user.role.is_admin_or_above() {
+            return Err(Status::invalid_argument("User is already an admin or root"));
         }
 
-        // Grant admin permission
-        user.permissions.0 |= ADMIN_PERMISSION;
+        // Grant admin role
+        user.role = synctv_core::models::UserRole::Admin;
 
         let updated_user = self
             .user_service
@@ -1858,12 +1803,11 @@ impl AdminService for AdminServiceImpl {
             id: updated_user.id.to_string(),
             username: updated_user.username,
             email: updated_user.email.unwrap_or_default(),
-            permissions: updated_user.permissions.0,
             role: "admin".to_string(),
             status: if updated_user.deleted_at.is_some() {
                 "banned".to_string()
             } else {
-                "active".to_string()
+                updated_user.status.as_str().to_string()
             },
             created_at: updated_user.created_at.timestamp(),
             updated_at: updated_user.updated_at.timestamp(),
@@ -1891,21 +1835,19 @@ impl AdminService for AdminServiceImpl {
             .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
 
         // Check if admin
-        const ADMIN_PERMISSION: i64 = 1 << 63;
-        if (user.permissions.0 & ADMIN_PERMISSION) == 0 {
+        if !user.role.is_admin_or_above() {
             return Err(Status::invalid_argument("User is not an admin"));
         }
 
-        // Check if root (can't remove root permission)
-        const ROOT_PERMISSION: i64 = 1 << 62;
-        if (user.permissions.0 & ROOT_PERMISSION) != 0 {
+        // Check if root (can't remove admin role from root)
+        if matches!(user.role, synctv_core::models::UserRole::Root) {
             return Err(Status::invalid_argument(
                 "Cannot remove admin role from root user",
             ));
         }
 
-        // Remove admin permission
-        user.permissions.0 &= !ADMIN_PERMISSION;
+        // Remove admin role (set to user)
+        user.role = synctv_core::models::UserRole::User;
 
         let _updated_user = self
             .user_service
@@ -1939,30 +1881,20 @@ impl AdminService for AdminServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Failed to list users: {}", e)))?;
 
-        // Filter for admin and root users (bit 63 set)
-        const ADMIN_PERMISSION: i64 = 1 << 63;
-        const ROOT_PERMISSION: i64 = 1 << 62;
-
+        // Filter for admin and root users
         let admin_users: Vec<AdminUser> = users
             .into_iter()
-            .filter(|u| (u.permissions.0 & ADMIN_PERMISSION) != 0)
+            .filter(|u| u.role.is_admin_or_above())
             .map(|u| {
-                let role = if (u.permissions.0 & ROOT_PERMISSION) != 0 {
-                    "root".to_string()
-                } else {
-                    "admin".to_string()
-                };
-
                 AdminUser {
                     id: u.id.to_string(),
                     username: u.username,
                     email: u.email.unwrap_or_default(),
-                    permissions: u.permissions.0,
-                    role,
+                    role: u.role.to_string(),
                     status: if u.deleted_at.is_some() {
                         "banned".to_string()
                     } else {
-                        "active".to_string()
+                        u.status.as_str().to_string()
                     },
                     created_at: u.created_at.timestamp(),
                     updated_at: u.updated_at.timestamp(),

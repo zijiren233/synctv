@@ -1,8 +1,9 @@
 use chrono::Utc;
 use sqlx::{postgres::PgRow, PgPool, Row};
+use std::str::FromStr;
 
 use crate::{
-    models::{PermissionBits, SignupMethod, User, UserId, UserListQuery},
+    models::{SignupMethod, User, UserId, UserListQuery, UserRole, UserStatus},
     Error, Result,
 };
 
@@ -26,9 +27,9 @@ impl UserRepository {
     pub async fn create(&self, user: &User) -> Result<User> {
         let row = sqlx::query(
             r#"
-            INSERT INTO users (id, username, email, password_hash, signup_method, permissions, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
+            INSERT INTO users (id, username, email, password_hash, signup_method, role, status, email_verified, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             "#,
         )
         .bind(user.id.as_str())
@@ -36,7 +37,9 @@ impl UserRepository {
         .bind(user.email.as_ref())
         .bind(&user.password_hash)
         .bind(user.signup_method.map(|m| m.as_str()))
-        .bind(user.permissions.0)
+        .bind(user.role.as_str())
+        .bind(user.status.as_str())
+        .bind(user.email_verified)
         .bind(user.created_at)
         .bind(user.updated_at)
         .fetch_one(&self.pool)
@@ -55,7 +58,7 @@ impl UserRepository {
     pub async fn get_by_id(&self, user_id: &UserId) -> Result<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
+            SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE id = $1 AND deleted_at IS NULL
             "#,
@@ -74,7 +77,7 @@ impl UserRepository {
     pub async fn get_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
+            SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE username = $1 AND deleted_at IS NULL
             "#,
@@ -93,7 +96,7 @@ impl UserRepository {
     pub async fn get_by_email(&self, email: &str) -> Result<Option<User>> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
+            SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE email = $1 AND deleted_at IS NULL
             "#,
@@ -113,16 +116,17 @@ impl UserRepository {
         let row = sqlx::query(
             r#"
             UPDATE users
-            SET username = $2, email = $3, password_hash = $4, permissions = $5, updated_at = $6
+            SET username = $2, email = $3, password_hash = $4, role = $5, status = $6, updated_at = $7
             WHERE id = $1 AND deleted_at IS NULL
-            RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
+            RETURNING id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             "#,
         )
         .bind(user.id.as_str())
         .bind(&user.username)
         .bind(user.email.as_ref())
         .bind(&user.password_hash)
-        .bind(user.permissions.0)
+        .bind(user.role.as_str())
+        .bind(user.status.as_str())
         .bind(Utc::now())
         .fetch_one(&self.pool)
         .await?;
@@ -223,7 +227,7 @@ impl UserRepository {
         // Get users
         let list_query = format!(
             r#"
-            SELECT id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
+            SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE deleted_at IS NULL {}
             ORDER BY created_at DESC
@@ -292,6 +296,14 @@ impl UserRepository {
         // Try to get email_verified, default to false if column doesn't exist
         let email_verified = row.try_get::<bool, _>("email_verified").unwrap_or_default();
 
+        let role_str: String = row.try_get("role")?;
+        let role = UserRole::from_str(&role_str)
+            .map_err(|_| Error::InvalidInput(format!("Invalid role: {}", role_str)))?;
+
+        let status_str: String = row.try_get("status")?;
+        let status = UserStatus::from_str(&status_str)
+            .map_err(|_| Error::InvalidInput(format!("Invalid status: {}", status_str)))?;
+
         Ok(User {
             id: UserId::from_string(row.try_get("id")?),
             username: row.try_get("username")?,
@@ -299,7 +311,8 @@ impl UserRepository {
             password_hash: row.try_get("password_hash")?,
             signup_method,
             email_verified,
-            permissions: PermissionBits::new(row.try_get("permissions")?),
+            role,
+            status,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             deleted_at: row.try_get("deleted_at")?,
@@ -311,6 +324,14 @@ impl UserRepository {
         let signup_method_str: Option<String> = row.try_get("signup_method")?;
         let signup_method = signup_method_str.map(|s| SignupMethod::from_str_name(&s));
 
+        let role_str: String = row.try_get("role")?;
+        let role = UserRole::from_str(&role_str)
+            .map_err(|_| Error::InvalidInput(format!("Invalid role: {}", role_str)))?;
+
+        let status_str: String = row.try_get("status")?;
+        let status = UserStatus::from_str(&status_str)
+            .map_err(|_| Error::InvalidInput(format!("Invalid status: {}", status_str)))?;
+
         Ok(User {
             id: UserId::from_string(row.try_get("id")?),
             username: row.try_get("username")?,
@@ -318,7 +339,8 @@ impl UserRepository {
             password_hash: row.try_get("password_hash")?,
             signup_method,
             email_verified: row.try_get("email_verified")?,
-            permissions: PermissionBits::new(row.try_get("permissions")?),
+            role,
+            status,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             deleted_at: row.try_get("deleted_at")?,

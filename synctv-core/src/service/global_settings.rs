@@ -45,9 +45,9 @@ pub struct SettingsRegistry {
     pub max_members_per_room: Setting<i64>,
 
     // Permission settings - global defaults for each role
-    pub admin_default_permissions: Setting<i64>,
-    pub member_default_permissions: Setting<i64>,
-    pub guest_default_permissions: Setting<i64>,
+    pub admin_default_permissions: Setting<u64>,
+    pub member_default_permissions: Setting<u64>,
+    pub guest_default_permissions: Setting<u64>,
 }
 
 impl std::fmt::Debug for SettingsRegistry {
@@ -91,11 +91,11 @@ impl SettingsRegistry {
             // Permission settings - global defaults for each role
             // These are base permissions that rooms can override with added/removed permissions
             // Admin default: All permissions except System::ADMIN (1073741823 = 0x3FFFFFFF)
-            admin_default_permissions: setting!(i64, "permissions.admin_default", storage.clone(), 1073741823),
+            admin_default_permissions: setting!(u64, "permissions.admin_default", storage.clone(), 1073741823),
             // Member default: Basic member permissions (262143 = 0x3FFFF)
-            member_default_permissions: setting!(i64, "permissions.member_default", storage.clone(), 262143),
+            member_default_permissions: setting!(u64, "permissions.member_default", storage.clone(), 262143),
             // Guest default: Read-only permissions (511 = 0x1FF)
-            guest_default_permissions: setting!(i64, "permissions.guest_default", storage, 511),
+            guest_default_permissions: setting!(u64, "permissions.guest_default", storage, 511),
         }
     }
 

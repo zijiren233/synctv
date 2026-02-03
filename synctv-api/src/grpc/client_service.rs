@@ -263,11 +263,24 @@ impl AuthService for ClientServiceImpl {
             })?;
 
         // Convert to proto User
+        let role_str = match user.role {
+            synctv_core::models::UserRole::Root => "root",
+            synctv_core::models::UserRole::Admin => "admin",
+            synctv_core::models::UserRole::User => "user",
+        };
+
+        let status_str = match user.status {
+            synctv_core::models::UserStatus::Active => "active",
+            synctv_core::models::UserStatus::Pending => "pending",
+            synctv_core::models::UserStatus::Banned => "banned",
+        };
+
         let proto_user = Some(User {
             id: user.id.as_str().to_string(),
             username: user.username,
             email: user.email.unwrap_or_default(),
-            permissions: user.permissions.0,
+            role: role_str.to_string(),
+            status: status_str.to_string(),
             created_at: user.created_at.timestamp(),
         });
 
@@ -307,11 +320,24 @@ impl AuthService for ClientServiceImpl {
             })?;
 
         // Convert to proto User
+        let role_str = match user.role {
+            synctv_core::models::UserRole::Root => "root",
+            synctv_core::models::UserRole::Admin => "admin",
+            synctv_core::models::UserRole::User => "user",
+        };
+
+        let status_str = match user.status {
+            synctv_core::models::UserStatus::Active => "active",
+            synctv_core::models::UserStatus::Pending => "pending",
+            synctv_core::models::UserStatus::Banned => "banned",
+        };
+
         let proto_user = Some(User {
             id: user.id.as_str().to_string(),
             username: user.username,
             email: user.email.unwrap_or_default(),
-            permissions: user.permissions.0,
+            role: role_str.to_string(),
+            status: status_str.to_string(),
             created_at: user.created_at.timestamp(),
         });
 
@@ -399,7 +425,8 @@ impl UserService for ClientServiceImpl {
                 id: user.id.to_string(),
                 username: user.username,
                 email: user.email.unwrap_or_default(),
-                permissions: user.permissions.0,
+                role: user.role.to_string(),
+                status: user.status.as_str().to_string(),
                 created_at: user.created_at.timestamp(),
             }),
         }))
@@ -445,7 +472,8 @@ impl UserService for ClientServiceImpl {
             id: updated_user.id.to_string(),
             username: updated_user.username,
             email: updated_user.email.unwrap_or_default(),
-            permissions: updated_user.permissions.0,
+            role: updated_user.role.to_string(),
+            status: updated_user.status.as_str().to_string(),
             created_at: updated_user.created_at.timestamp(),
         };
 
@@ -1139,16 +1167,31 @@ impl RoomService for ClientServiceImpl {
         let req = request.into_inner();
         let target_user_id = UserId::from_string(req.user_id);
 
-        // Set permissions
-        // TODO: This needs proper handling of added vs removed permissions
+        // Determine which permissions to set based on the request
+        // Priority: admin_* fields take precedence over regular fields
+        let use_admin = req.admin_added_permissions > 0 || req.admin_removed_permissions > 0;
+
+        let added = if use_admin {
+            if req.admin_added_permissions > 0 { Some(req.admin_added_permissions) } else { None }
+        } else {
+            if req.added_permissions > 0 { Some(req.added_permissions) } else { None }
+        };
+
+        let removed = if use_admin {
+            if req.admin_removed_permissions > 0 { Some(req.admin_removed_permissions) } else { None }
+        } else {
+            if req.removed_permissions > 0 { Some(req.removed_permissions) } else { None }
+        };
+
+        // Set member permissions
         let member = self
             .room_service
             .set_member_permission(
                 room_id.clone(),
                 user_id,
                 target_user_id.clone(),
-                Some(req.permissions),
-                None, // No removed permissions for now
+                added,
+                removed,
             )
             .await
             .map_err(|e| match e {

@@ -4,9 +4,10 @@
 
 use sqlx::{PgPool, postgres::PgRow, Row};
 use chrono::{DateTime, Utc};
+use std::str::FromStr;
 
 use crate::{
-    models::{PermissionBits, SignupMethod, User, UserId, UserListQuery},
+    models::{SignupMethod, User, UserId, UserListQuery, UserRole, UserStatus},
     repository::{BoolExpr, Column, FilterBuilder},
     Error, Result,
 };
@@ -66,29 +67,15 @@ impl UserFilterBuilder {
         self
     }
 
-    /// Filter by minimum permissions (bitwise AND)
-    pub fn has_permissions(mut self, permissions: PermissionBits) -> Self {
-        // Use raw SQL for bitwise operation
-        self.custom_filters.push(BoolExpr::raw(format!(
-            "(u.permissions & {}) > 0",
-            permissions.0
-        )));
+    /// Filter by user role
+    pub fn role(mut self, role: UserRole) -> Self {
+        self.builder = self.builder.eq("u.role", role.as_str());
         self
     }
 
-    /// Filter by exact permissions match
-    pub fn permissions_eq(mut self, permissions: PermissionBits) -> Self {
-        self.builder = self.builder.eq("u.permissions", permissions.0);
-        self
-    }
-
-    /// Filter by minimum permission level
-    pub fn permissions_gte(mut self, permissions: PermissionBits) -> Self {
-        self.custom_filters.push(BoolExpr::raw(format!(
-            "(u.permissions & {}) = {}",
-            permissions.0,
-            permissions.0
-        )));
+    /// Filter by user status
+    pub fn status(mut self, status: UserStatus) -> Self {
+        self.builder = self.builder.eq("u.status", status.as_str());
         self
     }
 
@@ -281,7 +268,7 @@ impl UserRepository {
         // Get users
         let list_query = format!(
             r#"
-            SELECT u.id, u.username, u.email, u.password_hash, u.signup_method, u.permissions,
+            SELECT u.id, u.username, u.email, u.password_hash, u.signup_method, u.role, u.status,
                    u.created_at, u.updated_at, u.deleted_at, u.email_verified
             FROM users u
             WHERE {}
@@ -319,8 +306,18 @@ impl UserRepository {
             filter_builder = filter_builder.email_verified(*email_verified);
         }
 
-        if let Some(min_permissions) = query.min_permissions {
-            filter_builder = filter_builder.permissions_gte(min_permissions);
+        // Apply role filter if specified
+        if let Some(ref role_str) = query.role {
+            if let Ok(role) = UserRole::from_str(role_str) {
+                filter_builder = filter_builder.role(role);
+            }
+        }
+
+        // Apply status filter if specified
+        if let Some(ref status_str) = query.status {
+            if let Ok(status) = UserStatus::from_str(status_str) {
+                filter_builder = filter_builder.status(status);
+            }
         }
 
         self.list_filtered(&filter_builder, query.page, query.page_size)
@@ -354,7 +351,7 @@ impl UserRepository {
         // Get users
         let list_query = format!(
             r#"
-            SELECT u.id, u.username, u.email, u.password_hash, u.signup_method, u.permissions,
+            SELECT u.id, u.username, u.email, u.password_hash, u.signup_method, u.role, u.status,
                    u.created_at, u.updated_at, u.deleted_at, u.email_verified
             FROM users u
             WHERE {}
@@ -430,13 +427,22 @@ impl UserRepository {
             _ => SignupMethod::Email,
         });
 
+        let role_str: String = row.try_get("role")?;
+        let role = UserRole::from_str(&role_str)
+            .map_err(|_| Error::InvalidInput(format!("Invalid role: {}", role_str)))?;
+
+        let status_str: String = row.try_get("status")?;
+        let status = UserStatus::from_str(&status_str)
+            .map_err(|_| Error::InvalidInput(format!("Invalid status: {}", status_str)))?;
+
         Ok(User {
             id: UserId::from_string(row.try_get("id")?),
             username: row.try_get("username")?,
             email: row.try_get("email")?,
             password_hash: row.try_get("password_hash")?,
             signup_method,
-            permissions: PermissionBits(row.try_get::<i32>("permissions")?),
+            role,
+            status,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             deleted_at: row.try_get("deleted_at")?,

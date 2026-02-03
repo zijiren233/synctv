@@ -24,7 +24,8 @@ pub struct UserCache {
 pub struct CachedUser {
     id: String,
     username: String,
-    permissions: i64,
+    role: String,  // UserRole as string (root, admin, user)
+    status: String,  // UserStatus as string (active, pending, banned)
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -278,7 +279,8 @@ mod tests {
         CachedUser {
             id: id.to_string(),
             username: username.to_string(),
-            permissions: 0,
+            role: "user".to_string(),
+            status: "active".to_string(),
             created_at: chrono::Utc::now(),
         }
     }

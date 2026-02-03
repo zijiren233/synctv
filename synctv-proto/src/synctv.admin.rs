@@ -8,17 +8,15 @@ pub struct AdminUser {
     pub username: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub email: ::prost::alloc::string::String,
-    #[prost(int64, tag = "4")]
-    pub permissions: i64,
-    /// guest, user, admin, root
-    #[prost(string, tag = "5")]
+    /// user, admin, root (RBAC only, no permissions)
+    #[prost(string, tag = "4")]
     pub role: ::prost::alloc::string::String,
     /// active, banned, pending
-    #[prost(string, tag = "6")]
+    #[prost(string, tag = "5")]
     pub status: ::prost::alloc::string::String,
-    #[prost(int64, tag = "7")]
+    #[prost(int64, tag = "6")]
     pub created_at: i64,
-    #[prost(int64, tag = "8")]
+    #[prost(int64, tag = "7")]
     pub updated_at: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -617,11 +615,26 @@ pub struct RoomMember {
     pub user_id: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub username: ::prost::alloc::string::String,
-    #[prost(int64, tag = "4")]
-    pub permissions: i64,
-    #[prost(int64, tag = "5")]
+    /// creator, admin, member, guest
+    #[prost(string, tag = "4")]
+    pub role: ::prost::alloc::string::String,
+    /// Effective permissions (calculated from role + added/removed)
+    #[prost(uint64, tag = "5")]
+    pub permissions: u64,
+    /// Allow/Deny permission pattern fields
+    /// For member role: uses added_permissions/removed_permissions
+    /// For admin role: uses admin_added_permissions/admin_removed_permissions
+    #[prost(uint64, tag = "6")]
+    pub added_permissions: u64,
+    #[prost(uint64, tag = "7")]
+    pub removed_permissions: u64,
+    #[prost(uint64, tag = "8")]
+    pub admin_added_permissions: u64,
+    #[prost(uint64, tag = "9")]
+    pub admin_removed_permissions: u64,
+    #[prost(int64, tag = "10")]
     pub joined_at: i64,
-    #[prost(bool, tag = "6")]
+    #[prost(bool, tag = "11")]
     pub is_online: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]

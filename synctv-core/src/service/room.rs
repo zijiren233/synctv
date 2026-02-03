@@ -374,7 +374,7 @@ impl RoomService {
         room_id: RoomId,
         granter_id: UserId,
         target_user_id: UserId,
-        permission: i64,
+        permission: u64,
     ) -> Result<crate::models::RoomMember> {
         self.member_service.grant_permission(room_id, granter_id, target_user_id, permission).await
     }
@@ -382,14 +382,14 @@ impl RoomService {
     /// Update member permissions (Allow/Deny pattern)
     ///
     /// This method sets both added_permissions and removed_permissions.
-    /// To reset to role default, pass None for both.
+    /// To reset to role default, pass 0 for both.
     pub async fn set_member_permission(
         &self,
         room_id: RoomId,
         granter_id: UserId,
         target_user_id: UserId,
-        added_permissions: Option<i64>,
-        removed_permissions: Option<i64>,
+        added_permissions: u64,
+        removed_permissions: u64,
     ) -> Result<crate::models::RoomMember> {
         self.member_service.set_member_permissions(room_id, granter_id, target_user_id, added_permissions, removed_permissions).await
     }
@@ -568,7 +568,7 @@ impl RoomService {
         room_id: RoomId,
         user_id: UserId,
         update_fn: impl FnOnce(&mut RoomPlaybackState),
-        required_permission: i64,
+        required_permission: u64,
     ) -> Result<RoomPlaybackState> {
         // Check permission
         self.permission_service
@@ -621,7 +621,7 @@ impl RoomService {
         &self,
         room_id: &RoomId,
         user_id: &UserId,
-        permission: i64,
+        permission: u64,
     ) -> Result<()> {
         self.permission_service.check_permission(room_id, user_id, permission).await
     }
@@ -674,7 +674,12 @@ impl RoomService {
                     room_id: m.room_id.as_str().to_string(),
                     user_id: m.user_id.as_str().to_string(),
                     username: m.username,
+                    role: m.role.to_string(),
                     permissions: effective.0,
+                    added_permissions: m.added_permissions,
+                    removed_permissions: m.removed_permissions,
+                    admin_added_permissions: m.admin_added_permissions,
+                    admin_removed_permissions: m.admin_removed_permissions,
                     joined_at: m.joined_at.timestamp(),
                     is_online: m.is_online,
                 }

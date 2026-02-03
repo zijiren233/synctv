@@ -120,7 +120,7 @@ impl PermissionService {
                     perms.grant(PermissionBits::SEND_DANMAKU);
                     perms
                 }
-                crate::models::RoomRole::Guest => PermissionBits(crate::models::PermissionBits::SEND_CHAT),
+                crate::models::RoomRole::Guest => PermissionBits(crate::models::PermissionBits::VIEW_PLAYLIST),
                 crate::models::RoomRole::Creator => PermissionBits(crate::models::PermissionBits::ALL),
             }
         }
@@ -162,7 +162,7 @@ impl PermissionService {
         &self,
         room_id: &RoomId,
         user_id: &UserId,
-        permission: i64,
+        permission: u64,
     ) -> Result<()> {
         let permissions = self.get_user_permissions(room_id, user_id).await?;
 
@@ -231,7 +231,7 @@ impl PermissionService {
         &self,
         room_id: &RoomId,
         user_id: &UserId,
-        permission: i64,
+        permission: u64,
     ) -> Result<bool> {
         match self.check_permission(room_id, user_id, permission).await {
             Ok(()) => Ok(true),
@@ -245,7 +245,7 @@ impl PermissionService {
         &self,
         room_id: &RoomId,
         user_id: &UserId,
-        permissions: &[i64],
+        permissions: &[u64],
     ) -> Result<()> {
         let user_permissions = self.get_user_permissions(room_id, user_id).await?;
 

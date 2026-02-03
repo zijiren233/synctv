@@ -110,8 +110,9 @@ message User {
     string id = 1;
     string username = 2;
     string email = 3;
-    int64 permissions = 4;
-    int64 created_at = 5;
+    string role = 4;     // Global RBAC role: root, admin, user
+    string status = 5;   // Account status: active, pending, banned
+    int64 created_at = 6;
 }
 
 message Room {
@@ -165,9 +166,21 @@ message RoomMember {
     string room_id = 1;
     string user_id = 2;
     string username = 3;
-    int64 permissions = 4;
-    int64 joined_at = 5;
-    bool is_online = 6;
+    string role = 4; // creator, admin, member, guest
+
+    // Effective permissions (calculated from role + added/removed)
+    uint64 permissions = 5;
+
+    // Allow/Deny permission pattern fields
+    // For member role: uses added_permissions/removed_permissions
+    // For admin role: uses admin_added_permissions/admin_removed_permissions
+    uint64 added_permissions = 6;
+    uint64 removed_permissions = 7;
+    uint64 admin_added_permissions = 8;
+    uint64 admin_removed_permissions = 9;
+
+    int64 joined_at = 10;
+    bool is_online = 11;
 }
 
 // Authentication Messages
@@ -313,8 +326,17 @@ message GetRoomMembersResponse {
 }
 
 message SetMemberPermissionRequest {
-    string user_id = 1;        // Target user
-    int64 permissions = 2;      // New permissions
+    string user_id = 1;           // Target user
+    string role = 2;              // New role (optional): creator, admin, member, guest
+
+    // Allow/Deny permission pattern fields
+    // Only set the fields you want to update
+    // For member role: use added_permissions/removed_permissions
+    // For admin role: use admin_added_permissions/admin_removed_permissions
+    uint64 added_permissions = 3;
+    uint64 removed_permissions = 4;
+    uint64 admin_added_permissions = 5;
+    uint64 admin_removed_permissions = 6;
 }
 
 message SetMemberPermissionResponse {
@@ -617,7 +639,7 @@ message ListParticipatedRoomsResponse {
 
 message RoomWithRole {
     Room room = 1;
-    int64 permissions = 2; // User's permissions in this room
+    uint64 permissions = 2; // User's permissions in this room
     string role = 3; // creator, admin, member, guest
 }
 
@@ -734,8 +756,16 @@ message MediaRemoved {
 message PermissionChanged {
     string room_id = 1;
     string user_id = 2;
-    int64 new_permissions = 3;
-    string updated_by = 4; // Username of who made the change
+    string role = 3; // New role (optional): creator, admin, member, guest
+
+    // All permission fields for full state sync
+    uint64 effective_permissions = 4; // Calculated final permissions
+    uint64 added_permissions = 5;
+    uint64 removed_permissions = 6;
+    uint64 admin_added_permissions = 7;
+    uint64 admin_removed_permissions = 8;
+
+    string updated_by = 9; // Username of who made the change
 }
 
 // ==================== Playlist Events ====================

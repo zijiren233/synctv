@@ -4,8 +4,9 @@ use jsonwebtoken::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::str::FromStr;
 
-use crate::{models::UserId, Error, Result};
+use crate::{models::UserId, models::UserRole, Error, Result};
 
 /// JWT token type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,8 +20,8 @@ pub enum TokenType {
 pub struct Claims {
     /// User ID
     pub sub: String,
-    /// User permissions (64-bit bitmask)
-    pub permissions: i64,
+    /// User RBAC role (root, admin, user)
+    pub role: String,
     /// Token type (access or refresh)
     pub typ: String,
     /// Issued at (Unix timestamp)
@@ -32,6 +33,12 @@ pub struct Claims {
 impl Claims {
     pub fn user_id(&self) -> UserId {
         UserId::from_string(self.sub.clone())
+    }
+
+    /// Parse role from string
+    pub fn role(&self) -> Result<UserRole> {
+        UserRole::from_str(&self.role)
+            .map_err(|_| Error::Internal(format!("Invalid role in token: {}", self.role)))
     }
 
     pub fn is_access_token(&self) -> bool {
@@ -110,12 +117,12 @@ impl JwtService {
     ///
     /// # Arguments
     /// * `user_id` - User ID
-    /// * `permissions` - User permissions (64-bit bitmask)
+    /// * `role` - User RBAC role (root, admin, user)
     /// * `token_type` - Access or refresh token
     pub fn sign_token(
         &self,
         user_id: &UserId,
-        permissions: i64,
+        role: UserRole,
         token_type: TokenType,
     ) -> Result<String> {
         let now = Utc::now();
@@ -126,7 +133,7 @@ impl JwtService {
 
         let claims = Claims {
             sub: user_id.as_str().to_string(),
-            permissions,
+            role: role.as_str().to_string(),
             typ: match token_type {
                 TokenType::Access => "access".to_string(),
                 TokenType::Refresh => "refresh".to_string(),
@@ -261,13 +268,13 @@ mod tests {
     fn test_sign_and_verify_access_token() {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
-        let permissions = 12345;
+        let role = UserRole::Admin;
 
-        let token = jwt.sign_token(&user_id, permissions, TokenType::Access).unwrap();
+        let token = jwt.sign_token(&user_id, role, TokenType::Access).unwrap();
         let claims = jwt.verify_access_token(&token).unwrap();
 
         assert_eq!(claims.sub, user_id.as_str());
-        assert_eq!(claims.permissions, permissions);
+        assert_eq!(claims.role(), Ok(UserRole::Admin));
         assert!(claims.is_access_token());
     }
 
@@ -275,13 +282,13 @@ mod tests {
     fn test_sign_and_verify_refresh_token() {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
-        let permissions = 67890;
+        let role = UserRole::User;
 
-        let token = jwt.sign_token(&user_id, permissions, TokenType::Refresh).unwrap();
+        let token = jwt.sign_token(&user_id, role, TokenType::Refresh).unwrap();
         let claims = jwt.verify_refresh_token(&token).unwrap();
 
         assert_eq!(claims.sub, user_id.as_str());
-        assert_eq!(claims.permissions, permissions);
+        assert_eq!(claims.role(), Ok(UserRole::User));
         assert!(claims.is_refresh_token());
     }
 
@@ -290,11 +297,11 @@ mod tests {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
 
-        let access_token = jwt.sign_token(&user_id, 0, TokenType::Access).unwrap();
+        let access_token = jwt.sign_token(&user_id, UserRole::User, TokenType::Access).unwrap();
         let result = jwt.verify_refresh_token(&access_token);
         assert!(result.is_err());
 
-        let refresh_token = jwt.sign_token(&user_id, 0, TokenType::Refresh).unwrap();
+        let refresh_token = jwt.sign_token(&user_id, UserRole::User, TokenType::Refresh).unwrap();
         let result = jwt.verify_access_token(&refresh_token);
         assert!(result.is_err());
     }

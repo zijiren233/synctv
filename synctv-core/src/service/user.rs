@@ -83,10 +83,10 @@ impl UserService {
         // Generate JWT tokens
         let access_token = self
             .jwt_service
-            .sign_token(&created_user.id, created_user.permissions.0, TokenType::Access)?;
+            .sign_token(&created_user.id, created_user.role, TokenType::Access)?;
         let refresh_token = self
             .jwt_service
-            .sign_token(&created_user.id, created_user.permissions.0, TokenType::Refresh)?;
+            .sign_token(&created_user.id, created_user.role, TokenType::Refresh)?;
 
         Ok((created_user, access_token, refresh_token))
     }
@@ -113,10 +113,10 @@ impl UserService {
         // Generate JWT tokens
         let access_token = self
             .jwt_service
-            .sign_token(&user.id, user.permissions.0, TokenType::Access)?;
+            .sign_token(&user.id, user.role, TokenType::Access)?;
         let refresh_token = self
             .jwt_service
-            .sign_token(&user.id, user.permissions.0, TokenType::Refresh)?;
+            .sign_token(&user.id, user.role, TokenType::Refresh)?;
 
         Ok((user, access_token, refresh_token))
     }
@@ -137,10 +137,10 @@ impl UserService {
         // Generate new tokens
         let new_access_token = self
             .jwt_service
-            .sign_token(&user.id, user.permissions.0, TokenType::Access)?;
+            .sign_token(&user.id, user.role, TokenType::Access)?;
         let new_refresh_token = self
             .jwt_service
-            .sign_token(&user.id, user.permissions.0, TokenType::Refresh)?;
+            .sign_token(&user.id, user.role, TokenType::Refresh)?;
 
         Ok((new_access_token, new_refresh_token))
     }

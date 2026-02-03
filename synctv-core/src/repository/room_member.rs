@@ -47,8 +47,8 @@ impl RoomMemberRepository {
         .bind(member.user_id.as_str())
         .bind(member.role.to_string())
         .bind(member.status.to_string())
-        .bind(member.added_permissions)
-        .bind(member.removed_permissions)
+        .bind(member.added_permissions as i64)
+        .bind(member.removed_permissions as i64)
         .bind(member.joined_at)
         .bind(member.version)
         .fetch_one(&self.pool)
@@ -165,8 +165,8 @@ impl RoomMemberRepository {
         .bind(member.user_id.as_str())
         .bind(member.role.to_string())
         .bind(member.status.to_string())
-        .bind(member.added_permissions)
-        .bind(member.removed_permissions)
+        .bind(member.added_permissions as i64)
+        .bind(member.removed_permissions as i64)
         .bind(member.joined_at)
         .bind(member.version)
         .fetch_one(&mut *tx)
@@ -358,8 +358,8 @@ impl RoomMemberRepository {
         &self,
         room_id: &RoomId,
         user_id: &UserId,
-        added_permissions: Option<i64>,
-        removed_permissions: Option<i64>,
+        added_permissions: u64,
+        removed_permissions: u64,
         current_version: i64,
     ) -> Result<RoomMember> {
         let row = sqlx::query(
@@ -372,13 +372,14 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
         .bind(room_id.as_str())
         .bind(user_id.as_str())
-        .bind(added_permissions)
-        .bind(removed_permissions)
+        .bind(added_permissions as i64)
+        .bind(removed_permissions as i64)
         .bind(current_version)
         .fetch_one(&self.pool)
         .await?;
@@ -396,13 +397,16 @@ impl RoomMemberRepository {
         let row = sqlx::query(
             "UPDATE room_members
              SET
-                added_permissions = NULL,
-                removed_permissions = NULL,
+                added_permissions = 0,
+                removed_permissions = 0,
+                admin_added_permissions = 0,
+                admin_removed_permissions = 0,
                 version = version + 1
              WHERE room_id = $1 AND user_id = $2 AND version = $3
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -690,10 +694,10 @@ impl RoomMemberRepository {
             user_id: UserId::from_string(row.try_get("user_id")?),
             role,
             status,
-            added_permissions: row.try_get("added_permissions")?,
-            removed_permissions: row.try_get("removed_permissions")?,
-            admin_added_permissions: row.try_get("admin_added_permissions")?,
-            admin_removed_permissions: row.try_get("admin_removed_permissions")?,
+            added_permissions: row.try_get::<i64, _>("added_permissions")? as u64,
+            removed_permissions: row.try_get::<i64, _>("removed_permissions")? as u64,
+            admin_added_permissions: row.try_get::<i64, _>("admin_added_permissions")? as u64,
+            admin_removed_permissions: row.try_get::<i64, _>("admin_removed_permissions")? as u64,
             joined_at: row.try_get("joined_at")?,
             left_at: row.try_get("left_at")?,
             version: row.try_get("version")?,
@@ -728,10 +732,10 @@ impl RoomMemberRepository {
             username: row.try_get("username")?,
             role,
             status,
-            added_permissions: row.try_get("added_permissions")?,
-            removed_permissions: row.try_get("removed_permissions")?,
-            admin_added_permissions: row.try_get("admin_added_permissions")?,
-            admin_removed_permissions: row.try_get("admin_removed_permissions")?,
+            added_permissions: row.try_get::<i64, _>("added_permissions")? as u64,
+            removed_permissions: row.try_get::<i64, _>("removed_permissions")? as u64,
+            admin_added_permissions: row.try_get::<i64, _>("admin_added_permissions")? as u64,
+            admin_removed_permissions: row.try_get::<i64, _>("admin_removed_permissions")? as u64,
             joined_at: row.try_get("joined_at")?,
             is_online: false, // Will be populated by connection tracking
             banned_at: row.try_get("banned_at")?,

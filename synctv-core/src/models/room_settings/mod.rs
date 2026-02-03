@@ -235,17 +235,17 @@ room_setting!(ShufflePlaylist, bool, "shuffle_playlist", false);
 
 room_setting!(MaxMembers, u64, "max_members", 0);
 
-room_setting!(AdminAddedPermissions, i64, "admin_added_permissions", 0);
-room_setting!(AdminRemovedPermissions, i64, "admin_removed_permissions", 0);
-room_setting!(MemberAddedPermissions, i64, "member_added_permissions", 0);
+room_setting!(AdminAddedPermissions, u64, "admin_added_permissions", 0);
+room_setting!(AdminRemovedPermissions, u64, "admin_removed_permissions", 0);
+room_setting!(MemberAddedPermissions, u64, "member_added_permissions", 0);
 room_setting!(
     MemberRemovedPermissions,
-    i64,
+    u64,
     "member_removed_permissions",
     0
 );
-room_setting!(GuestAddedPermissions, i64, "guest_added_permissions", 0);
-room_setting!(GuestRemovedPermissions, i64, "guest_removed_permissions", 0);
+room_setting!(GuestAddedPermissions, u64, "guest_added_permissions", 0);
+room_setting!(GuestRemovedPermissions, u64, "guest_removed_permissions", 0);
 
 use crate::models::room::AutoPlaySettings;
 

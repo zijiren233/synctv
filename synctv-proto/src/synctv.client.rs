@@ -9,9 +9,13 @@ pub struct User {
     pub username: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub email: ::prost::alloc::string::String,
-    #[prost(int64, tag = "4")]
-    pub permissions: i64,
-    #[prost(int64, tag = "5")]
+    /// Global RBAC role: root, admin, user
+    #[prost(string, tag = "4")]
+    pub role: ::prost::alloc::string::String,
+    /// Account status: active, pending, banned
+    #[prost(string, tag = "5")]
+    pub status: ::prost::alloc::string::String,
+    #[prost(int64, tag = "6")]
     pub created_at: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -126,11 +130,26 @@ pub struct RoomMember {
     pub user_id: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub username: ::prost::alloc::string::String,
-    #[prost(int64, tag = "4")]
-    pub permissions: i64,
-    #[prost(int64, tag = "5")]
+    /// creator, admin, member, guest
+    #[prost(string, tag = "4")]
+    pub role: ::prost::alloc::string::String,
+    /// Effective permissions (calculated from role + added/removed)
+    #[prost(uint64, tag = "5")]
+    pub permissions: u64,
+    /// Allow/Deny permission pattern fields
+    /// For member role: uses added_permissions/removed_permissions
+    /// For admin role: uses admin_added_permissions/admin_removed_permissions
+    #[prost(uint64, tag = "6")]
+    pub added_permissions: u64,
+    #[prost(uint64, tag = "7")]
+    pub removed_permissions: u64,
+    #[prost(uint64, tag = "8")]
+    pub admin_added_permissions: u64,
+    #[prost(uint64, tag = "9")]
+    pub admin_removed_permissions: u64,
+    #[prost(int64, tag = "10")]
     pub joined_at: i64,
-    #[prost(bool, tag = "6")]
+    #[prost(bool, tag = "11")]
     pub is_online: bool,
 }
 /// Authentication Messages
@@ -367,9 +386,21 @@ pub struct SetMemberPermissionRequest {
     /// Target user
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
-    /// New permissions
-    #[prost(int64, tag = "2")]
-    pub permissions: i64,
+    /// New role (optional): creator, admin, member, guest
+    #[prost(string, tag = "2")]
+    pub role: ::prost::alloc::string::String,
+    /// Allow/Deny permission pattern fields
+    /// Only set the fields you want to update
+    /// For member role: use added_permissions/removed_permissions
+    /// For admin role: use admin_added_permissions/admin_removed_permissions
+    #[prost(uint64, tag = "3")]
+    pub added_permissions: u64,
+    #[prost(uint64, tag = "4")]
+    pub removed_permissions: u64,
+    #[prost(uint64, tag = "5")]
+    pub admin_added_permissions: u64,
+    #[prost(uint64, tag = "6")]
+    pub admin_removed_permissions: u64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -881,8 +912,8 @@ pub struct RoomWithRole {
     #[prost(message, optional, tag = "1")]
     pub room: ::core::option::Option<Room>,
     /// User's permissions in this room
-    #[prost(int64, tag = "2")]
-    pub permissions: i64,
+    #[prost(uint64, tag = "2")]
+    pub permissions: u64,
     /// creator, admin, member, guest
     #[prost(string, tag = "3")]
     pub role: ::prost::alloc::string::String,
@@ -1066,10 +1097,24 @@ pub struct PermissionChanged {
     pub room_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub user_id: ::prost::alloc::string::String,
-    #[prost(int64, tag = "3")]
-    pub new_permissions: i64,
+    /// New role (optional): creator, admin, member, guest
+    #[prost(string, tag = "3")]
+    pub role: ::prost::alloc::string::String,
+    /// All permission fields for full state sync
+    ///
+    /// Calculated final permissions
+    #[prost(uint64, tag = "4")]
+    pub effective_permissions: u64,
+    #[prost(uint64, tag = "5")]
+    pub added_permissions: u64,
+    #[prost(uint64, tag = "6")]
+    pub removed_permissions: u64,
+    #[prost(uint64, tag = "7")]
+    pub admin_added_permissions: u64,
+    #[prost(uint64, tag = "8")]
+    pub admin_removed_permissions: u64,
     /// Username of who made the change
-    #[prost(string, tag = "4")]
+    #[prost(string, tag = "9")]
     pub updated_by: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]

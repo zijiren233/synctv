@@ -210,8 +210,8 @@ impl AuditService {
         actor_username: String,
         target_type: AuditTargetType,
         target_id: String,
-        old_permissions: i64,
-        new_permissions: i64,
+        old_permissions: u64,
+        new_permissions: u64,
     ) -> Result<()> {
         self.log(
             actor_id,

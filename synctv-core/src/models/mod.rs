@@ -43,4 +43,7 @@ pub use settings::{
     default_email_settings, default_oauth_settings, default_server_settings, get_default_settings,
     SettingsGroup, SettingsError,
 };
-pub use user::{CreateUserRequest, SignupMethod, UpdateUserRequest, User, UserListQuery};
+pub use user::{
+    CreateUserRequest, SignupMethod, UpdateUserRequest, User, UserListQuery,
+    UserRole, UserStatus,
+};

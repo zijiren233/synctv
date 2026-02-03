@@ -34,7 +34,7 @@ COMMENT ON COLUMN room_settings.value IS 'Setting value (stored as text, parsed 
 --   - allow_auto_join (bool)
 --   - auto_play (json) - AutoPlaySettings serialized as JSON
 --
--- Permission overrides (i64):
+-- Permission overrides (u64 BIGINT UNSIGNED):
 --   - admin_added_permissions
 --   - admin_removed_permissions
 --   - member_added_permissions

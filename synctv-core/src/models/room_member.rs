@@ -74,15 +74,14 @@ pub struct RoomMember {
 
     /// Allow/Deny permission pattern for member role
     /// - effective_permissions = (role_default | added) & ~removed
-    /// - None = use role default permissions
-    pub added_permissions: Option<i64>,
-    pub removed_permissions: Option<i64>,
+    pub added_permissions: u64,
+    pub removed_permissions: u64,
 
     /// Allow/Deny permission pattern for admin role (overrides member-level permissions)
     /// - Only applies when role = Admin
     /// - effective_permissions = (admin_default | admin_added) & ~admin_removed
-    pub admin_added_permissions: Option<i64>,
-    pub admin_removed_permissions: Option<i64>,
+    pub admin_added_permissions: u64,
+    pub admin_removed_permissions: u64,
 
     pub joined_at: DateTime<Utc>,
     pub left_at: Option<DateTime<Utc>>,
@@ -104,10 +103,10 @@ impl RoomMember {
             user_id,
             role,
             status: MemberStatus::Active,
-            added_permissions: None,
-            removed_permissions: None,
-            admin_added_permissions: None,
-            admin_removed_permissions: None,
+            added_permissions: 0,
+            removed_permissions: 0,
+            admin_added_permissions: 0,
+            admin_removed_permissions: 0,
             joined_at: now,
             left_at: None,
             version: 0,
@@ -144,12 +143,8 @@ impl RoomMember {
                 let mut result = role_default.0;
 
                 // Apply admin-specific Allow/Deny modifications
-                if let Some(added) = self.admin_added_permissions {
-                    result |= added;
-                }
-                if let Some(removed) = self.admin_removed_permissions {
-                    result &= !removed;
-                }
+                result |= self.admin_added_permissions;
+                result &= !self.admin_removed_permissions;
 
                 PermissionBits(result)
             }
@@ -158,12 +153,8 @@ impl RoomMember {
                 let mut result = role_default.0;
 
                 // Apply member-level Allow/Deny modifications
-                if let Some(added) = self.added_permissions {
-                    result |= added;
-                }
-                if let Some(removed) = self.removed_permissions {
-                    result &= !removed;
-                }
+                result |= self.added_permissions;
+                result &= !self.removed_permissions;
 
                 PermissionBits(result)
             }
@@ -171,7 +162,7 @@ impl RoomMember {
     }
 
     /// Check if member has a specific permission (considers both status and effective permissions)
-    pub fn has_permission(&self, permission: i64, role_default: PermissionBits) -> bool {
+    pub fn has_permission(&self, permission: u64, role_default: PermissionBits) -> bool {
         if !self.status.is_active() {
             return false;
         }
@@ -200,21 +191,21 @@ impl RoomMember {
     }
 
     /// Set added permissions (Allow pattern)
-    pub fn add_permissions(&mut self, permissions: i64) {
-        let current = self.added_permissions.unwrap_or(0);
-        self.added_permissions = Some(current | permissions);
+    pub fn add_permissions(&mut self, permissions: u64) {
+        self.added_permissions |= permissions;
     }
 
     /// Set removed permissions (Deny pattern)
-    pub fn remove_permissions(&mut self, permissions: i64) {
-        let current = self.removed_permissions.unwrap_or(0);
-        self.removed_permissions = Some(current | permissions);
+    pub fn remove_permissions(&mut self, permissions: u64) {
+        self.removed_permissions |= permissions;
     }
 
     /// Reset to role default (clear both added and removed)
     pub fn reset_to_role_default(&mut self) {
-        self.added_permissions = None;
-        self.removed_permissions = None;
+        self.added_permissions = 0;
+        self.removed_permissions = 0;
+        self.admin_added_permissions = 0;
+        self.admin_removed_permissions = 0;
     }
 }
 
@@ -225,10 +216,10 @@ pub struct RoomMemberWithUser {
     pub username: String,
     pub role: RoomRole,
     pub status: MemberStatus,
-    pub added_permissions: Option<i64>,
-    pub removed_permissions: Option<i64>,
-    pub admin_added_permissions: Option<i64>,
-    pub admin_removed_permissions: Option<i64>,
+    pub added_permissions: u64,
+    pub removed_permissions: u64,
+    pub admin_added_permissions: u64,
+    pub admin_removed_permissions: u64,
     pub joined_at: DateTime<Utc>,
     pub is_online: bool,
     pub banned_at: Option<DateTime<Utc>>,

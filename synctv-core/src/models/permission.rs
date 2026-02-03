@@ -1,50 +1,193 @@
+//! Permission System (Design Document 07-权限系统设计.md)
+//!
+//! This module implements the 64-bit permission bitmask system as specified in the design document.
+//!
+//! Key features:
+//! - Uses u64 (not i64) for permission bits
+//! - Telegram-style permission inheritance
+//! - Role and Status separation
+//! - Allow/Deny permission pattern for customization
+
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-/// 64-bit permission bitmask
+/// 64-bit permission bitmask (u64 as per design document)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct PermissionBits(pub i64);
+pub struct PermissionBits(pub u64);
 
 impl PermissionBits {
-    // Room management permissions (bits 0-9)
-    pub const CREATE_ROOM: i64 = 1 << 0;
-    pub const DELETE_ROOM: i64 = 1 << 1;
-    pub const UPDATE_ROOM_SETTINGS: i64 = 1 << 2;
-    pub const INVITE_USER: i64 = 1 << 3;
-    pub const KICK_USER: i64 = 1 << 4;
+    // ===== Content Management Permissions (0-9) =====
 
-    // Playlist permissions (bits 10-19)
-    pub const ADD_MEDIA: i64 = 1 << 10;
-    pub const REMOVE_MEDIA: i64 = 1 << 11;
-    pub const REORDER_PLAYLIST: i64 = 1 << 12;
-    pub const SWITCH_MEDIA: i64 = 1 << 13;
+    /// Send chat messages
+    pub const SEND_CHAT: u64 = 1 << 0;
 
-    // Playback control permissions (bits 20-29)
-    pub const PLAY_PAUSE: i64 = 1 << 20;
-    pub const SEEK: i64 = 1 << 21;
-    pub const CHANGE_SPEED: i64 = 1 << 22;
+    /// Send danmaku (bullet comments)
+    pub const SEND_DANMAKU: u64 = 1 << 0;  // Same as SEND_CHAT
 
-    // Chat permissions (bits 30-39)
-    pub const SEND_CHAT: i64 = 1 << 30;
-    pub const SEND_DANMAKU: i64 = 1 << 31;
-    pub const DELETE_MESSAGE: i64 = 1 << 32;
+    /// Add movie to playlist
+    pub const ADD_MOVIE: u64 = 1 << 1;
 
-    // Live streaming permissions (bits 40-49)
-    pub const START_LIVE: i64 = 1 << 40;
-    pub const STOP_LIVE: i64 = 1 << 41;
+    /// Delete own movie
+    pub const DELETE_MOVIE_SELF: u64 = 1 << 2;
 
-    // Admin permissions (bits 50-59)
-    pub const GRANT_PERMISSION: i64 = 1 << 50;
-    pub const REVOKE_PERMISSION: i64 = 1 << 51;
+    /// Delete any movie
+    pub const DELETE_MOVIE_ANY: u64 = 1 << 3;
 
-    // System admin permissions (bits 60-63)
-    pub const SYSTEM_ADMIN: i64 = 1 << 60;
+    /// Edit own movie info
+    pub const EDIT_MOVIE_SELF: u64 = 1 << 4;
 
-    pub const NONE: i64 = 0;
-    pub const ALL: i64 = !0; // All bits set
+    /// Edit any movie info
+    pub const EDIT_MOVIE_ANY: u64 = 1 << 5;
 
-    pub fn new(bits: i64) -> Self {
+    /// Reorder playlist
+    pub const REORDER_PLAYLIST: u64 = 1 << 6;
+
+    /// Clear playlist
+    pub const CLEAR_PLAYLIST: u64 = 1 << 7;
+
+    // ===== Playback Control Permissions (10-19) =====
+
+    /// Play control (play/pause/seek)
+    pub const PLAY_CONTROL: u64 = 1 << 10;
+
+    /// Switch current movie
+    pub const CHANGE_CURRENT_MOVIE: u64 = 1 << 11;
+
+    /// Change playback rate
+    pub const CHANGE_PLAYBACK_RATE: u64 = 1 << 12;
+
+    // ===== Member Management Permissions (20-29) =====
+
+    /// Approve pending members
+    pub const APPROVE_MEMBER: u64 = 1 << 20;
+
+    /// Kick member
+    pub const KICK_MEMBER: u64 = 1 << 21;
+
+    /// Invite user (alias for APPROVE_MEMBER)
+    pub const INVITE_USER: u64 = 1 << 20;
+
+    /// Kick user (alias for KICK_MEMBER)
+    pub const KICK_USER: u64 = 1 << 21;
+
+    /// Ban/unban member
+    pub const BAN_MEMBER: u64 = 1 << 22;
+
+    /// Set member permissions
+    pub const SET_MEMBER_PERMISSIONS: u64 = 1 << 23;
+
+    /// Grant permissions to members (alias for SET_MEMBER_PERMISSIONS)
+    pub const GRANT_PERMISSION: u64 = 1 << 23;
+
+    /// Manage admins (promote/demote)
+    pub const MANAGE_ADMIN: u64 = 1 << 24;
+
+    // ===== Room Management Permissions (30-39) =====
+
+    /// Modify room settings
+    pub const SET_ROOM_SETTINGS: u64 = 1 << 30;
+
+    /// Set room password
+    pub const SET_ROOM_PASSWORD: u64 = 1 << 31;
+
+    /// Delete chat messages
+    pub const DELETE_CHAT: u64 = 1 << 32;
+
+    /// Delete messages (alias for DELETE_CHAT)
+    pub const DELETE_MESSAGE: u64 = 1 << 32;
+
+    /// View room statistics
+    pub const VIEW_STATS: u64 = 1 << 33;
+
+    /// Export room data
+    pub const EXPORT_DATA: u64 = 1 << 34;
+
+    /// Delete room
+    pub const DELETE_ROOM: u64 = 1 << 35;
+
+    // ===== Aliases for backward compatibility =====
+
+    /// Update room settings (alias for SET_ROOM_SETTINGS)
+    pub const UPDATE_ROOM_SETTINGS: u64 = 1 << 30;
+
+    /// Add media (alias for ADD_MOVIE)
+    pub const ADD_MEDIA: u64 = 1 << 1;
+
+    /// Remove media (alias for DELETE_MOVIE_ANY)
+    pub const REMOVE_MEDIA: u64 = 1 << 3;
+
+    /// Switch media (alias for CHANGE_CURRENT_MOVIE)
+    pub const SWITCH_MEDIA: u64 = 1 << 11;
+
+    /// Play/pause (alias for PLAY_CONTROL)
+    pub const PLAY_PAUSE: u64 = 1 << 10;
+
+    /// Seek (alias for PLAY_CONTROL)
+    pub const SEEK: u64 = 1 << 10;
+
+    /// Change speed (alias for CHANGE_PLAYBACK_RATE)
+    pub const CHANGE_SPEED: u64 = 1 << 12;
+
+    /// Revoke permission (alias for SET_MEMBER_PERMISSIONS)
+    pub const REVOKE_PERMISSION: u64 = 1 << 23;
+
+    // ===== View Permissions (40-49) =====
+
+    /// View playlist
+    pub const VIEW_PLAYLIST: u64 = 1 << 40;
+
+    /// View member list
+    pub const VIEW_MEMBER_LIST: u64 = 1 << 41;
+
+    /// View chat history
+    pub const VIEW_CHAT_HISTORY: u64 = 1 << 42;
+
+    // ===== Communication Permissions (50-59) =====
+
+    /// Use WebRTC (voice/video)
+    pub const USE_WEBRTC: u64 = 1 << 50;
+
+    // ===== Reserved (60-63) =====
+    // Reserved for future use
+
+    // ===== Permission Combinations =====
+
+    /// All permissions (for Creator)
+    pub const ALL: u64 = u64::MAX;
+
+    /// Default member permissions
+    pub const DEFAULT_MEMBER: u64 = Self::SEND_CHAT
+        | Self::ADD_MOVIE
+        | Self::DELETE_MOVIE_SELF
+        | Self::EDIT_MOVIE_SELF
+        | Self::VIEW_PLAYLIST
+        | Self::VIEW_MEMBER_LIST
+        | Self::VIEW_CHAT_HISTORY;
+
+    /// Default admin permissions
+    pub const DEFAULT_ADMIN: u64 = Self::DEFAULT_MEMBER
+        | Self::DELETE_MOVIE_ANY
+        | Self::EDIT_MOVIE_ANY
+        | Self::REORDER_PLAYLIST
+        | Self::CLEAR_PLAYLIST
+        | Self::PLAY_CONTROL
+        | Self::CHANGE_CURRENT_MOVIE
+        | Self::CHANGE_PLAYBACK_RATE
+        | Self::APPROVE_MEMBER
+        | Self::KICK_MEMBER
+        | Self::BAN_MEMBER
+        | Self::SET_ROOM_SETTINGS
+        | Self::SET_ROOM_PASSWORD
+        | Self::DELETE_CHAT
+        | Self::VIEW_STATS;
+
+    /// Default guest permissions (read-only)
+    pub const DEFAULT_GUEST: u64 = Self::VIEW_PLAYLIST;
+
+    pub const NONE: u64 = 0;
+
+    pub fn new(bits: u64) -> Self {
         Self(bits)
     }
 
@@ -52,24 +195,53 @@ impl PermissionBits {
         Self(Self::NONE)
     }
 
-    pub fn has(&self, permission: i64) -> bool {
-        (self.0 & permission) == permission
+    /// Check if has specific permission
+    pub fn has(&self, permission: u64) -> bool {
+        (self.0 & permission) != 0
     }
 
-    pub fn grant(&mut self, permission: i64) {
+    /// Check if has all specified permissions
+    pub fn has_all(&self, permissions: u64) -> bool {
+        (self.0 & permissions) == permissions
+    }
+
+    /// Check if has any of the specified permissions
+    pub fn has_any(&self, permissions: u64) -> bool {
+        (self.0 & permissions) != 0
+    }
+
+    /// Add permission (Allow pattern)
+    pub fn grant(&mut self, permission: u64) {
         self.0 |= permission;
     }
 
-    pub fn revoke(&mut self, permission: i64) {
+    /// Remove permission (Deny pattern)
+    pub fn revoke(&mut self, permission: u64) {
         self.0 &= !permission;
     }
 
-    pub fn set(&mut self, permission: i64, enabled: bool) {
+    /// Set permission state
+    pub fn set(&mut self, permission: u64, enabled: bool) {
         if enabled {
             self.grant(permission);
         } else {
             self.revoke(permission);
         }
+    }
+
+    /// Add permissions (alias for grant)
+    pub fn add(&mut self, permission: u64) {
+        self.grant(permission);
+    }
+
+    /// Remove permissions (alias for revoke)
+    pub fn remove(&mut self, permission: u64) {
+        self.revoke(permission);
+    }
+
+    /// Toggle permission
+    pub fn toggle(&mut self, permission: u64) {
+        self.0 ^= permission;
     }
 }
 
@@ -79,65 +251,31 @@ impl Default for PermissionBits {
     }
 }
 
-/// Role presets with permission inheritance
+/// Room role preset (Telegram-style design)
+///
+/// These are the room-level roles that determine base permissions.
+/// Custom permissions can be added/removed via Allow/Deny pattern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
-    /// Room creator - full control
+    /// Room creator - has all permissions (fixed, cannot be modified)
     Creator,
-    /// Room administrator - can manage most aspects
+    /// Room administrator - inherits from DEFAULT_ADMIN with possible custom overrides
     Admin,
-    /// Regular member - basic permissions
+    /// Regular member - inherits from DEFAULT_MEMBER with possible custom overrides
     Member,
-    /// Guest - limited permissions
+    /// Guest - inherits from DEFAULT_GUEST with possible custom overrides
     Guest,
 }
 
 impl Role {
+    /// Get base permissions for this role (before custom Allow/Deny modifications)
     pub fn permissions(&self) -> PermissionBits {
         match self {
-            Role::Creator => {
-                // Creator has all permissions
-                PermissionBits(PermissionBits::ALL)
-            }
-            Role::Admin => {
-                // Admin has most permissions except system admin
-                let mut perms = PermissionBits::empty();
-                perms.grant(PermissionBits::DELETE_ROOM);
-                perms.grant(PermissionBits::UPDATE_ROOM_SETTINGS);
-                perms.grant(PermissionBits::INVITE_USER);
-                perms.grant(PermissionBits::KICK_USER);
-                perms.grant(PermissionBits::ADD_MEDIA);
-                perms.grant(PermissionBits::REMOVE_MEDIA);
-                perms.grant(PermissionBits::REORDER_PLAYLIST);
-                perms.grant(PermissionBits::SWITCH_MEDIA);
-                perms.grant(PermissionBits::PLAY_PAUSE);
-                perms.grant(PermissionBits::SEEK);
-                perms.grant(PermissionBits::CHANGE_SPEED);
-                perms.grant(PermissionBits::SEND_CHAT);
-                perms.grant(PermissionBits::SEND_DANMAKU);
-                perms.grant(PermissionBits::DELETE_MESSAGE);
-                perms.grant(PermissionBits::START_LIVE);
-                perms.grant(PermissionBits::STOP_LIVE);
-                perms.grant(PermissionBits::GRANT_PERMISSION);
-                perms.grant(PermissionBits::REVOKE_PERMISSION);
-                perms
-            }
-            Role::Member => {
-                // Member has basic interaction permissions
-                let mut perms = PermissionBits::empty();
-                perms.grant(PermissionBits::ADD_MEDIA);
-                perms.grant(PermissionBits::PLAY_PAUSE);
-                perms.grant(PermissionBits::SEEK);
-                perms.grant(PermissionBits::SEND_CHAT);
-                perms.grant(PermissionBits::SEND_DANMAKU);
-                perms
-            }
-            Role::Guest => {
-                // Guest can only view and chat
-                let mut perms = PermissionBits::empty();
-                perms.grant(PermissionBits::SEND_CHAT);
-                perms
-            }
+            Role::Creator => PermissionBits(PermissionBits::ALL),
+            Role::Admin => PermissionBits(PermissionBits::DEFAULT_ADMIN),
+            Role::Member => PermissionBits(PermissionBits::DEFAULT_MEMBER),
+            Role::Guest => PermissionBits(PermissionBits::DEFAULT_GUEST),
         }
     }
 }
@@ -173,11 +311,9 @@ mod tests {
 
     #[test]
     fn test_permission_has() {
-        let mut perms = PermissionBits::empty();
-        assert!(!perms.has(PermissionBits::SEND_CHAT));
-
-        perms.grant(PermissionBits::SEND_CHAT);
+        let perms = PermissionBits(PermissionBits::SEND_CHAT);
         assert!(perms.has(PermissionBits::SEND_CHAT));
+        assert!(!perms.has(PermissionBits::ADD_MOVIE));
     }
 
     #[test]
@@ -205,7 +341,43 @@ mod tests {
         assert!(!member_perms.has(PermissionBits::DELETE_ROOM));
 
         let guest_perms = Role::Guest.permissions();
-        assert!(guest_perms.has(PermissionBits::SEND_CHAT));
-        assert!(!guest_perms.has(PermissionBits::ADD_MEDIA));
+        assert!(guest_perms.has(PermissionBits::VIEW_PLAYLIST));
+        assert!(!guest_perms.has(PermissionBits::ADD_MOVIE));
+    }
+
+    #[test]
+    fn test_default_member_permissions() {
+        let perms = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+        assert!(perms.has(PermissionBits::SEND_CHAT));
+        assert!(perms.has(PermissionBits::ADD_MOVIE));
+        assert!(perms.has(PermissionBits::DELETE_MOVIE_SELF));
+        assert!(perms.has(PermissionBits::VIEW_PLAYLIST));
+        assert!(!perms.has(PermissionBits::DELETE_MOVIE_ANY));
+    }
+
+    #[test]
+    fn test_default_admin_permissions() {
+        let perms = PermissionBits(PermissionBits::DEFAULT_ADMIN);
+        assert!(perms.has_all(PermissionBits::DEFAULT_MEMBER));
+        assert!(perms.has(PermissionBits::DELETE_MOVIE_ANY));
+        assert!(perms.has(PermissionBits::BAN_MEMBER));
+        assert!(perms.has(PermissionBits::SET_ROOM_SETTINGS));
+    }
+
+    #[test]
+    fn test_allow_deny_pattern() {
+        // Start with DEFAULT_MEMBER
+        let mut perms = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+
+        // Add admin permission (Allow pattern)
+        perms.grant(PermissionBits::BAN_MEMBER);
+        assert!(perms.has(PermissionBits::BAN_MEMBER));
+
+        // Remove chat permission (Deny pattern)
+        perms.revoke(PermissionBits::SEND_CHAT);
+        assert!(!perms.has(PermissionBits::SEND_CHAT));
+
+        // Other DEFAULT_MEMBER permissions remain
+        assert!(perms.has(PermissionBits::ADD_MOVIE));
     }
 }

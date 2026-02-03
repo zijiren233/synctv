@@ -307,14 +307,14 @@ async fn generate_tokens(
     use synctv_core::service::TokenType;
 
     let access_token = jwt_service
-        .sign_token(&user.id, user.permissions.0, TokenType::Access)
+        .sign_token(&user.id, user.role, TokenType::Access)
         .map_err(|e| {
             error!("Failed to sign access token: {}", e);
             super::AppError::internal_server_error("Failed to generate access token")
         })?;
 
     let refresh_token = jwt_service
-        .sign_token(&user.id, user.permissions.0, TokenType::Refresh)
+        .sign_token(&user.id, user.role, TokenType::Refresh)
         .map_err(|e| {
             error!("Failed to sign refresh token: {}", e);
             super::AppError::internal_server_error("Failed to generate refresh token")

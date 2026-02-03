@@ -3,7 +3,7 @@
 //! This module provides common test utilities, fixtures, and helpers
 //! to reduce boilerplate and improve test consistency across the codebase.
 
-use crate::models::{RoomId, UserId};
+use crate::models::{RoomId, UserId, UserRole, UserStatus};
 use chrono::Utc;
 
 /// Create a test user ID
@@ -31,7 +31,8 @@ pub struct UserFixture {
     id: UserId,
     username: String,
     password_hash: String,
-    permissions: i64,
+    role: UserRole,
+    status: UserStatus,
 }
 
 impl UserFixture {
@@ -40,7 +41,8 @@ impl UserFixture {
             id: random_user_id(),
             username: "test_user".to_string(),
             password_hash: "hash".to_string(),
-            permissions: 0,
+            role: UserRole::User,
+            status: UserStatus::Active,
         }
     }
 
@@ -54,8 +56,13 @@ impl UserFixture {
         self
     }
 
-    pub fn with_permissions(mut self, permissions: i64) -> Self {
-        self.permissions = permissions;
+    pub fn with_role(mut self, role: UserRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    pub fn with_status(mut self, status: UserStatus) -> Self {
+        self.status = status;
         self
     }
 
@@ -63,10 +70,15 @@ impl UserFixture {
         crate::models::User {
             id: self.id,
             username: self.username,
+            email: Some("test@example.com".to_string()),
             password_hash: self.password_hash,
-            permissions: self.permissions,
+            role: self.role,
+            status: self.status,
+            signup_method: None,
+            email_verified: true,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            deleted_at: None,
         }
     }
 }
@@ -231,11 +243,13 @@ mod tests {
     fn test_user_fixture() {
         let user = UserFixture::new()
             .with_username("alice")
-            .with_permissions(123)
+            .with_role(UserRole::Admin)
+            .with_status(UserStatus::Active)
             .build();
 
         assert_eq!(user.username, "alice");
-        assert_eq!(user.permissions, 123);
+        assert_eq!(user.role, UserRole::Admin);
+        assert_eq!(user.status, UserStatus::Active);
     }
 
     #[test]

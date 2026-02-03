@@ -16,3 +16,4 @@ pub mod transaction;
 pub use config::Config;
 pub use error::{Error, Result};
 pub use transaction::{UnitOfWork, with_transaction};
+pub use cache::KeyBuilder;

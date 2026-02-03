@@ -164,14 +164,12 @@ impl AdminApiImpl {
         let user = self.user_service.get_user(&uid).await
             .map_err(|e| e.to_string())?;
 
-        // Update permissions based on role
-        let role_permissions = match req.role.as_str() {
-            "admin" | "creator" | "root" => synctv_core::models::PermissionBits(synctv_core::models::PermissionBits::ALL),
-            _ => synctv_core::models::PermissionBits::default(),
-        };
+        // Parse role from string
+        let new_role = synctv_core::models::UserRole::from_str(&req.role)
+            .map_err(|e| e.to_string())?;
 
         let updated_user = synctv_core::models::User {
-            permissions: role_permissions,
+            role: new_role,
             ..user
         };
 
@@ -337,24 +335,47 @@ fn admin_room_to_proto(
 }
 
 fn admin_room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) -> crate::proto::admin::RoomMember {
+    let role_str = match member.role {
+        synctv_core::models::RoomRole::Creator => "creator",
+        synctv_core::models::RoomRole::Admin => "admin",
+        synctv_core::models::RoomRole::Member => "member",
+        synctv_core::models::RoomRole::Guest => "guest",
+    };
+
     crate::proto::admin::RoomMember {
         room_id: member.room_id.to_string(),
         user_id: member.user_id.to_string(),
         username: member.username.clone(),
+        role: role_str.to_string(),
         permissions: member.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
+        added_permissions: member.added_permissions.0,
+        removed_permissions: member.removed_permissions.0,
+        admin_added_permissions: member.admin_added_permissions.0,
+        admin_removed_permissions: member.admin_removed_permissions.0,
         joined_at: member.joined_at.timestamp(),
         is_online: member.is_online,
     }
 }
 
 fn admin_user_to_proto(user: &synctv_core::models::User) -> crate::proto::admin::AdminUser {
+    let role_str = match user.role {
+        synctv_core::models::UserRole::Root => "root",
+        synctv_core::models::UserRole::Admin => "admin",
+        synctv_core::models::UserRole::User => "user",
+    };
+
+    let status_str = match user.status {
+        synctv_core::models::UserStatus::Active => "active",
+        synctv_core::models::UserStatus::Pending => "pending",
+        synctv_core::models::UserStatus::Banned => "banned",
+    };
+
     crate::proto::admin::AdminUser {
         id: user.id.to_string(),
         username: user.username.clone(),
         email: user.email.clone().unwrap_or_default(),
-        role: "user".to_string(),  // Default - User model doesn't have role field
-        permissions: user.permissions.0,
-        status: if user.email_verified { "active".to_string() } else { "pending".to_string() },
+        role: role_str.to_string(),
+        status: status_str.to_string(),
         created_at: user.created_at.timestamp(),
         updated_at: user.updated_at.timestamp(),
     }

@@ -8,7 +8,6 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR(20) NOT NULL DEFAULT 'user',
     status VARCHAR(20) NOT NULL DEFAULT 'active',
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
-    permissions BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ NULL,
@@ -35,7 +34,6 @@ CREATE INDEX idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NOT N
 -- Performance optimization indexes
 CREATE INDEX idx_users_username_lower ON users(LOWER(username)) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_email_lower ON users(LOWER(email)) WHERE deleted_at IS NULL AND email IS NOT NULL;
-CREATE INDEX idx_users_permissions ON users(permissions, created_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_role ON users(role) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_status ON users(status) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_signup_method ON users(signup_method) WHERE deleted_at IS NULL;
@@ -53,14 +51,13 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Comments
-COMMENT ON TABLE users IS 'User accounts with soft delete support';
+COMMENT ON TABLE users IS 'User accounts with soft delete support (RBAC: role-based access control)';
 COMMENT ON COLUMN users.id IS '12-character nanoid';
 COMMENT ON COLUMN users.username IS 'Unique username (NEVER reusable, even after deletion)';
 COMMENT ON COLUMN users.email IS 'User email (NULL allowed for OAuth2 users, non-empty values are unique and never reusable)';
 COMMENT ON COLUMN users.signup_method IS 'Method used to register: email or oauth2';
-COMMENT ON COLUMN users.role IS 'User role: root, admin, or user';
-COMMENT ON COLUMN users.status IS 'User status: active, pending (email verification), or banned';
+COMMENT ON COLUMN users.role IS 'User RBAC role: root, admin, or user (global access level)';
+COMMENT ON COLUMN users.status IS 'User account status: active, pending (email verification), or banned';
 COMMENT ON COLUMN users.email_verified IS 'Whether the user email has been verified';
-COMMENT ON COLUMN users.permissions IS '64-bit permission bitmask';
 COMMENT ON COLUMN users.deleted_at IS 'Soft delete timestamp (NULL = active user)';
 COMMENT ON CONSTRAINT users_email_not_empty ON users IS 'Ensures email is either NULL or a non-empty string';

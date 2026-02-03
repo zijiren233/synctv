@@ -178,27 +178,27 @@ pub struct RoomSettings {
 
     /// Additional permissions for Admin role (on top of global default)
     #[serde(default)]
-    pub admin_added_permissions: Option<i64>,
+    pub admin_added_permissions: Option<u64>,
 
     /// Removed permissions for Admin role (overrides global default)
     #[serde(default)]
-    pub admin_removed_permissions: Option<i64>,
+    pub admin_removed_permissions: Option<u64>,
 
     /// Additional permissions for Member role (on top of global default)
     #[serde(default)]
-    pub member_added_permissions: Option<i64>,
+    pub member_added_permissions: Option<u64>,
 
     /// Removed permissions for Member role (overrides global default)
     #[serde(default)]
-    pub member_removed_permissions: Option<i64>,
+    pub member_removed_permissions: Option<u64>,
 
     /// Additional permissions for Guests (on top of global default)
     #[serde(default)]
-    pub guest_added_permissions: Option<i64>,
+    pub guest_added_permissions: Option<u64>,
 
     /// Removed permissions for Guests (overrides global default)
     #[serde(default)]
-    pub guest_removed_permissions: Option<i64>,
+    pub guest_removed_permissions: Option<u64>,
 
     /// Whether room requires approval for new members
     #[serde(default)]
@@ -220,8 +220,8 @@ impl RoomSettings {
     /// - removed_permissions: Removed permissions from room settings (Optional)
     pub fn effective_permissions_for_role(
         global_default: PermissionBits,
-        added_permissions: Option<i64>,
-        removed_permissions: Option<i64>,
+        added_permissions: Option<u64>,
+        removed_permissions: Option<u64>,
     ) -> PermissionBits {
         let mut result = global_default.0;
 

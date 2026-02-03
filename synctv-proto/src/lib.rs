@@ -5,12 +5,12 @@
 
 // Client API
 pub mod client {
-    include!("synctv_client.rs");
+    include!("synctv.client.rs");
 }
 
 // Admin API
 pub mod admin {
-    include!("synctv_admin.rs");
+    include!("synctv.admin.rs");
 }
 
 // Providers

@@ -242,8 +242,8 @@ impl MemberService {
         room_id: RoomId,
         granter_id: UserId,
         target_user_id: UserId,
-        added_permissions: Option<i64>,
-        removed_permissions: Option<i64>,
+        added_permissions: u64,
+        removed_permissions: u64,
     ) -> Result<RoomMember> {
         // Check if granter has permission to modify permissions
         self.permission_service
@@ -277,7 +277,7 @@ impl MemberService {
         room_id: RoomId,
         granter_id: UserId,
         target_user_id: UserId,
-        permission: i64,
+        permission: u64,
     ) -> Result<RoomMember> {
         // Get current member
         let member = self
@@ -287,11 +287,10 @@ impl MemberService {
             .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
 
         // Add to existing added_permissions
-        let current_added = member.added_permissions.unwrap_or(0);
-        let new_added = current_added | permission;
+        let new_added = member.added_permissions | permission;
 
         // Update
-        self.set_member_permissions(room_id, granter_id, target_user_id, Some(new_added), member.removed_permissions)
+        self.set_member_permissions(room_id, granter_id, target_user_id, new_added, member.removed_permissions)
             .await
     }
 
@@ -301,7 +300,7 @@ impl MemberService {
         room_id: RoomId,
         granter_id: UserId,
         target_user_id: UserId,
-        permission: i64,
+        permission: u64,
     ) -> Result<RoomMember> {
         // Get current member
         let member = self
@@ -311,11 +310,10 @@ impl MemberService {
             .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
 
         // Add to existing removed_permissions
-        let current_removed = member.removed_permissions.unwrap_or(0);
-        let new_removed = current_removed | permission;
+        let new_removed = member.removed_permissions | permission;
 
         // Update
-        self.set_member_permissions(room_id, granter_id, target_user_id, member.added_permissions, Some(new_removed))
+        self.set_member_permissions(room_id, granter_id, target_user_id, member.added_permissions, new_removed)
             .await
     }
 
