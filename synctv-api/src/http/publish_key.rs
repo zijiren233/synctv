@@ -11,7 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::http::{AppState, AppError, AppResult};
+use crate::http::{AppState, AppError, AppResult, middleware::AuthUser};
 use synctv_core::models::{MediaId, RoomId};
 
 /// Request to generate a publish key
@@ -56,12 +56,10 @@ pub async fn generate_publish_key(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Json(req): Json<GeneratePublishKeyRequest>,
+    auth_user: AuthUser,
 ) -> AppResult<Json<PublishKeyResponse>> {
-    // Get user ID from JWT (would normally come from middleware)
-    let user_id = "user_id_from_jwt".to_string(); // TODO: Get from auth middleware
-
     let room_id = RoomId::from_string(room_id);
-    let user_id = synctv_core::models::UserId::from_string(user_id);
+    let user_id = auth_user.user_id;
 
     // Get PublishKeyService from state
     let publish_key_service = state.publish_key_service.as_ref()

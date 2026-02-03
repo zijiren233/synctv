@@ -14,6 +14,7 @@ pub struct Config {
     pub streaming: StreamingConfig,
     pub oauth2: OAuth2Config,
     pub email: EmailConfig,
+    pub media_providers: MediaProvidersConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +152,24 @@ impl Default for OAuth2Config {
     }
 }
 
+/// Media providers configuration
+///
+/// Stores media provider configurations (Alist, Emby, Bilibili, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaProvidersConfig {
+    /// Provider configurations (e.g., alist, emby, jellyfin, bilibili)
+    #[serde(default)]
+    pub providers: serde_json::Value,
+}
+
+impl Default for MediaProvidersConfig {
+    fn default() -> Self {
+        Self {
+            providers: serde_json::json!({}),
+        }
+    }
+}
+
 /// Email configuration for SMTP
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailConfig {
@@ -249,6 +268,7 @@ mod tests {
             streaming: StreamingConfig::default(),
             oauth2: OAuth2Config::default(),
             email: EmailConfig::default(),
+            media_providers: MediaProvidersConfig::default(),
         });
 
         assert!(!config.database_url().is_empty());
@@ -273,6 +293,7 @@ mod tests {
             streaming: StreamingConfig::default(),
             oauth2: OAuth2Config::default(),
             email: EmailConfig::default(),
+            media_providers: MediaProvidersConfig::default(),
         };
 
         assert_eq!(config.grpc_address(), "127.0.0.1:50051");

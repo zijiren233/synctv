@@ -4,6 +4,9 @@
 //! and Redis Pub/Sub for cross-node messaging.
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::broadcast;
+
 use crate::{
     models::{RoomId, UserId},
     Result,
@@ -64,33 +67,143 @@ pub enum RoomEvent {
     RoomDeleted,
 }
 
+impl RoomEvent {
+    /// Convert RoomEvent to JSON string
+    pub fn to_json(&self) -> Result<String> {
+        serde_json::to_string(self)
+            .map_err(|e| crate::Error::Internal(format!("Failed to serialize event: {}", e)))
+    }
+
+    /// Get event type name
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            RoomEvent::UserJoined { .. } => "user_joined",
+            RoomEvent::UserLeft { .. } => "user_left",
+            RoomEvent::ChatMessage { .. } => "chat_message",
+            RoomEvent::Danmaku { .. } => "danmaku",
+            RoomEvent::PlaybackStateChanged { .. } => "playback_state_changed",
+            RoomEvent::MediaAdded { .. } => "media_added",
+            RoomEvent::MediaRemoved { .. } => "media_removed",
+            RoomEvent::PlaylistReordered { .. } => "playlist_reordered",
+            RoomEvent::PermissionChanged { .. } => "permission_changed",
+            RoomEvent::MemberKicked { .. } => "member_kicked",
+            RoomEvent::SettingsUpdated { .. } => "settings_updated",
+            RoomEvent::RoomDeleted => "room_deleted",
+        }
+    }
+}
+
+/// Event broadcaster trait
+///
+/// Abstracts the broadcasting mechanism, allowing different implementations
+/// (WebSocket, Redis Pub/Sub, etc.)
+#[async_trait::async_trait]
+pub trait EventBroadcaster: Send + Sync {
+    /// Broadcast an event to a room
+    async fn broadcast_to_room(&self, room_id: &RoomId, event: &RoomEvent) -> Result<usize>;
+
+    /// Send an event to a specific user in a room
+    async fn send_to_user(&self, room_id: &RoomId, user_id: &UserId, event: &RoomEvent) -> Result<bool>;
+
+    /// Broadcast to all nodes in cluster
+    async fn broadcast_to_cluster(&self, room_id: &RoomId, event: &RoomEvent) -> Result<()>;
+}
+
+/// Notification service configuration
+#[derive(Clone, Debug)]
+pub struct NotificationConfig {
+    /// Channel capacity for broadcast events
+    pub channel_capacity: usize,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            channel_capacity: 1000,
+        }
+    }
+}
+
 /// Notification service
 ///
-/// Broadcasts events to connected clients and handles cross-node messaging.
+/// Provides a high-level API for broadcasting room events.
+/// Uses an EventBroadcaster implementation for actual distribution.
 #[derive(Clone)]
 pub struct NotificationService {
-    // TODO: Add WebSocket connection manager
-    // TODO: Add Redis Pub/Sub client
+    /// Event broadcaster
+    broadcaster: Arc<dyn EventBroadcaster>,
+    /// Broadcast channel for local event subscribers
+    event_tx: broadcast::Sender<(RoomId, RoomEvent)>,
+    /// Configuration
+    config: NotificationConfig,
 }
 
 impl std::fmt::Debug for NotificationService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NotificationService").finish()
+        f.debug_struct("NotificationService")
+            .field("config", &self.config)
+            .field("has_broadcaster", &"true")
+            .finish()
     }
 }
 
 impl NotificationService {
-    /// Create a new notification service
-    pub fn new() -> Self {
-        Self {}
+    /// Create a new notification service with a broadcaster
+    pub fn new(broadcaster: Arc<dyn EventBroadcaster>) -> Self {
+        Self::with_config(broadcaster, NotificationConfig::default())
+    }
+
+    /// Create a new notification service with custom configuration
+    pub fn with_config(
+        broadcaster: Arc<dyn EventBroadcaster>,
+        config: NotificationConfig,
+    ) -> Self {
+        let (event_tx, _) = broadcast::channel(config.channel_capacity);
+
+        Self {
+            broadcaster,
+            event_tx,
+            config,
+        }
+    }
+
+    /// Subscribe to room events locally
+    ///
+    /// Returns a receiver that can be used to receive events for all rooms.
+    /// This is useful for components that need to react to all room events.
+    pub fn subscribe(&self) -> broadcast::Receiver<(RoomId, RoomEvent)> {
+        self.event_tx.subscribe()
+    }
+
+    /// Get the event broadcaster
+    pub fn broadcaster(&self) -> &Arc<dyn EventBroadcaster> {
+        &self.broadcaster
     }
 
     /// Broadcast an event to all members of a room
+    ///
+    /// This sends the event to:
+    /// 1. All WebSocket subscribers via the broadcaster
+    /// 2. All local broadcast channel subscribers
     pub async fn broadcast_to_room(&self, room_id: &RoomId, event: RoomEvent) -> Result<()> {
-        // TODO: Implement WebSocket broadcasting
-        // TODO: Implement Redis Pub/Sub for cross-node messaging
+        tracing::trace!(
+            "Broadcasting event {} to room {}",
+            event.event_type(),
+            room_id.as_str()
+        );
 
-        tracing::trace!("Broadcasting event to room {}: {:?}", room_id.0, std::mem::discriminant(&event));
+        // Send to broadcast channel (for local subscribers)
+        let _ = self.event_tx.send((room_id.clone(), event.clone()));
+
+        // Broadcast via broadcaster implementation
+        let sent_count = self.broadcaster.broadcast_to_room(room_id, &event).await?;
+
+        tracing::debug!(
+            "Broadcast event {} to room {}: {} recipients",
+            event.event_type(),
+            room_id.as_str(),
+            sent_count
+        );
 
         Ok(())
     }
@@ -102,14 +215,22 @@ impl NotificationService {
         user_id: &UserId,
         event: RoomEvent,
     ) -> Result<()> {
-        // TODO: Implement direct user messaging via WebSocket
-
         tracing::trace!(
-            "Sending event to user {} in room {}: {:?}",
-            user_id.0,
-            room_id.0,
-            std::mem::discriminant(&event)
+            "Sending event {} to user {} in room {}",
+            event.event_type(),
+            user_id.as_str(),
+            room_id.as_str()
         );
+
+        let sent = self.broadcaster.send_to_user(room_id, user_id, &event).await?;
+
+        if !sent {
+            tracing::warn!(
+                "No active connection found for user {} in room {}",
+                user_id.as_str(),
+                room_id.as_str()
+            );
+        }
 
         Ok(())
     }
@@ -120,15 +241,13 @@ impl NotificationService {
         room_id: &RoomId,
         event: RoomEvent,
     ) -> Result<()> {
-        // TODO: Implement Redis Pub/Sub publishing
-
         tracing::trace!(
-            "Broadcasting event to cluster for room {}: {:?}",
-            room_id.0,
-            std::mem::discriminant(&event)
+            "Broadcasting event {} to cluster for room {}",
+            event.event_type(),
+            room_id.as_str()
         );
 
-        Ok(())
+        self.broadcaster.broadcast_to_cluster(room_id, &event).await
     }
 
     /// Notify room members that a user joined
@@ -290,7 +409,25 @@ impl NotificationService {
 
 impl Default for NotificationService {
     fn default() -> Self {
-        Self::new()
+        // Use a no-op broadcaster as default
+        struct NoOpBroadcaster;
+
+        #[async_trait::async_trait]
+        impl EventBroadcaster for NoOpBroadcaster {
+            async fn broadcast_to_room(&self, _room_id: &RoomId, _event: &RoomEvent) -> Result<usize> {
+                Ok(0)
+            }
+
+            async fn send_to_user(&self, _room_id: &RoomId, _user_id: &UserId, _event: &RoomEvent) -> Result<bool> {
+                Ok(false)
+            }
+
+            async fn broadcast_to_cluster(&self, _room_id: &RoomId, _event: &RoomEvent) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        Self::new(Arc::new(NoOpBroadcaster))
     }
 }
 
@@ -298,15 +435,155 @@ impl Default for NotificationService {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_room_event_serialization() {
+    #[test]
+    fn test_room_event_serialization() {
         let event = RoomEvent::UserJoined {
-            user_id: UserId("user123".to_string()),
+            user_id: UserId::from_string("user123".to_string()),
             username: "testuser".to_string(),
         };
 
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("UserJoined"));
+        assert!(json.contains(r#""type":"UserJoined""#));
         assert!(json.contains("user123"));
+    }
+
+    #[tokio::test]
+    async fn test_notification_service_creation() {
+        struct MockBroadcaster;
+
+        #[async_trait::async_trait]
+        impl EventBroadcaster for MockBroadcaster {
+            async fn broadcast_to_room(&self, _room_id: &RoomId, _event: &RoomEvent) -> Result<usize> {
+                Ok(0)
+            }
+
+            async fn send_to_user(&self, _room_id: &RoomId, _user_id: &UserId, _event: &RoomEvent) -> Result<bool> {
+                Ok(false)
+            }
+
+            async fn broadcast_to_cluster(&self, _room_id: &RoomId, _event: &RoomEvent) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let service = NotificationService::new(Arc::new(MockBroadcaster));
+        assert_eq!(service.config.channel_capacity, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_and_broadcast() {
+        struct MockBroadcaster;
+
+        #[async_trait::async_trait]
+        impl EventBroadcaster for MockBroadcaster {
+            async fn broadcast_to_room(&self, _room_id: &RoomId, _event: &RoomEvent) -> Result<usize> {
+                Ok(1)
+            }
+
+            async fn send_to_user(&self, _room_id: &RoomId, _user_id: &UserId, _event: &RoomEvent) -> Result<bool> {
+                Ok(true)
+            }
+
+            async fn broadcast_to_cluster(&self, _room_id: &RoomId, _event: &RoomEvent) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let service = NotificationService::new(Arc::new(MockBroadcaster));
+
+        // Subscribe to events
+        let mut rx = service.subscribe();
+
+        // Create test room and user
+        let room_id = RoomId::from_string("test_room".to_string());
+        let user_id = UserId::from_string("test_user".to_string());
+
+        // Broadcast user joined event
+        let event = RoomEvent::UserJoined {
+            user_id: user_id.clone(),
+            username: "testuser".to_string(),
+        };
+
+        service.broadcast_to_room(&room_id, event).await.unwrap();
+
+        // Receive event
+        let (received_room_id, received_event) = tokio::time::timeout(
+            tokio::time::Duration::from_millis(100),
+            rx.recv()
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(received_room_id, room_id);
+        match received_event {
+            RoomEvent::UserJoined { username, .. } => {
+                assert_eq!(username, "testuser");
+            }
+            _ => panic!("Unexpected event type"),
+        }
+    }
+
+    #[test]
+    fn test_room_event_types() {
+        // Test that all event types can be serialized
+        let events = vec![
+            RoomEvent::UserJoined {
+                user_id: UserId::new(),
+                username: "test".to_string(),
+            },
+            RoomEvent::UserLeft {
+                user_id: UserId::new(),
+                username: "test".to_string(),
+            },
+            RoomEvent::ChatMessage {
+                message_id: "msg123".to_string(),
+                user_id: UserId::new(),
+                username: "test".to_string(),
+                content: "hello".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+            RoomEvent::Danmaku {
+                user_id: UserId::new(),
+                username: "test".to_string(),
+                content: "hello".to_string(),
+                position: "top".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+            RoomEvent::PlaybackStateChanged {
+                playing: true,
+                position: 100,
+                speed: 1.0,
+                media_id: Some("media123".to_string()),
+            },
+            RoomEvent::MediaAdded {
+                media_id: "media123".to_string(),
+                title: "Test Video".to_string(),
+                url: "http://example.com/video.mp4".to_string(),
+                position: 1,
+            },
+            RoomEvent::MediaRemoved {
+                media_id: "media123".to_string(),
+            },
+            RoomEvent::PlaylistReordered {
+                media_ids: vec!["media1".to_string(), "media2".to_string()],
+            },
+            RoomEvent::PermissionChanged {
+                user_id: UserId::new(),
+                permissions: 123,
+            },
+            RoomEvent::MemberKicked {
+                user_id: UserId::new(),
+            },
+            RoomEvent::SettingsUpdated {
+                settings: serde_json::json!({"key": "value"}),
+            },
+            RoomEvent::RoomDeleted,
+        ];
+
+        for event in events {
+            let json = event.to_json().unwrap();
+            assert!(!json.is_empty());
+        }
     }
 }

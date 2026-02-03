@@ -206,11 +206,13 @@ impl PlaylistService {
     pub async fn delete_playlist(
         &self,
         room_id: RoomId,
-        _user_id: UserId,
+        user_id: UserId,
         playlist_id: PlaylistId,
     ) -> Result<()> {
         // Check permission (admin or creator)
-        // TODO: Verify user is creator or admin
+        self.permission_service
+            .is_admin_or_creator(&room_id, &user_id)
+            .await?;
 
         // Get playlist to verify ownership
         let playlist = self

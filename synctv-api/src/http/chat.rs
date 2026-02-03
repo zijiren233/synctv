@@ -11,7 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::http::{AppState, AppError, AppResult};
+use crate::http::{AppState, AppError, AppResult, middleware::AuthUser};
 use synctv_core::models::{RoomId, SendDanmakuRequest};
 
 /// Send chat message request
@@ -86,22 +86,19 @@ pub async fn send_chat_message(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Json(req): Json<SendMessageRequest>,
+    auth_user: AuthUser,
 ) -> AppResult<Json<SendMessageResponse>> {
     use synctv_core::service::ChatService;
 
-    // Get user ID from JWT (would normally come from middleware)
-    // For now, we'll need to add authentication middleware
-    let user_id = "user_id_from_jwt".to_string(); // TODO: Get from auth middleware
-
     let room_id = RoomId::from_string(room_id);
-    let user_id = synctv_core::models::UserId::from_string(user_id);
+    let user_id = auth_user.user_id;
 
     // Create chat service
     let chat_service = create_chat_service(&state);
 
     // Send message
     let message = chat_service
-        .send_message(room_id.clone(), user_id.clone(), req.content)
+        .send_message(room_id.clone(), user_id.clone(), req.content.clone())
         .await
         .map_err(|e| AppError::internal_server_error(&format!("Failed to send message: {}", e)))?;
 
@@ -112,6 +109,19 @@ pub async fn send_chat_message(
         .await
         .map_err(|e| AppError::internal_server_error(&format!("Failed to get username: {}", e)))?
         .unwrap_or_else(|| "Unknown".to_string());
+
+    // Publish to message hub for real-time delivery
+    use synctv_cluster::sync::ClusterEvent;
+    state.message_hub.broadcast(
+        &room_id,
+        ClusterEvent::ChatMessage {
+            room_id: room_id.clone(),
+            user_id: user_id.clone(),
+            username: username.clone(),
+            message: req.content,
+            timestamp: message.created_at,
+        },
+    );
 
     Ok(Json(SendMessageResponse {
         id: message.id,
@@ -180,12 +190,11 @@ pub async fn get_chat_history(
 pub async fn delete_chat_message(
     State(state): State<AppState>,
     Path((_room_id, message_id)): Path<(String, String)>,
+    auth_user: AuthUser,
 ) -> AppResult<impl IntoResponse> {
     use synctv_core::service::ChatService;
 
-    // Get user ID from JWT (would normally come from middleware)
-    let user_id = "user_id_from_jwt".to_string(); // TODO: Get from auth middleware
-    let user_id = synctv_core::models::UserId::from_string(user_id);
+    let user_id = auth_user.user_id;
 
     // Create chat service
     let chat_service = create_chat_service(&state);
@@ -210,27 +219,44 @@ pub async fn send_danmaku(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Json(mut req): Json<SendDanmakuRequest>,
+    auth_user: AuthUser,
 ) -> AppResult<Json<SendDanmakuResponse>> {
     use synctv_core::service::ChatService;
 
-    // Get user ID from JWT (would normally come from middleware)
-    let user_id = "user_id_from_jwt".to_string(); // TODO: Get from auth middleware
-    let user_id = synctv_core::models::UserId::from_string(user_id);
-
     let room_id = RoomId::from_string(room_id);
     req.room_id = room_id.clone();
+    let user_id = auth_user.user_id;
 
     // Create chat service
     let chat_service = create_chat_service(&state);
 
     // Send danmaku
     let danmaku = chat_service
-        .send_danmaku(room_id.clone(), user_id.clone(), req)
+        .send_danmaku(room_id.clone(), user_id.clone(), req.clone())
         .await
         .map_err(|e| AppError::internal_server_error(&format!("Failed to send danmaku: {}", e)))?;
 
-    // Publish to WebSocket/message hub for real-time delivery
-    // TODO: Add message publishing to message hub
+    // Get username for broadcasting
+    let username = state
+        .user_service
+        .get_username(&user_id)
+        .await
+        .map_err(|e| AppError::internal_server_error(&format!("Failed to get username: {}", e)))?
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    // Publish to message hub for real-time delivery
+    use synctv_cluster::sync::ClusterEvent;
+    state.message_hub.broadcast(
+        &room_id,
+        ClusterEvent::Danmaku {
+            room_id: room_id.clone(),
+            user_id: user_id.clone(),
+            username,
+            message: req.content,
+            position: req.position as f64,
+            timestamp: danmaku.timestamp,
+        },
+    );
 
     info!(
         room_id = room_id.as_str(),

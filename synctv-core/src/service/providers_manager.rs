@@ -137,20 +137,80 @@ impl ProvidersManager {
     ///
     /// # Returns
     /// Number of providers loaded
-    pub async fn load_from_config(&mut self, _config: &Config) -> Result<usize> {
+    pub async fn load_from_config(&mut self, config: &Config) -> Result<usize> {
         let mut count = 0;
 
-        // Load each provider from config
-        // For now, create default instances for all built-in providers
-        // TODO: Read actual provider configurations from config file
+        // Read provider configurations from config.media_providers.providers
+        // Each provider config should have:
+        // - instance_id: Unique identifier for this instance
+        // - provider_type: Type of provider (alist, emby, bilibili, etc.)
+        // - config: Provider-specific configuration (URL, credentials, etc.)
 
-        for provider_type in self.factories.keys() {
-            let instance_id = format!("{}_default", provider_type);
-            let provider_config = &serde_json::json!({});
+        // Check if providers is an object
+        if let Some(providers_obj) = config.media_providers.providers.as_object() {
+            for (instance_id, provider_config) in providers_obj {
+                // Extract provider_type from config (defaults to first part of instance_id)
+                let provider_type = provider_config
+                    .get("provider_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| {
+                        // Fallback: derive from instance_id (e.g., "alist_main" -> "alist")
+                        instance_id
+                            .split('_')
+                            .next()
+                            .unwrap_or("alist")
+                    });
 
-            self.create_provider(provider_type, &instance_id, provider_config)
-                .await?;
-            count += 1;
+                // Check if this provider type is registered
+                if !self.has_factory(provider_type) {
+                    tracing::warn!(
+                        "Unknown provider type '{}' for instance '{}', skipping",
+                        provider_type,
+                        instance_id
+                    );
+                    continue;
+                }
+
+                // Create the provider instance
+                match self
+                    .create_provider(provider_type, instance_id, provider_config)
+                    .await
+                {
+                    Ok(_) => {
+                        count += 1;
+                        tracing::info!(
+                            "Loaded provider instance: {} (type: {})",
+                            instance_id,
+                            provider_type
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to load provider instance '{}' (type: {}): {}",
+                            instance_id,
+                            provider_type,
+                            e
+                        );
+                        // Continue loading other providers
+                    }
+                }
+            }
+        }
+
+        // If no providers were configured, create default instances for all registered factories
+        if count == 0 {
+            tracing::info!(
+                "No providers configured, creating default instances for {} provider types",
+                self.factories.len()
+            );
+            for provider_type in self.factories.keys() {
+                let instance_id = format!("{}_default", provider_type);
+                let provider_config = &serde_json::json!({});
+
+                self.create_provider(provider_type, &instance_id, provider_config)
+                    .await?;
+                count += 1;
+            }
         }
 
         tracing::info!("Loaded {} providers from configuration", count);

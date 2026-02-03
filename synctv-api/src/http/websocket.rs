@@ -12,12 +12,12 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::http::AppState;
 use crate::impls::messaging::{StreamMessageHandler, StreamMessage, ProtoCodec, MessageSender};
 use synctv_core::models::{RoomId, UserId};
-use synctv_core::service::{RateLimiter, RateLimitConfig, ContentFilter};
+use synctv_core::service::{RateLimiter, RateLimitConfig, ContentFilter, auth::JwtValidator};
 use crate::proto::client::{ClientMessage, ServerMessage};
 
 /// WebSocket stream implementation of StreamMessage trait
@@ -88,7 +88,10 @@ pub async fn websocket_handler(
     Path(room_id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state, room_id))
+    // TODO: Extract JWT from query parameter or header before upgrade
+    // For now, all WebSocket connections use anonymous user IDs
+    // In production, clients should send JWT via query param: ws://host/room/123?token=xxx
+    ws.on_upgrade(move |socket| handle_socket(socket, state, room_id))
 }
 
 async fn handle_socket(
@@ -96,9 +99,16 @@ async fn handle_socket(
     state: AppState,
     room_id: String,
 ) {
-    // TODO: Extract user_id from JWT (similar to gRPC interceptor)
+    // TODO: Extract user_id from JWT token passed via query parameter
     let user_id = UserId::new();
-    let username = "anonymous".to_string();
+    // Try to get username from cache (will be None for anonymous users)
+    let username = state
+        .user_service
+        .get_username(&user_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "anonymous".to_string());
 
     info!(
         "WebSocket connection established: user={}, room={}",

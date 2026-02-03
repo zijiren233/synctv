@@ -102,7 +102,7 @@ impl RoomService {
             providers_manager.clone(),
         );
         let playback_service = PlaybackService::new(playback_repo.clone(), permission_service.clone(), media_service.clone(), media_repo.clone());
-        let notification_service = NotificationService::new();
+        let notification_service = NotificationService::default();
 
         Self {
             room_repo,
