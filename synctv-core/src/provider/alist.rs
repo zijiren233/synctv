@@ -9,6 +9,7 @@ use super::{
         AlistFileInfo,
     },
     MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
+    DynamicFolder, DirectoryItem, ItemType, NextPlayItem,
 };
 use crate::service::ProviderInstanceManager;
 use async_trait::async_trait;
@@ -268,6 +269,295 @@ impl MediaProvider for AlistProvider {
             format!("alist:{}:{}", host_hash, config.path)
         } else {
             "alist:unknown".to_string()
+        }
+    }
+
+    fn as_dynamic_folder(&self) -> Option<&dyn DynamicFolder> {
+        Some(self)
+    }
+}
+
+/// Implement `DynamicFolder` trait for Alist
+///
+/// Allows browsing Alist directories and getting next item for auto-play
+#[async_trait]
+impl DynamicFolder for AlistProvider {
+    async fn list_playlist(
+        &self,
+        _ctx: &ProviderContext<'_>,
+        playlist: &crate::models::Playlist,
+        relative_path: Option<&str>,
+        page: usize,
+        page_size: usize,
+    ) -> Result<Vec<DirectoryItem>, ProviderError> {
+        // Parse playlist's source_config to get base path
+        let config = playlist
+            .source_config
+            .as_ref()
+            .ok_or_else(|| ProviderError::InvalidConfig("Missing source_config".to_string()))?;
+
+        let base_config = AlistSourceConfig::try_from(config)?;
+
+        // Construct full path: base_path + relative_path
+        let full_path = if let Some(rel) = relative_path {
+            if rel.starts_with('/') {
+                format!("{}{}", base_config.path.trim_end_matches('/'), rel)
+            } else {
+                format!("{}/{}", base_config.path.trim_end_matches('/'), rel)
+            }
+        } else {
+            base_config.path.clone()
+        };
+
+        // Get appropriate client
+        let client = self
+            .get_client(base_config.provider_instance_name.as_deref())
+            .await;
+
+        // Build list request
+        let list_req = synctv_providers::grpc::alist::FsListReq {
+            host: base_config.host.clone(),
+            token: base_config.token.clone(),
+            path: full_path.clone(),
+            password: base_config.password.clone().unwrap_or_default(),
+            page: page as u64,
+            per_page: page_size as u64,
+            refresh: false,
+        };
+
+        // Call fs_list
+        let list_resp = client.fs_list(list_req).await?;
+
+        // Convert to DirectoryItem list
+        let items: Vec<DirectoryItem> = list_resp
+            .content
+            .into_iter()
+            .filter_map(|file_item| {
+                // Determine item type
+                let item_type = if file_item.is_dir {
+                    ItemType::Folder
+                } else {
+                    // Check if it's a video file
+                    let ext = file_item
+                        .name
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or("")
+                        .to_lowercase();
+                    match ext.as_str() {
+                        "mp4" | "mkv" | "avi" | "mov" | "flv" | "webm" | "m4v" | "wmv" | "m3u8" => {
+                            ItemType::Video
+                        }
+                        "mp3" | "flac" | "wav" | "aac" | "m4a" | "ogg" => ItemType::Audio,
+                        _ => return None, // Skip non-media files
+                    }
+                };
+
+                // Construct relative path for this item
+                let item_relative_path = if let Some(rel) = relative_path {
+                    format!("{}/{}", rel.trim_end_matches('/'), file_item.name)
+                } else {
+                    format!("/{}", file_item.name)
+                };
+
+                Some(DirectoryItem {
+                    name: file_item.name,
+                    item_type,
+                    path: item_relative_path,
+                    size: Some(file_item.size),
+                    thumbnail: if file_item.thumb.is_empty() {
+                        None
+                    } else {
+                        Some(file_item.thumb)
+                    },
+                    modified_at: Some(file_item.modified as i64),
+                })
+            })
+            .collect();
+
+        Ok(items)
+    }
+
+    async fn next(
+        &self,
+        ctx: &ProviderContext<'_>,
+        playlist: &crate::models::Playlist,
+        _playing_media: &crate::models::Media,
+        relative_path: &str,
+        play_mode: crate::models::PlayMode,
+    ) -> Result<Option<NextPlayItem>, ProviderError> {
+        use crate::models::PlayMode;
+
+        match play_mode {
+            PlayMode::RepeatOne => {
+                // Repeat current: return None to signal player to replay current
+                Ok(None)
+            }
+            PlayMode::Sequential | PlayMode::RepeatAll => {
+                // Get directory listing
+                let parent_path = relative_path.rsplit_once('/').map(|x| x.0)
+                    .and_then(|s| if s.is_empty() { None } else { Some(s) });
+
+                let items = self
+                    .list_playlist(ctx, playlist, parent_path, 0, 1000)
+                    .await?;
+
+                // Find current item index
+                let current_idx = items
+                    .iter()
+                    .position(|item| item.path == relative_path);
+
+                if let Some(idx) = current_idx {
+                    // Get next video item
+                    let next_item = items
+                        .iter()
+                        .skip(idx + 1)
+                        .find(|item| item.item_type == ItemType::Video);
+
+                    if let Some(next) = next_item {
+                        // Parse base config to construct source_config
+                        let config = playlist
+                            .source_config
+                            .as_ref()
+                            .ok_or_else(|| {
+                                ProviderError::InvalidConfig("Missing source_config".to_string())
+                            })?;
+                        let base_config = AlistSourceConfig::try_from(config)?;
+
+                        // Construct full path for next item
+                        let full_path = format!(
+                            "{}{}",
+                            base_config.path.trim_end_matches('/'),
+                            next.path
+                        );
+
+                        let source_config = json!({
+                            "host": base_config.host,
+                            "token": base_config.token,
+                            "path": full_path,
+                            "password": base_config.password,
+                            "provider_instance_name": base_config.provider_instance_name,
+                        });
+
+                        return Ok(Some(NextPlayItem {
+                            name: next.name.clone(),
+                            item_type: next.item_type,
+                            source_config,
+                            metadata: json!({
+                                "size": next.size,
+                                "thumbnail": next.thumbnail,
+                                "modified_at": next.modified_at,
+                            }),
+                            provider_data: json!({}),
+                            relative_path: next.path.clone(),
+                        }));
+                    } else if play_mode == PlayMode::RepeatAll {
+                        // Wrap around to first video
+                        let first_video = items
+                            .iter()
+                            .find(|item| item.item_type == ItemType::Video);
+
+                        if let Some(first) = first_video {
+                            let config = playlist.source_config.as_ref().ok_or_else(|| {
+                                ProviderError::InvalidConfig("Missing source_config".to_string())
+                            })?;
+                            let base_config = AlistSourceConfig::try_from(config)?;
+
+                            let full_path = format!(
+                                "{}{}",
+                                base_config.path.trim_end_matches('/'),
+                                first.path
+                            );
+
+                            let source_config = json!({
+                                "host": base_config.host,
+                                "token": base_config.token,
+                                "path": full_path,
+                                "password": base_config.password,
+                                "provider_instance_name": base_config.provider_instance_name,
+                            });
+
+                            return Ok(Some(NextPlayItem {
+                                name: first.name.clone(),
+                                item_type: first.item_type,
+                                source_config,
+                                metadata: json!({
+                                    "size": first.size,
+                                    "thumbnail": first.thumbnail,
+                                    "modified_at": first.modified_at,
+                                }),
+                                provider_data: json!({}),
+                                relative_path: first.path.clone(),
+                            }));
+                        }
+                    }
+                }
+
+                // No next item found
+                Ok(None)
+            }
+            PlayMode::Shuffle => {
+                // Get all video items and pick random
+                let parent_path = relative_path.rsplit_once('/').map(|x| x.0)
+                    .and_then(|s| if s.is_empty() { None } else { Some(s) });
+
+                let items = self
+                    .list_playlist(ctx, playlist, parent_path, 0, 1000)
+                    .await?;
+
+                let videos: Vec<_> = items
+                    .iter()
+                    .filter(|item| item.item_type == ItemType::Video)
+                    .collect();
+
+                if videos.is_empty() {
+                    return Ok(None);
+                }
+
+                // Simple random selection (use timestamp as seed)
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let seed = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let random_idx = (seed as usize) % videos.len();
+                let random_item = videos[random_idx];
+
+                let config = playlist
+                    .source_config
+                    .as_ref()
+                    .ok_or_else(|| {
+                        ProviderError::InvalidConfig("Missing source_config".to_string())
+                    })?;
+                let base_config = AlistSourceConfig::try_from(config)?;
+
+                let full_path = format!(
+                    "{}{}",
+                    base_config.path.trim_end_matches('/'),
+                    random_item.path
+                );
+
+                let source_config = json!({
+                    "host": base_config.host,
+                    "token": base_config.token,
+                    "path": full_path,
+                    "password": base_config.password,
+                    "provider_instance_name": base_config.provider_instance_name,
+                });
+
+                Ok(Some(NextPlayItem {
+                    name: random_item.name.clone(),
+                    item_type: random_item.item_type,
+                    source_config,
+                    metadata: json!({
+                        "size": random_item.size,
+                        "thumbnail": random_item.thumbnail,
+                        "modified_at": random_item.modified_at,
+                    }),
+                    provider_data: json!({}),
+                    relative_path: random_item.path.clone(),
+                }))
+            }
         }
     }
 }

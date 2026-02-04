@@ -70,7 +70,8 @@ pub struct AuditPartitionManager {
 
 impl AuditPartitionManager {
     /// Create a new partition manager
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -86,10 +87,10 @@ impl AuditPartitionManager {
         .bind(partition_count)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Internal(format!("Failed to ensure indexes: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to ensure indexes: {e}")))?;
 
         let result: IndexEnsureResult = serde_json::from_value(result_json)
-            .map_err(|e| Error::Internal(format!("Failed to parse index result: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to parse index result: {e}")))?;
 
         info!(
             "Indexes ensured: {} partitions, {} indexes created",
@@ -111,10 +112,10 @@ impl AuditPartitionManager {
         .bind(months_ahead)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Internal(format!("Failed to create partitions: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to create partitions: {e}")))?;
 
         let result: PartitionCreationResult = serde_json::from_value(result_json)
-            .map_err(|e| Error::Internal(format!("Failed to parse partition result: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to parse partition result: {e}")))?;
 
         info!(
             "Partitions created: {}/{} successful",
@@ -134,7 +135,7 @@ impl AuditPartitionManager {
         .bind(date)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Internal(format!("Failed to create partition: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to create partition: {e}")))?;
 
         let partition_name = result_json["partition_name"]
             .as_str()
@@ -159,7 +160,7 @@ impl AuditPartitionManager {
         .bind(keep_months)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Internal(format!("Failed to drop partitions: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to drop partitions: {e}")))?;
 
         let dropped_count = result_json["dropped_count"]
             .as_i64()
@@ -172,7 +173,7 @@ impl AuditPartitionManager {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|v| v["partition"].as_str())
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect()
             })
             .unwrap_or_default();
@@ -189,10 +190,10 @@ impl AuditPartitionManager {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Internal(format!("Failed to check partition health: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to check partition health: {e}")))?;
 
         let health: PartitionHealth = serde_json::from_value(result_json)
-            .map_err(|e| Error::Internal(format!("Failed to parse health result: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to parse health result: {e}")))?;
 
         match health.health_status.as_str() {
             "healthy" => {
@@ -221,10 +222,10 @@ impl AuditPartitionManager {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Internal(format!("Failed to get partition stats: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to get partition stats: {e}")))?;
 
         let stats: PartitionStats = serde_json::from_value(result_json)
-            .map_err(|e| Error::Internal(format!("Failed to parse stats result: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to parse stats result: {e}")))?;
 
         info!(
             "Audit log stats: {} partitions, {} total records",
@@ -237,6 +238,7 @@ impl AuditPartitionManager {
     /// Start automatic partition management task
     ///
     /// Spawns a background task that periodically checks and creates partitions
+    #[must_use] 
     pub fn start_auto_management(&self, check_interval_hours: u64) -> tokio::task::JoinHandle<()> {
         let manager = self.clone();
 

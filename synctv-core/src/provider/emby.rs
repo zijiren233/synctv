@@ -4,10 +4,12 @@
 
 use super::{
     provider_client::{create_remote_emby_client, load_local_emby_client, EmbyClientArc},
-    MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
+    DirectoryItem, DynamicFolder, ItemType, MediaProvider, NextPlayItem, PlaybackInfo,
+    PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
 };
 use crate::service::ProviderInstanceManager;
 use async_trait::async_trait;
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -279,5 +281,226 @@ impl MediaProvider for EmbyProvider {
 
     fn cache_key(&self, _ctx: &ProviderContext<'_>, source_config: &Value) -> String {
         format!("emby:{source_config}")
+    }
+
+    fn as_dynamic_folder(&self) -> Option<&dyn DynamicFolder> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl DynamicFolder for EmbyProvider {
+    async fn list_playlist(
+        &self,
+        _ctx: &ProviderContext<'_>,
+        playlist: &crate::models::Playlist,
+        relative_path: Option<&str>,
+        page: usize,
+        page_size: usize,
+    ) -> Result<Vec<DirectoryItem>, ProviderError> {
+        // Parse base config from playlist.source_config
+        let config = playlist
+            .source_config
+            .as_ref()
+            .ok_or_else(|| ProviderError::InvalidConfig("Missing source_config".to_string()))?;
+        let base_config: EmbySourceConfig = serde_json::from_value(config.clone()).map_err(|e| {
+            ProviderError::InvalidConfig(format!("Failed to parse Emby playlist config: {e}"))
+        })?;
+
+        // Determine path to list
+        // If relative_path is provided, use it as the item_id to list that folder's contents
+        // Otherwise, use the base config's item_id
+        let target_path = relative_path
+            .filter(|s| !s.is_empty() && *s != "/")
+            .unwrap_or(&base_config.item_id);
+
+        // Call fs_list to get items
+        let client = self
+            .get_client(base_config.provider_instance_name.as_deref())
+            .await;
+
+        let list_req = synctv_providers::grpc::emby::FsListReq {
+            host: base_config.host.clone(),
+            token: base_config.token.clone(),
+            path: target_path.to_string(),
+            start_index: (page * page_size) as u64,
+            limit: page_size as u64,
+            search_term: String::new(),
+            user_id: base_config.user_id.clone(),
+        };
+
+        let response = client.fs_list(list_req).await?;
+
+        // Convert Item to DirectoryItem
+        let items: Vec<DirectoryItem> = response
+            .items
+            .into_iter()
+            .filter_map(|item| {
+                // Determine item type
+                let item_type = if item.is_folder {
+                    ItemType::Folder
+                } else {
+                    match item.r#type.as_str() {
+                        "Movie" | "Episode" | "Video" => ItemType::Video,
+                        "Audio" | "MusicAlbum" => ItemType::Audio,
+                        _ => return None, // Skip other types
+                    }
+                };
+
+                Some(DirectoryItem {
+                    name: item.name,
+                    path: item.id, // Use item_id as path
+                    item_type,
+                    size: None, // Emby doesn't provide size in list
+                    thumbnail: None, // TODO: Extract from image tags if available
+                    modified_at: None, // Emby doesn't provide modified time in list
+                })
+            })
+            .collect();
+
+        Ok(items)
+    }
+
+    async fn next(
+        &self,
+        _ctx: &ProviderContext<'_>,
+        playlist: &crate::models::Playlist,
+        _playing_media: &crate::models::Media,
+        relative_path: &str,
+        play_mode: crate::models::PlayMode,
+    ) -> Result<Option<NextPlayItem>, ProviderError> {
+        use crate::models::PlayMode;
+
+        // Parse base playlist config
+        let config = playlist
+            .source_config
+            .as_ref()
+            .ok_or_else(|| ProviderError::InvalidConfig("Missing source_config".to_string()))?;
+        let base_config: EmbySourceConfig = serde_json::from_value(config.clone()).map_err(|e| {
+            ProviderError::InvalidConfig(format!("Failed to parse Emby playlist config: {e}"))
+        })?;
+
+        match play_mode {
+            PlayMode::RepeatOne => {
+                // Repeat current: return None to signal player to replay current
+                Ok(None)
+            }
+            PlayMode::Sequential | PlayMode::RepeatAll => {
+                // Get directory listing
+                // Extract parent path from relative_path (item_id in Emby)
+                // For Emby, we need to query the parent folder
+                // Since relative_path is the item_id, we need to get items from the base config's path
+                let items = self
+                    .list_playlist(_ctx, playlist, Some(&base_config.item_id), 0, 1000)
+                    .await?;
+
+                // Find current item index
+                let current_idx = items.iter().position(|item| item.path == relative_path);
+
+                if let Some(idx) = current_idx {
+                    // Get next video/audio item
+                    let next_item = items.iter().skip(idx + 1).find(|item| {
+                        matches!(item.item_type, ItemType::Video | ItemType::Audio)
+                    });
+
+                    if let Some(next) = next_item {
+                        // Construct source_config for next item
+                        let source_config = json!({
+                            "host": base_config.host,
+                            "token": base_config.token,
+                            "user_id": base_config.user_id,
+                            "item_id": next.path,
+                            "provider_instance_name": base_config.provider_instance_name,
+                        });
+
+                        return Ok(Some(NextPlayItem {
+                            name: next.name.clone(),
+                            item_type: next.item_type,
+                            source_config,
+                            metadata: json!({}),
+                            provider_data: json!({}),
+                            relative_path: next.path.clone(),
+                        }));
+                    } else if play_mode == PlayMode::RepeatAll {
+                        // Wrap around to first video/audio
+                        let first_item = items.iter().find(|item| {
+                            matches!(item.item_type, ItemType::Video | ItemType::Audio)
+                        });
+
+                        if let Some(first) = first_item {
+                            let source_config = json!({
+                                "host": base_config.host,
+                                "token": base_config.token,
+                                "user_id": base_config.user_id,
+                                "item_id": first.path,
+                                "provider_instance_name": base_config.provider_instance_name,
+                            });
+
+                            return Ok(Some(NextPlayItem {
+                                name: first.name.clone(),
+                                item_type: first.item_type,
+                                source_config,
+                                metadata: json!({}),
+                                provider_data: json!({}),
+                                relative_path: first.path.clone(),
+                            }));
+                        }
+                    }
+                }
+
+                // No next item found
+                Ok(None)
+            }
+            PlayMode::Shuffle => {
+                // Get all video/audio items and pick random
+                let items = self
+                    .list_playlist(_ctx, playlist, Some(&base_config.item_id), 0, 1000)
+                    .await?;
+
+                let playable_items: Vec<_> = items
+                    .iter()
+                    .filter(|item| matches!(item.item_type, ItemType::Video | ItemType::Audio))
+                    .collect();
+
+                if playable_items.is_empty() {
+                    return Ok(None);
+                }
+
+                // Pick random item (excluding current)
+                let mut rng = rand::thread_rng();
+                let candidates: Vec<_> = playable_items
+                    .iter()
+                    .filter(|item| item.path != relative_path)
+                    .collect();
+
+                let random_item = if candidates.is_empty() {
+                    // Only one item, pick it
+                    playable_items.choose(&mut rng).copied()
+                } else {
+                    candidates.choose(&mut rng).copied().copied()
+                };
+
+                if let Some(random) = random_item {
+                    let source_config = json!({
+                        "host": base_config.host,
+                        "token": base_config.token,
+                        "user_id": base_config.user_id,
+                        "item_id": random.path,
+                        "provider_instance_name": base_config.provider_instance_name,
+                    });
+
+                    Ok(Some(NextPlayItem {
+                        name: random.name.clone(),
+                        item_type: random.item_type,
+                        source_config,
+                        metadata: json!({}),
+                        provider_data: json!({}),
+                        relative_path: random.path.clone(),
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
     }
 }

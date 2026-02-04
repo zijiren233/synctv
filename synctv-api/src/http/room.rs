@@ -12,7 +12,7 @@ use synctv_core::models::{
 };
 
 use super::{middleware::AuthUser, AppResult, AppState};
-use crate::proto::client::{CreateRoomResponse, CreateRoomRequest, GetRoomResponse, JoinRoomResponse, JoinRoomRequest, LeaveRoomResponse, LeaveRoomRequest, DeleteRoomResponse, DeleteRoomRequest, AddMediaResponse, AddMediaRequest, RemoveMediaResponse, RemoveMediaRequest, GetPlaylistResponse, SwapMediaResponse, SwapMediaRequest, PlayResponse, PlayRequest, PauseResponse, SeekResponse, SeekRequest, ChangeSpeedResponse, ChangeSpeedRequest, SwitchMediaResponse, SwitchMediaRequest, GetPlaybackStateResponse, GetPlaybackStateRequest, GetRoomMembersResponse, CheckRoomResponse, ListRoomsResponse, ListRoomsRequest, SetRoomSettingsResponse, SetRoomSettingsRequest};
+use crate::proto::client::{CreateRoomResponse, CreateRoomRequest, GetRoomResponse, JoinRoomResponse, JoinRoomRequest, LeaveRoomResponse, LeaveRoomRequest, DeleteRoomResponse, DeleteRoomRequest, AddMediaResponse, AddMediaRequest, RemoveMediaResponse, RemoveMediaRequest, ListPlaylistResponse, SwapMediaResponse, SwapMediaRequest, PlayResponse, PlayRequest, PauseResponse, SeekResponse, SeekRequest, ChangeSpeedResponse, ChangeSpeedRequest, SwitchMediaResponse, SwitchMediaRequest, GetPlaybackStateResponse, GetPlaybackStateRequest, GetRoomMembersResponse, CheckRoomResponse, ListRoomsResponse, ListRoomsRequest, SetRoomSettingsResponse, SetRoomSettingsRequest};
 
 /// Room settings for HTTP requests
 #[derive(Debug, Clone, Default)]
@@ -258,7 +258,7 @@ pub async fn get_playlist(
     _auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<GetPlaylistResponse>> {
+) -> AppResult<Json<ListPlaylistResponse>> {
     let response = state
         .client_api
         .get_playlist(&room_id)

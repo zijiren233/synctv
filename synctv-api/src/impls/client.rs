@@ -483,7 +483,7 @@ impl ClientApiImpl {
     pub async fn get_playlist(
         &self,
         room_id: &str,
-    ) -> Result<crate::proto::client::GetPlaylistResponse, String> {
+    ) -> Result<crate::proto::client::ListPlaylistResponse, String> {
         let rid = RoomId::from_string(room_id.to_string());
         let media_list = self.room_service.get_playlist(&rid).await
             .map_err(|e| e.to_string())?;
@@ -505,9 +505,66 @@ impl ClientApiImpl {
             updated_at: 0,
         });
 
-        Ok(crate::proto::client::GetPlaylistResponse {
+        Ok(crate::proto::client::ListPlaylistResponse {
             playlist,
             media,
+            total,
+        })
+    }
+
+    pub async fn list_playlist_items(
+        &self,
+        user_id: &str,
+        req: crate::proto::client::ListPlaylistItemsRequest,
+    ) -> Result<crate::proto::client::ListPlaylistItemsResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(req.room_id.clone());
+        let playlist_id = synctv_core::models::PlaylistId::from_string(req.playlist_id.clone());
+
+        let relative_path = if req.relative_path.is_empty() {
+            None
+        } else {
+            Some(req.relative_path.as_str())
+        };
+
+        let page = req.page.max(0) as usize;
+        let page_size = req.page_size.clamp(1, 100) as usize;
+
+        let items = self
+            .room_service
+            .media_service()
+            .list_dynamic_playlist_items(rid, uid, &playlist_id, relative_path, page, page_size)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Convert DirectoryItem to proto DirectoryItem
+        let proto_items: Vec<_> = items
+            .into_iter()
+            .map(|item| {
+                use synctv_core::provider::ItemType;
+                let item_type = match item.item_type {
+                    ItemType::Video => crate::proto::client::ItemType::Video as i32,
+                    ItemType::Audio => crate::proto::client::ItemType::Audio as i32,
+                    ItemType::Folder => crate::proto::client::ItemType::Folder as i32,
+                    ItemType::Live => crate::proto::client::ItemType::Live as i32,
+                    ItemType::File => crate::proto::client::ItemType::File as i32,
+                };
+
+                crate::proto::client::DirectoryItem {
+                    name: item.name,
+                    item_type,
+                    path: item.path,
+                    size: item.size.map(|s| s as i64),
+                    thumbnail: item.thumbnail,
+                    modified_at: item.modified_at,
+                }
+            })
+            .collect();
+
+        let total = proto_items.len() as i32;
+
+        Ok(crate::proto::client::ListPlaylistItemsResponse {
+            items: proto_items,
             total,
         })
     }

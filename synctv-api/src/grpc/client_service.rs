@@ -18,7 +18,7 @@ use synctv_core::service::{
 use crate::proto::client::{
     auth_service_server::AuthService, email_service_server::EmailService,
     media_service_server::MediaService, public_service_server::PublicService,
-    room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, GetPlaylistRequest, GetPlaylistResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, GetPlaylistsRequest, GetPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse,
+    room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse,
 };
 
 /// Configuration for `ClientService`
@@ -149,8 +149,8 @@ impl ClientServiceImpl {
                     username,
                     content: message,
                     timestamp: timestamp.timestamp(),
-                    position: position.clone(),
-                    color: color.clone(),
+                    position: position,
+                    color: color,
                 })),
             }),
 
@@ -1651,10 +1651,10 @@ impl MediaService for ClientServiceImpl {
         Ok(Response::new(RemoveMediaResponse { success: true }))
     }
 
-    async fn get_playlist(
+    async fn list_playlist(
         &self,
-        request: Request<GetPlaylistRequest>,
-    ) -> Result<Response<GetPlaylistResponse>, Status> {
+        request: Request<ListPlaylistRequest>,
+    ) -> Result<Response<ListPlaylistResponse>, Status> {
         let room_id = self.get_room_id(&request)?;
 
         let media_list = self
@@ -1707,9 +1707,77 @@ impl MediaService for ClientServiceImpl {
             updated_at: 0,
         });
 
-        Ok(Response::new(GetPlaylistResponse {
+        Ok(Response::new(ListPlaylistResponse {
             playlist,
             media: proto_media,
+            total,
+        }))
+    }
+
+    async fn list_playlist_items(
+        &self,
+        request: Request<ListPlaylistItemsRequest>,
+    ) -> Result<Response<ListPlaylistItemsResponse>, Status> {
+        let user_id = self.get_user_id(&request)?;
+        let req = request.into_inner();
+
+        let room_id = RoomId::from_string(req.room_id);
+        let playlist_id = synctv_core::models::PlaylistId::from_string(req.playlist_id);
+
+        let relative_path = if req.relative_path.is_empty() {
+            None
+        } else {
+            Some(req.relative_path.as_str())
+        };
+
+        let page = req.page.max(0) as usize;
+        let page_size = req.page_size.clamp(1, 100) as usize;
+
+        let items = self
+            .room_service
+            .media_service()
+            .list_dynamic_playlist_items(room_id, user_id, &playlist_id, relative_path, page, page_size)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to list playlist items: {}", e);
+                match e {
+                    synctv_core::Error::Authorization(msg) | synctv_core::Error::PermissionDenied(msg) => {
+                        Status::permission_denied(msg)
+                    }
+                    synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                    synctv_core::Error::InvalidInput(msg) => Status::invalid_argument(msg),
+                    _ => Status::internal("Failed to list playlist items"),
+                }
+            })?;
+
+        // Convert DirectoryItem to proto DirectoryItem
+        let proto_items: Vec<_> = items
+            .into_iter()
+            .map(|item| {
+                use synctv_core::provider::ItemType as CoreItemType;
+                let item_type = match item.item_type {
+                    CoreItemType::Video => crate::proto::client::ItemType::Video as i32,
+                    CoreItemType::Audio => crate::proto::client::ItemType::Audio as i32,
+                    CoreItemType::Folder => crate::proto::client::ItemType::Folder as i32,
+                    CoreItemType::Live => crate::proto::client::ItemType::Live as i32,
+                    CoreItemType::File => crate::proto::client::ItemType::File as i32,
+                };
+
+                crate::proto::client::DirectoryItem {
+                    name: item.name,
+                    item_type,
+                    path: item.path,
+                    size: item.size.map(|s| s as i64),
+                    thumbnail: item.thumbnail,
+                    modified_at: item.modified_at,
+                }
+            })
+            .collect();
+
+        let total = proto_items.len() as i32;
+
+        Ok(Response::new(ListPlaylistItemsResponse {
+            items: proto_items,
             total,
         }))
     }
@@ -2067,10 +2135,10 @@ impl MediaService for ClientServiceImpl {
         Err(Status::unimplemented("Playlist management not yet implemented"))
     }
 
-    async fn get_playlists(
+    async fn list_playlists(
         &self,
-        _request: Request<GetPlaylistsRequest>,
-    ) -> Result<Response<GetPlaylistsResponse>, Status> {
+        _request: Request<ListPlaylistsRequest>,
+    ) -> Result<Response<ListPlaylistsResponse>, Status> {
         Err(Status::unimplemented("Playlist management not yet implemented"))
     }
 

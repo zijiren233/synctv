@@ -11,7 +11,7 @@ use crate::{
     models::{Media, MediaId, PlaylistId, RoomId, UserId, PermissionBits},
     repository::{MediaRepository, PlaylistRepository},
     service::{permission::PermissionService, ProvidersManager},
-    provider::ProviderContext,
+    provider::{ProviderContext, DirectoryItem},
     Error, Result,
 };
 use serde_json::Value as JsonValue;
@@ -391,6 +391,89 @@ impl MediaService {
     /// Count media items in a playlist
     pub async fn count_playlist_media(&self, playlist_id: &PlaylistId) -> Result<i64> {
         self.media_repo.count_by_playlist(playlist_id).await
+    }
+
+    /// List dynamic playlist items
+    ///
+    /// For dynamic playlists (provider-based folders), this fetches the directory listing
+    /// from the provider's `DynamicFolder` implementation.
+    ///
+    /// # Arguments
+    /// * `room_id` - Room ID for permission check
+    /// * `user_id` - User ID for permission check
+    /// * `playlist_id` - Playlist ID to list
+    /// * `relative_path` - Relative path within the dynamic folder (empty for root)
+    /// * `page` - Page number (0-indexed)
+    /// * `page_size` - Items per page
+    ///
+    /// # Returns
+    /// List of directory items (files and folders)
+    ///
+    /// # Errors
+    /// - `Error::NotFound` if playlist doesn't exist
+    /// - `Error::InvalidOperation` if playlist is not dynamic
+    /// - `Error::ProviderError` if provider fails
+    pub async fn list_dynamic_playlist_items(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        playlist_id: &PlaylistId,
+        relative_path: Option<&str>,
+        page: usize,
+        page_size: usize,
+    ) -> Result<Vec<DirectoryItem>> {
+        // Check permission
+        self.permission_service
+            .check_permission(&room_id, &user_id, PermissionBits::VIEW_PLAYLIST)
+            .await?;
+
+        // Get playlist
+        let playlist = self
+            .playlist_repo
+            .get_by_id(playlist_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("Playlist not found".to_string()))?;
+
+        // Verify playlist belongs to the room
+        if playlist.room_id != room_id {
+            return Err(Error::Authorization("Playlist does not belong to this room".to_string()));
+        }
+
+        // Check if playlist is dynamic
+        if !playlist.is_dynamic() {
+            return Err(Error::InvalidInput("Playlist is not dynamic".to_string()));
+        }
+
+        // Get provider
+        let provider_name = playlist.source_provider.as_ref()
+            .ok_or_else(|| Error::InvalidInput("Dynamic playlist missing provider".to_string()))?;
+
+        let provider = self.providers_manager
+            .get_by_type(provider_name)
+            .await
+            .ok_or_else(|| Error::NotFound(format!("Provider not found: {provider_name}")))?;
+
+        // Check if provider implements DynamicFolder trait
+        let dynamic_folder = provider.as_dynamic_folder()
+            .ok_or_else(|| Error::InvalidInput(format!("Provider {provider_name} does not support dynamic folders")))?;
+
+        // Create context
+        let ctx = ProviderContext {
+            user_id: Some(user_id.as_str()),
+            room_id: Some(room_id.as_str()),
+            base_url: None,
+            key_prefix: "synctv",
+            db: None,
+            redis: None,
+        };
+
+        // List items
+        let items = dynamic_folder
+            .list_playlist(&ctx, &playlist, relative_path, page, page_size)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to list playlist items: {e}")))?;
+
+        Ok(items)
     }
 }
 

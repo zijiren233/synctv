@@ -199,6 +199,20 @@ pub trait MediaProvider: Send + Sync {
         }
     }
 
+    // ========== Optional Capabilities ==========
+
+    /// Cast to `DynamicFolder` trait if supported
+    ///
+    /// Providers that implement `DynamicFolder` trait should override this
+    /// to return `Some(self)` for dynamic folder listing capability.
+    ///
+    /// # Returns
+    /// - `Some(&dyn DynamicFolder)` if provider supports dynamic folders
+    /// - `None` if provider doesn't support this capability
+    fn as_dynamic_folder(&self) -> Option<&dyn DynamicFolder> {
+        None
+    }
+
     // ========== Validation ==========
 
     /// Validate `source_config` before saving to database

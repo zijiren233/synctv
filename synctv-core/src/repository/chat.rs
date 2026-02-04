@@ -158,7 +158,7 @@ impl ChatRepository {
 
     /// Delete old messages for all rooms in a single query (keep only last N messages per room)
     ///
-    /// This is much more efficient than calling cleanup_old_messages() for each room individually.
+    /// This is much more efficient than calling `cleanup_old_messages()` for each room individually.
     /// Uses window functions to identify messages to delete across all rooms.
     /// Only processes rooms with recent activity (messages within the last few minutes).
     ///

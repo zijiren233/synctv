@@ -76,14 +76,112 @@
     - 支持媒体级元数据（duration、thumbnail、title等）
     - metadata动态生成，不浪费数据库存储空间
 
-- [ ] **动态文件夹支持** - 4-5天
-  - 问题: 无法浏览Alist/Emby文件夹结构
-  - 任务:
-    - [ ] 添加`parent_id`字段到Media表
-    - [ ] 添加`is_folder`/`is_dynamic_folder`标记
-    - [ ] 实现文件夹浏览API（向上/向下导航）
-    - [ ] 从Alist/Emby获取文件夹列表
-    - [ ] 添加数据库迁移
+- [ ] **动态文件夹支持** - 1.5-2天（基础设施已完成80%）
+  - **设计理念**: Playlist作为文件夹容器，Media作为文件，无需修改Media表结构
+  - **架构说明**:
+    - **不使用通用browse接口**：每个provider注册自己的特定API
+    - **客户端生成source_config**：用户调用provider特定接口 → 返回视频信息 → 客户端生成source_config → 调用添加media API
+    - **实现层级**：synctv-api/src/impls/providers（业务逻辑） → HTTP/gRPC（薄包装层）
+    - **Proto定义**：synctv-proto/proto/providers/{provider}.proto
+
+  - **现状分析**:
+    - ✅ **数据模型完善** (100%):
+      - Playlist模型已有动态文件夹字段：`source_provider`, `source_config`, `provider_instance_name`
+      - Playlist.is_dynamic()和is_static()方法已实现
+      - Media模型无需修改（作为具体文件）
+
+    - ✅ **Provider trait架构** (100%):
+      - MediaProvider trait（核心，generate_playback必须实现）
+      - DynamicFolder trait（可选，list_playlist + next方法）
+      - PlaybackResult, DirectoryItem, NextPlayItem等结构体已定义
+
+    - ✅ **Proto接口定义** (100%):
+      - `synctv-proto/proto/providers/bilibili.proto`: Parse, LoginQR, CheckQR, GetCaptcha, SendSMS, LoginSMS, GetUserInfo, Logout
+      - `synctv-proto/proto/providers/alist.proto`: Login, **List**, GetMe, Logout, GetBinds
+      - `synctv-proto/proto/providers/emby.proto`: Login, **List**, GetMe, Logout, GetBinds
+
+    - ✅ **API Implementation骨架** (80%):
+      - `synctv-api/src/impls/providers/bilibili.rs`: 已实现parse, login_qr, check_qr等方法
+      - `synctv-api/src/impls/providers/alist.rs`: 已实现login, **list**, get_me等方法
+      - `synctv-api/src/impls/providers/emby.rs`: 已实现login, **list**, get_me等方法
+
+    - ✅ **HTTP路由骨架** (80%):
+      - `synctv-api/src/http/providers/bilibili.rs`: HTTP handler已存在
+      - `synctv-api/src/http/providers/alist.rs`: HTTP handler已存在
+      - `synctv-api/src/http/providers/emby.rs`: HTTP handler已存在
+
+  - ❌ **待实现部分** (预计1.5-2天):
+
+    - [ ] **1. Provider特定接口完善** (1天)
+      - [ ] **Bilibili** (0.3天):
+        - ✅ Parse接口已实现（返回VideoInfo列表，包含bvid/cid/epid）
+        - ✅ 登录相关已实现
+        - [ ] 验证parse返回的数据格式符合客户端生成source_config的需求
+        - [ ] 确认parse接口是否需要返回更多metadata（duration, thumbnail等）
+
+      - [ ] **Alist** (0.3天):
+        - ✅ List接口已实现（返回FileItem列表，包含name/size/is_dir）
+        - ✅ Login已实现
+        - [ ] 验证List接口是否支持relative_path参数进行子目录导航
+        - [ ] 实现DynamicFolder trait的list_playlist()方法（内部调用List接口）
+        - [ ] 实现DynamicFolder trait的next()方法（用于自动连播）
+
+      - [ ] **Emby** (0.4天):
+        - ✅ List接口已实现（返回MediaItem列表，包含id/name/type）
+        - ✅ Login已实现
+        - [ ] 验证List接口是否支持parent_id参数进行层级导航
+        - [ ] 实现DynamicFolder trait的list_playlist()方法（内部调用List接口）
+        - [ ] 实现DynamicFolder trait的next()方法（用于自动连播）
+
+    - [ ] **2. 动态播放列表API** (0.5天)
+      - [ ] `GET /api/rooms/{room_id}/playlists/{playlist_id}/items?relative_path=xxx`
+        - 检查playlist是否为动态类型（source_provider != null）
+        - 调用DynamicFolder.list_playlist()获取内容
+        - 返回DirectoryItem列表
+        - 客户端根据返回数据决定：继续导航（is_dir=true）或播放（is_dir=false）
+      - [ ] 集成到现有的playlist API中
+
+    - [ ] **3. 播放session支持动态媒体** (不需要，设计变更)
+      - ❌ ~~room_playback_session添加relative_path字段~~（不需要）
+      - ✅ **新设计**：动态文件夹播放时，直接创建临时Media记录
+        - 用户选择动态文件夹中的视频 → 客户端调用 `/api/rooms/{room_id}/media/add`
+        - Media.source_config = 完整配置（playlist base_path + relative_path合并后）
+        - 播放session正常记录media_id即可
+        - 优势：简化设计，避免media_id和relative_path互斥的复杂逻辑
+
+  - **核心流程**:
+
+    **流程A - Bilibili添加视频**:
+    ```
+    1. 用户输入URL → POST /api/providers/bilibili/parse
+    2. 返回 ParseResponse: { title, videos: [{bvid, cid, epid, name, cover}] }
+    3. 客户端生成 source_config: {"bvid": "xxx", "cid": 123, "epid": 0}
+    4. 客户端调用 POST /api/rooms/{room_id}/media/add {source_provider: "bilibili", source_config: {...}}
+    ```
+
+    **流程B - Alist浏览文件夹**:
+    ```
+    1. 用户登录Alist → POST /api/providers/alist/login
+    2. 浏览根目录 → POST /api/providers/alist/list {path: "/"}
+    3. 返回 ListResponse: { content: [{name, is_dir, ...}] }
+    4. 用户点击子目录 → POST /api/providers/alist/list {path: "/movies"}
+    5. 用户选择视频 → 客户端生成 source_config: {"path": "/movies/video.mp4"}
+    6. 客户端调用 POST /api/rooms/{room_id}/media/add
+    ```
+
+    **流程C - 动态播放列表（Alist文件夹）**:
+    ```
+    1. 用户添加动态播放列表 → POST /api/rooms/{room_id}/playlists/add {source_provider: "alist", source_config: {"path": "/movies"}}
+    2. 用户浏览动态播放列表 → GET /api/rooms/{room_id}/playlists/{id}/items?relative_path=/action
+    3. 返回该文件夹下的视频列表（调用DynamicFolder.list_playlist()）
+    4. 用户点击播放 → 客户端创建临时Media → 播放（source_config = 合并后的完整路径）
+    ```
+
+  - **技术要点**:
+    - 每个provider提供不同的能力接口（Parse/List/Search等）
+    - 客户端根据provider返回数据生成source_config
+    - 添加media时统一使用 `/api/rooms/{room_id}/media/add` 接口
+    - 动态播放列表通过DynamicFolder trait支持
 
 ---
 

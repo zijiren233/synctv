@@ -61,13 +61,14 @@ service MediaService {
     rpc CreatePlaylist(CreatePlaylistRequest) returns (CreatePlaylistResponse);
     rpc SetPlaylist(SetPlaylistRequest) returns (SetPlaylistResponse);
     rpc DeletePlaylist(DeletePlaylistRequest) returns (DeletePlaylistResponse);
-    rpc GetPlaylists(GetPlaylistsRequest) returns (GetPlaylistsResponse);
+    rpc ListPlaylists(ListPlaylistsRequest) returns (ListPlaylistsResponse);
     rpc SetPlaying(SetPlayingRequest) returns (SetPlayingResponse);
 
     // Media Management (room-scoped operations, use x-room-id)
     rpc AddMedia(AddMediaRequest) returns (AddMediaResponse);
     rpc RemoveMedia(RemoveMediaRequest) returns (RemoveMediaResponse);
-    rpc GetPlaylist(GetPlaylistRequest) returns (GetPlaylistResponse);
+    rpc ListPlaylist(ListPlaylistRequest) returns (ListPlaylistResponse);
+    rpc ListPlaylistItems(ListPlaylistItemsRequest) returns (ListPlaylistItemsResponse); // List dynamic playlist items
     rpc SwapMedia(SwapMediaRequest) returns (SwapMediaResponse);
 
     // Playback Control (room-scoped operations, use x-room-id)
@@ -382,11 +383,11 @@ message DeletePlaylistResponse {
     bool success = 1;
 }
 
-message GetPlaylistsRequest {
+message ListPlaylistsRequest {
     string parent_id = 1; // Optional parent ID to get children of specific playlist
 }
 
-message GetPlaylistsResponse {
+message ListPlaylistsResponse {
     repeated Playlist playlists = 1;
 }
 
@@ -424,16 +425,47 @@ message RemoveMediaResponse {
     bool success = 1;
 }
 
-message GetPlaylistRequest {
+message ListPlaylistRequest {
     string playlist_id = 1; // Playlist ID to get
     int32 page = 2; // Page number (default 1)
     int32 page_size = 3; // Items per page (default 50)
 }
 
-message GetPlaylistResponse {
+message ListPlaylistResponse {
     Playlist playlist = 1;
     repeated Media media = 2;
     int32 total = 3; // Total number of items in playlist
+}
+
+message ListPlaylistItemsRequest {
+    string room_id = 1; // Room ID
+    string playlist_id = 2; // Playlist ID
+    string relative_path = 3; // Relative path within dynamic folder (empty for root)
+    int32 page = 4; // Page number (default 0)
+    int32 page_size = 5; // Items per page (default 50)
+}
+
+message ListPlaylistItemsResponse {
+    repeated DirectoryItem items = 1; // Directory items
+    int32 total = 2; // Total number of items
+}
+
+enum ItemType {
+    ITEM_TYPE_UNSPECIFIED = 0;
+    ITEM_TYPE_VIDEO = 1; // Video file
+    ITEM_TYPE_AUDIO = 2; // Audio file
+    ITEM_TYPE_FOLDER = 3; // Folder/directory
+    ITEM_TYPE_LIVE = 4; // Live stream
+    ITEM_TYPE_FILE = 5; // Other file
+}
+
+message DirectoryItem {
+    string name = 1; // Item name
+    ItemType item_type = 2; // Item type
+    string path = 3; // Full path from root
+    optional int64 size = 4; // File size in bytes (for files)
+    optional string thumbnail = 5; // Thumbnail URL
+    optional int64 modified_at = 6; // Modified time (Unix timestamp)
 }
 
 message SwapMediaRequest {

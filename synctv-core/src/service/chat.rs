@@ -308,12 +308,13 @@ impl ChatService {
     /// providing near real-time message limit enforcement without scanning inactive rooms.
     ///
     /// # Arguments
-    /// * `settings_registry` - Settings registry to get max_chat_messages setting
+    /// * `settings_registry` - Settings registry to get `max_chat_messages` setting
     /// * `interval_seconds` - Cleanup interval in seconds (default: 60 seconds)
     /// * `activity_window_minutes` - Only cleanup rooms with messages in the last N minutes (default: 3 minutes)
     ///
     /// # Returns
-    /// JoinHandle for the background task
+    /// `JoinHandle` for the background task
+    #[must_use] 
     pub fn start_cleanup_task(
         self,
         settings_registry: Arc<crate::service::SettingsRegistry>,

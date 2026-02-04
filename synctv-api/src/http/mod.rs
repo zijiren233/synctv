@@ -259,6 +259,11 @@ pub fn create_router(
             "/api/rooms/:room_id/media/clear",
             post(media::clear_playlist),
         )
+        // Dynamic playlist routes
+        .route(
+            "/api/rooms/:room_id/playlists/:playlist_id/items",
+            get(media::list_playlist_items),
+        )
         // Playback control routes
         .route("/api/rooms/:room_id/playback/play", post(room::play))
         .route("/api/rooms/:room_id/playback/pause", post(room::pause))

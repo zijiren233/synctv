@@ -229,7 +229,7 @@ impl EmailService {
         Ok(())
     }
 
-    /// Send email using SMTP (deprecated - use send_email_impl instead)
+    /// Send email using SMTP (deprecated - use `send_email_impl` instead)
     #[allow(dead_code)]
     async fn send_email(&self, config: &EmailConfig, to: &str, code: &str) -> std::result::Result<(), EmailError> {
         let subject = "SyncTV - Verification Code";

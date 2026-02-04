@@ -43,9 +43,9 @@ impl std::fmt::Display for ProviderType {
 /// Media file (video/audio)
 ///
 /// Note: `source_config` is provider-specific and should only be parsed by the provider itself.
-/// - For direct type: contains PlaybackResult (with danmakus in PlaybackInfo.danmakus)
-/// - For provider types: contains provider-specific config (e.g., BilibiliConfig)
-///   Provider's generate_playback() will deserialize source_config and return PlaybackResult
+/// - For direct type: contains `PlaybackResult` (with danmakus in PlaybackInfo.danmakus)
+/// - For provider types: contains provider-specific config (e.g., `BilibiliConfig`)
+///   Provider's `generate_playback()` will deserialize `source_config` and return `PlaybackResult`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Media {
     pub id: MediaId,
@@ -54,13 +54,13 @@ pub struct Media {
     pub creator_id: UserId,
     pub name: String,
     pub position: i32,
-    /// Provider type name (e.g., "bilibili", "alist", "emby", "direct_url")
+    /// Provider type name (e.g., "bilibili", "alist", "emby", "`direct_url`")
     /// Stored as string for flexibility, not an enum
     pub source_provider: String,
     /// Provider-specific configuration (JSONB)
     /// Should ONLY be parsed by the provider implementation, NOT by Media model
     pub source_config: JsonValue,
-    /// Provider instance name (e.g., "bilibili_main", "alist_company")
+    /// Provider instance name (e.g., "`bilibili_main`", "`alist_company`")
     /// Used to look up the provider from the registry at playback time
     pub provider_instance_name: Option<String>,
     pub added_at: DateTime<Utc>,

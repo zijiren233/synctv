@@ -20,6 +20,7 @@ pub struct DistributedLock {
 
 impl DistributedLock {
     /// Create a new distributed lock service
+    #[must_use] 
     pub const fn new(redis: RedisConnectionManager) -> Self {
         Self { redis }
     }
@@ -44,7 +45,7 @@ impl DistributedLock {
     /// }
     /// ```
     pub async fn acquire(&self, key: &str, ttl_seconds: u64) -> Result<Option<String>> {
-        let lock_key = format!("lock:{}", key);
+        let lock_key = format!("lock:{key}");
         let lock_value = crate::models::generate_id(); // nanoid(12)
 
         let mut conn = self.redis.clone();
@@ -60,7 +61,7 @@ impl DistributedLock {
             .arg(ttl_seconds)
             .query_async(&mut conn)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to acquire lock: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to acquire lock: {e}")))?;
 
         if result.is_some() {
             tracing::debug!(
@@ -81,17 +82,17 @@ impl DistributedLock {
 
     /// Release a lock (using Lua script for atomicity)
     ///
-    /// Only the lock holder (matching lock_value) can release the lock
+    /// Only the lock holder (matching `lock_value`) can release the lock
     ///
     /// # Arguments
     /// * `key` - Lock key (without "lock:" prefix)
-    /// * `lock_value` - The value returned by acquire()
+    /// * `lock_value` - The value returned by `acquire()`
     ///
     /// # Returns
     /// * `true` if lock was released successfully
     /// * `false` if lock was not held or already expired
     pub async fn release(&self, key: &str, lock_value: &str) -> Result<bool> {
-        let lock_key = format!("lock:{}", key);
+        let lock_key = format!("lock:{key}");
 
         // Lua script: Only delete if the value matches
         // This prevents releasing a lock that was already expired and reacquired
@@ -112,7 +113,7 @@ impl DistributedLock {
             .arg(lock_value)
             .invoke_async(&mut conn)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to release lock: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to release lock: {e}")))?;
 
         let released = result == 1;
         if released {
@@ -160,7 +161,7 @@ impl DistributedLock {
         let lock_value = self
             .acquire(key, ttl_seconds)
             .await?
-            .ok_or_else(|| Error::Internal(format!("Failed to acquire lock: {}", key)))?;
+            .ok_or_else(|| Error::Internal(format!("Failed to acquire lock: {key}")))?;
 
         // Execute operation
         let result = operation().await;
@@ -229,7 +230,7 @@ impl DistributedLock {
     /// * `true` if lock TTL was extended
     /// * `false` if lock doesn't exist or value mismatch
     pub async fn extend(&self, key: &str, lock_value: &str, ttl_seconds: u64) -> Result<bool> {
-        let lock_key = format!("lock:{}", key);
+        let lock_key = format!("lock:{key}");
 
         // Lua script: Only extend if the value matches
         let script = Script::new(
@@ -250,7 +251,7 @@ impl DistributedLock {
             .arg(ttl_seconds)
             .invoke_async(&mut conn)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to extend lock: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to extend lock: {e}")))?;
 
         Ok(result == 1)
     }
@@ -277,7 +278,7 @@ impl LockGuard {
         let value = lock
             .acquire(&key, ttl_seconds)
             .await?
-            .ok_or_else(|| Error::Internal(format!("Failed to acquire lock: {}", key)))?;
+            .ok_or_else(|| Error::Internal(format!("Failed to acquire lock: {key}")))?;
 
         Ok(Self { lock, key, value })
     }

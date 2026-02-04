@@ -11,8 +11,8 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::http::{AppState, AppResult};
-use crate::proto::client::{Media, GetPlaylistResponse};
+use crate::http::{AppState, AppResult, middleware::AuthUser};
+use crate::proto::client::{Media, ListPlaylistResponse};
 use crate::impls::client::media_to_proto;
 use synctv_core::{
     models::{MediaId, RoomId, UserId},
@@ -76,11 +76,45 @@ pub async fn get_playlist(
         updated_at: root_playlist.updated_at.timestamp(),
     };
 
-    Ok(Json(GetPlaylistResponse {
+    Ok(Json(ListPlaylistResponse {
         playlist: Some(playlist_proto),
         media: media_list,
         total: total as i32,
     }))
+}
+
+/// List dynamic playlist items
+///
+/// GET /`api/rooms/:room_id/playlists/:playlist_id/items`
+#[axum::debug_handler]
+pub async fn list_playlist_items(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((room_id, playlist_id)): Path<(String, String)>,
+    Query(params): Query<ListPlaylistItemsQuery>,
+) -> AppResult<impl IntoResponse> {
+    let req = crate::proto::client::ListPlaylistItemsRequest {
+        room_id: room_id.clone(),
+        playlist_id: playlist_id.clone(),
+        relative_path: params.relative_path.unwrap_or_default(),
+        page: params.page.unwrap_or(0),
+        page_size: params.page_size.unwrap_or(50),
+    };
+
+    let response = state
+        .client_api
+        .list_playlist_items(auth.user_id.as_str(), req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ListPlaylistItemsQuery {
+    pub relative_path: Option<String>,
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
 }
 
 /// Add a single media item to playlist

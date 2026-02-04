@@ -1,7 +1,7 @@
 //! System settings service for runtime configuration management
 //!
 //! Provides methods for managing settings groups with change notifications
-//! Uses PostgreSQL LISTEN/NOTIFY for hot reload across multiple replicas
+//! Uses `PostgreSQL` LISTEN/NOTIFY for hot reload across multiple replicas
 //!
 //! Design reference: /Volumes/workspace/rust/synctv-rs-design/19-配置管理系统.md §6.3
 
@@ -187,9 +187,9 @@ impl SettingsService {
         }
     }
 
-    /// Start PostgreSQL LISTEN task for hot reload
+    /// Start `PostgreSQL` LISTEN task for hot reload
     ///
-    /// Listens for 'settings_changed' notifications and automatically reloads
+    /// Listens for '`settings_changed`' notifications and automatically reloads
     /// changed settings from database into cache.
     ///
     /// This enables hot reload across multiple replicas without restart.
@@ -203,6 +203,7 @@ impl SettingsService {
     /// settings_service.initialize().await?;
     /// let _listen_task = settings_service.start_listen_task();
     /// ```
+    #[must_use] 
     pub fn start_listen_task(&self) -> tokio::task::JoinHandle<()> {
         let service = self.clone();
         let pool = self.pool.clone();
@@ -270,7 +271,7 @@ impl SettingsService {
 
     /// Reload a specific setting from database into cache
     ///
-    /// Called when a PostgreSQL NOTIFY is received
+    /// Called when a `PostgreSQL` NOTIFY is received
     async fn reload_setting(&self, key: &str) -> Result<(), Error> {
         debug!("Reloading setting from database: {}", key);
 
