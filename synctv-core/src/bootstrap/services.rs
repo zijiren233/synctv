@@ -154,11 +154,15 @@ pub async fn init_services(
     // Initialize Settings service
     info!("Initializing Settings service...");
     let settings_repo = SettingsRepository::new(pool.clone());
-    let settings_service = SettingsService::new(settings_repo);
+    let settings_service = SettingsService::new(settings_repo, pool.clone());
     settings_service.initialize().await?;
     info!("Settings service initialized with {} groups", {
         settings_service.get_all().await.map(|g| g.len()).unwrap_or(0)
     });
+
+    // Start PostgreSQL LISTEN for hot reload
+    let _settings_listen_task = settings_service.start_listen_task();
+    info!("Settings hot reload (PostgreSQL LISTEN) started");
 
     // Wrap settings_service in Arc before creating registry
     let settings_service = Arc::new(settings_service);
@@ -353,5 +357,11 @@ fn init_email_service(config: &Config) -> Option<Arc<EmailService>> {
         use_tls: config.email.use_tls,
     };
 
-    Some(Arc::new(EmailService::new(Some(email_config))))
+    match EmailService::new(Some(email_config)) {
+        Ok(service) => Some(Arc::new(service)),
+        Err(e) => {
+            error!("Failed to initialize email service: {}", e);
+            None
+        }
+    }
 }

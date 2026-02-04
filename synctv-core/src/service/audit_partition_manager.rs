@@ -125,7 +125,7 @@ impl AuditPartitionManager {
     }
 
     /// Create a partition for a specific date
-    pub async fn create_partition(&self, date: chrono::Date<chrono::Utc>) -> Result<PartitionInfo> {
+    pub async fn create_partition(&self, date: chrono::NaiveDate) -> Result<PartitionInfo> {
         info!("Creating audit log partition for date: {}", date);
 
         let result_json = sqlx::query_scalar::<_, serde_json::Value>(

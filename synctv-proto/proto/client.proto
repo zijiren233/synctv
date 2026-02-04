@@ -494,7 +494,6 @@ message GetPlaybackStateResponse {
 message ClientMessage {
     oneof message {
         ChatMessageSend chat = 1;
-        DanmakuMessageSend danmaku = 2;
         HeartbeatMessage heartbeat = 3;
     }
 }
@@ -502,7 +501,6 @@ message ClientMessage {
 message ServerMessage {
     oneof message {
         ChatMessageReceive chat = 1;
-        DanmakuMessageReceive danmaku = 2;
         PlaybackStateChanged playback_state = 3;
         UserJoinedRoom user_joined = 4;
         UserLeftRoom user_left = 5;
@@ -520,8 +518,11 @@ message ServerMessage {
 }
 
 // Note: room_id extracted from x-room-id metadata in MessageStream context
+// If position is set, client may display this as a danmaku (bullet comment)
 message ChatMessageSend {
     string content = 1;
+    optional double position = 2; // Video position in seconds (for danmaku display)
+    optional string color = 3; // Hex color (e.g., "#FFFFFF") for danmaku
 }
 
 message ChatMessageReceive {
@@ -531,22 +532,8 @@ message ChatMessageReceive {
     string username = 4;
     string content = 5;
     int64 timestamp = 6;
-}
-
-// Note: room_id extracted from x-room-id metadata in MessageStream context
-message DanmakuMessageSend {
-    string content = 1;
-    string color = 2; // hex color
-    int32 position = 3; // 0=top, 1=bottom, 2=scroll
-}
-
-message DanmakuMessageReceive {
-    string room_id = 1;
-    string user_id = 2;
-    string content = 3;
-    string color = 4;
-    int32 position = 5;
-    int64 timestamp = 6;
+    optional double position = 7; // Video position in seconds (for danmaku display)
+    optional string color = 8; // Hex color for danmaku
 }
 
 message HeartbeatMessage {

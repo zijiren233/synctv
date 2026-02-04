@@ -19,11 +19,8 @@ pub struct PermissionBits(pub u64);
 impl PermissionBits {
     // ===== Content Management Permissions (0-9) =====
 
-    /// Send chat messages
+    /// Send chat messages (includes messages with position for danmaku display)
     pub const SEND_CHAT: u64 = 1 << 0;
-
-    /// Send danmaku (bullet comments)
-    pub const SEND_DANMAKU: u64 = 1 << 0;  // Same as SEND_CHAT
 
     /// Add movie to playlist
     pub const ADD_MOVIE: u64 = 1 << 1;

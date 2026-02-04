@@ -653,7 +653,7 @@ pub struct GetPlaybackStateResponse {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClientMessage {
-    #[prost(oneof = "client_message::Message", tags = "1, 2, 3")]
+    #[prost(oneof = "client_message::Message", tags = "1, 3")]
     pub message: ::core::option::Option<client_message::Message>,
 }
 /// Nested message and enum types in `ClientMessage`.
@@ -663,8 +663,6 @@ pub mod client_message {
     pub enum Message {
         #[prost(message, tag = "1")]
         Chat(super::ChatMessageSend),
-        #[prost(message, tag = "2")]
-        Danmaku(super::DanmakuMessageSend),
         #[prost(message, tag = "3")]
         Heartbeat(super::HeartbeatMessage),
     }
@@ -674,7 +672,7 @@ pub mod client_message {
 pub struct ServerMessage {
     #[prost(
         oneof = "server_message::Message",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
+        tags = "1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
     )]
     pub message: ::core::option::Option<server_message::Message>,
 }
@@ -685,8 +683,6 @@ pub mod server_message {
     pub enum Message {
         #[prost(message, tag = "1")]
         Chat(super::ChatMessageReceive),
-        #[prost(message, tag = "2")]
-        Danmaku(super::DanmakuMessageReceive),
         #[prost(message, tag = "3")]
         PlaybackState(super::PlaybackStateChanged),
         #[prost(message, tag = "4")]
@@ -716,11 +712,18 @@ pub mod server_message {
     }
 }
 /// Note: room_id extracted from x-room-id metadata in MessageStream context
+/// If position is set, client may display this as a danmaku (bullet comment)
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ChatMessageSend {
     #[prost(string, tag = "1")]
     pub content: ::prost::alloc::string::String,
+    /// Video position in seconds (for danmaku display)
+    #[prost(double, optional, tag = "2")]
+    pub position: ::core::option::Option<f64>,
+    /// Hex color (e.g., "#FFFFFF") for danmaku
+    #[prost(string, optional, tag = "3")]
+    pub color: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -737,35 +740,12 @@ pub struct ChatMessageReceive {
     pub content: ::prost::alloc::string::String,
     #[prost(int64, tag = "6")]
     pub timestamp: i64,
-}
-/// Note: room_id extracted from x-room-id metadata in MessageStream context
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DanmakuMessageSend {
-    #[prost(string, tag = "1")]
-    pub content: ::prost::alloc::string::String,
-    /// hex color
-    #[prost(string, tag = "2")]
-    pub color: ::prost::alloc::string::String,
-    /// 0=top, 1=bottom, 2=scroll
-    #[prost(int32, tag = "3")]
-    pub position: i32,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DanmakuMessageReceive {
-    #[prost(string, tag = "1")]
-    pub room_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub user_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub content: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub color: ::prost::alloc::string::String,
-    #[prost(int32, tag = "5")]
-    pub position: i32,
-    #[prost(int64, tag = "6")]
-    pub timestamp: i64,
+    /// Video position in seconds (for danmaku display)
+    #[prost(double, optional, tag = "7")]
+    pub position: ::core::option::Option<f64>,
+    /// Hex color for danmaku
+    #[prost(string, optional, tag = "8")]
+    pub color: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]

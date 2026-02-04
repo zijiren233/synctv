@@ -3,7 +3,7 @@ mod server;
 
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use synctv_core::{
     logging,
@@ -59,6 +59,22 @@ async fn main() -> Result<()> {
             anyhow::anyhow!("Migration failed: {e}")
         })?;
     info!("Migrations completed");
+
+    // 4.5. Initialize audit log partitions
+    info!("Initializing audit log partitions...");
+    synctv_core::service::ensure_audit_partitions_on_startup(&pool)
+        .await
+        .map_err(|e| {
+            warn!("Failed to initialize audit partitions (non-fatal): {}", e);
+            // Non-fatal: continue startup even if partition creation fails
+            e
+        })
+        .ok();
+
+    // Start automatic partition management (check every 24 hours)
+    let audit_manager = synctv_core::service::AuditPartitionManager::new(pool.clone());
+    let _audit_task = audit_manager.start_auto_management(24);
+    info!("Audit log partition management started");
 
     // 5. Initialize services
     let synctv_services = init_services(pool.clone(), &config).await?;

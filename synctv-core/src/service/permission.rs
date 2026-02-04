@@ -107,7 +107,6 @@ impl PermissionService {
                     perms.grant(PermissionBits::SEEK);
                     perms.grant(PermissionBits::CHANGE_SPEED);
                     perms.grant(PermissionBits::SEND_CHAT);
-                    perms.grant(PermissionBits::SEND_DANMAKU);
                     perms.grant(PermissionBits::DELETE_MESSAGE);
                     perms.grant(PermissionBits::GRANT_PERMISSION);
                     perms.grant(PermissionBits::REVOKE_PERMISSION);
@@ -119,7 +118,6 @@ impl PermissionService {
                     perms.grant(PermissionBits::PLAY_PAUSE);
                     perms.grant(PermissionBits::SEEK);
                     perms.grant(PermissionBits::SEND_CHAT);
-                    perms.grant(PermissionBits::SEND_DANMAKU);
                     perms
                 }
                 crate::models::RoomRole::Guest => PermissionBits(crate::models::PermissionBits::VIEW_PLAYLIST),

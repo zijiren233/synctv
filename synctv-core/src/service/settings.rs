@@ -1,10 +1,14 @@
 //! System settings service for runtime configuration management
 //!
 //! Provides methods for managing settings groups with change notifications
+//! Uses PostgreSQL LISTEN/NOTIFY for hot reload across multiple replicas
+//!
+//! Design reference: /Volumes/workspace/rust/synctv-rs-design/19-配置管理系统.md §6.3
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn, error};
+use sqlx::PgPool;
 
 use crate::models::settings::{get_default_settings, SettingsGroup};
 use crate::repository::SettingsRepository;
@@ -17,6 +21,7 @@ pub type SettingsChangeListener = Arc<dyn Fn(&str, &serde_json::Value) + Send + 
 #[derive(Clone)]
 pub struct SettingsService {
     repository: SettingsRepository,
+    pool: PgPool,
     // In-memory cache for fast reads
     cache: Arc<RwLock<std::collections::HashMap<String, SettingsGroup>>>,
     // Change listeners
@@ -33,10 +38,11 @@ impl std::fmt::Debug for SettingsService {
 }
 
 impl SettingsService {
-    #[must_use] 
-    pub fn new(repository: SettingsRepository) -> Self {
+    #[must_use]
+    pub fn new(repository: SettingsRepository, pool: PgPool) -> Self {
         Self {
             repository,
+            pool,
             cache: Arc::new(RwLock::new(std::collections::HashMap::new())),
             listeners: Arc::new(RwLock::new(Vec::new())),
         }
@@ -178,6 +184,127 @@ impl SettingsService {
 
         for listener in listeners.iter() {
             listener(group, settings_json);
+        }
+    }
+
+    /// Start PostgreSQL LISTEN task for hot reload
+    ///
+    /// Listens for 'settings_changed' notifications and automatically reloads
+    /// changed settings from database into cache.
+    ///
+    /// This enables hot reload across multiple replicas without restart.
+    ///
+    /// # Returns
+    /// A `JoinHandle` for the background task
+    ///
+    /// # Example
+    /// ```ignore
+    /// let settings_service = SettingsService::new(repo, pool);
+    /// settings_service.initialize().await?;
+    /// let _listen_task = settings_service.start_listen_task();
+    /// ```
+    pub fn start_listen_task(&self) -> tokio::task::JoinHandle<()> {
+        let service = self.clone();
+        let pool = self.pool.clone();
+
+        tokio::spawn(async move {
+            info!("Starting PostgreSQL LISTEN for settings hot reload");
+
+            loop {
+                // Create listener connection
+                let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {
+                    Ok(listener) => listener,
+                    Err(e) => {
+                        error!("Failed to create PgListener: {}", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        continue;
+                    }
+                };
+
+                // Listen to 'settings_changed' channel
+                if let Err(e) = listener.listen("settings_changed").await {
+                    error!("Failed to LISTEN on settings_changed: {}", e);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    continue;
+                }
+
+                info!("PostgreSQL LISTEN started for settings_changed channel");
+
+                // Process notifications
+                loop {
+                    match listener.try_recv().await {
+                        Ok(Some(notification)) => {
+                            let changed_key = notification.payload();
+                            info!("Received settings change notification: {}", changed_key);
+
+                            // Reload the changed setting from database
+                            match service.reload_setting(changed_key).await {
+                                Ok(()) => {
+                                    debug!("Successfully reloaded setting: {}", changed_key);
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to reload setting '{}': {}",
+                                        changed_key, e
+                                    );
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            // No notification, wait a bit
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        }
+                        Err(e) => {
+                            error!("Error receiving notification: {}", e);
+                            // Connection lost, break inner loop to reconnect
+                            break;
+                        }
+                    }
+                }
+
+                warn!("PostgreSQL LISTEN connection lost, reconnecting in 5 seconds...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        })
+    }
+
+    /// Reload a specific setting from database into cache
+    ///
+    /// Called when a PostgreSQL NOTIFY is received
+    async fn reload_setting(&self, key: &str) -> Result<(), Error> {
+        debug!("Reloading setting from database: {}", key);
+
+        // Try to fetch from database
+        match self.repository.get(key).await {
+            Ok(setting) => {
+                // Update cache
+                let mut cache = self.cache.write().await;
+                cache.insert(setting.key.clone(), setting.clone());
+
+                // Notify local listeners
+                let json_value: serde_json::Value = setting.value.parse()
+                    .unwrap_or_else(|_| serde_json::json!(setting.value));
+                drop(cache); // Release lock before calling listeners
+                self.notify_listeners(key, &json_value).await;
+
+                info!("Setting '{}' reloaded from database", key);
+                Ok(())
+            }
+            Err(e) => {
+                // Setting was deleted, remove from cache
+                warn!(
+                    "Setting '{}' not found in database (may have been deleted): {}",
+                    key, e
+                );
+                let mut cache = self.cache.write().await;
+                cache.remove(key);
+
+                // Notify listeners about removal
+                drop(cache);
+                self.notify_listeners(key, &serde_json::json!(null)).await;
+
+                Ok(())
+            }
         }
     }
 

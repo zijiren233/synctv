@@ -114,17 +114,17 @@ impl std::fmt::Display for MediaId {
 pub struct PlaylistId(pub String);
 
 impl PlaylistId {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self(generate_id())
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn from_string(id: String) -> Self {
         Self(id)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }

@@ -409,6 +409,8 @@ impl ClientApiImpl {
                     username,
                     content: m.content,
                     timestamp: m.created_at.timestamp(),
+                    position: None, // History messages don't show as danmaku
+                    color: None,
                 }
             })
             .collect();

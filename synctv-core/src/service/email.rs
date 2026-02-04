@@ -8,9 +8,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use lettre::{
+    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
+    message::{header::ContentType, Mailbox, MultiPart},
+    transport::smtp::authentication::Credentials,
+};
 
 use crate::{Error, Result};
 use super::email_token::{EmailTokenService, EmailTokenType};
+use super::email_templates::EmailTemplateManager;
 
 /// Email verification error
 #[derive(Debug, thiserror::Error)]
@@ -64,6 +70,7 @@ pub struct EmailService {
     codes: Arc<RwLock<HashMap<String, VerificationCode>>>,
     code_ttl_minutes: i64,
     max_attempts: u32,
+    template_manager: Arc<EmailTemplateManager>,
 }
 
 impl std::fmt::Debug for EmailService {
@@ -78,25 +85,27 @@ impl std::fmt::Debug for EmailService {
 
 impl EmailService {
     /// Create a new email service
-    #[must_use] 
-    pub fn new(config: Option<EmailConfig>) -> Self {
-        Self {
+    pub fn new(config: Option<EmailConfig>) -> Result<Self> {
+        let template_manager = EmailTemplateManager::new()?;
+        Ok(Self {
             config,
             codes: Arc::new(RwLock::new(HashMap::new())),
             code_ttl_minutes: 10, // 10 minutes default
             max_attempts: 3,
-        }
+            template_manager: Arc::new(template_manager),
+        })
     }
 
     /// Create with custom TTL
-    #[must_use] 
-    pub fn with_ttl(config: Option<EmailConfig>, code_ttl_minutes: i64) -> Self {
-        Self {
+    pub fn with_ttl(config: Option<EmailConfig>, code_ttl_minutes: i64) -> Result<Self> {
+        let template_manager = EmailTemplateManager::new()?;
+        Ok(Self {
             config,
             codes: Arc::new(RwLock::new(HashMap::new())),
             code_ttl_minutes,
             max_attempts: 3,
-        }
+            template_manager: Arc::new(template_manager),
+        })
     }
 
     /// Generate a 6-digit verification code
@@ -220,30 +229,16 @@ impl EmailService {
         Ok(())
     }
 
-    /// Send email using SMTP (placeholder - would need lettre crate for actual sending)
+    /// Send email using SMTP (deprecated - use send_email_impl instead)
     #[allow(dead_code)]
     async fn send_email(&self, config: &EmailConfig, to: &str, code: &str) -> std::result::Result<(), EmailError> {
-        // Log the email (in production, this would use lettre or similar)
         let subject = "SyncTV - Verification Code";
         let body = format!(
             "SyncTV Email Verification\n\nYour verification code is: {}\n\nThis code will expire in {} minutes.\nIf you didn't request this code, please ignore this email.",
             code, self.code_ttl_minutes
         );
 
-        tracing::info!(
-            "Email Service Mock: To={}, Subject={}, Body={}, SMTP={}:{}",
-            to, subject, body, config.smtp_host, config.smtp_port
-        );
-
-        // In production, you would use lettre or similar:
-        // let email = lettre::Message::builder()
-        //     .from(format!("{} <{}>", config.from_name, config.from_email).parse()?)
-        //     .to(to.parse()?)
-        //     .subject(subject)
-        //     .body(body)?;
-        // lettre::AsyncTransport::send(&transport, &email).await?;
-
-        Ok(())
+        self.send_email_impl(config, to, subject, &body).await
     }
 
     /// Send verification email
@@ -329,21 +324,15 @@ impl EmailService {
             .as_ref()
             .ok_or_else(|| Error::Internal("Email service not configured".to_string()))?;
 
+        // Render template
+        let sent_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        let (html_body, plain_text_body) = self.template_manager
+            .render_test_email(&config.smtp_host, config.smtp_port, &sent_at)
+            .map_err(|e| Error::Internal(format!("Failed to render template: {e}")))?;
+
         // Send test email
         let subject = "SyncTV Email Test";
-        let body = format!(
-            "This is a test email from SyncTV.\n\n\
-            If you received this email, your email configuration is working correctly.\n\n\
-            SMTP Server: {}:{}\n\
-            Sent at: {}\n\n\
-            Best regards,\n\
-            The SyncTV Team",
-            config.smtp_host,
-            config.smtp_port,
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-        );
-
-        self.send_email_impl(config, to, subject, &body)
+        self.send_html_email(config, to, subject, &html_body, &plain_text_body)
             .await
             .map_err(|e| Error::Internal(format!("Failed to send test email: {e}")))?;
 
@@ -359,17 +348,11 @@ impl EmailService {
         token: &str,
     ) -> std::result::Result<(), EmailError> {
         let subject = "Verify your SyncTV email";
-        let body = format!(
-            "Welcome to SyncTV!\n\n\
-            Please verify your email address by clicking the link below or entering the code:\n\n\
-            Verification Code: {token}\n\n\
-            This code will expire in 24 hours.\n\n\
-            If you didn't create a SyncTV account, please ignore this email.\n\
-            Best regards,\n\
-            The SyncTV Team"
-        );
+        let (html_body, plain_text_body) = self.template_manager
+            .render_verification_email(token, "24 hours")
+            .map_err(|e| EmailError::SendError(format!("Failed to render template: {e}")))?;
 
-        self.send_email_impl(config, to, subject, &body).await
+        self.send_html_email(config, to, subject, &html_body, &plain_text_body).await
     }
 
     /// Send password reset email implementation
@@ -380,20 +363,14 @@ impl EmailService {
         token: &str,
     ) -> std::result::Result<(), EmailError> {
         let subject = "Reset your SyncTV password";
-        let body = format!(
-            "You requested a password reset for your SyncTV account.\n\n\
-            Your password reset code is: {token}\n\n\
-            This code will expire in 1 hour.\n\n\
-            If you didn't request a password reset, please ignore this email and your password will remain unchanged.\n\
-            Best regards,\n\
-            The SyncTV Team"
-        );
+        let (html_body, plain_text_body) = self.template_manager
+            .render_password_reset_email(token, "1 hour")
+            .map_err(|e| EmailError::SendError(format!("Failed to render template: {e}")))?;
 
-        self.send_email_impl(config, to, subject, &body).await
+        self.send_html_email(config, to, subject, &html_body, &plain_text_body).await
     }
 
-    /// Send email using SMTP (placeholder - would need lettre crate for actual sending)
-    #[allow(dead_code)]
+    /// Send plain text email using SMTP
     async fn send_email_impl(
         &self,
         config: &EmailConfig,
@@ -401,21 +378,110 @@ impl EmailService {
         subject: &str,
         body: &str,
     ) -> std::result::Result<(), EmailError> {
-        // Log the email (in production, this would use lettre or similar)
-        tracing::info!(
-            "Email Service Mock: To={}, Subject={}, Body Length={}, SMTP={}:{}",
-            to, subject, body.len(), config.smtp_host, config.smtp_port
+        // Parse email addresses
+        let from_mailbox: Mailbox = format!("{} <{}>", config.from_name, config.from_email)
+            .parse()
+            .map_err(|e| EmailError::SendError(format!("Invalid from address: {e}")))?;
+
+        let to_mailbox: Mailbox = to
+            .parse()
+            .map_err(|e| EmailError::SendError(format!("Invalid to address: {e}")))?;
+
+        // Build message
+        let email = Message::builder()
+            .from(from_mailbox)
+            .to(to_mailbox)
+            .subject(subject)
+            .body(body.to_string())
+            .map_err(|e| EmailError::SendError(format!("Failed to build email: {e}")))?;
+
+        // Send email
+        self.send_message(config, email).await
+    }
+
+    /// Send HTML email with plain text fallback
+    async fn send_html_email(
+        &self,
+        config: &EmailConfig,
+        to: &str,
+        subject: &str,
+        html_body: &str,
+        plain_text_body: &str,
+    ) -> std::result::Result<(), EmailError> {
+        // Parse email addresses
+        let from_mailbox: Mailbox = format!("{} <{}>", config.from_name, config.from_email)
+            .parse()
+            .map_err(|e| EmailError::SendError(format!("Invalid from address: {e}")))?;
+
+        let to_mailbox: Mailbox = to
+            .parse()
+            .map_err(|e| EmailError::SendError(format!("Invalid to address: {e}")))?;
+
+        // Build multipart message (HTML + plain text fallback)
+        let email = Message::builder()
+            .from(from_mailbox)
+            .to(to_mailbox)
+            .subject(subject)
+            .multipart(
+                MultiPart::alternative()
+                    .singlepart(
+                        lettre::message::SinglePart::builder()
+                            .header(ContentType::TEXT_PLAIN)
+                            .body(plain_text_body.to_string())
+                    )
+                    .singlepart(
+                        lettre::message::SinglePart::builder()
+                            .header(ContentType::TEXT_HTML)
+                            .body(html_body.to_string())
+                    )
+            )
+            .map_err(|e| EmailError::SendError(format!("Failed to build email: {e}")))?;
+
+        // Send email
+        self.send_message(config, email).await
+    }
+
+    /// Send email message via SMTP
+    async fn send_message(
+        &self,
+        config: &EmailConfig,
+        email: Message,
+    ) -> std::result::Result<(), EmailError> {
+        // Get recipient before consuming email
+        let recipient = email.envelope().to()[0].clone();
+
+        // Create SMTP credentials
+        let creds = Credentials::new(
+            config.smtp_username.clone(),
+            config.smtp_password.clone(),
         );
 
-        tracing::debug!("Email body:\n{}", body);
+        // Create SMTP transport
+        let transport = if config.use_tls {
+            AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
+                .map_err(|e| EmailError::SendError(format!("Failed to create SMTP transport: {e}")))?
+                .credentials(creds)
+                .port(config.smtp_port)
+                .build()
+        } else {
+            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
+                .credentials(creds)
+                .port(config.smtp_port)
+                .build()
+        };
 
-        // In production, you would use lettre or similar:
-        // let email = lettre::Message::builder()
-        //     .from(format!("{} <{}>", config.from_name, config.from_email).parse()?)
-        //     .to(to.parse()?)
-        //     .subject(subject)
-        //     .body(body)?;
-        // lettre::AsyncTransport::send(&transport, &email).await?;
+        // Send email
+        transport
+            .send(email)
+            .await
+            .map_err(|e| EmailError::SendError(format!("Failed to send email: {e}")))?;
+
+        tracing::info!(
+            "Email sent successfully to {} via SMTP {}:{}",
+            recipient,
+            config.smtp_host,
+            config.smtp_port
+        );
 
         Ok(())
     }
@@ -438,7 +504,7 @@ impl EmailService {
 
 impl Default for EmailService {
     fn default() -> Self {
-        Self::new(None)
+        Self::new(None).expect("Failed to create default EmailService")
     }
 }
 
@@ -470,7 +536,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_and_verify_code() {
-        let service = EmailService::new(None);
+        let service = EmailService::new(None).unwrap();
 
         let email = "test@example.com";
         let code = service.send_verification_code(email).await.unwrap();
@@ -487,7 +553,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_verify_expired_code() {
-        let service = EmailService::with_ttl(None, -1); // Expired immediately
+        let service = EmailService::with_ttl(None, -1).unwrap(); // Expired immediately
 
         let email = "test@example.com";
         let code = service.send_verification_code(email).await.unwrap();
@@ -500,7 +566,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_max_attempts() {
-        let service = EmailService::with_ttl(None, 60);
+        let service = EmailService::with_ttl(None, 60).unwrap();
 
         let email = "test@example.com";
         let code = service.send_verification_code(email).await.unwrap();

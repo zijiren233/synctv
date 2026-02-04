@@ -29,7 +29,32 @@ BEFORE UPDATE ON settings
 FOR EACH ROW
 EXECUTE FUNCTION update_settings_updated_at();
 
--- Add comment
+-- Function to notify all replicas when settings change (for hot reload)
+-- Design reference: /Volumes/workspace/rust/synctv-rs-design/19-配置管理系统.md §6.2
+CREATE OR REPLACE FUNCTION notify_settings_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- INSERT/UPDATE: notify the changed key
+    IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+        PERFORM pg_notify('settings_changed', NEW.key);
+        RETURN NEW;
+    -- DELETE: also notify to clear cache
+    ELSIF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('settings_changed', OLD.key);
+        RETURN OLD;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to notify on settings changes
+CREATE TRIGGER settings_change_trigger
+    AFTER INSERT OR UPDATE OR DELETE ON settings
+    FOR EACH ROW
+    EXECUTE FUNCTION notify_settings_change();
+
+-- Add comments
 COMMENT ON TABLE settings IS 'Runtime system settings organized by groups with JSON values';
 COMMENT ON COLUMN settings.key IS 'Unique settings key (e.g., server, email, oauth)';
 COMMENT ON COLUMN settings.group IS 'Settings group name (e.g., server, email, oauth)';
+COMMENT ON FUNCTION notify_settings_change() IS 'Notifies all replicas via PostgreSQL LISTEN/NOTIFY when settings change';
+COMMENT ON TRIGGER settings_change_trigger ON settings IS 'Triggers settings_changed notification for hot reload across replicas';

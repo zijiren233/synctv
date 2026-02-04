@@ -9,22 +9,17 @@ use synctv_core::models::playback::RoomPlaybackState;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClusterEvent {
     /// Chat message sent in a room
+    /// If position is set, this can be displayed as a danmaku (bullet comment)
     ChatMessage {
         room_id: RoomId,
         user_id: UserId,
         username: String,
         message: String,
         timestamp: DateTime<Utc>,
-    },
-
-    /// Danmaku (bullet comment) sent in a room
-    Danmaku {
-        room_id: RoomId,
-        user_id: UserId,
-        username: String,
-        message: String,
-        position: f64, // Video position in seconds
-        timestamp: DateTime<Utc>,
+        /// Video position in seconds (for danmaku display)
+        position: Option<f64>,
+        /// Hex color (for danmaku display)
+        color: Option<String>,
     },
 
     /// Room playback state changed (play, pause, seek, etc.)
@@ -110,11 +105,10 @@ pub enum NotificationLevel {
 
 impl ClusterEvent {
     /// Get the room ID for events that belong to a specific room
-    #[must_use] 
+    #[must_use]
     pub const fn room_id(&self) -> Option<&RoomId> {
         match self {
             Self::ChatMessage { room_id, .. }
-            | Self::Danmaku { room_id, .. }
             | Self::PlaybackStateChanged { room_id, .. }
             | Self::UserJoined { room_id, .. }
             | Self::UserLeft { room_id, .. }
@@ -127,11 +121,10 @@ impl ClusterEvent {
     }
 
     /// Get the user ID that initiated this event
-    #[must_use] 
+    #[must_use]
     pub const fn user_id(&self) -> Option<&UserId> {
         match self {
             Self::ChatMessage { user_id, .. }
-            | Self::Danmaku { user_id, .. }
             | Self::PlaybackStateChanged { user_id, .. }
             | Self::UserJoined { user_id, .. }
             | Self::UserLeft { user_id, .. }
@@ -144,11 +137,10 @@ impl ClusterEvent {
     }
 
     /// Get the timestamp of this event
-    #[must_use] 
+    #[must_use]
     pub const fn timestamp(&self) -> &DateTime<Utc> {
         match self {
             Self::ChatMessage { timestamp, .. }
-            | Self::Danmaku { timestamp, .. }
             | Self::PlaybackStateChanged { timestamp, .. }
             | Self::UserJoined { timestamp, .. }
             | Self::UserLeft { timestamp, .. }
@@ -161,11 +153,10 @@ impl ClusterEvent {
     }
 
     /// Get a short description of the event type
-    #[must_use] 
+    #[must_use]
     pub const fn event_type(&self) -> &'static str {
         match self {
             Self::ChatMessage { .. } => "chat_message",
-            Self::Danmaku { .. } => "danmaku",
             Self::PlaybackStateChanged { .. } => "playback_state_changed",
             Self::UserJoined { .. } => "user_joined",
             Self::UserLeft { .. } => "user_left",

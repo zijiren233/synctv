@@ -294,54 +294,58 @@ impl StreamMessageHandler {
 
         match &msg.message {
             Some(Message::Chat(chat_msg)) => {
+                // Check if this is a danmaku message (has position)
+                let is_danmaku = chat_msg.position.is_some();
+
                 // Check rate limit
-                let rate_limit_key = format!("user:{}:chat", self.user_id.as_str());
+                let rate_limit_key = if is_danmaku {
+                    format!("user:{}:danmaku", self.user_id.as_str())
+                } else {
+                    format!("user:{}:chat", self.user_id.as_str())
+                };
+
+                let rate_limit = if is_danmaku {
+                    self.rate_limit_config.danmaku_per_second
+                } else {
+                    self.rate_limit_config.chat_per_second
+                };
+
                 self.rate_limiter
                     .check_rate_limit(
                         &rate_limit_key,
-                        self.rate_limit_config.chat_per_second,
+                        rate_limit,
                         self.rate_limit_config.window_seconds,
                     )
                     .await
                     .map_err(|e| e.to_string())?;
 
                 // Filter and sanitize content
-                let sanitized_content = self.content_filter
-                    .filter_chat(&chat_msg.content)
-                    .map_err(|e| e.to_string())?;
+                let sanitized_content = if is_danmaku {
+                    self.content_filter
+                        .filter_danmaku(&chat_msg.content)
+                        .map_err(|e| e.to_string())?
+                } else {
+                    self.content_filter
+                        .filter_chat(&chat_msg.content)
+                        .map_err(|e| e.to_string())?
+                };
 
-                // Check permission
+                // Check permission (same permission for all chat messages)
                 self.room_service
                     .check_permission(&self.room_id, &self.user_id, PermissionBits::SEND_CHAT)
                     .await
                     .map_err(|e| e.to_string())?;
 
-                self.handle_chat_message(&sanitized_content).await?;
-            }
-            Some(Message::Danmaku(danmaku_msg)) => {
-                // Check rate limit
-                let rate_limit_key = format!("user:{}:danmaku", self.user_id.as_str());
-                self.rate_limiter
-                    .check_rate_limit(
-                        &rate_limit_key,
-                        self.rate_limit_config.danmaku_per_second,
-                        self.rate_limit_config.window_seconds,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                // Filter and sanitize content
-                let sanitized_content = self.content_filter
-                    .filter_danmaku(&danmaku_msg.content)
-                    .map_err(|e| e.to_string())?;
-
-                // Check permission
-                self.room_service
-                    .check_permission(&self.room_id, &self.user_id, PermissionBits::SEND_DANMAKU)
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                self.handle_danmaku(&sanitized_content, danmaku_msg.position).await?;
+                // Handle message
+                if is_danmaku {
+                    self.handle_danmaku(
+                        &sanitized_content,
+                        chat_msg.position.unwrap_or(0.0),
+                        chat_msg.color.clone(),
+                    ).await?;
+                } else {
+                    self.handle_chat_message(&sanitized_content).await?;
+                }
             }
             Some(Message::Heartbeat(_)) => {
                 // Heartbeat doesn't need to be broadcast
@@ -372,6 +376,8 @@ impl StreamMessageHandler {
             username: self.username.clone(),
             message: content.to_string(),
             timestamp: chrono::Utc::now(),
+            position: None,
+            color: None,
         };
 
         // Broadcast to cluster (handles both local and Redis)
@@ -380,14 +386,15 @@ impl StreamMessageHandler {
         Ok(())
     }
 
-    async fn handle_danmaku(&self, content: &str, position: i32) -> Result<(), String> {
-        let event = ClusterEvent::Danmaku {
+    async fn handle_danmaku(&self, content: &str, position: f64, color: Option<String>) -> Result<(), String> {
+        let event = ClusterEvent::ChatMessage {
             room_id: self.room_id.clone(),
             user_id: self.user_id.clone(),
             username: self.username.clone(),
             message: content.to_string(),
-            position: f64::from(position),
             timestamp: chrono::Utc::now(),
+            position: Some(position),
+            color,
         };
 
         // Broadcast to cluster (handles both local and Redis)
@@ -415,11 +422,11 @@ fn cluster_event_to_server_message(
     room_id: &str,
 ) -> Option<ServerMessage> {
     use crate::proto::client::server_message::Message;
-    use crate::proto::client::{ServerMessage, ChatMessageReceive, DanmakuMessageReceive, PlaybackStateChanged, PlaybackState, UserJoinedRoom, RoomMember, UserLeftRoom, RoomSettingsChanged, ErrorMessage};
+    use crate::proto::client::{ServerMessage, ChatMessageReceive, PlaybackStateChanged, PlaybackState, UserJoinedRoom, RoomMember, UserLeftRoom, RoomSettingsChanged, ErrorMessage};
     use synctv_cluster::sync::ClusterEvent;
 
     match event {
-        ClusterEvent::ChatMessage { username, message, timestamp, .. } => {
+        ClusterEvent::ChatMessage { username, message, timestamp, position, color, .. } => {
             Some(ServerMessage {
                 message: Some(Message::Chat(ChatMessageReceive {
                     id: nanoid::nanoid!(12),
@@ -428,18 +435,8 @@ fn cluster_event_to_server_message(
                     username: username.clone(),
                     content: message.clone(),
                     timestamp: timestamp.timestamp_micros(),
-                })),
-            })
-        }
-        ClusterEvent::Danmaku { username, message, position, timestamp, .. } => {
-            Some(ServerMessage {
-                message: Some(Message::Danmaku(DanmakuMessageReceive {
-                    room_id: room_id.to_string(),
-                    user_id: username.clone(),
-                    content: message.clone(),
-                    color: "#FFFFFF".to_string(),
-                    position: *position as i32,
-                    timestamp: timestamp.timestamp_micros(),
+                    position: *position,
+                    color: color.clone(),
                 })),
             })
         }

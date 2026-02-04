@@ -22,7 +22,10 @@ pub mod publish_key;
 pub mod notification;
 pub mod user_notification;
 pub mod audit;
+pub mod audit_partition_manager;
+pub mod distributed_lock;
 pub mod email;
+pub mod email_templates;
 pub mod webrtc;
 
 pub use auth::{hash_password, verify_password, JwtService, TokenType, Claims};
@@ -49,5 +52,11 @@ pub use publish_key::{PublishKeyService, PublishKey};
 pub use notification::{NotificationService, RoomEvent};
 pub use user_notification::UserNotificationService;
 pub use audit::{AuditService, AuditAction, AuditTargetType, AuditLog};
+pub use audit_partition_manager::{
+    AuditPartitionManager, PartitionHealth, PartitionStats,
+    ensure_audit_partitions_on_startup
+};
+pub use distributed_lock::{DistributedLock, LockGuard};
 pub use email::{EmailService, EmailConfig};
+pub use email_templates::{EmailTemplateManager, EmailTemplateType};
 pub use webrtc::{SignalingService, WebRTCConfig, MediaType};
