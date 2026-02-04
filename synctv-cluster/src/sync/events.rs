@@ -86,7 +86,7 @@ pub enum ClusterEvent {
         timestamp: DateTime<Utc>,
     },
 
-    /// WebRTC signaling message (offer, answer, ice_candidate)
+    /// WebRTC signaling message (offer, answer, `ice_candidate`)
     WebRTCSignaling {
         room_id: RoomId,
         message_type: String, // "offer", "answer", "ice_candidate"

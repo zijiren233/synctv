@@ -31,9 +31,9 @@ pub enum TrackKind {
 impl From<webrtc::rtp_transceiver::rtp_codec::RTPCodecType> for TrackKind {
     fn from(codec_type: webrtc::rtp_transceiver::rtp_codec::RTPCodecType) -> Self {
         match codec_type {
-            webrtc::rtp_transceiver::rtp_codec::RTPCodecType::Audio => TrackKind::Audio,
-            webrtc::rtp_transceiver::rtp_codec::RTPCodecType::Video => TrackKind::Video,
-            _ => TrackKind::Video, // Default to video
+            webrtc::rtp_transceiver::rtp_codec::RTPCodecType::Audio => Self::Audio,
+            webrtc::rtp_transceiver::rtp_codec::RTPCodecType::Video => Self::Video,
+            _ => Self::Video, // Default to video
         }
     }
 }
@@ -41,8 +41,8 @@ impl From<webrtc::rtp_transceiver::rtp_codec::RTPCodecType> for TrackKind {
 impl From<&str> for TrackKind {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "audio" => TrackKind::Audio,
-            "video" | _ => TrackKind::Video,
+            "audio" => Self::Audio,
+            "video" | _ => Self::Video,
         }
     }
 }
@@ -59,40 +59,44 @@ pub enum QualityLayer {
 impl QualityLayer {
     /// Select quality layer based on available bandwidth
     /// bandwidth in kbps
-    pub fn from_bandwidth(bandwidth_kbps: u32) -> Self {
+    #[must_use] 
+    pub const fn from_bandwidth(bandwidth_kbps: u32) -> Self {
         if bandwidth_kbps >= 2000 {
-            QualityLayer::High // >= 2 Mbps
+            Self::High // >= 2 Mbps
         } else if bandwidth_kbps >= 1000 {
-            QualityLayer::Medium // >= 1 Mbps
+            Self::Medium // >= 1 Mbps
         } else {
-            QualityLayer::Low // < 1 Mbps
+            Self::Low // < 1 Mbps
         }
     }
 
     /// Get the RID (restriction identifier) for this layer
-    pub fn rid(&self) -> &'static str {
+    #[must_use] 
+    pub const fn rid(&self) -> &'static str {
         match self {
-            QualityLayer::High => "h",
-            QualityLayer::Medium => "m",
-            QualityLayer::Low => "l",
+            Self::High => "h",
+            Self::Medium => "m",
+            Self::Low => "l",
         }
     }
 
     /// Get expected bitrate for this layer (kbps)
-    pub fn expected_bitrate(&self) -> u32 {
+    #[must_use] 
+    pub const fn expected_bitrate(&self) -> u32 {
         match self {
-            QualityLayer::High => 2500,    // 2.5 Mbps
-            QualityLayer::Medium => 1200,  // 1.2 Mbps
-            QualityLayer::Low => 500,      // 500 kbps
+            Self::High => 2500,    // 2.5 Mbps
+            Self::Medium => 1200,  // 1.2 Mbps
+            Self::Low => 500,      // 500 kbps
         }
     }
 
     /// Get spatial layer index (for SVC/Simulcast)
-    pub fn spatial_layer(&self) -> u8 {
+    #[must_use] 
+    pub const fn spatial_layer(&self) -> u8 {
         match self {
-            QualityLayer::High => 2,
-            QualityLayer::Medium => 1,
-            QualityLayer::Low => 0,
+            Self::High => 2,
+            Self::Medium => 1,
+            Self::Low => 0,
         }
     }
 }
@@ -268,13 +272,15 @@ impl MediaTrack {
     }
 
     /// Get track SSRC (Synchronization Source)
+    #[must_use] 
     pub fn ssrc(&self) -> u32 {
         self.remote_track.ssrc()
     }
 
     /// Get track codec
+    #[must_use] 
     pub fn codec(&self) -> String {
-        self.remote_track.codec().capability.mime_type.clone()
+        self.remote_track.codec().capability.mime_type
     }
 
     /// Set active quality layer for simulcast
@@ -292,21 +298,25 @@ impl MediaTrack {
     }
 
     /// Get active quality layer
+    #[must_use] 
     pub fn quality_layer(&self) -> Option<QualityLayer> {
         *self.active_quality_layer.read()
     }
 
     /// Check if track is video
+    #[must_use] 
     pub fn is_video(&self) -> bool {
         self.kind == TrackKind::Video
     }
 
     /// Check if track is audio
+    #[must_use] 
     pub fn is_audio(&self) -> bool {
         self.kind == TrackKind::Audio
     }
 
     /// Check if track is active
+    #[must_use] 
     pub fn is_active(&self) -> bool {
         *self.active.read()
     }
@@ -317,6 +327,7 @@ impl MediaTrack {
     }
 
     /// Get track statistics
+    #[must_use] 
     pub fn get_stats(&self) -> TrackStats {
         let packets_received = self.stats.packets_received.load(Ordering::Relaxed);
         let bytes_received = self.stats.bytes_received.load(Ordering::Relaxed);

@@ -278,7 +278,7 @@ async fn main() -> Result<()> {
         }
         synctv_core::config::TurnMode::External => {
             info!("Using external TURN server (coturn)");
-            if let (Some(url), Some(secret)) = (
+            if let (Some(url), Some(_secret)) = (
                 &config.webrtc.external_turn_server_url,
                 &config.webrtc.external_turn_static_secret,
             ) {

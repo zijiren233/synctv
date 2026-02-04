@@ -9,14 +9,13 @@
 
 use crate::config::SfuConfig;
 use crate::peer::SfuPeer;
-use crate::track::{MediaTrack, TrackKind};
+use crate::track::MediaTrack;
 use crate::types::{PeerId, RoomId, TrackId};
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
 /// Room mode - P2P or SFU
@@ -55,13 +54,13 @@ pub struct SfuRoom {
     /// Current room mode
     pub mode: Arc<RwLock<RoomMode>>,
 
-    /// Peers in the room (uses DashMap for concurrent access)
+    /// Peers in the room (uses `DashMap` for concurrent access)
     pub peers: DashMap<PeerId, Arc<SfuPeer>>,
 
-    /// Published tracks: track_id -> (publisher_peer_id, track)
+    /// Published tracks: `track_id` -> (`publisher_peer_id`, track)
     published_tracks: DashMap<TrackId, (PeerId, Arc<MediaTrack>)>,
 
-    /// Track subscriptions: (subscriber_peer_id, track_id) -> ()
+    /// Track subscriptions: (`subscriber_peer_id`, `track_id`) -> ()
     subscriptions: DashMap<(PeerId, TrackId), ()>,
 
     /// Forwarding tasks for each track
@@ -375,7 +374,7 @@ impl SfuRoom {
 
             // Forward to each subscriber
             for subscriber_id in subscribers {
-                if let Some(peer) = peers.get(&subscriber_id) {
+                if let Some(_peer) = peers.get(&subscriber_id) {
                     // In a real implementation, we would forward the packet via WebRTC
                     // For now, just update statistics
                     let packet_size = packet.data.len();
@@ -447,7 +446,7 @@ impl SfuRoom {
 
     /// Switch to SFU mode - start forwarding all tracks
     async fn switch_to_sfu(&self) -> Result<()> {
-        for entry in self.published_tracks.iter() {
+        for entry in &self.published_tracks {
             let track_id = entry.key().clone();
             let (publisher_peer_id, track) = entry.value().clone();
 
@@ -508,7 +507,7 @@ impl SfuRoom {
         stats.audio_tracks = 0;
         stats.video_tracks = 0;
 
-        for entry in self.published_tracks.iter() {
+        for entry in &self.published_tracks {
             let (_, track) = entry.value();
             if track.is_audio() {
                 stats.audio_tracks += 1;
@@ -526,11 +525,13 @@ impl SfuRoom {
     }
 
     /// Get list of all peer IDs
+    #[must_use] 
     pub fn get_peer_ids(&self) -> Vec<PeerId> {
         self.peers.iter().map(|entry| entry.key().clone()).collect()
     }
 
     /// Get list of all published track IDs
+    #[must_use] 
     pub fn get_track_ids(&self) -> Vec<TrackId> {
         self.published_tracks
             .iter()

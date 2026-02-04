@@ -227,8 +227,10 @@ pub struct WebRTCConfig {
 /// TURN server mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TurnMode {
     /// Use built-in TURN server (simple deployment, limited scale)
+    #[default]
     Builtin,
     /// Use external TURN server (production, high scale)
     External,
@@ -236,11 +238,6 @@ pub enum TurnMode {
     Disabled,
 }
 
-impl Default for TurnMode {
-    fn default() -> Self {
-        Self::Builtin // Default to built-in for ease of use
-    }
-}
 
 /// WebRTC operation mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

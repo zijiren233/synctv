@@ -528,7 +528,7 @@ impl StreamMessageHandler {
         let event = ClusterEvent::WebRTCJoin {
             room_id: self.room_id.clone(),
             user_id: self.user_id.clone(),
-            conn_id: conn_id.clone(),
+            conn_id: conn_id,
             username: self.username.clone(),
             timestamp: chrono::Utc::now(),
         };

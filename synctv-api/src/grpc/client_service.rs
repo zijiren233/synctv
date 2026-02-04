@@ -155,8 +155,8 @@ impl ClientServiceImpl {
                     username,
                     content: message,
                     timestamp: timestamp.timestamp(),
-                    position: position,
-                    color: color,
+                    position,
+                    color,
                 })),
             }),
 

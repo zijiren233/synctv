@@ -20,7 +20,7 @@ pub struct ClientApiImpl {
 
 impl ClientApiImpl {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         user_service: Arc<UserService>,
         room_service: Arc<RoomService>,
         connection_manager: Arc<ConnectionManager>,

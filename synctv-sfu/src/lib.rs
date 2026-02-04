@@ -1,4 +1,4 @@
-//! SyncTV SFU (Selective Forwarding Unit)
+//! `SyncTV` SFU (Selective Forwarding Unit)
 //!
 //! This module implements a WebRTC SFU for handling large rooms (10+ participants).
 //! The SFU receives media streams from all participants and selectively forwards
@@ -6,10 +6,10 @@
 //!
 //! ## Architecture
 //!
-//! - **SfuRoom**: Manages a single room with multiple peers
-//! - **SfuPeer**: Represents a single participant in an SFU room
-//! - **MediaTrack**: Represents an audio or video track
-//! - **QualityLayer**: Simulcast quality selection (high/medium/low)
+//! - **`SfuRoom`**: Manages a single room with multiple peers
+//! - **`SfuPeer`**: Represents a single participant in an SFU room
+//! - **`MediaTrack`**: Represents an audio or video track
+//! - **`QualityLayer`**: Simulcast quality selection (high/medium/low)
 //!
 //! ## Features
 //!

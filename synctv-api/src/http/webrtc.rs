@@ -3,15 +3,13 @@
 //! Provides HTTP/JSON API for WebRTC configuration and control:
 //! - `/api/rooms/{room_id}/webrtc/ice-servers` - Get ICE servers configuration (STUN/TURN)
 //! - Includes TURN credential generation for authenticated users
-//! - Supports all WebRTC modes (SignalingOnly, PeerToPeer, Hybrid, SFU)
+//! - Supports all WebRTC modes (`SignalingOnly`, `PeerToPeer`, Hybrid, SFU)
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
     response::{IntoResponse, Json},
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 use crate::http::{AppError, AppResult, AppState};
 use crate::http::middleware::AuthUser;
@@ -64,8 +62,8 @@ pub struct GetIceServersResponse {
 ///
 /// # Configuration
 /// The returned servers depend on the configured WebRTC mode:
-/// - **SignalingOnly**: Empty list (client must use public STUN servers)
-/// - **PeerToPeer**: Built-in STUN + external STUN servers
+/// - **`SignalingOnly`**: Empty list (client must use public STUN servers)
+/// - **`PeerToPeer`**: Built-in STUN + external STUN servers
 /// - **Hybrid/SFU**: Full configuration with STUN and TURN
 ///
 /// TURN credentials are time-limited (default 24 hours) and generated using HMAC-SHA1.

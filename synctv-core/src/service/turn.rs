@@ -10,7 +10,7 @@
 //! - Higher cost than STUN (relays all media traffic)
 //!
 //! ## Coturn Integration
-//! This module is designed to work with coturn (https://github.com/coturn/coturn),
+//! This module is designed to work with coturn (<https://github.com/coturn/coturn>),
 //! the most widely deployed open-source TURN server.
 //!
 //! ## Credential Generation
@@ -55,7 +55,7 @@ impl Default for TurnConfig {
 /// TURN credentials (username and password)
 #[derive(Debug, Clone)]
 pub struct TurnCredential {
-    /// Username in format: "<timestamp>:<user_identifier>"
+    /// Username in format: "<timestamp>:<`user_identifier`>"
     pub username: String,
 
     /// HMAC-SHA1 based password
@@ -73,7 +73,8 @@ pub struct TurnCredentialService {
 
 impl TurnCredentialService {
     /// Create a new TURN credential service
-    pub fn new(config: TurnConfig) -> Self {
+    #[must_use] 
+    pub const fn new(config: TurnConfig) -> Self {
         Self { config }
     }
 
@@ -91,7 +92,7 @@ impl TurnCredentialService {
         let expiry_timestamp = expires_at.timestamp();
 
         // Format: "<timestamp>:<user_id>"
-        let username = format!("{}:{}", expiry_timestamp, user_id);
+        let username = format!("{expiry_timestamp}:{user_id}");
 
         // Generate HMAC-SHA1 password
         let password = self.compute_hmac(&username)?;
@@ -116,11 +117,13 @@ impl TurnCredentialService {
     }
 
     /// Verify if a credential is still valid
+    #[must_use] 
     pub fn is_credential_valid(&self, credential: &TurnCredential) -> bool {
         Utc::now() < credential.expires_at
     }
 
     /// Get TURN server URLs
+    #[must_use] 
     pub fn get_urls(&self) -> Vec<String> {
         let mut urls = vec![self.config.server_url.clone()];
 

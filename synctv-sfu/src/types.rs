@@ -12,6 +12,7 @@ impl PeerId {
         Self(id.into())
     }
 
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -44,6 +45,7 @@ impl RoomId {
         Self(id.into())
     }
 
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -76,6 +78,7 @@ impl TrackId {
         Self(id.into())
     }
 
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }

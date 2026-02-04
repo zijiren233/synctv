@@ -45,7 +45,7 @@ pub struct SfuManager {
     /// Configuration
     config: Arc<SfuConfig>,
 
-    /// Active rooms (uses DashMap for lock-free concurrent access)
+    /// Active rooms (uses `DashMap` for lock-free concurrent access)
     rooms: DashMap<RoomId, Arc<SfuRoom>>,
 
     /// Global statistics
@@ -242,16 +242,19 @@ impl SfuManager {
     }
 
     /// Get configuration
+    #[must_use] 
     pub fn config(&self) -> &SfuConfig {
         &self.config
     }
 
     /// Get list of all active room IDs
+    #[must_use] 
     pub fn get_room_ids(&self) -> Vec<RoomId> {
         self.rooms.iter().map(|entry| entry.key().clone()).collect()
     }
 
     /// Get number of active rooms
+    #[must_use] 
     pub fn room_count(&self) -> usize {
         self.rooms.len()
     }
@@ -262,7 +265,7 @@ impl SfuManager {
         let mut room_ids_to_remove = Vec::new();
 
         // Collect empty room IDs
-        for entry in self.rooms.iter() {
+        for entry in &self.rooms {
             let room_id = entry.key();
             let room = entry.value();
 
@@ -318,7 +321,7 @@ impl SfuManager {
             ..Default::default()
         };
 
-        for entry in self.rooms.iter() {
+        for entry in &self.rooms {
             let room = entry.value();
             let room_stats = room.get_stats().await;
 

@@ -23,7 +23,7 @@
 //! - Production deployments (>100 users)
 //! - Enterprise scale
 //! - Advanced features (TCP relay, TLS, high availability)
-//! - See docs/TURN_DEPLOYMENT.md for coturn setup guide
+//! - See `docs/TURN_DEPLOYMENT.md` for coturn setup guide
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -89,7 +89,7 @@ pub struct TurnMetrics {
 /// Built-in TURN server for NAT traversal relay
 ///
 /// **Note**: This is a simplified implementation. For production scale,
-/// consider using external coturn server (see docs/TURN_DEPLOYMENT.md)
+/// consider using external coturn server (see `docs/TURN_DEPLOYMENT.md`)
 pub struct TurnServer {
     config: TurnServerConfig,
     socket: Arc<UdpSocket>,
@@ -109,7 +109,7 @@ impl TurnServer {
     /// Create and start a new TURN server
     ///
     /// **Important**: Requires `static_secret` to be configured for authentication.
-    /// This secret must match the one used by SyncTV for credential generation.
+    /// This secret must match the one used by `SyncTV` for credential generation.
     pub async fn start(config: TurnServerConfig) -> anyhow::Result<Arc<Self>> {
         // Validate configuration
         if config.static_secret.is_empty() {
@@ -182,6 +182,7 @@ impl TurnServer {
     }
 
     /// Get current metrics
+    #[must_use] 
     pub fn metrics(&self) -> TurnMetrics {
         TurnMetrics {
             total_allocations: self.metrics.total_allocations.load(Ordering::Relaxed),

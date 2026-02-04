@@ -20,7 +20,7 @@ use tokio::net::UdpSocket;
 use tracing::{debug, error, info, warn};
 
 use bytecodec::{DecodeExt, EncodeExt};
-use stun_codec::{Message, MessageClass, MessageDecoder, MessageEncoder, TransactionId};
+use stun_codec::{Message, MessageClass, MessageDecoder, MessageEncoder};
 use stun_codec::rfc5389::attributes::{Software, XorMappedAddress};
 use stun_codec::rfc5389::{Attribute, methods};
 
@@ -140,7 +140,7 @@ impl StunServer {
         }
     }
 
-    /// Handle a single STUN request using the stun_codec crate
+    /// Handle a single STUN request using the `stun_codec` crate
     async fn handle_request(
         socket: &UdpSocket,
         data: &[u8],
@@ -220,6 +220,7 @@ impl StunServer {
     }
 
     /// Get current metrics
+    #[must_use] 
     pub fn metrics(&self) -> StunMetrics {
         StunMetrics {
             total_requests: self.metrics.total_requests.load(Ordering::Relaxed),

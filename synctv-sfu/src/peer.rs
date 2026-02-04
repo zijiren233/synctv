@@ -50,7 +50,7 @@ impl BandwidthEstimator {
         self.recent_bytes.push_back((now, bytes));
 
         // Remove samples outside the window
-        let cutoff = now - std::time::Duration::from_secs(self.window_duration_secs);
+        let cutoff = now.checked_sub(std::time::Duration::from_secs(self.window_duration_secs)).unwrap();
         while let Some(&(timestamp, _)) = self.recent_bytes.front() {
             if timestamp < cutoff {
                 self.recent_bytes.pop_front();
@@ -72,17 +72,14 @@ impl BandwidthEstimator {
         let new_bandwidth_kbps = ((total_bytes * 8) as f64 / duration_secs / 1000.0) as u32;
 
         // Apply exponential smoothing: new_estimate = α * old + (1-α) * new
-        self.current_bandwidth_kbps = (
-            self.smoothing_factor * self.current_bandwidth_kbps as f64 +
-            (1.0 - self.smoothing_factor) * new_bandwidth_kbps as f64
-        ) as u32;
+        self.current_bandwidth_kbps = self.smoothing_factor.mul_add(f64::from(self.current_bandwidth_kbps), (1.0 - self.smoothing_factor) * f64::from(new_bandwidth_kbps)) as u32;
 
         self.last_update = now;
         self.current_bandwidth_kbps
     }
 
     /// Get current bandwidth estimate without updating
-    fn get_current(&self) -> u32 {
+    const fn get_current(&self) -> u32 {
         self.current_bandwidth_kbps
     }
 }
@@ -104,6 +101,7 @@ pub struct SfuPeer {
 
 impl SfuPeer {
     /// Create a new SFU peer
+    #[must_use] 
     pub fn new(id: PeerId) -> Self {
         Self {
             id,
@@ -132,6 +130,7 @@ impl SfuPeer {
     }
 
     /// Update bandwidth estimation and potentially adjust quality
+    #[must_use] 
     pub fn update_bandwidth_estimation(&self) -> (u32, Option<QualityLayer>) {
         let estimated_bandwidth = self.bandwidth_estimator.write().estimate();
         let old_quality = *self.preferred_quality.read();
@@ -148,11 +147,13 @@ impl SfuPeer {
     }
 
     /// Get current bandwidth estimate
+    #[must_use] 
     pub fn get_bandwidth(&self) -> u32 {
         self.bandwidth_estimator.read().get_current()
     }
 
     /// Get preferred quality layer
+    #[must_use] 
     pub fn get_preferred_quality(&self) -> QualityLayer {
         *self.preferred_quality.read()
     }
@@ -163,6 +164,7 @@ impl SfuPeer {
     }
 
     /// Get peer statistics
+    #[must_use] 
     pub fn get_stats(&self) -> PeerStats {
         self.stats.read().clone()
     }

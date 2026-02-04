@@ -123,7 +123,7 @@ pub fn create_router(
         user_service.clone(),
         room_service.clone(),
         connection_manager.clone(),
-        config.clone(),
+        config,
     ));
 
     // AdminApi requires SettingsService and EmailService
