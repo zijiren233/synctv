@@ -15,6 +15,7 @@ synctv-core.workspace = true
 synctv-api = { path = "../synctv-api" }
 synctv-stream.workspace = true
 synctv-cluster.workspace = true
+synctv-sfu = { path = "../synctv-sfu" }
 
 # Async
 tokio.workspace = true

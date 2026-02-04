@@ -224,6 +224,7 @@ pub async fn serve(
                 user_service_for_provider,
                 room_service_for_provider,
                 Arc::new(connection_manager_for_provider.clone()),
+                Arc::new(config.clone()),
             )),
             admin_api: None,
         });

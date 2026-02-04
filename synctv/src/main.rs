@@ -296,6 +296,33 @@ async fn main() -> Result<()> {
         }
     };
 
+    // 9.7. Initialize SFU manager (if needed for WebRTC mode)
+    let sfu_manager = if config.webrtc.mode == synctv_core::config::WebRTCMode::SFU
+        || config.webrtc.mode == synctv_core::config::WebRTCMode::Hybrid
+    {
+        info!("Initializing SFU manager for mode: {:?}", config.webrtc.mode);
+        let sfu_config = synctv_sfu::SfuConfig {
+            sfu_threshold: config.webrtc.sfu_threshold,
+            max_sfu_rooms: config.webrtc.max_sfu_rooms,
+            max_peers_per_room: config.webrtc.max_peers_per_sfu_room,
+            enable_simulcast: config.webrtc.enable_simulcast,
+            simulcast_layers: vec!["high".to_string(), "medium".to_string(), "low".to_string()],
+            max_bitrate_per_peer: 0, // 0 = no limit
+            enable_bandwidth_estimation: true,
+        };
+        let manager = synctv_sfu::SfuManager::new(sfu_config);
+        info!(
+            "SFU manager initialized (threshold: {}, max_rooms: {}, max_peers_per_room: {})",
+            config.webrtc.sfu_threshold,
+            if config.webrtc.max_sfu_rooms == 0 { "unlimited".to_string() } else { config.webrtc.max_sfu_rooms.to_string() },
+            config.webrtc.max_peers_per_sfu_room
+        );
+        Some(manager)
+    } else {
+        info!("SFU manager disabled (mode: {:?})", config.webrtc.mode);
+        None
+    };
+
     // 10. Create server with all services
     let provider_instance_manager = synctv_services.provider_instance_manager.clone();
     let alist_provider = Arc::new(AlistProvider::new(provider_instance_manager.clone()));
@@ -330,6 +357,7 @@ async fn main() -> Result<()> {
         live_streaming_infrastructure,
         stun_server,
         turn_server,
+        sfu_manager,
     };
 
     let server = SyncTvServer::new(config, services, streaming_state);

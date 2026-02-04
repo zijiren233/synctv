@@ -5905,6 +5905,7 @@ dependencies = [
  "synctv-api",
  "synctv-cluster",
  "synctv-core",
+ "synctv-sfu",
  "synctv-stream",
  "tokio",
  "tracing",

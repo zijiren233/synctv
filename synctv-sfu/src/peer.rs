@@ -1,20 +1,256 @@
 //! SFU Peer management
+//!
+//! This module handles:
+//! - Peer connection state and lifecycle
+//! - Bandwidth estimation with exponential smoothing
+//! - Adaptive quality layer selection
+//! - Track subscription management
+//! - Peer statistics tracking
 
+use crate::track::QualityLayer;
 use crate::types::PeerId;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::time::Instant;
 
-pub struct SfuPeer {
-    pub id: PeerId,
+/// Bandwidth estimator using exponential smoothing
+struct BandwidthEstimator {
+    /// Recent data samples: (timestamp, bytes)
+    recent_bytes: VecDeque<(Instant, usize)>,
+
+    /// Current estimated bandwidth in kbps
+    current_bandwidth_kbps: u32,
+
+    /// Last update time
+    last_update: Instant,
+
+    /// Smoothing factor (0.8 = 80% weight on previous value)
+    smoothing_factor: f64,
+
+    /// Time window for bandwidth calculation (1 second)
+    window_duration_secs: u64,
 }
 
-impl SfuPeer {
-    pub fn new(id: PeerId) -> Self {
-        Self { id }
+impl BandwidthEstimator {
+    fn new() -> Self {
+        Self {
+            recent_bytes: VecDeque::new(),
+            current_bandwidth_kbps: 1000, // Start with 1 Mbps assumption
+            last_update: Instant::now(),
+            smoothing_factor: 0.8,
+            window_duration_secs: 1,
+        }
+    }
+
+    /// Record received bytes
+    fn record_bytes(&mut self, bytes: usize) {
+        let now = Instant::now();
+        self.recent_bytes.push_back((now, bytes));
+
+        // Remove samples outside the window
+        let cutoff = now - std::time::Duration::from_secs(self.window_duration_secs);
+        while let Some(&(timestamp, _)) = self.recent_bytes.front() {
+            if timestamp < cutoff {
+                self.recent_bytes.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Estimate current bandwidth using exponential smoothing
+    fn estimate(&mut self) -> u32 {
+        let now = Instant::now();
+
+        // Calculate total bytes in the window
+        let total_bytes: usize = self.recent_bytes.iter().map(|(_, bytes)| bytes).sum();
+
+        // Calculate instantaneous bandwidth
+        let duration_secs = self.window_duration_secs as f64;
+        let new_bandwidth_kbps = ((total_bytes * 8) as f64 / duration_secs / 1000.0) as u32;
+
+        // Apply exponential smoothing: new_estimate = α * old + (1-α) * new
+        self.current_bandwidth_kbps = (
+            self.smoothing_factor * self.current_bandwidth_kbps as f64 +
+            (1.0 - self.smoothing_factor) * new_bandwidth_kbps as f64
+        ) as u32;
+
+        self.last_update = now;
+        self.current_bandwidth_kbps
+    }
+
+    /// Get current bandwidth estimate without updating
+    fn get_current(&self) -> u32 {
+        self.current_bandwidth_kbps
     }
 }
 
+/// SFU Peer - represents a connected peer in SFU mode
+pub struct SfuPeer {
+    /// Peer ID
+    pub id: PeerId,
+
+    /// Bandwidth estimator
+    bandwidth_estimator: Arc<RwLock<BandwidthEstimator>>,
+
+    /// Current preferred quality layer for this peer
+    preferred_quality: Arc<RwLock<QualityLayer>>,
+
+    /// Peer statistics
+    stats: Arc<RwLock<PeerStats>>,
+}
+
+impl SfuPeer {
+    /// Create a new SFU peer
+    pub fn new(id: PeerId) -> Self {
+        Self {
+            id,
+            bandwidth_estimator: Arc::new(RwLock::new(BandwidthEstimator::new())),
+            preferred_quality: Arc::new(RwLock::new(QualityLayer::Medium)),
+            stats: Arc::new(RwLock::new(PeerStats::default())),
+        }
+    }
+
+    /// Record received bytes and update bandwidth estimate
+    pub fn record_received_bytes(&self, bytes: usize) {
+        let mut estimator = self.bandwidth_estimator.write();
+        estimator.record_bytes(bytes);
+
+        // Update stats
+        let mut stats = self.stats.write();
+        stats.packets_received += 1;
+        stats.bytes_received += bytes as u64;
+    }
+
+    /// Record sent bytes
+    pub fn record_sent_bytes(&self, bytes: usize) {
+        let mut stats = self.stats.write();
+        stats.packets_sent += 1;
+        stats.bytes_sent += bytes as u64;
+    }
+
+    /// Update bandwidth estimation and potentially adjust quality
+    pub fn update_bandwidth_estimation(&self) -> (u32, Option<QualityLayer>) {
+        let estimated_bandwidth = self.bandwidth_estimator.write().estimate();
+        let old_quality = *self.preferred_quality.read();
+        let new_quality = QualityLayer::from_bandwidth(estimated_bandwidth);
+
+        // Only change quality if there's a significant bandwidth change
+        // or if the quality layer should change
+        if new_quality != old_quality {
+            *self.preferred_quality.write() = new_quality;
+            return (estimated_bandwidth, Some(new_quality));
+        }
+
+        (estimated_bandwidth, None)
+    }
+
+    /// Get current bandwidth estimate
+    pub fn get_bandwidth(&self) -> u32 {
+        self.bandwidth_estimator.read().get_current()
+    }
+
+    /// Get preferred quality layer
+    pub fn get_preferred_quality(&self) -> QualityLayer {
+        *self.preferred_quality.read()
+    }
+
+    /// Set preferred quality layer manually
+    pub fn set_preferred_quality(&self, quality: QualityLayer) {
+        *self.preferred_quality.write() = quality;
+    }
+
+    /// Get peer statistics
+    pub fn get_stats(&self) -> PeerStats {
+        self.stats.read().clone()
+    }
+
+    /// Reset statistics
+    pub fn reset_stats(&self) {
+        *self.stats.write() = PeerStats::default();
+    }
+}
+
+/// Peer statistics
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PeerStats {
+    /// Number of packets received from this peer
     pub packets_received: u64,
+
+    /// Number of bytes received from this peer
     pub bytes_received: u64,
+
+    /// Number of packets sent to this peer
+    pub packets_sent: u64,
+
+    /// Number of bytes sent to this peer
+    pub bytes_sent: u64,
+
+    /// Number of packet loss events
+    pub packet_loss_count: u64,
+
+    /// Current estimated bandwidth in kbps
+    pub bandwidth_kbps: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_peer_creation() {
+        let peer = SfuPeer::new(PeerId::from("test-peer"));
+        assert_eq!(peer.get_bandwidth(), 1000); // Default 1 Mbps
+        assert_eq!(peer.get_preferred_quality(), QualityLayer::Medium);
+    }
+
+    #[test]
+    fn test_bandwidth_estimation() {
+        let peer = SfuPeer::new(PeerId::from("test-peer"));
+
+        // Record some bytes
+        peer.record_received_bytes(10000);
+        peer.record_received_bytes(10000);
+        peer.record_received_bytes(10000);
+
+        // Update estimation
+        let (bandwidth, _) = peer.update_bandwidth_estimation();
+
+        // Should have some bandwidth estimate
+        assert!(bandwidth > 0);
+    }
+
+    #[test]
+    fn test_quality_adaptation() {
+        let peer = SfuPeer::new(PeerId::from("test-peer"));
+
+        // Set quality manually
+        peer.set_preferred_quality(QualityLayer::High);
+        assert_eq!(peer.get_preferred_quality(), QualityLayer::High);
+
+        peer.set_preferred_quality(QualityLayer::Low);
+        assert_eq!(peer.get_preferred_quality(), QualityLayer::Low);
+    }
+
+    #[test]
+    fn test_stats() {
+        let peer = SfuPeer::new(PeerId::from("test-peer"));
+
+        peer.record_received_bytes(1000);
+        peer.record_sent_bytes(500);
+
+        let stats = peer.get_stats();
+        assert_eq!(stats.packets_received, 1);
+        assert_eq!(stats.bytes_received, 1000);
+        assert_eq!(stats.packets_sent, 1);
+        assert_eq!(stats.bytes_sent, 500);
+
+        // Reset stats
+        peer.reset_stats();
+        let stats = peer.get_stats();
+        assert_eq!(stats.packets_received, 0);
+        assert_eq!(stats.bytes_received, 0);
+    }
 }

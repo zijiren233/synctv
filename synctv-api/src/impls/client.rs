@@ -15,19 +15,22 @@ pub struct ClientApiImpl {
     pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
     pub connection_manager: Arc<ConnectionManager>,
+    pub config: Arc<synctv_core::Config>,
 }
 
 impl ClientApiImpl {
-    #[must_use] 
-    pub const fn new(
+    #[must_use]
+    pub fn new(
         user_service: Arc<UserService>,
         room_service: Arc<RoomService>,
         connection_manager: Arc<ConnectionManager>,
+        config: Arc<synctv_core::Config>,
     ) -> Self {
         Self {
             user_service,
             room_service,
             connection_manager,
+            config,
         }
     }
 
@@ -895,5 +898,112 @@ fn room_member_to_proto(member: synctv_core::models::RoomMemberWithUser) -> crat
         admin_removed_permissions: member.admin_removed_permissions,
         joined_at: member.joined_at.timestamp(),
         is_online: member.is_online,
+    }
+}
+
+impl ClientApiImpl {
+    // === WebRTC Operations ===
+
+    /// Get ICE servers configuration for WebRTC
+    pub async fn get_ice_servers(
+        &self,
+        _room_id: &RoomId,
+        user_id: &UserId,
+    ) -> Result<crate::proto::client::GetIceServersResponse, anyhow::Error> {
+        use crate::proto::client::{IceServer, GetIceServersResponse};
+        use synctv_core::config::TurnMode;
+
+        let webrtc_config = &self.config.webrtc;
+        let mut servers = Vec::new();
+
+        // Add built-in STUN server if enabled
+        if webrtc_config.enable_builtin_stun {
+            let stun_url = format!(
+                "stun:{}:{}",
+                self.config.server.host,
+                webrtc_config.builtin_stun_port
+            );
+            servers.push(IceServer {
+                urls: vec![stun_url],
+                username: None,
+                credential: None,
+            });
+        }
+
+        // Add external STUN servers
+        for url in &webrtc_config.external_stun_servers {
+            servers.push(IceServer {
+                urls: vec![url.clone()],
+                username: None,
+                credential: None,
+            });
+        }
+
+        // Add TURN server based on configured mode
+        match webrtc_config.turn_mode {
+            TurnMode::Builtin => {
+                if webrtc_config.enable_builtin_turn {
+                    // Use built-in TURN server
+                    let turn_url = format!(
+                        "turn:{}:{}",
+                        self.config.server.host,
+                        webrtc_config.builtin_turn_port
+                    );
+
+                    // Get static secret for credential generation
+                    if let Some(turn_secret) = &webrtc_config.external_turn_static_secret {
+                        let turn_config = synctv_core::service::TurnConfig {
+                            server_url: turn_url.clone(),
+                            static_secret: turn_secret.clone(),
+                            credential_ttl: std::time::Duration::from_secs(webrtc_config.turn_credential_ttl),
+                            use_tls: false,
+                        };
+                        let turn_service = synctv_core::service::TurnCredentialService::new(turn_config);
+
+                        // Generate time-limited credentials
+                        let credential = turn_service.generate_credential(user_id.as_str())?;
+
+                        servers.push(IceServer {
+                            urls: vec![turn_url],
+                            username: Some(credential.username),
+                            credential: Some(credential.password),
+                        });
+                    }
+                }
+            }
+            TurnMode::External => {
+                // Use external TURN server (coturn)
+                if let (Some(turn_url), Some(turn_secret)) = (
+                    &webrtc_config.external_turn_server_url,
+                    &webrtc_config.external_turn_static_secret,
+                ) {
+                    let turn_config = synctv_core::service::TurnConfig {
+                        server_url: turn_url.clone(),
+                        static_secret: turn_secret.clone(),
+                        credential_ttl: std::time::Duration::from_secs(webrtc_config.turn_credential_ttl),
+                        use_tls: false,
+                    };
+                    let turn_service = synctv_core::service::TurnCredentialService::new(turn_config);
+
+                    // Generate time-limited credentials
+                    let credential = turn_service.generate_credential(user_id.as_str())?;
+
+                    // Get all TURN URLs (including TLS variant if enabled)
+                    let urls = turn_service.get_urls();
+
+                    servers.push(IceServer {
+                        urls,
+                        username: Some(credential.username),
+                        credential: Some(credential.password),
+                    });
+                }
+            }
+            TurnMode::Disabled => {
+                // TURN disabled - rely on STUN only for NAT traversal
+                // This may result in ~85-90% connection success rate instead of ~99%
+            }
+        }
+
+        Ok(GetIceServersResponse { servers })
     }
 }

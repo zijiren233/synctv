@@ -53,6 +53,7 @@ pub struct Services {
     pub live_streaming_infrastructure: Option<Arc<synctv_stream::api::LiveStreamingInfrastructure>>,
     pub stun_server: Option<Arc<synctv_core::service::StunServer>>,
     pub turn_server: Option<Arc<synctv_core::service::TurnServer>>,
+    pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 }
 
 /// `SyncTV` server - manages all server components
@@ -193,6 +194,7 @@ impl SyncTvServer {
         let live_streaming_infrastructure = self.services.live_streaming_infrastructure.clone();
 
         let http_router = synctv_api::http::create_router(
+            Arc::new(self.config.clone()),
             user_service,
             room_service,
             provider_instance_manager,

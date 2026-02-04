@@ -16,6 +16,7 @@ pub mod publish_key;
 pub mod room;
 pub mod room_extra;
 pub mod user;
+pub mod webrtc;
 pub mod websocket;
 
 // Provider HTTP routes
@@ -42,6 +43,7 @@ pub use error::{AppError, AppResult};
 /// Configuration for creating the HTTP router
 #[derive(Clone)]
 pub struct RouterConfig {
+    pub config: Arc<synctv_core::Config>,
     pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
     pub provider_instance_manager: Arc<ProviderInstanceManager>,
@@ -94,6 +96,7 @@ pub struct AppState {
 /// Create the HTTP router with all routes
 #[allow(clippy::too_many_arguments)]
 pub fn create_router(
+    config: Arc<synctv_core::Config>,
     user_service: Arc<UserService>,
     room_service: Arc<RoomService>,
     provider_instance_manager: Arc<ProviderInstanceManager>,
@@ -120,6 +123,7 @@ pub fn create_router(
         user_service.clone(),
         room_service.clone(),
         connection_manager.clone(),
+        config.clone(),
     ));
 
     // AdminApi requires SettingsService and EmailService
@@ -296,6 +300,11 @@ pub fn create_router(
             "/ws/rooms/:room_id",
             axum::routing::get(websocket::websocket_handler),
         )
+        // WebRTC configuration endpoints
+        .route(
+            "/api/rooms/:room_id/webrtc/ice-servers",
+            get(webrtc::get_ice_servers),
+        )
         // Provider-specific HTTP routes
         .nest("/api/providers/bilibili", providers::bilibili::bilibili_routes())
         .nest("/api/providers/alist", providers::alist::alist_routes())
@@ -318,6 +327,7 @@ pub fn create_router(
 /// Create the HTTP router from configuration struct
 pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
     create_router(
+        config.config,
         config.user_service,
         config.room_service,
         config.provider_instance_manager,
