@@ -43,6 +43,7 @@ pub struct SettingsRegistry {
     pub allow_room_creation: Setting<bool>,
     pub max_rooms_per_user: Setting<i64>,
     pub max_members_per_room: Setting<i64>,
+    pub max_chat_messages: Setting<u64>,
 
     // Permission settings - global defaults for each role
     pub admin_default_permissions: Setting<u64>,
@@ -85,6 +86,15 @@ impl SettingsRegistry {
                         Ok(())
                     } else {
                         Err(anyhow::anyhow!("max_members_per_room must be between 1 and 10000"))
+                    }
+                }
+            ),
+            max_chat_messages: setting!(u64, "server.max_chat_messages", storage.clone(), 500,
+                |v: &u64| -> anyhow::Result<()> {
+                    if *v <= 10000 {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!("max_chat_messages must be at most 10000 (0 = unlimited)"))
                     }
                 }
             ),

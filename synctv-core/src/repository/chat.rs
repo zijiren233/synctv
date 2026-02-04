@@ -24,7 +24,7 @@ impl ChatRepository {
             r"
             INSERT INTO chat_messages (id, room_id, user_id, content, created_at)
             VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, room_id, user_id, content, created_at, deleted_at
+            RETURNING id, room_id, user_id, content, created_at
             ",
         )
         .bind(&message.id)
@@ -51,9 +51,9 @@ impl ChatRepository {
         let rows = if let Some(before_time) = before {
             sqlx::query(
                 r"
-                SELECT id, room_id, user_id, content, created_at, deleted_at
+                SELECT id, room_id, user_id, content, created_at
                 FROM chat_messages
-                WHERE room_id = $1 AND created_at < $2 AND deleted_at IS NULL
+                WHERE room_id = $1 AND created_at < $2
                 ORDER BY created_at DESC
                 LIMIT $3
                 ",
@@ -66,9 +66,9 @@ impl ChatRepository {
         } else {
             sqlx::query(
                 r"
-                SELECT id, room_id, user_id, content, created_at, deleted_at
+                SELECT id, room_id, user_id, content, created_at
                 FROM chat_messages
-                WHERE room_id = $1 AND deleted_at IS NULL
+                WHERE room_id = $1
                 ORDER BY created_at DESC
                 LIMIT $2
                 ",
@@ -88,9 +88,9 @@ impl ChatRepository {
     pub async fn get_by_id(&self, message_id: &str) -> Result<Option<ChatMessage>> {
         let row = sqlx::query(
             r"
-            SELECT id, room_id, user_id, content, created_at, deleted_at
+            SELECT id, room_id, user_id, content, created_at
             FROM chat_messages
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1
             ",
         )
         .bind(message_id)
@@ -103,17 +103,15 @@ impl ChatRepository {
         }
     }
 
-    /// Soft delete a message
+    /// Delete a message (physical delete)
     pub async fn delete(&self, message_id: &str) -> Result<bool> {
         let result = sqlx::query(
             r"
-            UPDATE chat_messages
-            SET deleted_at = $2
-            WHERE id = $1 AND deleted_at IS NULL
+            DELETE FROM chat_messages
+            WHERE id = $1
             ",
         )
         .bind(message_id)
-        .bind(Utc::now())
         .execute(&self.pool)
         .await?;
 
@@ -126,7 +124,7 @@ impl ChatRepository {
             r"
             SELECT COUNT(*) as count
             FROM chat_messages
-            WHERE room_id = $1 AND deleted_at IS NULL
+            WHERE room_id = $1
             ",
         )
         .bind(room_id.as_str())
@@ -144,7 +142,7 @@ impl ChatRepository {
             WHERE room_id = $1
             AND id NOT IN (
                 SELECT id FROM chat_messages
-                WHERE room_id = $1 AND deleted_at IS NULL
+                WHERE room_id = $1
                 ORDER BY created_at DESC
                 LIMIT $2
             )
@@ -152,6 +150,50 @@ impl ChatRepository {
         )
         .bind(room_id.as_str())
         .bind(keep_count)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Delete old messages for all rooms in a single query (keep only last N messages per room)
+    ///
+    /// This is much more efficient than calling cleanup_old_messages() for each room individually.
+    /// Uses window functions to identify messages to delete across all rooms.
+    /// Only processes rooms with recent activity (messages within the last few minutes).
+    ///
+    /// # Arguments
+    /// * `keep_count` - Maximum messages to keep per room (0 = unlimited, no cleanup)
+    /// * `activity_window_minutes` - Only cleanup rooms with messages in the last N minutes
+    ///
+    /// # Returns
+    /// Total number of messages deleted across all rooms
+    pub async fn cleanup_all_rooms(&self, keep_count: i32, activity_window_minutes: i32) -> Result<u64> {
+        // If keep_count is 0, no cleanup needed
+        if keep_count <= 0 {
+            return Ok(0);
+        }
+
+        let result = sqlx::query(
+            r"
+            DELETE FROM chat_messages
+            WHERE id IN (
+                SELECT id FROM (
+                    SELECT id, room_id,
+                           ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY created_at DESC) as rn
+                    FROM chat_messages
+                    WHERE room_id IN (
+                        SELECT DISTINCT room_id
+                        FROM chat_messages
+                        WHERE created_at >= NOW() - ($2 || ' minutes')::INTERVAL
+                    )
+                ) ranked_messages
+                WHERE rn > $1
+            )
+            ",
+        )
+        .bind(keep_count)
+        .bind(activity_window_minutes)
         .execute(&self.pool)
         .await?;
 
@@ -166,7 +208,6 @@ impl ChatRepository {
             user_id: UserId::from_string(row.try_get("user_id")?),
             content: row.try_get("content")?,
             created_at: row.try_get("created_at")?,
-            deleted_at: row.try_get("deleted_at")?,
         })
     }
 }

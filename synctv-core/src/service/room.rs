@@ -700,7 +700,6 @@ impl RoomService {
             user_id,
             content,
             created_at: Utc::now(),
-            deleted_at: None,
         };
         self.chat_repo.create(&message).await
     }

@@ -10,11 +10,10 @@ pub struct ChatMessage {
     pub user_id: UserId,
     pub content: String,
     pub created_at: DateTime<Utc>,
-    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 impl ChatMessage {
-    #[must_use] 
+    #[must_use]
     pub fn new(room_id: RoomId, user_id: UserId, content: String) -> Self {
         Self {
             id: super::id::generate_id(),
@@ -22,13 +21,7 @@ impl ChatMessage {
             user_id,
             content,
             created_at: Utc::now(),
-            deleted_at: None,
         }
-    }
-
-    #[must_use] 
-    pub const fn is_deleted(&self) -> bool {
-        self.deleted_at.is_some()
     }
 }
 

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use chrono::Utc;
-use tracing::info;
+use tracing::{info, debug, error};
 
 use crate::{
     cache::UsernameCache,
@@ -225,6 +225,127 @@ impl ChatService {
         );
 
         Ok(danmaku)
+    }
+
+    /// Cleanup old chat messages for a specific room based on global settings
+    ///
+    /// # Arguments
+    /// * `room_id` - Room ID to cleanup
+    /// * `max_messages` - Maximum messages to keep (0 = unlimited)
+    ///
+    /// # Returns
+    /// Number of messages deleted
+    pub async fn cleanup_room_messages(
+        &self,
+        room_id: &RoomId,
+        max_messages: u64,
+    ) -> Result<u64> {
+        // If max_messages is 0, no cleanup needed (unlimited)
+        if max_messages == 0 {
+            return Ok(0);
+        }
+
+        // Cleanup old messages
+        let deleted = self
+            .chat_repository
+            .cleanup_old_messages(room_id, max_messages as i32)
+            .await?;
+
+        if deleted > 0 {
+            debug!(
+                room_id = room_id.as_str(),
+                deleted = deleted,
+                max_messages = max_messages,
+                "Cleaned up old chat messages"
+            );
+        }
+
+        Ok(deleted)
+    }
+
+    /// Cleanup old chat messages for all rooms using global settings
+    ///
+    /// This method uses a single optimized SQL query with window functions to delete
+    /// old messages across all rooms, making it suitable for production environments
+    /// with thousands of rooms.
+    ///
+    /// Only processes rooms with recent activity (messages within the last few minutes),
+    /// avoiding unnecessary scans of inactive rooms.
+    ///
+    /// # Arguments
+    /// * `max_messages` - Maximum messages to keep per room (from global settings, 0 = unlimited)
+    /// * `activity_window_minutes` - Only cleanup rooms with messages in the last N minutes
+    ///
+    /// # Returns
+    /// Total number of messages deleted across all rooms
+    pub async fn cleanup_all_rooms(&self, max_messages: u64, activity_window_minutes: i32) -> Result<u64> {
+        // If max_messages is 0, no cleanup needed (unlimited)
+        if max_messages == 0 {
+            return Ok(0);
+        }
+
+        // Use optimized batch cleanup (single SQL query for all rooms)
+        let deleted = self
+            .chat_repository
+            .cleanup_all_rooms(max_messages as i32, activity_window_minutes)
+            .await?;
+
+        if deleted > 0 {
+            debug!(
+                total_deleted = deleted,
+                max_messages = max_messages,
+                activity_window_minutes = activity_window_minutes,
+                "Cleaned up chat messages for active rooms"
+            );
+        }
+
+        Ok(deleted)
+    }
+
+    /// Start a background task to periodically cleanup old messages
+    ///
+    /// This task runs every minute and only processes rooms with recent activity (last 3 minutes),
+    /// providing near real-time message limit enforcement without scanning inactive rooms.
+    ///
+    /// # Arguments
+    /// * `settings_registry` - Settings registry to get max_chat_messages setting
+    /// * `interval_seconds` - Cleanup interval in seconds (default: 60 seconds)
+    /// * `activity_window_minutes` - Only cleanup rooms with messages in the last N minutes (default: 3 minutes)
+    ///
+    /// # Returns
+    /// JoinHandle for the background task
+    pub fn start_cleanup_task(
+        self,
+        settings_registry: Arc<crate::service::SettingsRegistry>,
+        interval_seconds: u64,
+        activity_window_minutes: i32,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_seconds));
+
+            loop {
+                interval.tick().await;
+
+                // Get current max_chat_messages setting
+                let max_messages = settings_registry.max_chat_messages.get().unwrap_or(500);
+
+                match self.cleanup_all_rooms(max_messages, activity_window_minutes).await {
+                    Ok(deleted) => {
+                        if deleted > 0 {
+                            info!(
+                                deleted = deleted,
+                                max_messages = max_messages,
+                                activity_window_minutes = activity_window_minutes,
+                                "Periodic chat cleanup completed"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Failed to run periodic chat cleanup");
+                    }
+                }
+            }
+        })
     }
 }
 
