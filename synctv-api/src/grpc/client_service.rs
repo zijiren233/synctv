@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
+use base64::Engine;
 
 use synctv_cluster::sync::{ClusterEvent, ClusterManager, ConnectionManager};
 use crate::impls::messaging::{StreamMessageHandler, MessageSender};
@@ -18,7 +19,7 @@ use synctv_core::service::{
 use crate::proto::client::{
     auth_service_server::AuthService, email_service_server::EmailService,
     media_service_server::MediaService, public_service_server::PublicService,
-    room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse,
+    room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse, GetIceServersRequest, GetIceServersResponse, IceServer,
 };
 
 /// Configuration for `ClientService`
@@ -34,6 +35,7 @@ pub struct ClientServiceConfig {
     pub email_service: Option<Arc<synctv_core::service::EmailService>>,
     pub email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+    pub config: Arc<synctv_core::Config>,
 }
 
 /// `ClientService` implementation
@@ -49,11 +51,12 @@ pub struct ClientServiceImpl {
     email_service: Option<Arc<synctv_core::service::EmailService>>,
     email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
     settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+    config: Arc<synctv_core::Config>,
 }
 
 impl ClientServiceImpl {
     #[allow(clippy::too_many_arguments)]
-    #[must_use] 
+    #[must_use]
     pub fn new(
         user_service: CoreUserService,
         room_service: CoreRoomService,
@@ -65,6 +68,7 @@ impl ClientServiceImpl {
         email_service: Option<Arc<synctv_core::service::EmailService>>,
         email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
         settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+        config: Arc<synctv_core::Config>,
     ) -> Self {
         Self {
             user_service: Arc::new(user_service),
@@ -77,11 +81,12 @@ impl ClientServiceImpl {
             email_service,
             email_token_service,
             settings_registry,
+            config,
         }
     }
 
     /// Create `ClientService` from configuration struct
-    #[must_use] 
+    #[must_use]
     pub fn from_config(config: ClientServiceConfig) -> Self {
         Self {
             user_service: Arc::new(config.user_service),
@@ -94,6 +99,7 @@ impl ClientServiceImpl {
             email_service: config.email_service,
             email_token_service: config.email_token_service,
             settings_registry: config.settings_registry,
+            config: config.config,
         }
     }
 
@@ -1413,6 +1419,7 @@ impl RoomService for ClientServiceImpl {
             username.clone(),
             self.room_service.clone(),
             self.cluster_manager.clone(),
+            (*self.connection_manager).clone(),
             self.rate_limiter.clone(),
             self.rate_limit_config.clone(),
             self.content_filter.clone(),
@@ -1545,6 +1552,119 @@ impl RoomService for ClientServiceImpl {
         Ok(Response::new(GetChatHistoryResponse {
             messages: proto_messages,
         }))
+    }
+
+    async fn get_ice_servers(
+        &self,
+        request: Request<GetIceServersRequest>,
+    ) -> Result<Response<GetIceServersResponse>, Status> {
+        let _user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+
+        // Check if user has access to the room (is a member)
+        self.room_service
+            .check_membership(&room_id, &_user_id)
+            .await
+            .map_err(|e| Status::permission_denied(format!("Not a member of the room: {e}")))?;
+
+        // Get WebRTC configuration from settings
+        let webrtc_config = &self.config.webrtc;
+
+        let mut servers = Vec::new();
+
+        // Add built-in STUN server if enabled
+        if webrtc_config.enable_builtin_stun {
+            let stun_url = format!(
+                "stun:{}:{}",
+                self.config.server.host,
+                webrtc_config.builtin_stun_port
+            );
+            servers.push(IceServer {
+                urls: vec![stun_url],
+                username: None,
+                credential: None,
+            });
+        }
+
+        // Add external STUN servers
+        for url in &webrtc_config.external_stun_servers {
+            servers.push(IceServer {
+                urls: vec![url.clone()],
+                username: None,
+                credential: None,
+            });
+        }
+
+        // Add TURN server based on configured mode
+        match webrtc_config.turn_mode {
+            synctv_core::config::TurnMode::Builtin => {
+                if webrtc_config.enable_builtin_turn {
+                    // Use built-in TURN server
+                    let turn_url = format!(
+                        "turn:{}:{}",
+                        self.config.server.host,
+                        webrtc_config.builtin_turn_port
+                    );
+
+                    // Get static secret for credential generation
+                    if let Some(turn_secret) = &webrtc_config.external_turn_static_secret {
+                        let turn_config = synctv_core::service::TurnConfig {
+                            server_url: turn_url.clone(),
+                            static_secret: turn_secret.clone(),
+                            credential_ttl: std::time::Duration::from_secs(webrtc_config.turn_credential_ttl),
+                            use_tls: false,
+                        };
+                        let turn_service = synctv_core::service::TurnCredentialService::new(turn_config);
+
+                        // Generate time-limited credentials
+                        let credential = turn_service
+                            .generate_credential(_user_id.as_str())
+                            .map_err(|e| Status::internal(format!("Failed to generate TURN credentials: {e}")))?;
+
+                        servers.push(IceServer {
+                            urls: vec![turn_url],
+                            username: Some(credential.username),
+                            credential: Some(credential.password),
+                        });
+                    }
+                }
+            }
+            synctv_core::config::TurnMode::External => {
+                // Use external TURN server (coturn)
+                if let (Some(turn_url), Some(turn_secret)) = (
+                    &webrtc_config.external_turn_server_url,
+                    &webrtc_config.external_turn_static_secret,
+                ) {
+                    let turn_config = synctv_core::service::TurnConfig {
+                        server_url: turn_url.clone(),
+                        static_secret: turn_secret.clone(),
+                        credential_ttl: std::time::Duration::from_secs(webrtc_config.turn_credential_ttl),
+                        use_tls: false,
+                    };
+                    let turn_service = synctv_core::service::TurnCredentialService::new(turn_config);
+
+                    // Generate time-limited credentials
+                    let credential = turn_service
+                        .generate_credential(_user_id.as_str())
+                        .map_err(|e| Status::internal(format!("Failed to generate TURN credentials: {e}")))?;
+
+                    // Get all TURN URLs (including TLS variant if enabled)
+                    let urls = turn_service.get_urls();
+
+                    servers.push(IceServer {
+                        urls,
+                        username: Some(credential.username),
+                        credential: Some(credential.password),
+                    });
+                }
+            }
+            synctv_core::config::TurnMode::Disabled => {
+                // TURN disabled - rely on STUN only for NAT traversal
+                // This may result in ~85-90% connection success rate instead of ~99%
+            }
+        }
+
+        Ok(Response::new(GetIceServersResponse { servers }))
     }
 }
 

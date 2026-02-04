@@ -6,7 +6,7 @@ members = [
     "synctv-stream",
     "synctv-cluster",
     "synctv-providers",
-    "synctv",
+    "synctv", "synctv-sfu",
 ]
 resolver = "2"
 

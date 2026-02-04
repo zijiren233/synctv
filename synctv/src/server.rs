@@ -51,6 +51,8 @@ pub struct Services {
     pub publish_key_service: Arc<synctv_core::service::PublishKeyService>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     pub live_streaming_infrastructure: Option<Arc<synctv_stream::api::LiveStreamingInfrastructure>>,
+    pub stun_server: Option<Arc<synctv_core::service::StunServer>>,
+    pub turn_server: Option<Arc<synctv_core::service::TurnServer>>,
 }
 
 /// `SyncTV` server - manages all server components

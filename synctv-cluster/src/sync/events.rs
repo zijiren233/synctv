@@ -86,6 +86,33 @@ pub enum ClusterEvent {
         timestamp: DateTime<Utc>,
     },
 
+    /// WebRTC signaling message (offer, answer, ice_candidate)
+    WebRTCSignaling {
+        room_id: RoomId,
+        message_type: String, // "offer", "answer", "ice_candidate"
+        from: String,         // "user_id:conn_id" (server-set, prevents forgery)
+        to: String,           // "user_id:conn_id"
+        data: String,         // Opaque SDP/ICE data
+        timestamp: DateTime<Utc>,
+    },
+
+    /// User joined WebRTC call in room
+    WebRTCJoin {
+        room_id: RoomId,
+        user_id: UserId,
+        conn_id: String,
+        username: String,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// User left WebRTC call in room
+    WebRTCLeave {
+        room_id: RoomId,
+        user_id: UserId,
+        conn_id: String,
+        timestamp: DateTime<Utc>,
+    },
+
     /// Notification for all clients (system-wide)
     SystemNotification {
         message: String,
@@ -115,7 +142,10 @@ impl ClusterEvent {
             | Self::MediaAdded { room_id, .. }
             | Self::MediaRemoved { room_id, .. }
             | Self::PermissionChanged { room_id, .. }
-            | Self::RoomSettingsChanged { room_id, .. } => Some(room_id),
+            | Self::RoomSettingsChanged { room_id, .. }
+            | Self::WebRTCSignaling { room_id, .. }
+            | Self::WebRTCJoin { room_id, .. }
+            | Self::WebRTCLeave { room_id, .. } => Some(room_id),
             Self::SystemNotification { .. } => None,
         }
     }
@@ -130,9 +160,11 @@ impl ClusterEvent {
             | Self::UserLeft { user_id, .. }
             | Self::MediaAdded { user_id, .. }
             | Self::MediaRemoved { user_id, .. }
-            | Self::RoomSettingsChanged { user_id, .. } => Some(user_id),
+            | Self::RoomSettingsChanged { user_id, .. }
+            | Self::WebRTCJoin { user_id, .. }
+            | Self::WebRTCLeave { user_id, .. } => Some(user_id),
             Self::PermissionChanged { changed_by, .. } => Some(changed_by),
-            Self::SystemNotification { .. } => None,
+            Self::WebRTCSignaling { .. } | Self::SystemNotification { .. } => None,
         }
     }
 
@@ -148,6 +180,9 @@ impl ClusterEvent {
             | Self::MediaRemoved { timestamp, .. }
             | Self::PermissionChanged { timestamp, .. }
             | Self::RoomSettingsChanged { timestamp, .. }
+            | Self::WebRTCSignaling { timestamp, .. }
+            | Self::WebRTCJoin { timestamp, .. }
+            | Self::WebRTCLeave { timestamp, .. }
             | Self::SystemNotification { timestamp, .. } => timestamp,
         }
     }
@@ -164,6 +199,9 @@ impl ClusterEvent {
             Self::MediaRemoved { .. } => "media_removed",
             Self::PermissionChanged { .. } => "permission_changed",
             Self::RoomSettingsChanged { .. } => "room_settings_changed",
+            Self::WebRTCSignaling { .. } => "webrtc_signaling",
+            Self::WebRTCJoin { .. } => "webrtc_join",
+            Self::WebRTCLeave { .. } => "webrtc_leave",
             Self::SystemNotification { .. } => "system_notification",
         }
     }

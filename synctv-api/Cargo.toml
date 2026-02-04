@@ -61,6 +61,10 @@ base64.workspace = true
 uuid.workspace = true
 url = "2.5"
 
+# Cryptography (for WebRTC TURN credentials)
+hmac = "0.12"
+sha1 = "0.10"
+
 # Time
 chrono.workspace = true
 

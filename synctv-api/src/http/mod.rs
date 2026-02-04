@@ -76,6 +76,7 @@ pub struct AppState {
     pub emby_provider: Arc<EmbyProvider>,
     pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
     pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
+    pub connection_manager: Arc<synctv_cluster::sync::ConnectionManager>,
     pub jwt_service: synctv_core::service::JwtService,
     pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
@@ -130,7 +131,7 @@ pub fn create_router(
             user_service.clone(),
             settings_svc.clone(),
             email_svc.clone(),
-            connection_manager,
+            connection_manager.clone(),
             provider_instance_manager.clone(),
         )))
     } else {
@@ -147,6 +148,7 @@ pub fn create_router(
         emby_provider,
         message_hub,
         cluster_manager,
+        connection_manager,
         jwt_service,
         redis_publish_tx,
         oauth2_service,

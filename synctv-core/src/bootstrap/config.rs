@@ -24,6 +24,7 @@ pub fn load_config() -> Result<Config> {
             oauth2: crate::config::OAuth2Config::default(),
             email: crate::config::EmailConfig::default(),
             media_providers: crate::config::MediaProvidersConfig::default(),
+            webrtc: crate::config::WebRTCConfig::default(),
         }
     });
 

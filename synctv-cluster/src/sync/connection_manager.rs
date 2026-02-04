@@ -14,10 +14,11 @@ pub struct ConnectionInfo {
     pub connected_at: Instant,
     pub last_activity: Instant,
     pub message_count: u64,
+    pub rtc_joined: bool,
 }
 
 impl ConnectionInfo {
-    #[must_use] 
+    #[must_use]
     pub fn new(connection_id: String, user_id: UserId) -> Self {
         let now = Instant::now();
         Self {
@@ -27,6 +28,7 @@ impl ConnectionInfo {
             connected_at: now,
             last_activity: now,
             message_count: 0,
+            rtc_joined: false,
         }
     }
 
@@ -331,7 +333,7 @@ impl ConnectionManager {
     }
 
     /// Get metrics summary
-    #[must_use] 
+    #[must_use]
     pub fn metrics(&self) -> ConnectionMetrics {
         ConnectionMetrics {
             active_connections: self.connection_count(),
@@ -339,6 +341,59 @@ impl ConnectionManager {
             total_messages: self.total_messages(),
             active_users: self.user_connections.len(),
             active_rooms: self.room_connections.len(),
+        }
+    }
+
+    /// Get connection ID for a user in a specific room
+    ///
+    /// Returns the first active connection ID found for the user in the room.
+    /// For WebRTC, this allows us to identify which connection a user is using in a room.
+    #[must_use]
+    pub fn get_connection_id(&self, room_id: &RoomId, user_id: &UserId) -> Option<String> {
+        // Get all connections for this user
+        if let Some(conn_ids) = self.user_connections.get(user_id) {
+            // Find the first connection that's in the specified room
+            for conn_id in conn_ids.iter() {
+                if let Some(conn) = self.connections.get(conn_id) {
+                    if conn.room_id.as_ref() == Some(room_id) {
+                        return Some(conn.connection_id.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Mark a connection as joined or left WebRTC session
+    ///
+    /// This is used to track which connections are actively participating in WebRTC calls.
+    pub fn mark_rtc_joined(&self, room_id: &RoomId, user_id: &UserId, conn_id: &str, joined: bool) {
+        // Verify the connection belongs to the user and room
+        if let Some(mut conn) = self.connections.get_mut(conn_id) {
+            if &conn.user_id == user_id && conn.room_id.as_ref() == Some(room_id) {
+                conn.rtc_joined = joined;
+                debug!(
+                    connection_id = %conn_id,
+                    user_id = %user_id.as_str(),
+                    room_id = %room_id.as_str(),
+                    joined = joined,
+                    "WebRTC join status updated"
+                );
+            }
+        }
+    }
+
+    /// Get all connections in a room that have joined WebRTC
+    #[must_use]
+    pub fn get_rtc_connections(&self, room_id: &RoomId) -> Vec<ConnectionInfo> {
+        if let Some(conn_ids) = self.room_connections.get(room_id) {
+            conn_ids
+                .iter()
+                .filter_map(|id| self.connections.get(id).map(|c| c.clone()))
+                .filter(|conn| conn.rtc_joined)
+                .collect()
+        } else {
+            Vec::new()
         }
     }
 }

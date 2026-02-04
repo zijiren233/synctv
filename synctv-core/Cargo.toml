@@ -88,6 +88,15 @@ prometheus = "0.14.0"
 lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "smtp-transport"] }
 handlebars = "5.1"
 
+# WebRTC/TURN credentials
+hmac = "0.12"
+sha1 = "0.10"
+base64 = "0.22"
+
+# STUN protocol (use mature implementation)
+bytecodec = "0.4"
+stun_codec = "0.3"
+
 [dev-dependencies]
 mockall.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

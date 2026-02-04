@@ -51,6 +51,9 @@ service RoomService {
     // Real-time Messaging (room-scoped, use x-room-id)
     rpc MessageStream(stream ClientMessage) returns (stream ServerMessage);
     rpc GetChatHistory(GetChatHistoryRequest) returns (GetChatHistoryResponse);
+
+    // WebRTC ICE Servers Configuration
+    rpc GetIceServers(GetIceServersRequest) returns (GetIceServersResponse);
 }
 
 // ==================== Media Service ====================
@@ -527,6 +530,12 @@ message ClientMessage {
     oneof message {
         ChatMessageSend chat = 1;
         HeartbeatMessage heartbeat = 3;
+        // WebRTC signaling messages (P2P and SFU modes)
+        WebRTCOffer webrtc_offer = 10;
+        WebRTCAnswer webrtc_answer = 11;
+        WebRTCIceCandidate webrtc_ice_candidate = 12;
+        WebRTCJoin webrtc_join = 13;
+        WebRTCLeave webrtc_leave = 14;
     }
 }
 
@@ -546,6 +555,12 @@ message ServerMessage {
         PlaylistUpdated playlist_updated = 13;
         PlaylistDeleted playlist_deleted = 14;
         PlayingChanged playing_changed = 15;
+        // WebRTC signaling messages (forwarded from other peers)
+        WebRTCOffer webrtc_offer = 20;
+        WebRTCAnswer webrtc_answer = 21;
+        WebRTCIceCandidate webrtc_ice_candidate = 22;
+        WebRTCJoin webrtc_join = 23;
+        WebRTCLeave webrtc_leave = 24;
     }
 }
 
@@ -808,4 +823,67 @@ message PlayingChanged {
     string room_id = 1;
     Playlist playlist = 2;
     Media playing_media = 3; // Optional: the media that started playing
+}
+
+// ==================== WebRTC Signaling Messages ====================
+
+// WebRTC Offer (SDP offer from initiator)
+// Client sends this to another specific peer through the server
+message WebRTCOffer {
+    string to = 1;          // Target: "user_id" or "user_id:conn_id"
+    string from = 2;        // Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    string data = 3;        // SDP offer (JSON string, opaque to server)
+}
+
+// WebRTC Answer (SDP answer from receiver)
+// Response to an offer
+message WebRTCAnswer {
+    string to = 1;          // Target: "user_id" or "user_id:conn_id"
+    string from = 2;        // Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    string data = 3;        // SDP answer (JSON string, opaque to server)
+}
+
+// WebRTC ICE Candidate
+// Sent repeatedly during ICE negotiation
+message WebRTCIceCandidate {
+    string to = 1;          // Target: "user_id" or "user_id:conn_id"
+    string from = 2;        // Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    string data = 3;        // ICE candidate (JSON string, opaque to server)
+}
+
+// WebRTC Join (user joins WebRTC session)
+// Broadcast to all users who already joined RTC in the room
+message WebRTCJoin {
+    string user_id = 1;     // Joiner's user ID
+    string conn_id = 2;     // Joiner's connection ID
+    string username = 3;    // Joiner's display name (for UI)
+}
+
+// WebRTC Leave (user leaves WebRTC session)
+// Broadcast to all users in the WebRTC session
+message WebRTCLeave {
+    string user_id = 1;     // Leaver's user ID
+    string conn_id = 2;     // Leaver's connection ID
+}
+
+// ICE Servers Configuration
+// Server sends this to client upon request or connection
+// Contains STUN/TURN server URLs for NAT traversal
+message IceServersConfig {
+    repeated IceServer servers = 1;
+}
+
+message IceServer {
+    repeated string urls = 1;     // ["stun:stun.example.com:3478", "turn:turn.example.com:3478"]
+    optional string username = 2;  // For TURN authentication
+    optional string credential = 3; // For TURN authentication (temporary password)
+}
+
+// Request/Response for GetIceServers RPC
+message GetIceServersRequest {
+    // Empty - uses x-room-id from metadata
+}
+
+message GetIceServersResponse {
+    repeated IceServer servers = 1;
 }

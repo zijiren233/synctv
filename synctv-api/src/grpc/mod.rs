@@ -123,6 +123,7 @@ pub async fn serve(
         email_service,
         email_token_service,
         settings_registry.clone(),
+        Arc::new(config.clone()),
     );
 
     let admin_service = AdminServiceImpl::new(
@@ -208,6 +209,7 @@ pub async fn serve(
             bilibili_provider,
             emby_provider,
             cluster_manager: None, // gRPC doesn't expose cluster_manager to HTTP
+            connection_manager: Arc::new(connection_manager_for_provider.clone()),
             message_hub: message_hub_from_cluster,
             jwt_service: jwt_service_for_provider,
             redis_publish_tx: redis_publish_tx.clone(),

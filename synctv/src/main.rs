@@ -212,6 +212,90 @@ async fn main() -> Result<()> {
         }
     };
 
+    // 9.5. Initialize STUN server (if enabled)
+    let stun_server = if config.webrtc.enable_builtin_stun {
+        info!("Starting built-in STUN server...");
+        let stun_config = synctv_core::service::StunServerConfig {
+            bind_addr: format!("{}:{}", config.webrtc.builtin_stun_host, config.webrtc.builtin_stun_port),
+            max_packet_size: 1500,
+        };
+        match synctv_core::service::StunServer::start(stun_config).await {
+            Ok(server) => {
+                let addr = server.local_addr()?;
+                info!("Built-in STUN server started on {}", addr);
+                Some(server)
+            }
+            Err(e) => {
+                error!("Failed to start STUN server: {}", e);
+                error!("WebRTC P2P connectivity may be limited without STUN");
+                None
+            }
+        }
+    } else {
+        info!("Built-in STUN server disabled");
+        None
+    };
+
+    // 9.6. Initialize TURN server (if enabled)
+    let turn_server = match config.webrtc.turn_mode {
+        synctv_core::config::TurnMode::Builtin => {
+            if config.webrtc.enable_builtin_turn {
+                info!("Starting built-in TURN server...");
+                let turn_config = synctv_core::service::TurnBuiltinServerConfig {
+                    bind_addr: format!("{}:{}", config.webrtc.builtin_stun_host, config.webrtc.builtin_turn_port),
+                    relay_min_port: config.webrtc.builtin_turn_min_port,
+                    relay_max_port: config.webrtc.builtin_turn_max_port,
+                    max_allocations: config.webrtc.builtin_turn_max_allocations,
+                    default_lifetime: 600,
+                    max_lifetime: 3600,
+                    static_secret: config.webrtc.external_turn_static_secret
+                        .clone()
+                        .unwrap_or_else(|| {
+                            warn!("No TURN static_secret configured, using default (INSECURE!)");
+                            "insecure_default_secret".to_string()
+                        }),
+                    realm: "synctv.local".to_string(),
+                };
+                match synctv_core::service::TurnServer::start(turn_config).await {
+                    Ok(server) => {
+                        let addr = server.local_addr()?;
+                        info!("Built-in TURN server started on {}", addr);
+                        info!("TURN relay port range: {}-{}",
+                            config.webrtc.builtin_turn_min_port,
+                            config.webrtc.builtin_turn_max_port);
+                        Some(server)
+                    }
+                    Err(e) => {
+                        error!("Failed to start TURN server: {}", e);
+                        error!("WebRTC connectivity may fail in restrictive networks without TURN");
+                        None
+                    }
+                }
+            } else {
+                info!("Built-in TURN server available but disabled in config");
+                None
+            }
+        }
+        synctv_core::config::TurnMode::External => {
+            info!("Using external TURN server (coturn)");
+            if let (Some(url), Some(secret)) = (
+                &config.webrtc.external_turn_server_url,
+                &config.webrtc.external_turn_static_secret,
+            ) {
+                info!("External TURN server configured: {}", url);
+                info!("Note: Ensure coturn is deployed and static-auth-secret matches");
+            } else {
+                warn!("External TURN mode selected but server URL or secret not configured");
+            }
+            None
+        }
+        synctv_core::config::TurnMode::Disabled => {
+            info!("TURN server disabled (P2P + STUN only)");
+            info!("Connection success rate may be lower (~85-90%) without TURN");
+            None
+        }
+    };
+
     // 10. Create server with all services
     let provider_instance_manager = synctv_services.provider_instance_manager.clone();
     let alist_provider = Arc::new(AlistProvider::new(provider_instance_manager.clone()));
@@ -244,6 +328,8 @@ async fn main() -> Result<()> {
         publish_key_service: synctv_services.publish_key_service.clone(),
         notification_service: Some(synctv_services.notification_service.clone()),
         live_streaming_infrastructure,
+        stun_server,
+        turn_server,
     };
 
     let server = SyncTvServer::new(config, services, streaming_state);

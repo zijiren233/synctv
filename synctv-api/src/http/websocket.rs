@@ -166,6 +166,7 @@ async fn handle_socket(
         username.clone(),
         state.room_service.clone(),
         cluster_manager,
+        (*state.connection_manager).clone(),
         rate_limiter,
         rate_limit_config,
         content_filter,

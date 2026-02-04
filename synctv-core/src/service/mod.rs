@@ -26,7 +26,9 @@ pub mod audit_partition_manager;
 pub mod distributed_lock;
 pub mod email;
 pub mod email_templates;
-pub mod webrtc;
+pub mod stun;
+pub mod turn;
+pub mod turn_server;
 
 pub use auth::{hash_password, verify_password, JwtService, TokenType, Claims};
 pub use chat::ChatService;
@@ -59,4 +61,6 @@ pub use audit_partition_manager::{
 pub use distributed_lock::{DistributedLock, LockGuard};
 pub use email::{EmailService, EmailConfig};
 pub use email_templates::{EmailTemplateManager, EmailTemplateType};
-pub use webrtc::{SignalingService, WebRTCConfig, MediaType};
+pub use stun::{StunServer, StunServerConfig, StunMetrics};
+pub use turn::{TurnCredentialService, TurnConfig, TurnCredential, COTURN_DEPLOYMENT_GUIDE};
+pub use turn_server::{TurnServer, TurnServerConfig as TurnBuiltinServerConfig, TurnMetrics};

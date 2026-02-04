@@ -704,7 +704,7 @@ pub struct GetPlaybackStateResponse {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClientMessage {
-    #[prost(oneof = "client_message::Message", tags = "1, 3")]
+    #[prost(oneof = "client_message::Message", tags = "1, 3, 10, 11, 12, 13, 14")]
     pub message: ::core::option::Option<client_message::Message>,
 }
 /// Nested message and enum types in `ClientMessage`.
@@ -716,6 +716,17 @@ pub mod client_message {
         Chat(super::ChatMessageSend),
         #[prost(message, tag = "3")]
         Heartbeat(super::HeartbeatMessage),
+        /// WebRTC signaling messages (P2P and SFU modes)
+        #[prost(message, tag = "10")]
+        WebrtcOffer(super::WebRtcOffer),
+        #[prost(message, tag = "11")]
+        WebrtcAnswer(super::WebRtcAnswer),
+        #[prost(message, tag = "12")]
+        WebrtcIceCandidate(super::WebRtcIceCandidate),
+        #[prost(message, tag = "13")]
+        WebrtcJoin(super::WebRtcJoin),
+        #[prost(message, tag = "14")]
+        WebrtcLeave(super::WebRtcLeave),
     }
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -723,7 +734,7 @@ pub mod client_message {
 pub struct ServerMessage {
     #[prost(
         oneof = "server_message::Message",
-        tags = "1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
+        tags = "1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 21, 22, 23, 24"
     )]
     pub message: ::core::option::Option<server_message::Message>,
 }
@@ -760,6 +771,17 @@ pub mod server_message {
         PlaylistDeleted(super::PlaylistDeleted),
         #[prost(message, tag = "15")]
         PlayingChanged(super::PlayingChanged),
+        /// WebRTC signaling messages (forwarded from other peers)
+        #[prost(message, tag = "20")]
+        WebrtcOffer(super::WebRtcOffer),
+        #[prost(message, tag = "21")]
+        WebrtcAnswer(super::WebRtcAnswer),
+        #[prost(message, tag = "22")]
+        WebrtcIceCandidate(super::WebRtcIceCandidate),
+        #[prost(message, tag = "23")]
+        WebrtcJoin(super::WebRtcJoin),
+        #[prost(message, tag = "24")]
+        WebrtcLeave(super::WebRtcLeave),
     }
 }
 /// Note: room_id extracted from x-room-id metadata in MessageStream context
@@ -1182,6 +1204,112 @@ pub struct PlayingChanged {
     /// Optional: the media that started playing
     #[prost(message, optional, tag = "3")]
     pub playing_media: ::core::option::Option<Media>,
+}
+/// WebRTC Offer (SDP offer from initiator)
+/// Client sends this to another specific peer through the server
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WebRtcOffer {
+    /// Target: "user_id" or "user_id:conn_id"
+    #[prost(string, tag = "1")]
+    pub to: ::prost::alloc::string::String,
+    /// Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    #[prost(string, tag = "2")]
+    pub from: ::prost::alloc::string::String,
+    /// SDP offer (JSON string, opaque to server)
+    #[prost(string, tag = "3")]
+    pub data: ::prost::alloc::string::String,
+}
+/// WebRTC Answer (SDP answer from receiver)
+/// Response to an offer
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WebRtcAnswer {
+    /// Target: "user_id" or "user_id:conn_id"
+    #[prost(string, tag = "1")]
+    pub to: ::prost::alloc::string::String,
+    /// Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    #[prost(string, tag = "2")]
+    pub from: ::prost::alloc::string::String,
+    /// SDP answer (JSON string, opaque to server)
+    #[prost(string, tag = "3")]
+    pub data: ::prost::alloc::string::String,
+}
+/// WebRTC ICE Candidate
+/// Sent repeatedly during ICE negotiation
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WebRtcIceCandidate {
+    /// Target: "user_id" or "user_id:conn_id"
+    #[prost(string, tag = "1")]
+    pub to: ::prost::alloc::string::String,
+    /// Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    #[prost(string, tag = "2")]
+    pub from: ::prost::alloc::string::String,
+    /// ICE candidate (JSON string, opaque to server)
+    #[prost(string, tag = "3")]
+    pub data: ::prost::alloc::string::String,
+}
+/// WebRTC Join (user joins WebRTC session)
+/// Broadcast to all users who already joined RTC in the room
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WebRtcJoin {
+    /// Joiner's user ID
+    #[prost(string, tag = "1")]
+    pub user_id: ::prost::alloc::string::String,
+    /// Joiner's connection ID
+    #[prost(string, tag = "2")]
+    pub conn_id: ::prost::alloc::string::String,
+    /// Joiner's display name (for UI)
+    #[prost(string, tag = "3")]
+    pub username: ::prost::alloc::string::String,
+}
+/// WebRTC Leave (user leaves WebRTC session)
+/// Broadcast to all users in the WebRTC session
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WebRtcLeave {
+    /// Leaver's user ID
+    #[prost(string, tag = "1")]
+    pub user_id: ::prost::alloc::string::String,
+    /// Leaver's connection ID
+    #[prost(string, tag = "2")]
+    pub conn_id: ::prost::alloc::string::String,
+}
+/// ICE Servers Configuration
+/// Server sends this to client upon request or connection
+/// Contains STUN/TURN server URLs for NAT traversal
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IceServersConfig {
+    #[prost(message, repeated, tag = "1")]
+    pub servers: ::prost::alloc::vec::Vec<IceServer>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IceServer {
+    /// \["stun:stun.example.com:3478", "turn:turn.example.com:3478"\]
+    #[prost(string, repeated, tag = "1")]
+    pub urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// For TURN authentication
+    #[prost(string, optional, tag = "2")]
+    pub username: ::core::option::Option<::prost::alloc::string::String>,
+    /// For TURN authentication (temporary password)
+    #[prost(string, optional, tag = "3")]
+    pub credential: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Request/Response for GetIceServers RPC
+///
+/// Empty - uses x-room-id from metadata
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct GetIceServersRequest {}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetIceServersResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub servers: ::prost::alloc::vec::Vec<IceServer>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -2073,6 +2201,31 @@ pub mod room_service_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("synctv.client.RoomService", "GetChatHistory"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// WebRTC ICE Servers Configuration
+        pub async fn get_ice_servers(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetIceServersRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetIceServersResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.client.RoomService/GetIceServers",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("synctv.client.RoomService", "GetIceServers"));
             self.inner.unary(req, path, codec).await
         }
     }
@@ -3821,6 +3974,14 @@ pub mod room_service_server {
             tonic::Response<super::GetChatHistoryResponse>,
             tonic::Status,
         >;
+        /// WebRTC ICE Servers Configuration
+        async fn get_ice_servers(
+            &self,
+            request: tonic::Request<super::GetIceServersRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetIceServersResponse>,
+            tonic::Status,
+        >;
     }
     /// ==================== Room Service ====================
     /// Authentication: JWT Authorization header (user_id) + x-room-id metadata (room context)
@@ -4522,6 +4683,51 @@ pub mod room_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetChatHistorySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.client.RoomService/GetIceServers" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetIceServersSvc<T: RoomService>(pub Arc<T>);
+                    impl<
+                        T: RoomService,
+                    > tonic::server::UnaryService<super::GetIceServersRequest>
+                    for GetIceServersSvc<T> {
+                        type Response = super::GetIceServersResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetIceServersRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as RoomService>::get_ice_servers(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetIceServersSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

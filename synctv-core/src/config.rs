@@ -15,6 +15,7 @@ pub struct Config {
     pub oauth2: OAuth2Config,
     pub email: EmailConfig,
     pub media_providers: MediaProvidersConfig,
+    pub webrtc: WebRTCConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +171,151 @@ impl Default for MediaProvidersConfig {
     }
 }
 
+/// WebRTC configuration for audio/video calls
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebRTCConfig {
+    /// WebRTC operation mode
+    pub mode: WebRTCMode,
+
+    // STUN Configuration
+    /// Enable built-in STUN server
+    pub enable_builtin_stun: bool,
+    /// Built-in STUN server port
+    pub builtin_stun_port: u16,
+    /// Built-in STUN server host
+    pub builtin_stun_host: String,
+    /// External STUN server URLs (fallback/backup)
+    pub external_stun_servers: Vec<String>,
+
+    // TURN Configuration (optional, for NAT traversal)
+    /// TURN mode: "builtin", "external", or "disabled"
+    pub turn_mode: TurnMode,
+
+    // Built-in TURN server configuration
+    /// Enable built-in TURN server
+    pub enable_builtin_turn: bool,
+    /// Built-in TURN server port (same as STUN by default)
+    pub builtin_turn_port: u16,
+    /// Built-in TURN relay port range (min)
+    pub builtin_turn_min_port: u16,
+    /// Built-in TURN relay port range (max)
+    pub builtin_turn_max_port: u16,
+    /// Maximum concurrent TURN allocations (limit resource usage)
+    pub builtin_turn_max_allocations: usize,
+
+    // External TURN server configuration
+    /// External TURN server URL (e.g., "turn:turn.example.com:3478")
+    pub external_turn_server_url: Option<String>,
+    /// External TURN static secret for generating temporary credentials
+    /// Must match coturn's `static-auth-secret` configuration
+    pub external_turn_static_secret: Option<String>,
+    /// TURN credential TTL in seconds (default 24 hours)
+    pub turn_credential_ttl: u64,
+
+    // SFU Configuration (for large rooms)
+    /// Room size threshold to switch to SFU mode (only for Hybrid mode)
+    pub sfu_threshold: usize,
+    /// Enable Simulcast (multiple quality layers)
+    pub enable_simulcast: bool,
+    /// Maximum concurrent SFU rooms (0 = unlimited)
+    pub max_sfu_rooms: usize,
+    /// Maximum peers per SFU room
+    pub max_peers_per_sfu_room: usize,
+}
+
+/// TURN server mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnMode {
+    /// Use built-in TURN server (simple deployment, limited scale)
+    Builtin,
+    /// Use external TURN server (production, high scale)
+    External,
+    /// Disable TURN (P2P + STUN only, ~85-90% success rate)
+    Disabled,
+}
+
+impl Default for TurnMode {
+    fn default() -> Self {
+        Self::Builtin // Default to built-in for ease of use
+    }
+}
+
+/// WebRTC operation mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebRTCMode {
+    /// Pure P2P mode (zero server cost)
+    /// - Signaling only, no STUN/TURN/SFU
+    /// - Best for: personal deployments
+    /// - Connection success rate: ~70-75%
+    SignalingOnly,
+
+    /// P2P with STUN/TURN support (recommended for most deployments)
+    /// - P2P connections with NAT traversal
+    /// - STUN for reflexive candidates
+    /// - TURN fallback for difficult NAT scenarios
+    /// - Best for: small to medium deployments
+    /// - Connection success rate: ~99%
+    PeerToPeer,
+
+    /// Hybrid mode (P2P for small rooms, SFU for large rooms)
+    /// - Automatically switches based on room size
+    /// - P2P for rooms < threshold
+    /// - SFU for rooms >= threshold
+    /// - Best for: flexible deployments with mixed room sizes
+    /// - Optimal balance of cost and performance
+    Hybrid,
+
+    /// Pure SFU mode (enterprise grade)
+    /// - All rooms use SFU regardless of size
+    /// - Server receives and forwards all media streams
+    /// - Best for: large scale deployments, recording, monitoring
+    /// - Highest server cost, best quality and reliability
+    #[serde(rename = "sfu")]
+    SFU,
+}
+
+impl Default for WebRTCConfig {
+    fn default() -> Self {
+        Self {
+            // Default to Hybrid mode (balanced)
+            mode: WebRTCMode::Hybrid,
+
+            // STUN enabled by default
+            enable_builtin_stun: true,
+            builtin_stun_port: 3478,
+            builtin_stun_host: "0.0.0.0".to_string(),
+            external_stun_servers: vec![
+                "stun:stun.l.google.com:19302".to_string(),
+                "stun:stun1.l.google.com:19302".to_string(),
+            ],
+
+            // TURN mode (default to built-in for ease of use)
+            turn_mode: TurnMode::Builtin,
+
+            // Built-in TURN configuration
+            enable_builtin_turn: false, // Disabled by default (higher resource usage)
+            builtin_turn_port: 3478, // Same as STUN by default
+            builtin_turn_min_port: 49152,
+            builtin_turn_max_port: 65535,
+            builtin_turn_max_allocations: 100,
+
+            // External TURN configuration
+            external_turn_server_url: None,
+            external_turn_static_secret: None,
+            turn_credential_ttl: 86400, // 24 hours
+
+            // SFU configuration
+            sfu_threshold: 5, // Switch to SFU for 5+ participants
+            enable_simulcast: true,
+            max_sfu_rooms: 0, // No limit by default
+            max_peers_per_sfu_room: 50,
+        }
+    }
+}
+
 /// Email configuration for SMTP
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailConfig {
@@ -273,12 +419,14 @@ mod tests {
             oauth2: OAuth2Config::default(),
             email: EmailConfig::default(),
             media_providers: MediaProvidersConfig::default(),
+            webrtc: WebRTCConfig::default(),
         });
 
         assert!(!config.database_url().is_empty());
         assert!(!config.redis_url().is_empty());
         assert!(config.server.grpc_port > 0);
         assert!(config.server.http_port > 0);
+        assert!(config.webrtc.enable_builtin_stun);
     }
 
     #[test]
@@ -298,6 +446,7 @@ mod tests {
             oauth2: OAuth2Config::default(),
             email: EmailConfig::default(),
             media_providers: MediaProvidersConfig::default(),
+            webrtc: WebRTCConfig::default(),
         };
 
         assert_eq!(config.grpc_address(), "127.0.0.1:50051");

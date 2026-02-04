@@ -17,7 +17,7 @@ use synctv_core::{
     models::{RoomId, UserId, PermissionBits},
     service::{ContentFilter, RateLimitConfig, RateLimiter, RoomService},
 };
-use synctv_cluster::sync::{ClusterEvent, ClusterManager};
+use synctv_cluster::sync::{ClusterEvent, ClusterManager, ConnectionManager};
 
 use crate::proto::client::{ClientMessage, ServerMessage};
 
@@ -72,6 +72,7 @@ pub struct StreamMessageHandler {
     username: String,
     room_service: Arc<RoomService>,
     cluster_manager: Arc<ClusterManager>,
+    connection_manager: ConnectionManager,
     rate_limiter: Arc<RateLimiter>,
     rate_limit_config: Arc<RateLimitConfig>,
     content_filter: Arc<ContentFilter>,
@@ -86,6 +87,7 @@ impl Clone for StreamMessageHandler {
             username: self.username.clone(),
             room_service: Arc::clone(&self.room_service),
             cluster_manager: Arc::clone(&self.cluster_manager),
+            connection_manager: self.connection_manager.clone(),
             rate_limiter: Arc::clone(&self.rate_limiter),
             rate_limit_config: Arc::clone(&self.rate_limit_config),
             content_filter: Arc::clone(&self.content_filter),
@@ -103,6 +105,7 @@ impl StreamMessageHandler {
         username: String,
         room_service: Arc<RoomService>,
         cluster_manager: Arc<ClusterManager>,
+        connection_manager: ConnectionManager,
         rate_limiter: Arc<RateLimiter>,
         rate_limit_config: Arc<RateLimitConfig>,
         content_filter: Arc<ContentFilter>,
@@ -114,6 +117,7 @@ impl StreamMessageHandler {
             username,
             room_service,
             cluster_manager,
+            connection_manager,
             rate_limiter,
             rate_limit_config,
             content_filter,
@@ -350,6 +354,21 @@ impl StreamMessageHandler {
             Some(Message::Heartbeat(_)) => {
                 // Heartbeat doesn't need to be broadcast
             }
+            Some(Message::WebrtcOffer(offer)) => {
+                self.handle_webrtc_offer(offer).await?;
+            }
+            Some(Message::WebrtcAnswer(answer)) => {
+                self.handle_webrtc_answer(answer).await?;
+            }
+            Some(Message::WebrtcIceCandidate(candidate)) => {
+                self.handle_webrtc_ice_candidate(candidate).await?;
+            }
+            Some(Message::WebrtcJoin(join)) => {
+                self.handle_webrtc_join(join).await?;
+            }
+            Some(Message::WebrtcLeave(leave)) => {
+                self.handle_webrtc_leave(leave).await?;
+            }
             None => {
                 return Err("Empty message".to_string());
             }
@@ -398,6 +417,147 @@ impl StreamMessageHandler {
         };
 
         // Broadcast to cluster (handles both local and Redis)
+        let _result = self.cluster_manager.broadcast(event);
+
+        Ok(())
+    }
+
+    // ==================== WebRTC Message Handlers ====================
+
+    async fn handle_webrtc_offer(&self, offer: &crate::proto::client::WebRtcOffer) -> Result<(), String> {
+        // Check permission
+        self.room_service
+            .check_permission(&self.room_id, &self.user_id, PermissionBits::USE_WEBRTC)
+            .await
+            .map_err(|e| format!("WebRTC permission denied: {e}"))?;
+
+        // Get connection ID from ConnectionManager
+        let conn_id = self.connection_manager
+            .get_connection_id(&self.room_id, &self.user_id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+
+        // Create event with server-set 'from' field (防止伪造)
+        let event = ClusterEvent::WebRTCSignaling {
+            room_id: self.room_id.clone(),
+            message_type: "offer".to_string(),
+            from: format!("{}:{}", self.user_id.as_str(), conn_id),
+            to: offer.to.clone(),
+            data: offer.data.clone(),
+            timestamp: chrono::Utc::now(),
+        };
+
+        // Broadcast to cluster
+        let _result = self.cluster_manager.broadcast(event);
+
+        Ok(())
+    }
+
+    async fn handle_webrtc_answer(&self, answer: &crate::proto::client::WebRtcAnswer) -> Result<(), String> {
+        // Check permission
+        self.room_service
+            .check_permission(&self.room_id, &self.user_id, PermissionBits::USE_WEBRTC)
+            .await
+            .map_err(|e| format!("WebRTC permission denied: {e}"))?;
+
+        // Get connection ID
+        let conn_id = self.connection_manager
+            .get_connection_id(&self.room_id, &self.user_id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+
+        // Create event with server-set 'from' field
+        let event = ClusterEvent::WebRTCSignaling {
+            room_id: self.room_id.clone(),
+            message_type: "answer".to_string(),
+            from: format!("{}:{}", self.user_id.as_str(), conn_id),
+            to: answer.to.clone(),
+            data: answer.data.clone(),
+            timestamp: chrono::Utc::now(),
+        };
+
+        // Broadcast to cluster
+        let _result = self.cluster_manager.broadcast(event);
+
+        Ok(())
+    }
+
+    async fn handle_webrtc_ice_candidate(&self, candidate: &crate::proto::client::WebRtcIceCandidate) -> Result<(), String> {
+        // Check permission
+        self.room_service
+            .check_permission(&self.room_id, &self.user_id, PermissionBits::USE_WEBRTC)
+            .await
+            .map_err(|e| format!("WebRTC permission denied: {e}"))?;
+
+        // Get connection ID
+        let conn_id = self.connection_manager
+            .get_connection_id(&self.room_id, &self.user_id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+
+        // Create event with server-set 'from' field
+        let event = ClusterEvent::WebRTCSignaling {
+            room_id: self.room_id.clone(),
+            message_type: "ice_candidate".to_string(),
+            from: format!("{}:{}", self.user_id.as_str(), conn_id),
+            to: candidate.to.clone(),
+            data: candidate.data.clone(),
+            timestamp: chrono::Utc::now(),
+        };
+
+        // Broadcast to cluster
+        let _result = self.cluster_manager.broadcast(event);
+
+        Ok(())
+    }
+
+    async fn handle_webrtc_join(&self, _join: &crate::proto::client::WebRtcJoin) -> Result<(), String> {
+        // Check permission
+        self.room_service
+            .check_permission(&self.room_id, &self.user_id, PermissionBits::USE_WEBRTC)
+            .await
+            .map_err(|e| format!("WebRTC permission denied: {e}"))?;
+
+        // Get connection ID
+        let conn_id = self.connection_manager
+            .get_connection_id(&self.room_id, &self.user_id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+
+        // Mark this connection as joined WebRTC session
+        self.connection_manager
+            .mark_rtc_joined(&self.room_id, &self.user_id, &conn_id, true);
+
+        // Broadcast Join event to all RTC-joined users in the room
+        let event = ClusterEvent::WebRTCJoin {
+            room_id: self.room_id.clone(),
+            user_id: self.user_id.clone(),
+            conn_id: conn_id.clone(),
+            username: self.username.clone(),
+            timestamp: chrono::Utc::now(),
+        };
+
+        // Broadcast to cluster
+        let _result = self.cluster_manager.broadcast(event);
+
+        Ok(())
+    }
+
+    async fn handle_webrtc_leave(&self, _leave: &crate::proto::client::WebRtcLeave) -> Result<(), String> {
+        // Get connection ID
+        let conn_id = self.connection_manager
+            .get_connection_id(&self.room_id, &self.user_id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+
+        // Mark this connection as left WebRTC session
+        self.connection_manager
+            .mark_rtc_joined(&self.room_id, &self.user_id, &conn_id, false);
+
+        // Broadcast Leave event to all RTC-joined users in the room
+        let event = ClusterEvent::WebRTCLeave {
+            room_id: self.room_id.clone(),
+            user_id: self.user_id.clone(),
+            conn_id,
+            timestamp: chrono::Utc::now(),
+        };
+
+        // Broadcast to cluster
         let _result = self.cluster_manager.broadcast(event);
 
         Ok(())
@@ -530,6 +690,53 @@ fn cluster_event_to_server_message(
                     room_id: room_id.to_string(),
                     settings: serde_json::to_vec(&serde_json::json!({}))
                         .unwrap_or_default(),
+                })),
+            })
+        }
+        ClusterEvent::WebRTCSignaling { message_type, from, to, data, .. } => {
+            // Convert to appropriate proto message based on message_type
+            match message_type.as_str() {
+                "offer" => Some(ServerMessage {
+                    message: Some(Message::WebrtcOffer(crate::proto::client::WebRtcOffer {
+                        from: from.clone(),
+                        to: to.clone(),
+                        data: data.clone(),
+                    })),
+                }),
+                "answer" => Some(ServerMessage {
+                    message: Some(Message::WebrtcAnswer(crate::proto::client::WebRtcAnswer {
+                        from: from.clone(),
+                        to: to.clone(),
+                        data: data.clone(),
+                    })),
+                }),
+                "ice_candidate" => Some(ServerMessage {
+                    message: Some(Message::WebrtcIceCandidate(crate::proto::client::WebRtcIceCandidate {
+                        from: from.clone(),
+                        to: to.clone(),
+                        data: data.clone(),
+                    })),
+                }),
+                _ => {
+                    tracing::warn!("Unknown WebRTC message type: {}", message_type);
+                    None
+                }
+            }
+        }
+        ClusterEvent::WebRTCJoin { user_id, conn_id, username, .. } => {
+            Some(ServerMessage {
+                message: Some(Message::WebrtcJoin(crate::proto::client::WebRtcJoin {
+                    user_id: user_id.as_str().to_string(),
+                    conn_id: conn_id.clone(),
+                    username: username.clone(),
+                })),
+            })
+        }
+        ClusterEvent::WebRTCLeave { user_id, conn_id, .. } => {
+            Some(ServerMessage {
+                message: Some(Message::WebrtcLeave(crate::proto::client::WebRtcLeave {
+                    user_id: user_id.as_str().to_string(),
+                    conn_id: conn_id.clone(),
                 })),
             })
         }
