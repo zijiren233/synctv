@@ -175,7 +175,7 @@ pub async fn edit_media(
 
     let media = state
         .room_service
-        .edit_media(room_id, user_id, media_id, req.title, req.metadata)
+        .edit_media(room_id, user_id, media_id, req.title)
         .await?;
 
     Ok(Json(media_to_proto(&media)))
@@ -308,7 +308,6 @@ pub struct AddMediaItem {
 pub struct EditMediaHttpRequest {
     pub user_id: String,
     pub title: Option<String>,
-    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

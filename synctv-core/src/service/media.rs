@@ -33,7 +33,6 @@ pub struct AddMediaRequest {
     /// The provider will be looked up from the provider registry
     pub provider_instance_name: String,
     pub source_config: JsonValue,
-    pub metadata: Option<JsonValue>,
 }
 
 /// Request to edit a media item
@@ -42,7 +41,6 @@ pub struct EditMediaRequest {
     pub media_id: MediaId,
     pub name: Option<String>,
     pub position: Option<i32>,
-    pub metadata: Option<JsonValue>,
 }
 
 /// Media management service
@@ -278,9 +276,6 @@ impl MediaService {
         }
         if let Some(position) = request.position {
             media.position = position;
-        }
-        if let Some(metadata) = request.metadata {
-            media.metadata = metadata;
         }
 
         let updated_media = self.media_repo.update(&media).await?;

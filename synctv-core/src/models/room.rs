@@ -37,9 +37,39 @@ impl RoomStatus {
         matches!(self, Self::Pending)
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn is_active(&self) -> bool {
         matches!(self, Self::Active)
+    }
+}
+
+// Database mapping: RoomStatus -> SMALLINT (1=active, 2=pending, 3=banned)
+impl sqlx::Type<sqlx::Postgres> for RoomStatus {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <i16 as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for RoomStatus {
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        let val: i16 = match self {
+            Self::Active => 1,
+            Self::Pending => 2,
+            Self::Banned => 3,
+        };
+        <i16 as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&val, buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for RoomStatus {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let val = <i16 as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        match val {
+            1 => Ok(Self::Active),
+            2 => Ok(Self::Pending),
+            3 => Ok(Self::Banned),
+            _ => Err(format!("Invalid RoomStatus value: {val}").into()),
+        }
     }
 }
 

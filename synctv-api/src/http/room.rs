@@ -702,21 +702,16 @@ pub async fn edit_media(
     let room_id_obj = RoomId::from_string(room_id.clone());
     let media_id_obj = MediaId::from_string(media_id.clone());
 
-    // Build metadata from request
+    // Get title from request
     let title = req.get("title")
         .and_then(|v| v.as_str())
         .map(std::string::ToString::to_string);
-    let url = req.get("url")
-        .and_then(|v| v.as_str())
-        .map(std::string::ToString::to_string);
-
-    // Build metadata JSON
-    let metadata = url.as_ref().map(|url| serde_json::json!({"url": url}));
 
     // Edit media (permission check is done inside service)
+    // Note: metadata is no longer stored in database, only in PlaybackResult
     let media = state
         .room_service
-        .edit_media(room_id_obj, auth.user_id, media_id_obj, title, metadata)
+        .edit_media(room_id_obj, auth.user_id, media_id_obj, title)
         .await
         .map_err(|e| super::AppError::internal_server_error(format!("Failed to edit media: {e}")))?;
 
@@ -725,6 +720,16 @@ pub async fn edit_media(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
+    // Get metadata from PlaybackResult if available (for direct URLs)
+    let metadata_bytes = if media.is_direct() {
+        media
+            .get_playback_result()
+            .map(|pb| serde_json::to_vec(&pb.metadata).unwrap_or_default())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
     Ok(Json(AddMediaResponse {
         media: Some(crate::proto::client::Media {
             id: media.id.as_str().to_string(),
@@ -732,7 +737,7 @@ pub async fn edit_media(
             url: media_url.to_string(),
             provider: media.source_provider.clone(),
             title: media.name.clone(),
-            metadata: serde_json::to_vec(&media.metadata).unwrap_or_default(),
+            metadata: metadata_bytes,
             position: media.position,
             added_at: media.added_at.timestamp(),
             added_by: media.creator_id.as_str().to_string(),

@@ -552,7 +552,6 @@ impl RoomService {
             name: title,
             provider_instance_name,
             source_config,
-            metadata: None,
         };
 
         self.media_service.add_media(room_id, user_id, request).await
@@ -602,14 +601,12 @@ impl RoomService {
         user_id: UserId,
         media_id: MediaId,
         name: Option<String>,
-        metadata: Option<serde_json::Value>,
     ) -> Result<Media> {
         use crate::service::media::EditMediaRequest;
         let request = EditMediaRequest {
             media_id,
             name,
             position: None,
-            metadata,
         };
         self.media_service.edit_media(room_id, user_id, request).await
     }

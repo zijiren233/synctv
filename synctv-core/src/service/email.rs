@@ -316,6 +316,41 @@ impl EmailService {
         Ok(token)
     }
 
+    /// Send a test email to verify email configuration
+    ///
+    /// This is used by admins to test email settings
+    pub async fn send_test_email(&self, to: &str) -> Result<()> {
+        // Validate email
+        Self::validate_email(to)?;
+
+        // Check if service is configured
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| Error::Internal("Email service not configured".to_string()))?;
+
+        // Send test email
+        let subject = "SyncTV Email Test";
+        let body = format!(
+            "This is a test email from SyncTV.\n\n\
+            If you received this email, your email configuration is working correctly.\n\n\
+            SMTP Server: {}:{}\n\
+            Sent at: {}\n\n\
+            Best regards,\n\
+            The SyncTV Team",
+            config.smtp_host,
+            config.smtp_port,
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        );
+
+        self.send_email_impl(config, to, subject, &body)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to send test email: {e}")))?;
+
+        tracing::info!("Sent test email to {}", to);
+        Ok(())
+    }
+
     /// Send verification email implementation
     async fn send_verification_email_impl(
         &self,

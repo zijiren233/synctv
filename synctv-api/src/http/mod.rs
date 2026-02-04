@@ -131,6 +131,7 @@ pub fn create_router(
             settings_svc.clone(),
             email_svc.clone(),
             connection_manager,
+            provider_instance_manager.clone(),
         )))
     } else {
         None

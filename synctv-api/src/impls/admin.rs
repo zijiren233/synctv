@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::str::FromStr;
 use synctv_core::models::{UserId, RoomId};
-use synctv_core::service::{RoomService, UserService, SettingsService, EmailService};
+use synctv_core::service::{RoomService, UserService, SettingsService, EmailService, ProviderInstanceManager};
 use synctv_cluster::sync::ConnectionManager;
 
 /// Admin API implementation
@@ -17,16 +17,18 @@ pub struct AdminApiImpl {
     pub settings_service: Arc<SettingsService>,
     pub email_service: Arc<EmailService>,
     pub connection_manager: Arc<ConnectionManager>,
+    pub provider_instance_manager: Arc<ProviderInstanceManager>,
 }
 
 impl AdminApiImpl {
-    #[must_use] 
+    #[must_use]
     pub const fn new(
         room_service: Arc<RoomService>,
         user_service: Arc<UserService>,
         settings_service: Arc<SettingsService>,
         email_service: Arc<EmailService>,
         connection_manager: Arc<ConnectionManager>,
+        provider_instance_manager: Arc<ProviderInstanceManager>,
     ) -> Self {
         Self {
             room_service,
@@ -34,6 +36,7 @@ impl AdminApiImpl {
             settings_service,
             email_service,
             connection_manager,
+            provider_instance_manager,
         }
     }
 
@@ -273,12 +276,17 @@ impl AdminApiImpl {
         &self,
         req: crate::proto::admin::SendTestEmailRequest,
     ) -> Result<crate::proto::admin::SendTestEmailResponse, String> {
-        // TODO: Implement actual test email sending
-        // For now, just return success
-        Ok(crate::proto::admin::SendTestEmailResponse {
-            message: format!("Test email queued for delivery to {}", req.to),
-            success: true,
-        })
+        // Send test email using EmailService
+        match self.email_service.send_test_email(&req.to).await {
+            Ok(()) => Ok(crate::proto::admin::SendTestEmailResponse {
+                message: format!("Test email sent successfully to {}", req.to),
+                success: true,
+            }),
+            Err(e) => Ok(crate::proto::admin::SendTestEmailResponse {
+                message: format!("Failed to send test email: {e}"),
+                success: false,
+            }),
+        }
     }
 
     // === Provider Instance Management ===
@@ -287,53 +295,185 @@ impl AdminApiImpl {
         &self,
         _req: crate::proto::admin::ListProviderInstancesRequest,
     ) -> Result<crate::proto::admin::ListProviderInstancesResponse, String> {
-        // This would require access to provider_instance_manager
-        // For now, return empty list
+        let instances = self.provider_instance_manager
+            .get_all_instances()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let proto_instances: Vec<_> = instances
+            .into_iter()
+            .map(provider_instance_to_proto)
+            .collect();
+
         Ok(crate::proto::admin::ListProviderInstancesResponse {
-            instances: vec![],
+            instances: proto_instances,
         })
     }
 
     pub async fn add_provider_instance(
         &self,
-        _req: crate::proto::admin::AddProviderInstanceRequest,
+        req: crate::proto::admin::AddProviderInstanceRequest,
     ) -> Result<crate::proto::admin::AddProviderInstanceResponse, String> {
-        Err("Provider instance management not yet implemented".to_string())
+        // Parse config if provided
+        let (jwt_secret, custom_ca) = if req.config.is_empty() {
+            (None, None)
+        } else {
+            let config: serde_json::Value = serde_json::from_slice(&req.config)
+                .map_err(|e| format!("Invalid config JSON: {e}"))?;
+            (
+                config.get("jwt_secret").and_then(|v| v.as_str()).map(String::from),
+                config.get("custom_ca").and_then(|v| v.as_str()).map(String::from),
+            )
+        };
+
+        let instance = synctv_core::models::ProviderInstance {
+            name: req.name,
+            endpoint: req.endpoint,
+            comment: if req.comment.is_empty() { None } else { Some(req.comment) },
+            jwt_secret,
+            custom_ca,
+            timeout: req.timeout,
+            tls: req.tls,
+            insecure_tls: req.insecure_tls,
+            providers: req.providers,
+            enabled: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        self.provider_instance_manager
+            .add(instance.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::AddProviderInstanceResponse {
+            instance: Some(provider_instance_to_proto(instance)),
+        })
     }
 
     pub async fn set_provider_instance(
         &self,
-        _req: crate::proto::admin::SetProviderInstanceRequest,
+        req: crate::proto::admin::SetProviderInstanceRequest,
     ) -> Result<crate::proto::admin::SetProviderInstanceResponse, String> {
-        Err("Provider instance management not yet implemented".to_string())
+        // Get existing instance
+        let instances = self.provider_instance_manager.get_all_instances().await
+            .map_err(|e| e.to_string())?;
+        let mut instance = instances.into_iter()
+            .find(|i| i.name == req.name)
+            .ok_or_else(|| format!("Provider instance '{}' not found", req.name))?;
+
+        // Update fields if provided
+        if !req.endpoint.is_empty() {
+            instance.endpoint = req.endpoint;
+        }
+        if !req.comment.is_empty() {
+            instance.comment = Some(req.comment);
+        }
+        if !req.timeout.is_empty() {
+            instance.timeout = req.timeout;
+        }
+        instance.tls = req.tls;
+        instance.insecure_tls = req.insecure_tls;
+        if !req.providers.is_empty() {
+            instance.providers = req.providers;
+        }
+
+        // Parse config if provided
+        if !req.config.is_empty() {
+            let config: serde_json::Value = serde_json::from_slice(&req.config)
+                .map_err(|e| format!("Invalid config JSON: {e}"))?;
+            if let Some(jwt_secret) = config.get("jwt_secret").and_then(|v| v.as_str()) {
+                instance.jwt_secret = Some(jwt_secret.to_string());
+            }
+            if let Some(custom_ca) = config.get("custom_ca").and_then(|v| v.as_str()) {
+                instance.custom_ca = Some(custom_ca.to_string());
+            }
+        }
+
+        instance.updated_at = chrono::Utc::now();
+
+        self.provider_instance_manager
+            .update(instance.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::SetProviderInstanceResponse {
+            instance: Some(provider_instance_to_proto(instance)),
+        })
     }
 
     pub async fn delete_provider_instance(
         &self,
-        _req: crate::proto::admin::DeleteProviderInstanceRequest,
+        req: crate::proto::admin::DeleteProviderInstanceRequest,
     ) -> Result<crate::proto::admin::DeleteProviderInstanceResponse, String> {
-        Err("Provider instance management not yet implemented".to_string())
+        self.provider_instance_manager
+            .delete(&req.name)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::DeleteProviderInstanceResponse {
+            success: true,
+        })
     }
 
     pub async fn reconnect_provider_instance(
         &self,
-        _req: crate::proto::admin::ReconnectProviderInstanceRequest,
+        req: crate::proto::admin::ReconnectProviderInstanceRequest,
     ) -> Result<crate::proto::admin::ReconnectProviderInstanceResponse, String> {
-        Err("Provider instance management not yet implemented".to_string())
+        // Disable then enable to force reconnect
+        self.provider_instance_manager.disable(&req.name).await
+            .map_err(|e| e.to_string())?;
+        self.provider_instance_manager.enable(&req.name).await
+            .map_err(|e| e.to_string())?;
+
+        // Get updated instance
+        let instances = self.provider_instance_manager.get_all_instances().await
+            .map_err(|e| e.to_string())?;
+        let instance = instances.into_iter()
+            .find(|i| i.name == req.name)
+            .ok_or_else(|| format!("Provider instance '{}' not found", req.name))?;
+
+        Ok(crate::proto::admin::ReconnectProviderInstanceResponse {
+            instance: Some(provider_instance_to_proto(instance)),
+        })
     }
 
     pub async fn enable_provider_instance(
         &self,
-        _req: crate::proto::admin::EnableProviderInstanceRequest,
+        req: crate::proto::admin::EnableProviderInstanceRequest,
     ) -> Result<crate::proto::admin::EnableProviderInstanceResponse, String> {
-        Err("Provider instance management not yet implemented".to_string())
+        self.provider_instance_manager.enable(&req.name).await
+            .map_err(|e| e.to_string())?;
+
+        // Get updated instance
+        let instances = self.provider_instance_manager.get_all_instances().await
+            .map_err(|e| e.to_string())?;
+        let instance = instances.into_iter()
+            .find(|i| i.name == req.name)
+            .ok_or_else(|| format!("Provider instance '{}' not found", req.name))?;
+
+        Ok(crate::proto::admin::EnableProviderInstanceResponse {
+            instance: Some(provider_instance_to_proto(instance)),
+        })
     }
 
     pub async fn disable_provider_instance(
         &self,
-        _req: crate::proto::admin::DisableProviderInstanceRequest,
+        req: crate::proto::admin::DisableProviderInstanceRequest,
     ) -> Result<crate::proto::admin::DisableProviderInstanceResponse, String> {
-        Err("Provider instance management not yet implemented".to_string())
+        self.provider_instance_manager.disable(&req.name).await
+            .map_err(|e| e.to_string())?;
+
+        // Get updated instance
+        let instances = self.provider_instance_manager.get_all_instances().await
+            .map_err(|e| e.to_string())?;
+        let instance = instances.into_iter()
+            .find(|i| i.name == req.name)
+            .ok_or_else(|| format!("Provider instance '{}' not found", req.name))?;
+
+        Ok(crate::proto::admin::DisableProviderInstanceResponse {
+            instance: Some(provider_instance_to_proto(instance)),
+        })
     }
 }
 
@@ -402,5 +542,28 @@ fn admin_user_to_proto(user: &synctv_core::models::User) -> crate::proto::admin:
         status: status_str.to_string(),
         created_at: user.created_at.timestamp(),
         updated_at: user.updated_at.timestamp(),
+    }
+}
+
+fn provider_instance_to_proto(instance: synctv_core::models::ProviderInstance) -> crate::proto::admin::ProviderInstance {
+    // Generate status based on enabled flag
+    let status = if instance.enabled {
+        "connected".to_string()
+    } else {
+        "disabled".to_string()
+    };
+
+    crate::proto::admin::ProviderInstance {
+        name: instance.name,
+        endpoint: instance.endpoint,
+        comment: instance.comment.unwrap_or_default(),
+        timeout: instance.timeout,
+        tls: instance.tls,
+        insecure_tls: instance.insecure_tls,
+        providers: instance.providers,
+        enabled: instance.enabled,
+        status,
+        created_at: instance.created_at.timestamp(),
+        updated_at: instance.updated_at.timestamp(),
     }
 }

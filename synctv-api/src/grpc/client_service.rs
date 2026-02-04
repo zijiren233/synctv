@@ -1615,13 +1615,23 @@ impl MediaService for ClientServiceImpl {
                 _ => Status::internal("Failed to add media"),
             })?;
 
+        // Get metadata from PlaybackResult if available (for direct URLs)
+        let metadata_bytes = if media.is_direct() {
+            media
+                .get_playback_result()
+                .map(|pb| serde_json::to_vec(&pb.metadata).unwrap_or_default())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         let proto_media = Some(Media {
             id: media.id.as_str().to_string(),
             room_id: media.room_id.as_str().to_string(),
             url: String::new(), // Deprecated: Use source_config instead
             provider: media.source_provider.clone(),
             title: media.name.clone(),
-            metadata: serde_json::to_vec(&media.metadata).unwrap_or_default(),
+            metadata: metadata_bytes,
             position: media.position,
             added_at: media.added_at.timestamp(),
             added_by: media.creator_id.as_str().to_string(),
@@ -1666,18 +1676,29 @@ impl MediaService for ClientServiceImpl {
 
         let proto_media: Vec<Media> = media_list
             .into_iter()
-            .map(|m| Media {
-                id: m.id.as_str().to_string(),
-                room_id: m.room_id.as_str().to_string(),
-                url: String::new(), // Deprecated: Use source_config instead
-                provider: m.source_provider.clone(),
-                title: m.name.clone(),
-                metadata: serde_json::to_vec(&m.metadata).unwrap_or_default(),
-                position: m.position,
-                added_at: m.added_at.timestamp(),
-                added_by: m.creator_id.as_str().to_string(),
-                provider_instance_name: m.provider_instance_name.unwrap_or_default(),
-                source_config: serde_json::to_vec(&m.source_config).unwrap_or_default(),
+            .map(|m| {
+                // Get metadata from PlaybackResult if available (for direct URLs)
+                let metadata_bytes = if m.is_direct() {
+                    m.get_playback_result()
+                        .map(|pb| serde_json::to_vec(&pb.metadata).unwrap_or_default())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+
+                Media {
+                    id: m.id.as_str().to_string(),
+                    room_id: m.room_id.as_str().to_string(),
+                    url: String::new(), // Deprecated: Use source_config instead
+                    provider: m.source_provider.clone(),
+                    title: m.name.clone(),
+                    metadata: metadata_bytes,
+                    position: m.position,
+                    added_at: m.added_at.timestamp(),
+                    added_by: m.creator_id.as_str().to_string(),
+                    provider_instance_name: m.provider_instance_name.unwrap_or_default(),
+                    source_config: serde_json::to_vec(&m.source_config).unwrap_or_default(),
+                }
             })
             .collect();
 

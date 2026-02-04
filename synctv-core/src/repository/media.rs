@@ -24,15 +24,14 @@ impl MediaRepository {
     /// Add media to playlist
     pub async fn create(&self, media: &Media) -> Result<Media> {
         let source_config_json = serde_json::to_value(&media.source_config)?;
-        let metadata_json = serde_json::to_value(&media.metadata)?;
 
         let row = sqlx::query(
             r"
             INSERT INTO media (id, playlist_id, room_id, creator_id, name, position,
-                              source_provider, source_config, metadata, provider_instance_name, added_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                              source_provider, source_config, provider_instance_name, added_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING id, playlist_id, room_id, creator_id, name, position,
-                       source_provider, source_config, metadata, provider_instance_name,
+                       source_provider, source_config, provider_instance_name,
                        added_at, deleted_at
             "
         )
@@ -44,7 +43,6 @@ impl MediaRepository {
         .bind(media.position)
         .bind(media.source_provider.as_str())
         .bind(&source_config_json)
-        .bind(&metadata_json)
         .bind(&media.provider_instance_name)
         .bind(media.added_at)
         .fetch_one(&self.pool)
@@ -64,15 +62,14 @@ impl MediaRepository {
 
         for item in items {
             let source_config_json = serde_json::to_value(&item.source_config)?;
-            let metadata_json = serde_json::to_value(&item.metadata)?;
 
             let row = sqlx::query(
                 r"
                 INSERT INTO media (id, playlist_id, room_id, creator_id, name, position,
-                                  source_provider, source_config, metadata, provider_instance_name, added_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                                  source_provider, source_config, provider_instance_name, added_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                  RETURNING id, playlist_id, room_id, creator_id, name, position,
-                           source_provider, source_config, metadata, provider_instance_name,
+                           source_provider, source_config, provider_instance_name,
                            added_at, deleted_at
                 "
             )
@@ -84,7 +81,6 @@ impl MediaRepository {
             .bind(item.position)
             .bind(item.source_provider.as_str())
             .bind(&source_config_json)
-            .bind(&metadata_json)
             .bind(&item.provider_instance_name)
             .bind(item.added_at)
             .fetch_one(&mut *tx)
@@ -102,16 +98,15 @@ impl MediaRepository {
     /// Update media
     pub async fn update(&self, media: &Media) -> Result<Media> {
         let source_config_json = serde_json::to_value(&media.source_config)?;
-        let metadata_json = serde_json::to_value(&media.metadata)?;
 
         let row = sqlx::query(
             r"
             UPDATE media
-            SET name = $2, position = $3, source_config = $4, metadata = $5,
-                provider_instance_name = $6
+            SET name = $2, position = $3, source_config = $4,
+                provider_instance_name = $5
              WHERE id = $1 AND deleted_at IS NULL
              RETURNING id, playlist_id, room_id, creator_id, name, position,
-                       source_provider, source_config, metadata, provider_instance_name,
+                       source_provider, source_config, provider_instance_name,
                        added_at, deleted_at
             "
         )
@@ -119,7 +114,6 @@ impl MediaRepository {
         .bind(&media.name)
         .bind(media.position)
         .bind(&source_config_json)
-        .bind(&metadata_json)
         .bind(&media.provider_instance_name)
         .fetch_one(&self.pool)
         .await?;
@@ -132,7 +126,7 @@ impl MediaRepository {
         let row = sqlx::query(
             r"
             SELECT id, playlist_id, room_id, creator_id, name, position,
-                   source_provider, source_config, metadata, provider_instance_name,
+                   source_provider, source_config, provider_instance_name,
                    added_at, deleted_at
              FROM media
              WHERE id = $1 AND deleted_at IS NULL
@@ -153,7 +147,7 @@ impl MediaRepository {
         let rows = sqlx::query(
             r"
             SELECT id, playlist_id, room_id, creator_id, name, position,
-                   source_provider, source_config, metadata, provider_instance_name,
+                   source_provider, source_config, provider_instance_name,
                    added_at, deleted_at
              FROM media
              WHERE room_id = $1 AND deleted_at IS NULL
@@ -172,7 +166,7 @@ impl MediaRepository {
         let rows = sqlx::query(
             r"
             SELECT id, playlist_id, room_id, creator_id, name, position,
-                   source_provider, source_config, metadata, provider_instance_name,
+                   source_provider, source_config, provider_instance_name,
                    added_at, deleted_at
              FROM media
              WHERE playlist_id = $1 AND deleted_at IS NULL
@@ -209,7 +203,7 @@ impl MediaRepository {
         let rows = sqlx::query(
             r"
             SELECT id, playlist_id, room_id, creator_id, name, position,
-                   source_provider, source_config, metadata, provider_instance_name,
+                   source_provider, source_config, provider_instance_name,
                    added_at, deleted_at
              FROM media
              WHERE playlist_id = $1 AND deleted_at IS NULL
@@ -334,7 +328,6 @@ impl MediaRepository {
             position: row.try_get("position")?,
             source_provider: row.try_get("source_provider")?,
             source_config: row.try_get("source_config")?,
-            metadata: row.try_get("metadata")?,
             provider_instance_name: row.try_get("provider_instance_name")?,
             added_at: row.try_get("added_at")?,
             deleted_at: row.try_get("deleted_at")?,

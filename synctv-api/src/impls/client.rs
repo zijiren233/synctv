@@ -772,12 +772,22 @@ fn room_to_proto_basic(
     }
 }
 
-#[must_use] 
+#[must_use]
 pub fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::client::Media {
     // Try to extract URL from source_config
     let url = media.source_config.get("url")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+
+    // Get metadata from PlaybackResult if available (for direct URLs)
+    let metadata_bytes = if media.is_direct() {
+        media
+            .get_playback_result()
+            .map(|pb| serde_json::to_vec(&pb.metadata).unwrap_or_default())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     crate::proto::client::Media {
         id: media.id.as_str().to_string(),
@@ -785,7 +795,7 @@ pub fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::clien
         url: url.to_string(),
         provider: media.source_provider.clone(),
         title: media.name.clone(),
-        metadata: serde_json::to_vec(&media.metadata).unwrap_or_default(),
+        metadata: metadata_bytes,
         position: media.position,
         added_at: media.added_at.timestamp(),
         added_by: media.creator_id.as_str().to_string(),

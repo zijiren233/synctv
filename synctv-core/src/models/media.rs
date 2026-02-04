@@ -53,7 +53,6 @@ pub struct Media {
     /// Stored as string for flexibility, not an enum
     pub source_provider: String,
     pub source_config: JsonValue,
-    pub metadata: JsonValue,
     /// Provider instance name (e.g., "`bilibili_main`", "`alist_company`")
     /// Used to look up the provider from the registry at playback time
     pub provider_instance_name: Option<String>,
@@ -110,7 +109,6 @@ impl Media {
             position,
             source_provider: provider_name.to_string(),
             source_config,
-            metadata: JsonValue::default(),
             provider_instance_name: Some(provider_instance_name),
             added_at: Utc::now(),
             deleted_at: None,
@@ -129,26 +127,534 @@ impl Media {
             position: params.position,
             source_provider: params.provider_name,
             source_config: params.source_config,
-            metadata: JsonValue::default(),
             provider_instance_name: Some(params.provider_instance_name),
             added_at: Utc::now(),
             deleted_at: None,
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn is_deleted(&self) -> bool {
         self.deleted_at.is_some()
     }
+
+    /// Check if this media is a direct URL type (no provider needed for playback)
+    #[must_use]
+    pub fn is_direct(&self) -> bool {
+        self.source_provider == "direct_url" || self.source_provider == "direct"
+    }
+
+    /// Get playback result from `source_config` (for direct type media)
+    ///
+    /// Returns None if this is not a direct type or if `source_config` doesn't contain valid playback data
+    /// Automatically fills in media fields (id, `playlist_id`, `room_id`, name, position) from self
+    #[must_use] 
+    pub fn get_playback_result(&self) -> Option<PlaybackResult> {
+        if !self.is_direct() {
+            return None;
+        }
+
+        // Try parsing as source_config structure (HashMap<String, PlaybackInfo> with default_mode and metadata)
+        #[derive(Deserialize)]
+        struct SourceConfigFormat {
+            playback_infos: std::collections::HashMap<String, PlaybackInfo>,
+            default_mode: String,
+            #[serde(default)]
+            metadata: std::collections::HashMap<String, JsonValue>,
+        }
+
+        if let Ok(config) = serde_json::from_value::<SourceConfigFormat>(self.source_config.clone()) {
+            return Some(PlaybackResult {
+                id: Some(self.id.clone()),
+                playlist_id: self.playlist_id.clone(),
+                room_id: self.room_id.clone(),
+                name: self.name.clone(),
+                position: self.position,
+                playback_infos: config.playback_infos,
+                default_mode: config.default_mode,
+                metadata: config.metadata,
+            });
+        }
+
+        // Fall back to single PlaybackInfo (legacy format)
+        if let Ok(info) = serde_json::from_value::<PlaybackInfo>(self.source_config.clone()) {
+            return Some(PlaybackResult::from_media_single_mode(self, "direct", info));
+        }
+
+        None
+    }
+
+    /// Create a direct URL media with multi-mode playback info
+    #[must_use]
+    pub fn from_direct_multimode(
+        playlist_id: PlaylistId,
+        room_id: RoomId,
+        creator_id: UserId,
+        name: String,
+        playback_infos: std::collections::HashMap<String, PlaybackInfo>,
+        default_mode: String,
+        metadata: std::collections::HashMap<String, JsonValue>,
+        position: i32,
+    ) -> Self {
+        // Only store playback_infos, default_mode, and metadata in source_config
+        // id, playlist_id, room_id, name, position are stored in Media fields
+        let source_config = serde_json::json!({
+            "playback_infos": playback_infos,
+            "default_mode": default_mode,
+            "metadata": metadata,
+        });
+
+        Self {
+            id: MediaId::new(),
+            playlist_id,
+            room_id,
+            creator_id,
+            name,
+            position,
+            source_provider: "direct_url".to_string(),
+            source_config,
+            provider_instance_name: None,
+            added_at: Utc::now(),
+            deleted_at: None,
+        }
+    }
+
+    /// Create a direct URL media with single playback info (convenience method)
+    #[must_use]
+    pub fn from_direct_single_mode(
+        playlist_id: PlaylistId,
+        room_id: RoomId,
+        creator_id: UserId,
+        name: String,
+        mode_name: &str,
+        playback_info: PlaybackInfo,
+        position: i32,
+    ) -> Self {
+        let mut playback_infos = std::collections::HashMap::new();
+        playback_infos.insert(mode_name.to_string(), playback_info);
+
+        Self::from_direct_multimode(
+            playlist_id,
+            room_id,
+            creator_id,
+            name,
+            playback_infos,
+            mode_name.to_string(),
+            std::collections::HashMap::new(),
+            position,
+        )
+    }
 }
 
-/// Media metadata structure (stored as JSON in database)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MediaMetadata {
-    pub title: String,
-    pub duration: Option<f64>, // seconds
-    pub thumbnail: Option<String>,
-    pub description: Option<String>,
-    pub author: Option<String>,
-    pub provider_data: JsonValue,
+// ============================================================================
+// Playback Information Structures (for all media types)
+// ============================================================================
+// PlaybackResult is returned when generating playback info (at playback time)
+// For direct type media, source_config can store either:
+// 1. PlaybackResult (multi-mode, recommended)
+// 2. PlaybackInfo (single mode, will be wrapped into PlaybackResult)
+
+/// Playback information generation result (returned by `generate_playback`)
+/// This structure supports multiple playback modes (e.g., "direct" and "proxied")
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaybackResult {
+    /// Media ID (optional, only set when returning playback for existing media)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<MediaId>,
+
+    /// Playlist ID
+    pub playlist_id: PlaylistId,
+
+    /// Room ID
+    pub room_id: RoomId,
+
+    /// Media name
+    pub name: String,
+
+    /// Position in playlist
+    pub position: i32,
+
+    /// Playback mode `HashMap` (multiple `PlaybackInfo` objects)
+    /// Provider can define arbitrary mode names, such as:
+    /// - "direct" and "proxied" (common)
+    /// - "cdn1", "cdn2", "cdn3" (multiple CDNs)
+    /// - "high", "medium", "low" (different qualities)
+    pub playback_infos: std::collections::HashMap<String, PlaybackInfo>,
+
+    /// Default mode name (must be a key in `playback_infos`)
+    /// Provider decides based on `source_config.prefer_proxy` etc.
+    pub default_mode: String,
+
+    /// Media-level metadata (duration, thumbnail, title, author, etc.)
+    /// Flexible JSON structure for provider-specific metadata
+    #[serde(default)]
+    pub metadata: std::collections::HashMap<String, JsonValue>,
+}
+
+/// Complete playback information for a single mode
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaybackInfo {
+    /// List of playback URLs (different qualities, codecs)
+    pub urls: Vec<PlaybackUrl>,
+
+    /// Default URL index
+    #[serde(default)]
+    pub default_url_index: usize,
+
+    /// Subtitle list
+    #[serde(default)]
+    pub subtitles: Vec<Subtitle>,
+
+    /// Default subtitle index
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_subtitle_index: Option<usize>,
+
+    /// Danmaku list (each mode can have different danmaku sources)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub danmakus: Vec<Danmaku>,
+}
+
+/// Playback URL (represents a quality/codec option)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaybackUrl {
+    /// Display name (e.g., "1080P", "HEVC 4K", "720P")
+    pub name: String,
+
+    /// Complete URL
+    pub url: String,
+
+    /// Request headers (if needed)
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub headers: std::collections::HashMap<String, String>,
+
+    /// Expiration time (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expire_at: Option<DateTime<Utc>>,
+
+    /// URL-level metadata (resolution, codec, bitrate, fps, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<PlaybackUrlMetadata>,
+}
+
+/// URL-level metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaybackUrlMetadata {
+    /// Resolution (e.g., "1920x1080", "1280x720")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+
+    /// Bitrate in bps
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bitrate: Option<i64>,
+
+    /// Video codec (e.g., "avc", "hevc", "av1")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
+
+    /// Frame rate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fps: Option<i32>,
+
+    /// Additional metadata
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, JsonValue>,
+}
+
+/// Subtitle information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Subtitle {
+    /// Display name (e.g., "简体中文", "English")
+    pub name: String,
+
+    /// Language code (e.g., "zh-CN", "en-US")
+    pub language: String,
+
+    /// Subtitle URL list (multiple sources/formats)
+    pub urls: Vec<SubtitleUrl>,
+
+    /// Default URL index
+    #[serde(default)]
+    pub default_url_index: usize,
+}
+
+/// Subtitle URL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubtitleUrl {
+    /// Display name (e.g., "原始", "AI翻译")
+    pub name: String,
+
+    /// Subtitle file URL
+    pub url: String,
+
+    /// Request headers (if needed)
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub headers: std::collections::HashMap<String, String>,
+}
+
+/// Danmaku (bullet comments) information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Danmaku {
+    /// Display name (e.g., "Bilibili弹幕", "本地弹幕")
+    pub name: String,
+
+    /// Danmaku API URL or file URL
+    pub url: String,
+
+    /// Format type (e.g., "bilibili", "ass", "xml")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+
+    /// Request headers (if needed)
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub headers: std::collections::HashMap<String, String>,
+}
+
+// ============================================================================
+// Helper implementations
+// ============================================================================
+
+impl PlaybackResult {
+    /// Create a `PlaybackResult` from Media and single mode `PlaybackInfo`
+    #[must_use]
+    pub fn from_media_single_mode(media: &Media, mode_name: &str, playback_info: PlaybackInfo) -> Self {
+        let mut playback_infos = std::collections::HashMap::new();
+        playback_infos.insert(mode_name.to_string(), playback_info);
+
+        Self {
+            id: Some(media.id.clone()),
+            playlist_id: media.playlist_id.clone(),
+            room_id: media.room_id.clone(),
+            name: media.name.clone(),
+            position: media.position,
+            playback_infos,
+            default_mode: mode_name.to_string(),
+            metadata: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new builder
+    #[must_use]
+    pub fn builder(playlist_id: PlaylistId, room_id: RoomId, name: String, position: i32) -> PlaybackResultBuilder {
+        PlaybackResultBuilder {
+            id: None,
+            playlist_id,
+            room_id,
+            name,
+            position,
+            playback_infos: std::collections::HashMap::new(),
+            default_mode: None,
+            metadata: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Add metadata field
+    #[must_use] 
+    pub fn with_metadata(mut self, key: String, value: JsonValue) -> Self {
+        self.metadata.insert(key, value);
+        self
+    }
+
+    /// Get the default playback info
+    #[must_use] 
+    pub fn get_default_playback_info(&self) -> Option<&PlaybackInfo> {
+        self.playback_infos.get(&self.default_mode)
+    }
+}
+
+/// Builder for `PlaybackResult`
+pub struct PlaybackResultBuilder {
+    id: Option<MediaId>,
+    playlist_id: PlaylistId,
+    room_id: RoomId,
+    name: String,
+    position: i32,
+    playback_infos: std::collections::HashMap<String, PlaybackInfo>,
+    default_mode: Option<String>,
+    metadata: std::collections::HashMap<String, JsonValue>,
+}
+
+impl PlaybackResultBuilder {
+    /// Set media ID (optional)
+    #[must_use] 
+    pub fn id(mut self, id: MediaId) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// Add a playback mode
+    #[must_use] 
+    pub fn add_mode(mut self, mode_name: String, info: PlaybackInfo) -> Self {
+        self.playback_infos.insert(mode_name, info);
+        self
+    }
+
+    /// Set the default mode
+    #[must_use] 
+    pub fn default_mode(mut self, mode_name: String) -> Self {
+        self.default_mode = Some(mode_name);
+        self
+    }
+
+    /// Add metadata
+    #[must_use] 
+    pub fn add_metadata(mut self, key: String, value: JsonValue) -> Self {
+        self.metadata.insert(key, value);
+        self
+    }
+
+    /// Build the `PlaybackResult`
+    ///
+    /// Returns None if no modes were added or `default_mode` is not set
+    #[must_use] 
+    pub fn build(self) -> Option<PlaybackResult> {
+        if self.playback_infos.is_empty() {
+            return None;
+        }
+
+        let default_mode = self.default_mode.or_else(|| {
+            // If no default mode specified, use the first mode
+            self.playback_infos.keys().next().cloned()
+        })?;
+
+        // Verify default_mode exists in playback_infos
+        if !self.playback_infos.contains_key(&default_mode) {
+            return None;
+        }
+
+        Some(PlaybackResult {
+            id: self.id,
+            playlist_id: self.playlist_id,
+            room_id: self.room_id,
+            name: self.name,
+            position: self.position,
+            playback_infos: self.playback_infos,
+            default_mode,
+            metadata: self.metadata,
+        })
+    }
+}
+
+impl PlaybackInfo {
+    /// Create a simple playback info with a single URL
+    #[must_use]
+    pub fn single_url(url: String, name: String) -> Self {
+        Self {
+            urls: vec![PlaybackUrl {
+                name,
+                url,
+                headers: std::collections::HashMap::new(),
+                expire_at: None,
+                metadata: None,
+            }],
+            default_url_index: 0,
+            subtitles: Vec::new(),
+            default_subtitle_index: None,
+            danmakus: Vec::new(),
+        }
+    }
+
+    /// Create a new builder
+    #[must_use]
+    pub fn builder() -> PlaybackInfoBuilder {
+        PlaybackInfoBuilder::default()
+    }
+}
+
+/// Builder for `PlaybackInfo`
+#[derive(Default)]
+pub struct PlaybackInfoBuilder {
+    urls: Vec<PlaybackUrl>,
+    default_url_index: usize,
+    subtitles: Vec<Subtitle>,
+    default_subtitle_index: Option<usize>,
+    danmakus: Vec<Danmaku>,
+}
+
+impl PlaybackInfoBuilder {
+    /// Add a playback URL
+    #[must_use] 
+    pub fn add_url(mut self, url: PlaybackUrl) -> Self {
+        self.urls.push(url);
+        self
+    }
+
+    /// Set the default URL index
+    #[must_use] 
+    pub const fn default_url_index(mut self, index: usize) -> Self {
+        self.default_url_index = index;
+        self
+    }
+
+    /// Add a subtitle
+    #[must_use] 
+    pub fn add_subtitle(mut self, subtitle: Subtitle) -> Self {
+        self.subtitles.push(subtitle);
+        self
+    }
+
+    /// Set the default subtitle index
+    #[must_use] 
+    pub const fn default_subtitle_index(mut self, index: usize) -> Self {
+        self.default_subtitle_index = Some(index);
+        self
+    }
+
+    /// Add a danmaku source
+    #[must_use] 
+    pub fn add_danmaku(mut self, danmaku: Danmaku) -> Self {
+        self.danmakus.push(danmaku);
+        self
+    }
+
+    /// Build the `PlaybackInfo`
+    #[must_use]
+    pub fn build(self) -> PlaybackInfo {
+        PlaybackInfo {
+            urls: self.urls,
+            default_url_index: self.default_url_index,
+            subtitles: self.subtitles,
+            default_subtitle_index: self.default_subtitle_index,
+            danmakus: self.danmakus,
+        }
+    }
+}
+
+impl PlaybackUrl {
+    /// Create a simple playback URL
+    #[must_use]
+    pub fn simple(name: String, url: String) -> Self {
+        Self {
+            name,
+            url,
+            headers: std::collections::HashMap::new(),
+            expire_at: None,
+            metadata: None,
+        }
+    }
+
+    /// Create with metadata
+    #[must_use]
+    pub fn with_metadata(name: String, url: String, metadata: PlaybackUrlMetadata) -> Self {
+        Self {
+            name,
+            url,
+            headers: std::collections::HashMap::new(),
+            expire_at: None,
+            metadata: Some(metadata),
+        }
+    }
+}
+
+impl PlaybackUrlMetadata {
+    /// Create metadata with resolution and codec
+    #[must_use]
+    pub fn new(resolution: String, codec: String) -> Self {
+        Self {
+            resolution: Some(resolution),
+            codec: Some(codec),
+            bitrate: None,
+            fps: None,
+            extra: std::collections::HashMap::new(),
+        }
+    }
 }

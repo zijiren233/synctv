@@ -75,6 +75,36 @@ impl std::fmt::Display for UserRole {
     }
 }
 
+// Database mapping: UserRole -> SMALLINT (1=root, 2=admin, 3=user)
+impl sqlx::Type<sqlx::Postgres> for UserRole {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <i16 as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for UserRole {
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        let val: i16 = match self {
+            Self::Root => 1,
+            Self::Admin => 2,
+            Self::User => 3,
+        };
+        <i16 as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&val, buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for UserRole {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let val = <i16 as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        match val {
+            1 => Ok(Self::Root),
+            2 => Ok(Self::Admin),
+            3 => Ok(Self::User),
+            _ => Err(format!("Invalid UserRole value: {val}").into()),
+        }
+    }
+}
+
 /// User account status (design document 06: role and status separation)
 ///
 /// This represents the user's ACCOUNT state, independent of their role.
@@ -156,6 +186,36 @@ impl FromStr for UserStatus {
 impl std::fmt::Display for UserStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+// Database mapping: UserStatus -> SMALLINT (1=active, 2=pending, 3=banned)
+impl sqlx::Type<sqlx::Postgres> for UserStatus {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <i16 as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for UserStatus {
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        let val: i16 = match self {
+            Self::Active => 1,
+            Self::Pending => 2,
+            Self::Banned => 3,
+        };
+        <i16 as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&val, buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for UserStatus {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let val = <i16 as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        match val {
+            1 => Ok(Self::Active),
+            2 => Ok(Self::Pending),
+            3 => Ok(Self::Banned),
+            _ => Err(format!("Invalid UserStatus value: {val}").into()),
+        }
     }
 }
 

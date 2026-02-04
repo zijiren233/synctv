@@ -312,9 +312,17 @@ impl PlaybackService {
         };
 
         // Check if media has metadata with duration
-        let duration = if let Some(duration) = playing_media.metadata.get("duration") {
-            duration.as_f64()
+        // For direct URLs, get duration from PlaybackResult metadata
+        // For provider-based media, duration check is skipped (client should handle)
+        let duration = if playing_media.is_direct() {
+            if let Some(playback_result) = playing_media.get_playback_result() {
+                playback_result.metadata.get("duration")
+                    .and_then(serde_json::Value::as_f64)
+            } else {
+                return Ok(None);
+            }
         } else {
+            // For provider-based media, auto-play is handled by client or provider
             return Ok(None);
         };
 

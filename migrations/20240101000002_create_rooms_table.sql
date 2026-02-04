@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS rooms (
     id CHAR(12) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     created_by CHAR(12) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    status SMALLINT NOT NULL DEFAULT 1,  -- 1=active, 2=pending, 3=banned
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ NULL
@@ -25,12 +25,12 @@ CREATE INDEX idx_rooms_name_lower ON rooms(LOWER(name)) WHERE deleted_at IS NULL
 CREATE TRIGGER update_rooms_updated_at BEFORE UPDATE ON rooms
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Add check constraint for status
+-- Add check constraint for status: 1=active, 2=pending, 3=banned
 ALTER TABLE rooms ADD CONSTRAINT rooms_status_check
-    CHECK (status IN ('active', 'closed'));
+    CHECK (status BETWEEN 1 AND 3);
 
 -- Comments
 COMMENT ON TABLE rooms IS 'Video watching rooms - all settings stored in room_settings table';
 COMMENT ON COLUMN rooms.id IS '12-character nanoid';
-COMMENT ON COLUMN rooms.status IS 'Room status: active, closed, pending';
+COMMENT ON COLUMN rooms.status IS 'Room status: 1=active, 2=pending, 3=banned';
 

@@ -114,11 +114,87 @@ async fn main() -> Result<()> {
         .as_ref()
         .and_then(|cm| cm.redis_publish_tx().cloned());
 
-    // 9. Initialize streaming components (RTMP server)
-    // TODO: Refactor streaming initialization to use new API
-    // The streaming infrastructure has been refactored with new interfaces (RtmpServer, LiveStreamingInfrastructure)
-    // Need to update this code to use the new API instead of the old RtmpStreamingServer
-    let streaming_state = None;
+    // 9. Initialize streaming components (RTMP server and live streaming infrastructure)
+    let (streaming_state, live_streaming_infrastructure) = if config.redis.url.is_empty() {
+        info!("Redis not configured, streaming features disabled");
+        (None, None)
+    } else {
+        info!("Initializing streaming infrastructure...");
+
+        match redis::Client::open(config.redis.url.clone()) {
+            Ok(redis_client) => {
+                match redis_client.get_connection_manager().await {
+                    Ok(redis_conn) => {
+                        // Create two registries:
+                        // 1. Stream state registry for HLS (DashMap-based)
+                        let stream_registry: synctv_stream::StreamRegistry = Arc::new(dashmap::DashMap::new());
+
+                        // 2. Publisher registry for Redis (used by PullStreamManager)
+                        let publisher_registry = Arc::new(synctv_stream::relay::StreamRegistry::new(redis_conn)) as Arc<dyn synctv_stream::relay::StreamRegistryTrait>;
+
+                        // Create GOP cache
+                        let gop_cache_config = synctv_stream::libraries::gop_cache::GopCacheConfig::default();
+                        let gop_cache = Arc::new(synctv_stream::GopCache::new(gop_cache_config));
+
+                        // Create StreamHub event sender (needed by PullStreamManager)
+                        let (stream_hub_event_sender, _stream_hub_event_receiver) =
+                            tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
+
+                        // Create PullStreamManager (uses publisher_registry for Redis)
+                        let node_id = generate_node_id();
+                        let pull_manager = Arc::new(synctv_stream::streaming::PullStreamManager::new(
+                            gop_cache.clone(),
+                            publisher_registry.clone(),
+                            node_id,
+                            stream_hub_event_sender.clone(),
+                        ));
+
+                        // Create LiveStreamingInfrastructure (uses publisher_registry for Redis)
+                        let live_infra = Arc::new(synctv_stream::api::LiveStreamingInfrastructure::new(
+                            publisher_registry.clone(),
+                            stream_hub_event_sender,
+                            gop_cache,
+                            pull_manager.clone(),
+                        ));
+
+                        // Create RTMP authentication callback
+                        let _rtmp_auth = Arc::new(rtmp::SyncTvRtmpAuth::new(
+                            synctv_services.room_service.clone(),
+                            synctv_services.publish_key_service.clone(),
+                        ));
+
+                        // Create RTMP server configuration
+                        let rtmp_listen_addr = format!("{}:{}", config.server.host, config.streaming.rtmp_port);
+                        let rtmp_config = synctv_stream::xiu_integration::RtmpConfig {
+                            listen_addr: rtmp_listen_addr.parse().expect("Invalid RTMP address"),
+                            max_streams: 1000,
+                            chunk_size: 4096,
+                            gop_num: 2,
+                        };
+                        let _rtmp_server = synctv_stream::RtmpServer::new(rtmp_config);
+
+                        // TODO: Start RTMP server (需要实现 build() 和 run() 方法)
+                        info!("Streaming infrastructure initialized (RTMP server not started yet)");
+
+                        let state = Some(server::StreamingState {
+                            registry: stream_registry,
+                            pull_manager,
+                        });
+
+                        (state, Some(live_infra))
+                    }
+                    Err(e) => {
+                        error!("Failed to connect to Redis for streaming: {}", e);
+                        (None, None)
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to create Redis client for streaming: {}", e);
+                (None, None)
+            }
+        }
+    };
 
     // 10. Create server with all services
     let provider_instance_manager = synctv_services.provider_instance_manager.clone();
@@ -151,6 +227,7 @@ async fn main() -> Result<()> {
         email_token_service: synctv_services.email_token_service.clone(),
         publish_key_service: synctv_services.publish_key_service.clone(),
         notification_service: Some(synctv_services.notification_service.clone()),
+        live_streaming_infrastructure,
     };
 
     let server = SyncTvServer::new(config, services, streaming_state);

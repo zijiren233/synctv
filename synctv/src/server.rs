@@ -15,7 +15,7 @@ use synctv_core::{
     provider::{AlistProvider, BilibiliProvider, EmbyProvider},
     Config,
 };
-use synctv_stream::relay::StreamRegistry;
+use synctv_stream::StreamRegistry;
 
 /// Streaming server state
 pub struct StreamingState {
@@ -50,6 +50,7 @@ pub struct Services {
     pub email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
     pub publish_key_service: Arc<synctv_core::service::PublishKeyService>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
+    pub live_streaming_infrastructure: Option<Arc<synctv_stream::api::LiveStreamingInfrastructure>>,
 }
 
 /// `SyncTV` server - manages all server components
@@ -187,9 +188,7 @@ impl SyncTvServer {
         let notification_service = self.services.notification_service.clone();
         let connection_manager = self.services.connection_manager.clone();
 
-        //  TODO: Convert StreamingState to LiveStreamingInfrastructure
-        // For now, pass None until we refactor StreamingState to include all required fields
-        let live_streaming_infrastructure = None;
+        let live_streaming_infrastructure = self.services.live_streaming_infrastructure.clone();
 
         let http_router = synctv_api::http::create_router(
             user_service,

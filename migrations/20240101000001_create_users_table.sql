@@ -5,8 +5,8 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) UNIQUE,  -- NULL allowed (e.g., OAuth2 users without email)
     password_hash VARCHAR(255) NOT NULL,
     signup_method VARCHAR(20),  -- NULL for legacy users, 'email' or 'oauth2' for new users
-    role VARCHAR(20) NOT NULL DEFAULT 'user',
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    role SMALLINT NOT NULL DEFAULT 3,  -- 1=root, 2=admin, 3=user
+    status SMALLINT NOT NULL DEFAULT 1,  -- 1=active, 2=pending, 3=banned
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -16,10 +16,10 @@ CREATE TABLE IF NOT EXISTS users (
     CONSTRAINT users_email_not_empty CHECK (email IS NULL OR length(trim(email)) > 0),
     -- Signup method constraint (NULL allowed for legacy users)
     CONSTRAINT users_signup_method_check CHECK (signup_method IS NULL OR signup_method IN ('email', 'oauth2')),
-    -- Role constraint
-    CONSTRAINT users_role_check CHECK (role IN ('root', 'admin', 'user')),
-    -- Status constraint
-    CONSTRAINT users_status_check CHECK (status IN ('active', 'pending', 'banned'))
+    -- Role constraint: 1=root, 2=admin, 3=user
+    CONSTRAINT users_role_check CHECK (role BETWEEN 1 AND 3),
+    -- Status constraint: 1=active, 2=pending, 3=banned
+    CONSTRAINT users_status_check CHECK (status BETWEEN 1 AND 3)
 );
 
 -- Create indexes
@@ -56,8 +56,8 @@ COMMENT ON COLUMN users.id IS '12-character nanoid';
 COMMENT ON COLUMN users.username IS 'Unique username (NEVER reusable, even after deletion)';
 COMMENT ON COLUMN users.email IS 'User email (NULL allowed for OAuth2 users, non-empty values are unique and never reusable)';
 COMMENT ON COLUMN users.signup_method IS 'Method used to register: email or oauth2';
-COMMENT ON COLUMN users.role IS 'User RBAC role: root, admin, or user (global access level)';
-COMMENT ON COLUMN users.status IS 'User account status: active, pending (email verification), or banned';
+COMMENT ON COLUMN users.role IS 'User RBAC role: 1=root, 2=admin, 3=user (global access level)';
+COMMENT ON COLUMN users.status IS 'User account status: 1=active, 2=pending (email verification), 3=banned';
 COMMENT ON COLUMN users.email_verified IS 'Whether the user email has been verified';
 COMMENT ON COLUMN users.deleted_at IS 'Soft delete timestamp (NULL = active user)';
 COMMENT ON CONSTRAINT users_email_not_empty ON users IS 'Ensures email is either NULL or a non-empty string';

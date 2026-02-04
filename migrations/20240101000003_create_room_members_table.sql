@@ -4,8 +4,8 @@ CREATE TABLE IF NOT EXISTS room_members (
     user_id CHAR(12) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
     -- Role and Status (separated as per design)
-    role VARCHAR(20) NOT NULL DEFAULT 'member',
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    role SMALLINT NOT NULL DEFAULT 3,  -- 1=creator, 2=admin, 3=member, 4=guest
+    status SMALLINT NOT NULL DEFAULT 1,  -- 1=active, 2=pending, 3=banned
 
     -- Allow/Deny permission pattern
     -- effective_permissions = ((global_default | room_added | admin_added | member_added) & ~(room_removed | admin_removed | member_removed))
@@ -53,19 +53,20 @@ CREATE INDEX idx_room_members_banned ON room_members(banned_at)
 CREATE INDEX idx_room_members_version ON room_members(room_id, user_id, version)
     WHERE left_at IS NULL;
 
--- Constraints
+-- Constraints: 1=creator, 2=admin, 3=member, 4=guest
 ALTER TABLE room_members
     ADD CONSTRAINT check_room_members_role
-    CHECK (role IN ('creator', 'admin', 'member', 'guest'));
+    CHECK (role BETWEEN 1 AND 4);
 
+-- Status constraint: 1=active, 2=pending, 3=banned
 ALTER TABLE room_members
     ADD CONSTRAINT check_room_members_status
-    CHECK (status IN ('active', 'pending', 'banned'));
+    CHECK (status BETWEEN 1 AND 3);
 
 -- Comments
 COMMENT ON TABLE room_members IS 'Room membership with Allow/Deny permission pattern';
-COMMENT ON COLUMN room_members.role IS 'Room role: creator, admin, member, guest';
-COMMENT ON COLUMN room_members.status IS 'Member status: active, pending, banned';
+COMMENT ON COLUMN room_members.role IS 'Room role: 1=creator, 2=admin, 3=member, 4=guest';
+COMMENT ON COLUMN room_members.status IS 'Member status: 1=active, 2=pending, 3=banned';
 COMMENT ON COLUMN room_members.added_permissions IS 'Extra permissions added to role default (Allow pattern)';
 COMMENT ON COLUMN room_members.removed_permissions IS 'Permissions removed from role default (Deny pattern)';
 COMMENT ON COLUMN room_members.version IS 'Optimistic lock version for permission updates';

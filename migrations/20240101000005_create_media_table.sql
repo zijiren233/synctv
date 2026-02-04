@@ -23,9 +23,6 @@ CREATE TABLE IF NOT EXISTS media (
     -- ========== Video source configuration (persistent storage) ==========
     source_config JSONB NOT NULL,
 
-    -- Metadata (duration, resolution, etc.)
-    metadata JSONB NOT NULL DEFAULT '{}',
-
     -- Provider instance name (for registry lookup)
     provider_instance_name VARCHAR(64),
 
@@ -63,7 +60,6 @@ COMMENT ON COLUMN media.name IS 'File name (forbids / character)';
 COMMENT ON COLUMN media.position IS 'Position in playlist (0-indexed)';
 COMMENT ON COLUMN media.source_provider IS 'Provider type name (e.g., "bilibili", "alist", "emby", "direct_url")';
 COMMENT ON COLUMN media.source_config IS 'Provider-specific configuration (persistent)';
-COMMENT ON COLUMN media.metadata IS 'Metadata (duration, resolution, etc.)';
 COMMENT ON COLUMN media.provider_instance_name IS 'Provider instance name for registry lookup (e.g., "bilibili_main")';
 COMMENT ON CONSTRAINT unique_media_name ON media IS 'No duplicate names in same playlist';
 COMMENT ON CONSTRAINT valid_media_name ON media IS 'File name validation: not empty, 1-255 chars, no / character';

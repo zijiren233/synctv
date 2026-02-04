@@ -38,12 +38,37 @@ pub async fn proxy_media_stream(
         .find(|m| m.id == media_id)
         .ok_or_else(|| anyhow::anyhow!("Media not found in playlist"))?;
 
-    // Extract the original URL from metadata
-    let original_url = media
-        .metadata
-        .get("url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Media URL not found in metadata"))?;
+    // Extract the original URL
+    // For direct URLs: Get from PlaybackResult
+    // For provider-based: This needs to call provider.generate_playback()
+    let original_url = if media.is_direct() {
+        // Get PlaybackResult from source_config
+        let playback_result = media
+            .get_playback_result()
+            .ok_or_else(|| anyhow::anyhow!("Media does not have playback info"))?;
+
+        // Get default mode
+        let default_mode = &playback_result.default_mode;
+        let playback_info = playback_result
+            .playback_infos
+            .get(default_mode)
+            .ok_or_else(|| anyhow::anyhow!("Default playback mode not found"))?;
+
+        // Get first URL
+        let playback_url = playback_info
+            .urls
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("No URLs found in playback info"))?;
+
+        playback_url.url.clone()
+    } else {
+        // TODO: For provider-based media, call provider.generate_playback()
+        // to get the URL dynamically
+        return Err(anyhow::anyhow!(
+            "Proxy not yet implemented for provider-based media"
+        )
+        .into());
+    };
 
     tracing::info!("Proxying media request for URL: {}", original_url);
 
@@ -53,7 +78,7 @@ pub async fn proxy_media_stream(
         .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
 
     // Build the proxy request
-    let mut request = client.get(original_url);
+    let mut request = client.get(&original_url);
 
     // Copy relevant headers from the original request
     for (name, value) in &headers {
@@ -77,7 +102,7 @@ pub async fn proxy_media_stream(
     );
 
     // Set Referer if not present (some providers require this)
-    if let Ok(parsed_url) = url::Url::parse(original_url) {
+    if let Ok(parsed_url) = url::Url::parse(&original_url) {
         let referer = format!(
             "{}://{}{}",
             parsed_url.scheme(),
