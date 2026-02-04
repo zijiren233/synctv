@@ -12,7 +12,8 @@ pub struct RoomPlaybackStateRepository {
 }
 
 impl RoomPlaybackStateRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -69,7 +70,7 @@ impl RoomPlaybackStateRepository {
 
     /// Update playback state with optimistic locking
     pub async fn update(&self, state: &RoomPlaybackState) -> Result<RoomPlaybackState> {
-        let movie_id_str = state.playing_media_id.as_ref().map(|id| id.as_str());
+        let movie_id_str = state.playing_media_id.as_ref().map(super::super::models::id::MediaId::as_str);
 
         let row = sqlx::query(
             "UPDATE room_playback_state
@@ -97,7 +98,7 @@ impl RoomPlaybackStateRepository {
         }
     }
 
-    /// Convert database row to RoomPlaybackState
+    /// Convert database row to `RoomPlaybackState`
     fn row_to_state(&self, row: PgRow) -> Result<RoomPlaybackState> {
         let movie_id_opt: Option<String> = row.try_get("playing_media_id")?;
 

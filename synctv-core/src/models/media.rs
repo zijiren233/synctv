@@ -20,11 +20,11 @@ impl FromStr for ProviderType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "direct_url" | "directurl" => Ok(ProviderType::DirectUrl),
-            "bilibili" => Ok(ProviderType::Bilibili),
-            "alist" => Ok(ProviderType::Alist),
-            "emby" => Ok(ProviderType::Emby),
-            _ => Err(format!("Unknown provider type: {}", s)),
+            "direct_url" | "directurl" => Ok(Self::DirectUrl),
+            "bilibili" => Ok(Self::Bilibili),
+            "alist" => Ok(Self::Alist),
+            "emby" => Ok(Self::Emby),
+            _ => Err(format!("Unknown provider type: {s}")),
         }
     }
 }
@@ -32,10 +32,10 @@ impl FromStr for ProviderType {
 impl std::fmt::Display for ProviderType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ProviderType::DirectUrl => write!(f, "direct_url"),
-            ProviderType::Bilibili => write!(f, "bilibili"),
-            ProviderType::Alist => write!(f, "alist"),
-            ProviderType::Emby => write!(f, "emby"),
+            Self::DirectUrl => write!(f, "direct_url"),
+            Self::Bilibili => write!(f, "bilibili"),
+            Self::Alist => write!(f, "alist"),
+            Self::Emby => write!(f, "emby"),
         }
     }
 }
@@ -49,12 +49,12 @@ pub struct Media {
     pub creator_id: UserId,
     pub name: String,
     pub position: i32,
-    /// Provider type name (e.g., "bilibili", "alist", "emby", "direct_url")
+    /// Provider type name (e.g., "bilibili", "alist", "emby", "`direct_url`")
     /// Stored as string for flexibility, not an enum
     pub source_provider: String,
     pub source_config: JsonValue,
     pub metadata: JsonValue,
-    /// Provider instance name (e.g., "bilibili_main", "alist_company")
+    /// Provider instance name (e.g., "`bilibili_main`", "`alist_company`")
     /// Used to look up the provider from the registry at playback time
     pub provider_instance_name: Option<String>,
     pub added_at: DateTime<Utc>,
@@ -78,11 +78,11 @@ impl Media {
     /// Create media from provider instance (registry pattern)
     ///
     /// This is the preferred way to create media when using the provider registry.
-    /// The provider_instance_name is used to look up the provider at playback time.
+    /// The `provider_instance_name` is used to look up the provider at playback time.
     ///
     /// # Arguments
-    /// * `provider_name` - Provider type name from provider.name() (e.g., "bilibili")
-    /// * `provider_instance_name` - Instance name for lookup (e.g., "bilibili_main")
+    /// * `provider_name` - Provider type name from `provider.name()` (e.g., "bilibili")
+    /// * `provider_instance_name` - Instance name for lookup (e.g., "`bilibili_main`")
     ///
     /// # Example
     /// ```rust
@@ -90,6 +90,7 @@ impl Media {
     /// let media = Media::from_provider(..., provider.name(), "bilibili_main", ...);
     /// ```
     #[allow(clippy::too_many_arguments)]
+    #[must_use] 
     pub fn from_provider(
         playlist_id: PlaylistId,
         room_id: RoomId,
@@ -117,6 +118,7 @@ impl Media {
     }
 
     /// Create media from provider with parameters struct
+    #[must_use] 
     pub fn from_provider_with_params(params: FromProviderParams) -> Self {
         Self {
             id: MediaId::new(),
@@ -134,7 +136,8 @@ impl Media {
         }
     }
 
-    pub fn is_deleted(&self) -> bool {
+    #[must_use] 
+    pub const fn is_deleted(&self) -> bool {
         self.deleted_at.is_some()
     }
 }

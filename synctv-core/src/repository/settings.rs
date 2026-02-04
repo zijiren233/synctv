@@ -13,7 +13,8 @@ pub struct SettingsRepository {
 }
 
 impl SettingsRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -42,7 +43,7 @@ impl SettingsRepository {
             })
             .collect();
 
-        debug!("Retrieved {} settings", groups.as_ref().map(|g| g.len()).unwrap_or(0));
+        debug!("Retrieved {} settings", groups.as_ref().map(std::vec::Vec::len).unwrap_or(0));
         groups
     }
 

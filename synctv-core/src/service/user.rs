@@ -30,7 +30,8 @@ impl std::fmt::Debug for UserService {
 }
 
 impl UserService {
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         pool: PgPool,
         jwt_service: JwtService,
         blacklist_service: TokenBlacklistService,
@@ -227,14 +228,14 @@ impl UserService {
         self.blacklist_service.is_blacklisted(token).await
     }
 
-    /// Create or load user by OAuth2 provider
+    /// Create or load user by `OAuth2` provider
     ///
-    /// This method is called during OAuth2 login flow.
-    /// If a user exists with the given provider and provider_user_id, return it.
+    /// This method is called during `OAuth2` login flow.
+    /// If a user exists with the given provider and `provider_user_id`, return it.
     /// Otherwise, create a new user with a random password.
     ///
-    /// Note: This method doesn't save the OAuth2 token - that's handled by OAuth2Service.
-    /// Note: Email is optional for OAuth2 users.
+    /// Note: This method doesn't save the `OAuth2` token - that's handled by `OAuth2Service`.
+    /// Note: Email is optional for `OAuth2` users.
     pub async fn create_or_load_by_oauth2(
         &self,
         provider: &OAuth2Provider,
@@ -255,7 +256,7 @@ impl UserService {
         let random_password = nanoid::nanoid!(32);
 
         // Use provided email, or None if not provided
-        let user_email = email.map(|e| e.to_string());
+        let user_email = email.map(std::string::ToString::to_string);
 
         // Hash password
         let password_hash = hash_password(&random_password).await?;
@@ -361,7 +362,7 @@ impl UserService {
 
     /// Get multiple usernames at once (more efficient)
     ///
-    /// Returns a map of user_id -> username.
+    /// Returns a map of `user_id` -> username.
     pub async fn get_usernames(&self, user_ids: &[UserId]) -> Result<HashMap<UserId, String>> {
         // Try batch cache lookup first
         let mut result = self.username_cache.get_batch(user_ids).await?;
@@ -393,12 +394,14 @@ impl UserService {
     }
 
     /// Get the database pool (for creating dependent services)
-    pub fn pool(&self) -> &PgPool {
+    #[must_use] 
+    pub const fn pool(&self) -> &PgPool {
         self.repository.pool()
     }
 
     /// Get the username cache (for creating dependent services)
-    pub fn username_cache(&self) -> &UsernameCache {
+    #[must_use] 
+    pub const fn username_cache(&self) -> &UsernameCache {
         &self.username_cache
     }
 }

@@ -66,6 +66,13 @@ impl std::fmt::Debug for RoomService {
 }
 
 impl RoomService {
+    /// Get the playlist service
+    #[must_use] 
+    pub const fn playlist_service(&self) -> &PlaylistService {
+        &self.playlist_service
+    }
+
+    #[must_use] 
     pub fn new(pool: PgPool, user_service: UserService) -> Self {
         // Initialize repositories
         let room_repo = RoomRepository::new(pool.clone());
@@ -88,20 +95,20 @@ impl RoomService {
         permission_service.set_room_settings_repo(room_settings_repo.clone());
 
         // Initialize provider instance manager and providers manager
-        let provider_instance_manager = Arc::new(crate::service::ProviderInstanceManager::new(provider_instance_repo.clone()));
+        let provider_instance_manager = Arc::new(crate::service::ProviderInstanceManager::new(provider_instance_repo));
         let providers_manager = Arc::new(ProvidersManager::new(provider_instance_manager));
 
         // Initialize domain services
-        let mut member_service = MemberService::new(member_repo.clone(), room_repo.clone(), permission_service.clone());
+        let mut member_service = MemberService::new(member_repo, room_repo.clone(), permission_service.clone());
         member_service.set_room_settings_repo(room_settings_repo.clone());
         let playlist_service = PlaylistService::new(playlist_repo.clone(), permission_service.clone());
         let media_service = MediaService::new(
             media_repo.clone(),
-            playlist_repo.clone(),
+            playlist_repo,
             permission_service.clone(),
-            providers_manager.clone(),
+            providers_manager,
         );
-        let playback_service = PlaybackService::new(playback_repo.clone(), permission_service.clone(), media_service.clone(), media_repo.clone());
+        let playback_service = PlaybackService::new(playback_repo.clone(), permission_service.clone(), media_service.clone(), media_repo);
         let notification_service = NotificationService::default();
 
         Self {
@@ -312,7 +319,7 @@ impl RoomService {
 
     /// Update single room setting
     pub async fn update_room_setting(&self, room_id: &RoomId, key: &str, value: &serde_json::Value) -> Result<String> {
-        use crate::models::{AutoPlaySettings, PlayMode, room_settings::*};
+        use crate::models::{AutoPlaySettings, PlayMode, room_settings::{ChatEnabled, DanmakuEnabled, AutoPlay, AllowGuestJoin, RequirePassword, MaxMembers, AutoPlayNext, LoopPlaylist, ShufflePlaylist}};
 
         let mut settings = self.room_settings_repo.get(room_id).await?;
 
@@ -368,7 +375,7 @@ impl RoomService {
                 }
             }
             _ => {
-                return Err(Error::InvalidInput(format!("Unknown setting key: {}", key)));
+                return Err(Error::InvalidInput(format!("Unknown setting key: {key}")));
             }
         }
 
@@ -377,7 +384,7 @@ impl RoomService {
 
         // Return updated settings as JSON string
         serde_json::to_string(&settings)
-            .map_err(|e| Error::Internal(format!("Failed to serialize settings: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to serialize settings: {e}")))
     }
 
     /// Reset room settings to default values
@@ -387,7 +394,7 @@ impl RoomService {
 
         // Return default settings as JSON string
         serde_json::to_string(&default_settings)
-            .map_err(|e| Error::Internal(format!("Failed to serialize settings: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to serialize settings: {e}")))
     }
 
     /// Check room password
@@ -397,7 +404,7 @@ impl RoomService {
         match password_hash {
             Some(stored) => {
                 verify_password(password, &stored).await
-                    .map_err(|e| Error::Internal(format!("Password verification failed: {}", e)))
+                    .map_err(|e| Error::Internal(format!("Password verification failed: {e}")))
             }
             None => Ok(false),
         }
@@ -468,7 +475,7 @@ impl RoomService {
 
     /// Update member permissions (Allow/Deny pattern)
     ///
-    /// This method sets both added_permissions and removed_permissions.
+    /// This method sets both `added_permissions` and `removed_permissions`.
     /// To reset to role default, pass 0 for both.
     pub async fn set_member_permission(
         &self,
@@ -520,10 +527,10 @@ impl RoomService {
     ///
     /// This is a convenience method that:
     /// 1. Gets the root playlist for the room
-    /// 2. Calls MediaService::add_media with the provided source_config
+    /// 2. Calls `MediaService::add_media` with the provided `source_config`
     ///
     /// Note: Clients should typically call the parse endpoint first to get
-    /// source_config, then call this method with provider_instance_name.
+    /// `source_config`, then call this method with `provider_instance_name`.
     ///
     /// Uses provider registry pattern - no enum switching in service layer.
     pub async fn add_media(
@@ -722,11 +729,11 @@ impl RoomService {
     /// lightweight wrappers.
     ///
     /// # Arguments
-    /// * `request` - GetRoomMembersRequest containing room_id
+    /// * `request` - `GetRoomMembersRequest` containing `room_id`
     /// * `requesting_user_id` - The user making the request (for permission checking)
     ///
     /// # Returns
-    /// GetRoomMembersResponse containing list of room members
+    /// `GetRoomMembersResponse` containing list of room members
     pub async fn get_room_members_grpc(
         &self,
         request: synctv_proto::admin::GetRoomMembersRequest,
@@ -856,7 +863,7 @@ impl RoomService {
 
         if !request.creator_id.is_empty() {
             let creator_id = UserId::from_string(request.creator_id.clone());
-            let (rooms, total) = self.list_rooms_by_creator_with_count(&creator_id, query.page as i64, query.page_size as i64).await?;
+            let (rooms, total) = self.list_rooms_by_creator_with_count(&creator_id, i64::from(query.page), i64::from(query.page_size)).await?;
 
             // Collect creator IDs for batch lookup
             let creator_ids: Vec<UserId> = rooms.iter().map(|r| r.room.created_by.clone()).collect();
@@ -1025,7 +1032,8 @@ impl RoomService {
     // ========== Service Accessors ==========
 
     /// Get reference to media service
-    pub fn media_service(&self) -> &MediaService {
+    #[must_use] 
+    pub const fn media_service(&self) -> &MediaService {
         &self.media_service
     }
 
@@ -1066,17 +1074,20 @@ impl RoomService {
     }
 
     /// Get reference to playback service
-    pub fn playback_service(&self) -> &PlaybackService {
+    #[must_use] 
+    pub const fn playback_service(&self) -> &PlaybackService {
         &self.playback_service
     }
 
     /// Get reference to member service
-    pub fn member_service(&self) -> &MemberService {
+    #[must_use] 
+    pub const fn member_service(&self) -> &MemberService {
         &self.member_service
     }
 
     /// Get reference to notification service
-    pub fn notification_service(&self) -> &NotificationService {
+    #[must_use] 
+    pub const fn notification_service(&self) -> &NotificationService {
         &self.notification_service
     }
 }

@@ -138,12 +138,14 @@ impl Peer {
     }
 
     /// Check if peer is active
+    #[must_use] 
     pub fn is_active(&self) -> bool {
         self.connection_state == PeerConnectionState::Connected
             && (self.state == PeerState::Active || self.state == PeerState::Muted || self.state == PeerState::VideoOff)
     }
 
     /// Check if peer has timed out
+    #[must_use] 
     pub fn has_timed_out(&self, timeout_seconds: i64) -> bool {
         let now = chrono::Utc::now();
         let elapsed = now.signed_duration_since(self.last_activity);
@@ -159,6 +161,7 @@ pub struct PeerManager {
 
 impl PeerManager {
     /// Create a new peer manager
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             peers: Arc::new(RwLock::new(HashMap::new())),

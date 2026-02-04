@@ -1,6 +1,5 @@
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use tracing::{info, error, warn};
+use tracing::{info, warn};
 use redis::aio::ConnectionManager as RedisConnectionManager;
 use redis::AsyncCommands;
 use synctv_core::models::id::RoomId;
@@ -37,11 +36,11 @@ impl StreamHandler {
     pub fn new(redis: RedisConnectionManager, jwt_secret: String) -> Result<Self> {
         // Generate node ID from hostname
         let hostname = get_hostname()
-            .map_err(|e| anyhow!("Failed to get hostname: {}", e))?
+            .map_err(|e| anyhow!("Failed to get hostname: {e}"))?
             .to_string_lossy()
             .to_string();
 
-        let node_id = format!("stream-{}", hostname);
+        let node_id = format!("stream-{hostname}");
 
         Ok(Self {
             redis,
@@ -51,7 +50,7 @@ impl StreamHandler {
     }
 
     /// Handle stream publish event
-    /// Stream key format: {room_id}/{media_id}?token={access_token}
+    /// Stream key format: {`room_id}/{media_id}?token={access_token`}
     pub async fn on_publish(&mut self, app_name: &str, stream_key: &str) -> Result<()> {
         info!(
             app_name = app_name,
@@ -143,8 +142,8 @@ impl StreamHandler {
         Ok(())
     }
 
-    /// Parse stream key to extract room_id, media_id, and optional token
-    /// Format: {room_id}/{media_id}?token={access_token}
+    /// Parse stream key to extract `room_id`, `media_id`, and optional token
+    /// Format: {`room_id}/{media_id}?token={access_token`}
     fn parse_stream_key(&self, stream_key: &str) -> Result<(String, String, Option<String>)> {
         // First split by ? to separate path from query
         let (path, query) = if let Some((p, q)) = stream_key.split_once('?') {
@@ -164,18 +163,18 @@ impl StreamHandler {
         let token = query.and_then(|q| {
             q.split('&')
                 .find_map(|param| param.strip_prefix("token="))
-                .map(|t| t.to_string())
+                .map(std::string::ToString::to_string)
         });
 
         Ok((room_id, media_id, token))
     }
 
     /// Validate JWT token from RTMP authorization
-    /// Format: rtmp://server/live/room_id/media_id?token=JWT_TOKEN
+    /// Format: <rtmp://server/live/room_id/media_id?token=JWT_TOKEN>
     /// JWT token contains:
-    ///   - "r" claim: room_id
-    ///   - "m" claim: media_id
-    ///   - "u" claim: user_id
+    ///   - "r" claim: `room_id`
+    ///   - "m" claim: `media_id`
+    ///   - "u" claim: `user_id`
     ///   - "exp" claim: expiration time
     async fn validate_token(&self, room_id: &RoomId, media_id: &str, token: &str) -> Result<()> {
         if token.is_empty() {
@@ -193,7 +192,7 @@ impl StreamHandler {
             Ok(data) => data.claims,
             Err(e) => {
                 warn!("JWT validation failed: {}", e);
-                return Err(anyhow!("JWT token validation failed: {}", e));
+                return Err(anyhow!("JWT token validation failed: {e}"));
             }
         };
 
@@ -221,7 +220,7 @@ impl StreamHandler {
 
         info!(
             media_id = claims.m,
-            room_id = claims.r.as_ref().map(|s| s.as_str()).unwrap_or("none"),
+            room_id = claims.r.as_deref().unwrap_or("none"),
             user_id = claims.u,
             "Stream authorization validated successfully"
         );

@@ -1,6 +1,6 @@
-//! Bilibili MediaProvider Adapter
+//! Bilibili `MediaProvider` Adapter
 //!
-//! Adapter that calls BilibiliClient to implement MediaProvider trait
+//! Adapter that calls `BilibiliClient` to implement `MediaProvider` trait
 
 use super::{
     provider_client::{
@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use crate::service::ProviderInstanceManager;
 
-/// Bilibili MediaProvider
+/// Bilibili `MediaProvider`
 ///
-/// Holds a reference to ProviderInstanceManager to select appropriate provider instance.
+/// Holds a reference to `ProviderInstanceManager` to select appropriate provider instance.
 pub struct BilibiliProvider {
     provider_instance_manager: Arc<ProviderInstanceManager>,
 }
@@ -43,8 +43,9 @@ pub struct BilibiliPageInfo {
 }
 
 impl BilibiliProvider {
-    /// Create a new BilibiliProvider with ProviderInstanceManager
-    pub fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
+    /// Create a new `BilibiliProvider` with `ProviderInstanceManager`
+    #[must_use] 
+    pub const fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
         Self {
             provider_instance_manager,
         }
@@ -53,7 +54,7 @@ impl BilibiliProvider {
     /// Get Bilibili client for the given instance name
     ///
     /// Selection priority:
-    /// 1. Instance specified by instance_name parameter
+    /// 1. Instance specified by `instance_name` parameter
     /// 2. Fallback to singleton local client
     async fn get_client(&self, instance_name: Option<&str>) -> BilibiliClientArc {
         if let Some(name) = instance_name {
@@ -77,7 +78,7 @@ impl BilibiliProvider {
     ) -> Result<synctv_providers::grpc::bilibili::MatchResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         let req = synctv_providers::grpc::bilibili::MatchReq { url };
-        client.r#match(req).await.map_err(|e| e.into())
+        client.r#match(req).await.map_err(std::convert::Into::into)
     }
 
     /// Parse video page
@@ -87,7 +88,7 @@ impl BilibiliProvider {
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.parse_video_page(req).await.map_err(|e| e.into())
+        client.parse_video_page(req).await.map_err(std::convert::Into::into)
     }
 
     /// Parse PGC page
@@ -97,7 +98,7 @@ impl BilibiliProvider {
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.parse_pgc_page(req).await.map_err(|e| e.into())
+        client.parse_pgc_page(req).await.map_err(std::convert::Into::into)
     }
 
     /// Parse live page
@@ -107,7 +108,7 @@ impl BilibiliProvider {
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.parse_live_page(req).await.map_err(|e| e.into())
+        client.parse_live_page(req).await.map_err(std::convert::Into::into)
     }
 
     /// Generate QR code for login
@@ -119,7 +120,7 @@ impl BilibiliProvider {
         client
             .new_qr_code(synctv_providers::grpc::bilibili::Empty {})
             .await
-            .map_err(|e| e.into())
+            .map_err(std::convert::Into::into)
     }
 
     /// Check QR code login status
@@ -129,7 +130,7 @@ impl BilibiliProvider {
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::bilibili::LoginWithQrCodeResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.login_with_qr_code(req).await.map_err(|e| e.into())
+        client.login_with_qr_code(req).await.map_err(std::convert::Into::into)
     }
 
     /// Get new captcha
@@ -141,7 +142,7 @@ impl BilibiliProvider {
         client
             .new_captcha(synctv_providers::grpc::bilibili::Empty {})
             .await
-            .map_err(|e| e.into())
+            .map_err(std::convert::Into::into)
     }
 
     /// Send SMS verification code
@@ -151,7 +152,7 @@ impl BilibiliProvider {
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::bilibili::NewSmsResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.new_sms(req).await.map_err(|e| e.into())
+        client.new_sms(req).await.map_err(std::convert::Into::into)
     }
 
     /// Login with SMS code
@@ -161,7 +162,7 @@ impl BilibiliProvider {
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::bilibili::LoginWithSmsResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.login_with_sms(req).await.map_err(|e| e.into())
+        client.login_with_sms(req).await.map_err(std::convert::Into::into)
     }
 
     /// Get user info
@@ -171,7 +172,7 @@ impl BilibiliProvider {
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::bilibili::UserInfoResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.user_info(req).await.map_err(|e| e.into())
+        client.user_info(req).await.map_err(std::convert::Into::into)
     }
 }
 
@@ -208,7 +209,7 @@ enum BilibiliSourceConfig {
 }
 
 impl BilibiliSourceConfig {
-    /// Get provider_instance_name from any variant
+    /// Get `provider_instance_name` from any variant
     fn provider_instance_name(&self) -> Option<&str> {
         match self {
             Self::Video {
@@ -232,7 +233,7 @@ impl TryFrom<&Value> for BilibiliSourceConfig {
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
         serde_json::from_value(value.clone()).map_err(|e| {
-            ProviderError::InvalidConfig(format!("Failed to parse Bilibili source config: {}", e))
+            ProviderError::InvalidConfig(format!("Failed to parse Bilibili source config: {e}"))
         })
     }
 }
@@ -493,10 +494,10 @@ impl MediaProvider for BilibiliProvider {
 
                 // Group streams by quality
                 for stream in live_resp.live_streams {
-                    let quality_name = if !stream.desc.is_empty() {
-                        stream.desc
-                    } else {
+                    let quality_name = if stream.desc.is_empty() {
                         format!("quality_{}", stream.quality)
+                    } else {
+                        stream.desc
                     };
 
                     playback_infos.insert(
@@ -539,6 +540,6 @@ impl MediaProvider for BilibiliProvider {
     }
 
     fn cache_key(&self, _ctx: &ProviderContext<'_>, source_config: &Value) -> String {
-        format!("bilibili:{}", source_config)
+        format!("bilibili:{source_config}")
     }
 }

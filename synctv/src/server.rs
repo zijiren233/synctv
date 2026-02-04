@@ -52,7 +52,7 @@ pub struct Services {
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
 }
 
-/// SyncTV server - manages all server components
+/// `SyncTV` server - manages all server components
 pub struct SyncTvServer {
     config: Config,
     services: Services,
@@ -70,7 +70,7 @@ impl Services {
 
 impl SyncTvServer {
     /// Create a new server instance
-    pub fn new(
+    pub const fn new(
         config: Config,
         services: Services,
         streaming_state: Option<StreamingState>,
@@ -185,12 +185,11 @@ impl SyncTvServer {
         let email_service = self.services.email_service.clone();
         let publish_key_service = self.services.publish_key_service.clone();
         let notification_service = self.services.notification_service.clone();
+        let connection_manager = self.services.connection_manager.clone();
 
-        // Convert streaming state to HTTP state
-        let streaming_state = self.streaming_state.as_ref().map(|s| synctv_stream::streaming::StreamingHttpState {
-            registry: s.registry.clone(),
-            pull_manager: s.pull_manager.clone(),
-        });
+        //  TODO: Convert StreamingState to LiveStreamingInfrastructure
+        // For now, pass None until we refactor StreamingState to include all required fields
+        let live_streaming_infrastructure = None;
 
         let http_router = synctv_api::http::create_router(
             user_service,
@@ -203,15 +202,16 @@ impl SyncTvServer {
             self.services.emby_provider.clone(),
             message_hub,
             cluster_manager,
+            Arc::new(connection_manager),
             jwt_service,
             redis_publish_tx,
-            streaming_state,
             oauth2_service,
             Some(settings_service),
             Some(settings_registry),
             email_service,
             Some(publish_key_service),
             notification_service,
+            live_streaming_infrastructure,
         );
 
         let handle = tokio::spawn(async move {

@@ -12,7 +12,8 @@ pub struct RoomRepository {
 }
 
 impl RoomRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -107,7 +108,7 @@ impl RoomRepository {
         let where_clause = conditions.join(" AND ");
 
         // Get total count
-        let count_query = format!("SELECT COUNT(*) as count FROM rooms r WHERE {}", where_clause);
+        let count_query = format!("SELECT COUNT(*) as count FROM rooms r WHERE {where_clause}");
         let count: i64 = sqlx::query_scalar(&count_query)
             .fetch_one(&self.pool)
             .await?;
@@ -116,10 +117,9 @@ impl RoomRepository {
         let list_query = format!(
             "SELECT r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
              FROM rooms r
-             WHERE {}
+             WHERE {where_clause}
              ORDER BY r.created_at DESC
-             LIMIT $1 OFFSET $2",
-            where_clause
+             LIMIT $1 OFFSET $2"
         );
 
         let rows = sqlx::query(&list_query)
@@ -161,8 +161,7 @@ impl RoomRepository {
 
         // Get total count
         let count_query = format!(
-            "SELECT COUNT(DISTINCT r.id) FROM rooms r WHERE {}",
-            where_clause
+            "SELECT COUNT(DISTINCT r.id) FROM rooms r WHERE {where_clause}"
         );
 
         let count: i64 = if has_search {
@@ -179,19 +178,18 @@ impl RoomRepository {
 
         // Get rooms with member count using LEFT JOIN
         let list_query = format!(
-            r#"
+            r"
             SELECT
                 r.id, r.name, r.created_by, r.status,
                 r.created_at, r.updated_at, r.deleted_at,
                 COALESCE(COUNT(rm.user_id) FILTER (WHERE rm.left_at IS NULL), 0)::int as member_count
             FROM rooms r
             LEFT JOIN room_members rm ON r.id = rm.room_id
-            WHERE {}
+            WHERE {where_clause}
             GROUP BY r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
             ORDER BY r.created_at DESC
             LIMIT $1 OFFSET $2
-            "#,
-            where_clause
+            "
         );
 
         let rows = if has_search {
@@ -307,7 +305,7 @@ impl RoomRepository {
 
         // Get rooms with member count using LEFT JOIN
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT
                 r.id, r.name, r.created_by, r.status,
                 r.created_at, r.updated_at, r.deleted_at,
@@ -318,7 +316,7 @@ impl RoomRepository {
             GROUP BY r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
             ORDER BY r.created_at DESC
             LIMIT $2 OFFSET $3
-            "#
+            "
         )
         .bind(creator_id.as_str())
         .bind(page_size)
@@ -361,12 +359,12 @@ impl RoomRepository {
         let status_str = self.status_to_str(&status);
 
         let row = sqlx::query(
-            r#"
+            r"
             UPDATE rooms
             SET status = $1, updated_at = CURRENT_TIMESTAMP
             WHERE id = $2 AND deleted_at IS NULL
             RETURNING id, name, created_by, status, created_at, updated_at, deleted_at
-            "#,
+            ",
         )
         .bind(status_str)
         .bind(room_id.as_str())
@@ -377,7 +375,7 @@ impl RoomRepository {
         self.row_to_room(row)
     }
 
-    fn status_to_str(&self, status: &RoomStatus) -> &'static str {
+    const fn status_to_str(&self, status: &RoomStatus) -> &'static str {
         match status {
             RoomStatus::Pending => "pending",
             RoomStatus::Active => "active",

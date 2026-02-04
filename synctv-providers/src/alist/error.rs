@@ -1,6 +1,6 @@
 //! Alist Provider Client Error Types
 //!
-//! Pure provider errors, no dependency on ProviderError
+//! Pure provider errors, no dependency on `ProviderError`
 
 use thiserror::Error;
 
@@ -27,18 +27,18 @@ pub enum AlistError {
 
 impl From<reqwest::Error> for AlistError {
     fn from(err: reqwest::Error) -> Self {
-        AlistError::Network(err.to_string())
+        Self::Network(err.to_string())
     }
 }
 
 impl From<serde_json::Error> for AlistError {
     fn from(err: serde_json::Error) -> Self {
-        AlistError::Parse(err.to_string())
+        Self::Parse(err.to_string())
     }
 }
 
 impl From<reqwest::header::InvalidHeaderValue> for AlistError {
     fn from(err: reqwest::header::InvalidHeaderValue) -> Self {
-        AlistError::InvalidHeader(err.to_string())
+        Self::InvalidHeader(err.to_string())
     }
 }

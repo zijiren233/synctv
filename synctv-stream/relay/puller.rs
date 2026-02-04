@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use crate::relay::{StreamRegistryTrait, PublisherInfo};
 use crate::grpc::GrpcStreamPuller;
 use streamhub::define::StreamHubEventSender;
@@ -65,7 +65,7 @@ impl Puller {
         let grpc_puller = GrpcStreamPuller::new(
             self.room_id.clone(),
             self.media_id.clone(),
-            publisher_info.node_id.clone(),
+            publisher_info.node_id,
             self.node_id.clone(),
             self.stream_hub_event_sender.clone(),
             self.registry.clone(),
@@ -106,6 +106,7 @@ impl Puller {
     }
 
     /// Get Publisher node ID
+    #[must_use] 
     pub fn publisher_node_id(&self) -> Option<&str> {
         self.publisher_info.as_ref().map(|info| info.node_id.as_str())
     }
@@ -124,7 +125,7 @@ impl Puller {
     pub async fn check_result(&mut self) -> Option<Result<()>> {
         if let Some(handle) = self.grpc_puller_handle.take() {
             if handle.is_finished() {
-                Some(handle.await.unwrap_or_else(|e| Err(anyhow!("Puller task panicked: {}", e))))
+                Some(handle.await.unwrap_or_else(|e| Err(anyhow!("Puller task panicked: {e}"))))
             } else {
                 // Task is still running, put the handle back
                 self.grpc_puller_handle = Some(handle);

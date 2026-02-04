@@ -19,24 +19,25 @@ use tracing::{warn, info, debug};
 
 /// RTMP authentication callback implementation
 ///
-/// Validates RTMP publish requests using JWT tokens from PublishKeyService.
+/// Validates RTMP publish requests using JWT tokens from `PublishKeyService`.
 /// Based on synctv-go internal/rtmp/rtmp.go and internal/bootstrap/rtmp.go
 pub struct RtmpAuthCallbackImpl {
     publish_key_service: Arc<PublishKeyService>,
 }
 
 impl RtmpAuthCallbackImpl {
-    pub fn new(publish_key_service: Arc<PublishKeyService>) -> Self {
+    #[must_use] 
+    pub const fn new(publish_key_service: Arc<PublishKeyService>) -> Self {
         Self {
             publish_key_service,
         }
     }
 
-    /// Validate RTMP publish token and extract media_id
+    /// Validate RTMP publish token and extract `media_id`
     ///
     /// Token format from synctv-go:
-    /// - JWT with "m" claim containing movie_id (media_id)
-    /// - Claims also include room_id, user_id, permissions
+    /// - JWT with "m" claim containing `movie_id` (`media_id`)
+    /// - Claims also include `room_id`, `user_id`, permissions
     async fn validate_publish_token(&self, token: &str, room_id: &str, media_id: &str) -> Result<String, String> {
         // Use PublishKeyService to validate the token
         match self
@@ -59,7 +60,7 @@ impl RtmpAuthCallbackImpl {
             }
             Err(e) => {
                 warn!("RTMP publish token validation failed: {}", e);
-                Err(format!("Invalid token: {}", e))
+                Err(format!("Invalid token: {e}"))
             }
         }
     }
@@ -118,8 +119,7 @@ impl RtmpAuthCallback for RtmpAuthCallbackImpl {
                 Err(e) => {
                     warn!("RTMP publisher authentication failed: {}", e);
                     return Err(StreamError::AuthenticationFailed(format!(
-                        "Authentication failed: {}",
-                        e
+                        "Authentication failed: {e}"
                     )));
                 }
             }

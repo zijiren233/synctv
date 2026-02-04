@@ -1,9 +1,9 @@
-//! Type-safe room settings with automatic lazy_static registration
+//! Type-safe room settings with automatic `lazy_static` registration
 //!
 //! # Architecture
 //!
 //! Each room setting is an **independent type** that implements `RoomSetting` trait.
-//! The `room_setting!` macro generates the type with **lazy_static! auto-registration**.
+//! The `room_setting!` macro generates the type with **`lazy_static`! auto-registration**.
 //!
 //! # Examples
 //!
@@ -19,9 +19,9 @@
 //! RoomSettingsRegistry::has_key("chat_enabled");  // auto-registers
 //! ```
 //!
-//! # Auto-Registration with lazy_static!
+//! # Auto-Registration with `lazy_static`!
 //!
-//! Each type has a **lazy_static!** block in the macro that:
+//! Each type has a **`lazy_static`!** block in the macro that:
 //! - Runs once on first access
 //! - Registers the type in the global registry
 //! - No manual registration needed!
@@ -54,8 +54,8 @@ pub trait RoomSettingProvider: Send + Sync {
 /// Global registry for all room setting types
 ///
 /// Auto-populated by ctor in each setting type.
-static REGISTRY: once_cell::sync::Lazy<RwLock<HashMap<String, Arc<dyn RoomSettingProvider>>>> =
-    once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
+static REGISTRY: std::sync::LazyLock<RwLock<HashMap<String, Arc<dyn RoomSettingProvider>>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Global registry for all room setting types
 pub struct RoomSettingsRegistry;
@@ -88,7 +88,7 @@ impl RoomSettingsRegistry {
     /// Validate a setting value by key (dynamic validation)
     pub fn validate_setting(key: &str, value: &str) -> Result<()> {
         let provider = Self::get_provider(key)
-            .ok_or_else(|| Error::NotFound(format!("Setting '{}' not found", key)))?;
+            .ok_or_else(|| Error::NotFound(format!("Setting '{key}' not found")))?;
         provider.is_valid_raw(value)
     }
 }
@@ -140,7 +140,7 @@ pub trait RoomSetting: Sized + Send + Sync + 'static {
 #[macro_export]
 macro_rules! room_setting {
     ($name:ident, $ty:ty, $key:expr, $default:expr) => {
-        #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
         #[serde(transparent)]
         pub struct $name(pub $ty);
 
@@ -258,7 +258,8 @@ pub struct AutoPlay {
 }
 
 impl AutoPlay {
-    pub fn new(value: AutoPlaySettings) -> Self {
+    #[must_use] 
+    pub const fn new(value: AutoPlaySettings) -> Self {
         Self { value }
     }
 }
@@ -278,7 +279,7 @@ impl RoomSetting for AutoPlay {
 
     fn parse_from_str(value: &str) -> Result<AutoPlaySettings> {
         serde_json::from_str(value).map_err(|_| {
-            crate::Error::InvalidInput(format!("Invalid JSON for auto_play: {}", value))
+            crate::Error::InvalidInput(format!("Invalid JSON for auto_play: {value}"))
         })
     }
 
@@ -294,11 +295,11 @@ impl RoomSetting for AutoPlay {
 // Implement RoomSettingProvider for AutoPlay
 impl RoomSettingProvider for AutoPlay {
     fn key(&self) -> &'static str {
-        <AutoPlay as RoomSetting>::KEY
+        <Self as RoomSetting>::KEY
     }
 
     fn type_name(&self) -> &'static str {
-        <AutoPlay as RoomSetting>::TYPE_NAME
+        <Self as RoomSetting>::TYPE_NAME
     }
 
     fn is_valid_raw(&self, value: &str) -> Result<()> {
@@ -354,8 +355,9 @@ pub struct RoomSettings {
 impl RoomSettings {
     /// Get effective permissions for Admin role
     ///
-    /// Formula: (global_default | added) & ~removed
-    pub fn admin_permissions(&self, global_default: PermissionBits) -> PermissionBits {
+    /// Formula: (`global_default` | added) & ~removed
+    #[must_use] 
+    pub const fn admin_permissions(&self, global_default: PermissionBits) -> PermissionBits {
         let mut result = global_default.0;
         result |= self.admin_added_permissions.0;
         result &= !self.admin_removed_permissions.0;
@@ -363,7 +365,8 @@ impl RoomSettings {
     }
 
     /// Get effective permissions for Member role
-    pub fn member_permissions(&self, global_default: PermissionBits) -> PermissionBits {
+    #[must_use] 
+    pub const fn member_permissions(&self, global_default: PermissionBits) -> PermissionBits {
         let mut result = global_default.0;
         result |= self.member_added_permissions.0;
         result &= !self.member_removed_permissions.0;
@@ -371,7 +374,8 @@ impl RoomSettings {
     }
 
     /// Get effective permissions for Guest
-    pub fn guest_permissions(&self, global_default: PermissionBits) -> PermissionBits {
+    #[must_use] 
+    pub const fn guest_permissions(&self, global_default: PermissionBits) -> PermissionBits {
         let mut result = global_default.0;
         result |= self.guest_added_permissions.0;
         result &= !self.guest_removed_permissions.0;

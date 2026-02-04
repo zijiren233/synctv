@@ -14,9 +14,9 @@ use synctv_core::models::id::RoomId;
 /// This service enables multi-replica deployments by:
 /// 1. Publishing local room events to Redis channels
 /// 2. Subscribing to Redis channels for events from other nodes
-/// 3. Forwarding received events to the local RoomMessageHub
+/// 3. Forwarding received events to the local `RoomMessageHub`
 ///
-/// Channel naming: room:{room_id} for room-specific events
+/// Channel naming: `room:{room_id`} for room-specific events
 pub struct RedisPubSub {
     redis_client: RedisClient,
     message_hub: Arc<RoomMessageHub>,
@@ -24,7 +24,7 @@ pub struct RedisPubSub {
 }
 
 impl RedisPubSub {
-    /// Create a new RedisPubSub service
+    /// Create a new `RedisPubSub` service
     pub fn new(redis_url: &str, message_hub: Arc<RoomMessageHub>, node_id: String) -> Result<Self> {
         let redis_client = RedisClient::open(redis_url).context("Failed to create Redis client")?;
 
@@ -80,13 +80,13 @@ impl RedisPubSub {
         });
 
         // Clone for the subscriber task
-        let self_clone = self.clone();
+        let self_clone = self;
 
         // Spawn task to handle subscribing
         tokio::spawn(async move {
             loop {
                 match self_clone.run_subscriber().await {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Redis subscriber task completed normally");
                         break;
                     }
@@ -102,7 +102,7 @@ impl RedisPubSub {
     }
 
     /// Run the subscriber task
-    /// This subscribes to room:* pattern and forwards events to RoomMessageHub
+    /// This subscribes to room:* pattern and forwards events to `RoomMessageHub`
     async fn run_subscriber(&self) -> Result<()> {
         let mut pubsub = self
             .redis_client
@@ -220,7 +220,7 @@ pub struct PublishRequest {
 }
 
 /// Envelope for events published to Redis
-/// Includes node_id to avoid echo (each node ignores its own events)
+/// Includes `node_id` to avoid echo (each node ignores its own events)
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct EventEnvelope {
     node_id: String,

@@ -31,24 +31,27 @@ pub enum UserRole {
 
 impl UserRole {
     /// Check if this role can manage another role
-    pub fn can_manage(&self, other: &UserRole) -> bool {
+    #[must_use] 
+    pub const fn can_manage(&self, other: &Self) -> bool {
         match (self, other) {
-            (UserRole::Root, _) => true,
-            (UserRole::Admin, UserRole::User) => true,
+            (Self::Root, _) => true,
+            (Self::Admin, Self::User) => true,
             _ => false,
         }
     }
 
     /// Check if this role is admin or above
-    pub fn is_admin_or_above(&self) -> bool {
-        matches!(self, UserRole::Root | UserRole::Admin)
+    #[must_use] 
+    pub const fn is_admin_or_above(&self) -> bool {
+        matches!(self, Self::Root | Self::Admin)
     }
 
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            UserRole::Root => "root",
-            UserRole::Admin => "admin",
-            UserRole::User => "user",
+            Self::Root => "root",
+            Self::Admin => "admin",
+            Self::User => "user",
         }
     }
 }
@@ -58,10 +61,10 @@ impl FromStr for UserRole {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "root" => Ok(UserRole::Root),
-            "admin" => Ok(UserRole::Admin),
-            "user" => Ok(UserRole::User),
-            _ => Err(format!("Unknown user role: {}", s)),
+            "root" => Ok(Self::Root),
+            "admin" => Ok(Self::Admin),
+            "user" => Ok(Self::User),
+            _ => Err(format!("Unknown user role: {s}")),
         }
     }
 }
@@ -94,39 +97,46 @@ pub enum UserStatus {
 }
 
 impl UserStatus {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            UserStatus::Active => "active",
-            UserStatus::Pending => "pending",
-            UserStatus::Banned => "banned",
+            Self::Active => "active",
+            Self::Pending => "pending",
+            Self::Banned => "banned",
         }
     }
 
     /// Check if user can login with this status
-    pub fn can_login(&self) -> bool {
-        matches!(self, UserStatus::Active | UserStatus::Pending)
+    #[must_use] 
+    pub const fn can_login(&self) -> bool {
+        matches!(self, Self::Active | Self::Pending)
     }
 
     /// Check if user can create rooms with this status
-    pub fn can_create_room(&self) -> bool {
-        matches!(self, UserStatus::Active)
+    #[must_use] 
+    pub const fn can_create_room(&self) -> bool {
+        matches!(self, Self::Active)
     }
 
     /// Check if user can join rooms with this status
-    pub fn can_join_room(&self) -> bool {
-        matches!(self, UserStatus::Active)
+    #[must_use] 
+    pub const fn can_join_room(&self) -> bool {
+        matches!(self, Self::Active)
     }
 
-    pub fn is_active(&self) -> bool {
-        matches!(self, UserStatus::Active)
+    #[must_use] 
+    pub const fn is_active(&self) -> bool {
+        matches!(self, Self::Active)
     }
 
-    pub fn is_pending(&self) -> bool {
-        matches!(self, UserStatus::Pending)
+    #[must_use] 
+    pub const fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
     }
 
-    pub fn is_banned(&self) -> bool {
-        matches!(self, UserStatus::Banned)
+    #[must_use] 
+    pub const fn is_banned(&self) -> bool {
+        matches!(self, Self::Banned)
     }
 }
 
@@ -135,10 +145,10 @@ impl FromStr for UserStatus {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "active" => Ok(UserStatus::Active),
-            "pending" => Ok(UserStatus::Pending),
-            "banned" => Ok(UserStatus::Banned),
-            _ => Err(format!("Unknown user status: {}", s)),
+            "active" => Ok(Self::Active),
+            "pending" => Ok(Self::Pending),
+            "banned" => Ok(Self::Banned),
+            _ => Err(format!("Unknown user status: {s}")),
         }
     }
 }
@@ -158,19 +168,21 @@ pub enum SignupMethod {
 }
 
 impl SignupMethod {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            SignupMethod::Email => "email",
-            SignupMethod::OAuth2 => "oauth2",
+            Self::Email => "email",
+            Self::OAuth2 => "oauth2",
         }
     }
 
     /// Parse signup method from string name (defaults to email for unknown values)
+    #[must_use] 
     pub fn from_str_name(s: &str) -> Self {
         match s {
-            "email" => SignupMethod::Email,
-            "oauth2" => SignupMethod::OAuth2,
-            _ => SignupMethod::Email, // Default to email
+            "email" => Self::Email,
+            "oauth2" => Self::OAuth2,
+            _ => Self::Email, // Default to email
         }
     }
 }
@@ -197,6 +209,7 @@ pub struct User {
 }
 
 impl User {
+    #[must_use] 
     pub fn new(username: String, email: Option<String>, password_hash: String, signup_method: Option<SignupMethod>) -> Self {
         let now = Utc::now();
         Self {
@@ -214,30 +227,36 @@ impl User {
         }
     }
 
-    pub fn is_deleted(&self) -> bool {
+    #[must_use] 
+    pub const fn is_deleted(&self) -> bool {
         self.deleted_at.is_some()
     }
 
     /// Check if user has specific role level (RBAC)
-    pub fn is_root(&self) -> bool {
+    #[must_use] 
+    pub const fn is_root(&self) -> bool {
         matches!(self.role, UserRole::Root)
     }
 
-    pub fn is_admin(&self) -> bool {
+    #[must_use] 
+    pub const fn is_admin(&self) -> bool {
         matches!(self.role, UserRole::Admin)
     }
 
-    pub fn is_admin_or_above(&self) -> bool {
+    #[must_use] 
+    pub const fn is_admin_or_above(&self) -> bool {
         self.role.is_admin_or_above()
     }
 
     /// Check if user can login (checks status, not role)
-    pub fn can_login(&self) -> bool {
+    #[must_use] 
+    pub const fn can_login(&self) -> bool {
         self.status.can_login()
     }
 
     /// Check if user can create rooms (checks both role and status)
-    pub fn can_create_room(&self, allow_user: bool) -> bool {
+    #[must_use] 
+    pub const fn can_create_room(&self, allow_user: bool) -> bool {
         if !self.status.can_create_room() {
             return false;
         }
@@ -249,14 +268,16 @@ impl User {
     }
 
     /// Check if user can join rooms (checks status)
-    pub fn can_join_room(&self) -> bool {
+    #[must_use] 
+    pub const fn can_join_room(&self) -> bool {
         self.status.can_join_room()
     }
 
     /// Check if user can unbind a provider
-    /// OAuth2 users cannot remove all OAuth2 providers unless they have email
+    /// `OAuth2` users cannot remove all `OAuth2` providers unless they have email
     /// Email users cannot remove their email
-    pub fn can_unbind_provider(&self, has_oauth2_count: usize, has_email: bool) -> bool {
+    #[must_use] 
+    pub const fn can_unbind_provider(&self, has_oauth2_count: usize, has_email: bool) -> bool {
         match self.signup_method {
             None => {
                 // Legacy users - allow if they have email or multiple OAuth2

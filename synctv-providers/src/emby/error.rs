@@ -28,18 +28,18 @@ pub enum EmbyError {
 
 impl From<reqwest::Error> for EmbyError {
     fn from(err: reqwest::Error) -> Self {
-        EmbyError::Network(err.to_string())
+        Self::Network(err.to_string())
     }
 }
 
 impl From<serde_json::Error> for EmbyError {
     fn from(err: serde_json::Error) -> Self {
-        EmbyError::Parse(err.to_string())
+        Self::Parse(err.to_string())
     }
 }
 
 impl From<reqwest::header::InvalidHeaderValue> for EmbyError {
     fn from(err: reqwest::header::InvalidHeaderValue) -> Self {
-        EmbyError::InvalidHeader(err.to_string())
+        Self::InvalidHeader(err.to_string())
     }
 }

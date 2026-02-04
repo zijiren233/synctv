@@ -4,15 +4,15 @@ use tonic::{Request, Status};
 use tracing::warn;
 use std::fmt::Debug;
 
-/// User context - contains user_id extracted from JWT
-/// Used by UserService and AdminService methods
+/// User context - contains `user_id` extracted from JWT
+/// Used by `UserService` and `AdminService` methods
 #[derive(Debug, Clone)]
 pub struct UserContext {
     pub user_id: String,
 }
 
-/// Room context - contains UserContext and room_id
-/// Used by RoomService and MediaService methods
+/// Room context - contains `UserContext` and `room_id`
+/// Used by `RoomService` and `MediaService` methods
 #[derive(Debug, Clone)]
 pub struct RoomContext {
     #[allow(dead_code)] // Nested for future use when both user and room info needed
@@ -20,8 +20,8 @@ pub struct RoomContext {
     pub room_id: String,
 }
 
-/// Simple JWT auth interceptor (synchronous, compatible with tonic::service::Interceptor)
-/// Only validates JWT and extracts user_id into AuthContext
+/// Simple JWT auth interceptor (synchronous, compatible with `tonic::service::Interceptor`)
+/// Only validates JWT and extracts `user_id` into `AuthContext`
 /// Service methods should call helper functions to load entities from database
 #[derive(Clone)]
 pub struct AuthInterceptor {
@@ -29,14 +29,15 @@ pub struct AuthInterceptor {
 }
 
 impl AuthInterceptor {
+    #[must_use] 
     pub fn new(jwt_service: JwtService) -> Self {
         Self {
             jwt_validator: Arc::new(JwtValidator::new(Arc::new(jwt_service))),
         }
     }
 
-    /// Inject UserContext - validates JWT and extracts user_id
-    /// Used for UserService and AdminService
+    /// Inject `UserContext` - validates JWT and extracts `user_id`
+    /// Used for `UserService` and `AdminService`
     #[allow(clippy::result_large_err)]
     pub fn inject_user<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
         // Use unified validator for gRPC validation
@@ -53,8 +54,8 @@ impl AuthInterceptor {
         Ok(request)
     }
 
-    /// Inject RoomContext - validates JWT, extracts user_id and room_id from x-room-id header
-    /// Used for RoomService and MediaService
+    /// Inject `RoomContext` - validates JWT, extracts `user_id` and `room_id` from x-room-id header
+    /// Used for `RoomService` and `MediaService`
     #[allow(clippy::result_large_err)]
     pub fn inject_room<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
         // Use unified validator for gRPC validation
@@ -103,7 +104,8 @@ impl std::fmt::Debug for AuthInterceptor {
 pub struct LoggingInterceptor;
 
 impl LoggingInterceptor {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self
     }
 
@@ -146,7 +148,8 @@ pub struct ValidationInterceptor {
 }
 
 impl ValidationInterceptor {
-    pub fn new(max_request_size_mb: usize) -> Self {
+    #[must_use] 
+    pub const fn new(max_request_size_mb: usize) -> Self {
         Self {
             max_request_size_mb,
         }
@@ -199,14 +202,15 @@ pub struct TimeoutInterceptor {
 }
 
 impl TimeoutInterceptor {
-    pub fn new(default_timeout_secs: u64) -> Self {
+    #[must_use] 
+    pub const fn new(default_timeout_secs: u64) -> Self {
         Self {
             default_timeout_secs,
         }
     }
 
     /// Ensure request has a deadline
-    pub fn enforce_timeout<T>(&self, _request: &mut Request<T>) {
+    pub const fn enforce_timeout<T>(&self, _request: &mut Request<T>) {
         // Note: tonic deadlines should be set by the client using gRPC timeout headers
         // This interceptor is a placeholder for future timeout enforcement
         // For now, we rely on the client to set appropriate timeouts

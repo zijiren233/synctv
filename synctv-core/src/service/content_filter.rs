@@ -32,8 +32,9 @@ pub struct ContentFilter {
 }
 
 impl ContentFilter {
-    /// Create a new ContentFilter with default settings
-    pub fn new() -> Self {
+    /// Create a new `ContentFilter` with default settings
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {
             max_chat_length: 1000,
             max_danmaku_length: 100,
@@ -43,6 +44,7 @@ impl ContentFilter {
     }
 
     /// Create with custom settings
+    #[must_use] 
     pub fn with_config(
         max_chat_length: usize,
         max_danmaku_length: usize,

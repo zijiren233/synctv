@@ -24,9 +24,9 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    /// Create a new RateLimiter
+    /// Create a new `RateLimiter`
     ///
-    /// If redis_url is None, rate limiting is disabled (allows all requests)
+    /// If `redis_url` is None, rate limiting is disabled (allows all requests)
     pub fn new(redis_url: Option<String>, key_prefix: String) -> Result<Self> {
         let redis_client = if let Some(url) = redis_url {
             Some(redis::Client::open(url)?)
@@ -42,10 +42,10 @@ impl RateLimiter {
 
     /// Check if a request is allowed under the rate limit
     ///
-    /// Returns Ok(()) if allowed, or RateLimitError if rate limit exceeded
+    /// Returns Ok(()) if allowed, or `RateLimitError` if rate limit exceeded
     ///
     /// # Arguments
-    /// * `key` - Unique identifier for the rate limit (e.g., "user:{user_id}:chat")
+    /// * `key` - Unique identifier for the rate limit (e.g., "`user:{user_id}:chat`")
     /// * `max_requests` - Maximum number of requests allowed in the window
     /// * `window_seconds` - Size of the sliding window in seconds
     pub async fn check_rate_limit(
@@ -118,7 +118,7 @@ impl RateLimiter {
 
     /// Get remaining quota for a rate limit
     ///
-    /// Returns (remaining_requests, reset_time_seconds)
+    /// Returns (`remaining_requests`, `reset_time_seconds`)
     pub async fn get_quota(
         &self,
         key: &str,

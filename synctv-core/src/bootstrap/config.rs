@@ -7,12 +7,12 @@ use crate::Config;
 
 /// Load configuration from environment variables
 ///
-/// For now, this just calls Config::from_env(). In the future,
+/// For now, this just calls `Config::from_env()`. In the future,
 /// it could also load from config files.
 pub fn load_config() -> Result<Config> {
     // Try to load from environment, with fallback to defaults
     let config = Config::from_env().unwrap_or_else(|e| {
-        eprintln!("Failed to load config: {}", e);
+        eprintln!("Failed to load config: {e}");
         eprintln!("Using default configuration");
         Config {
             server: crate::config::ServerConfig::default(),

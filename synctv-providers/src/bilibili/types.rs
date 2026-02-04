@@ -27,25 +27,28 @@ pub enum Quality {
 }
 
 impl Quality {
-    pub fn to_qn(&self) -> u32 {
+    #[must_use] 
+    pub const fn to_qn(&self) -> u32 {
         *self as u32
     }
 
-    pub fn from_qn(qn: u32) -> Self {
+    #[must_use] 
+    pub const fn from_qn(qn: u32) -> Self {
         match qn {
-            80 => Quality::P1080,
-            64 => Quality::P720,
-            32 => Quality::P480,
-            _ => Quality::P360,
+            80 => Self::P1080,
+            64 => Self::P720,
+            32 => Self::P480,
+            _ => Self::P360,
         }
     }
 
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            Quality::P1080 => "1080P",
-            Quality::P720 => "720P",
-            Quality::P480 => "480P",
-            Quality::P360 => "360P",
+            Self::P1080 => "1080P",
+            Self::P720 => "720P",
+            Self::P480 => "480P",
+            Self::P360 => "360P",
         }
     }
 }

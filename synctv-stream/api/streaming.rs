@@ -23,7 +23,6 @@ use crate::{
     },
     protocols::hls::remuxer::StreamRegistry as HlsStreamRegistry,
     protocols::httpflv::HttpFlvSession,
-    error::StreamResult,
 };
 use anyhow::Result;
 use bytes::Bytes;
@@ -43,7 +42,7 @@ use tokio::sync::mpsc;
 pub struct LiveStreamingInfrastructure {
     /// Registry for finding publishers (Redis)
     pub registry: Arc<dyn StreamRegistryTrait>,
-    /// StreamHub event sender for subscribing to streams
+    /// `StreamHub` event sender for subscribing to streams
     pub stream_hub_event_sender: StreamHubEventSender,
     /// GOP cache for instant playback
     pub gop_cache: Arc<GopCache>,
@@ -74,12 +73,14 @@ impl LiveStreamingInfrastructure {
     }
 
     /// Add HLS segment manager
+    #[must_use] 
     pub fn with_segment_manager(mut self, segment_manager: Arc<SegmentManager>) -> Self {
         self.segment_manager = Some(segment_manager);
         self
     }
 
     /// Add HLS stream registry
+    #[must_use] 
     pub fn with_hls_stream_registry(mut self, hls_stream_registry: HlsStreamRegistry) -> Self {
         self.hls_stream_registry = Some(hls_stream_registry);
         self
@@ -91,7 +92,7 @@ impl LiveStreamingInfrastructure {
             .get_publisher(room_id, media_id)
             .await
             .map(|opt| opt.is_some())
-            .map_err(|e| anyhow::anyhow!("Failed to check publisher: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to check publisher: {e}"))
     }
 
     /// Get publisher info
@@ -99,7 +100,7 @@ impl LiveStreamingInfrastructure {
         self.registry
             .get_publisher(room_id, media_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("No publisher found for {}/{}", room_id, media_id))
+            .ok_or_else(|| anyhow::anyhow!("No publisher found for {room_id}/{media_id}"))
     }
 }
 
@@ -135,13 +136,13 @@ impl FlvStreamingApi {
         // Ensure publisher exists
         infrastructure.has_publisher(room_id, media_id).await?
             .then_some(())
-            .ok_or_else(|| anyhow::anyhow!("No publisher for {}/{}", room_id, media_id))?;
+            .ok_or_else(|| anyhow::anyhow!("No publisher for {room_id}/{media_id}"))?;
 
         // Create channel for FLV data
         let (tx, rx) = mpsc::unbounded_channel();
 
         // Create FLV session
-        let stream_name = format!("{}/{}", room_id, media_id);
+        let stream_name = format!("{room_id}/{media_id}");
         let mut flv_session = HttpFlvSession::new(
             "live".to_string(),
             stream_name,
@@ -176,7 +177,7 @@ impl FlvStreamingApi {
             .pull_manager
             .get_or_create_pull_stream(room_id, media_id)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to create pull stream: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create pull stream: {e}"))?;
 
         // Create FLV session
         Self::create_session(infrastructure, room_id, media_id).await
@@ -238,38 +239,32 @@ impl HlsStreamingApi {
         // Ensure publisher exists
         infrastructure.has_publisher(room_id, media_id).await?
             .then_some(())
-            .ok_or_else(|| anyhow::anyhow!("No publisher for {}/{}", room_id, media_id))?;
+            .ok_or_else(|| anyhow::anyhow!("No publisher for {room_id}/{media_id}"))?;
 
         // Generate from HLS stream registry
         if let Some(hls_registry) = &infrastructure.hls_stream_registry {
             // Registry key format: "live/room_id:media_id" (same as remuxer uses)
-            let stream_key = format!("live/{}:{}", room_id, media_id);
+            let stream_key = format!("live/{room_id}:{media_id}");
 
-            let playlist = hls_registry.get(&stream_key)
-                .map(|stream_state| {
+            let playlist = hls_registry.get(&stream_key).map_or_else(|| {
+                    // Empty playlist if stream not in registry yet
+                    "#EXTM3U\n\
+                         #EXT-X-VERSION:3\n\
+                         #EXT-X-TARGETDURATION:10\n\
+                         #EXT-X-MEDIA-SEQUENCE:0\n".to_string()
+                }, |stream_state| {
                     let state = stream_state.read();
                     // Use caller-provided URL generator for maximum flexibility
                     state.generate_m3u8(url_generator)
-                })
-                .unwrap_or_else(|| {
-                    // Empty playlist if stream not in registry yet
-                    format!(
-                        "#EXTM3U\n\
-                         #EXT-X-VERSION:3\n\
-                         #EXT-X-TARGETDURATION:10\n\
-                         #EXT-X-MEDIA-SEQUENCE:0\n"
-                    )
                 });
 
             Ok(playlist)
         } else {
             // Fallback: empty playlist
-            Ok(format!(
-                "#EXTM3U\n\
+            Ok("#EXTM3U\n\
                  #EXT-X-VERSION:3\n\
                  #EXT-X-TARGETDURATION:10\n\
-                 #EXT-X-MEDIA-SEQUENCE:0\n"
-            ))
+                 #EXT-X-MEDIA-SEQUENCE:0\n".to_string())
         }
     }
 
@@ -279,7 +274,7 @@ impl HlsStreamingApi {
     /// * `infrastructure` - Live streaming infrastructure
     /// * `room_id` - Room identifier
     /// * `media_id` - Media/stream identifier
-    /// * `segment_url_base` - Base URL for segment links (e.g., "/api/rooms/{room_id}/live/hls/segments/")
+    /// * `segment_url_base` - Base URL for segment links (e.g., "/`api/rooms/{room_id}/live/hls/segments`/")
     ///
     /// # Returns
     /// M3U8 playlist content as a string
@@ -290,7 +285,7 @@ impl HlsStreamingApi {
         segment_url_base: &str,
     ) -> Result<String> {
         Self::generate_playlist(infrastructure, room_id, media_id, |ts_name| {
-            format!("{}{}.ts", segment_url_base, ts_name)
+            format!("{segment_url_base}{ts_name}.ts")
         }).await
     }
 
@@ -313,20 +308,20 @@ impl HlsStreamingApi {
         // Ensure publisher exists
         infrastructure.has_publisher(room_id, media_id).await?
             .then_some(())
-            .ok_or_else(|| anyhow::anyhow!("No publisher for {}/{}", room_id, media_id))?;
+            .ok_or_else(|| anyhow::anyhow!("No publisher for {room_id}/{media_id}"))?;
 
         // Get segment from storage
         if let Some(segment_manager) = &infrastructure.segment_manager {
             // Build storage key: app_name-stream_name-ts_name
             // stream_name format is "room_id:media_id", replace : with - for flat key
-            let stream_name = format!("{}:{}", room_id, media_id);
+            let stream_name = format!("{room_id}:{media_id}");
             let storage_key = format!("live-{}-{}", stream_name.replace(':', "-"), segment_name);
 
             segment_manager
                 .storage()
                 .read(&storage_key)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to read segment: {}", e))
+                .map_err(|e| anyhow::anyhow!("Failed to read segment: {e}"))
         } else {
             Err(anyhow::anyhow!("Segment manager not configured"))
         }
@@ -364,7 +359,7 @@ impl HlsStreamingApi {
     /// * `infrastructure` - Live streaming infrastructure
     /// * `room_id` - Room identifier
     /// * `media_id` - Media/stream identifier
-    /// * `segment_url_base` - Base URL for segment links (e.g., "/api/rooms/{room_id}/live/hls/segments/")
+    /// * `segment_url_base` - Base URL for segment links (e.g., "/`api/rooms/{room_id}/live/hls/segments`/")
     pub async fn generate_playlist_with_pull_simple(
         infrastructure: &LiveStreamingInfrastructure,
         room_id: &str,
@@ -372,7 +367,7 @@ impl HlsStreamingApi {
         segment_url_base: &str,
     ) -> Result<String> {
         Self::generate_playlist_with_pull(infrastructure, room_id, media_id, |ts_name| {
-            format!("{}{}.ts", segment_url_base, ts_name)
+            format!("{segment_url_base}{ts_name}.ts")
         }).await
     }
 }

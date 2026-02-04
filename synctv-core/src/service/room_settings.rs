@@ -109,6 +109,7 @@ impl RoomSettingsService {
     const PUBSUB_CHANNEL: &'static str = "room_settings_updates";
 
     /// Create a new room settings service
+    #[must_use] 
     pub fn new(
         repo: RoomSettingsRepository,
         invalidation: Option<Arc<dyn CacheInvalidation>>,
@@ -180,7 +181,7 @@ impl RoomSettingsService {
         let settings = self.repo.get(room_id).await?;
 
         // Store in cache
-        let _ = self.cache.insert(room_id.clone(), settings.clone()).await;
+        let () = self.cache.insert(room_id.clone(), settings.clone()).await;
 
         Ok(settings)
     }
@@ -197,7 +198,7 @@ impl RoomSettingsService {
         self.repo.set_settings(room_id, settings).await?;
 
         // Update local cache
-        let _ = self.cache.insert(room_id.clone(), settings.clone()).await;
+        let () = self.cache.insert(room_id.clone(), settings.clone()).await;
 
         // Notify other replicas via Pub/Sub (if configured)
         if let Some(ref invalidation) = self.invalidation {
@@ -273,7 +274,7 @@ impl RoomSettingsService {
 
     /// Invalidate local cache for a room
     async fn invalidate_local(&self, room_id: &RoomId) {
-        let _ = self.cache.invalidate(room_id).await;
+        let () = self.cache.invalidate(room_id).await;
     }
 
     /// Listen for settings updates from Pub/Sub
@@ -341,6 +342,7 @@ impl RoomSettingsService {
     }
 
     /// Get cache statistics
+    #[must_use] 
     pub fn cache_stats(&self) -> CacheStats {
         CacheStats {
             entry_count: self.cache.entry_count(),

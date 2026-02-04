@@ -18,11 +18,11 @@ use tokio::time::{interval, Duration};
 use tracing as log;
 use dashmap::DashMap;
 
-/// Publisher manager that listens to StreamHub events
+/// Publisher manager that listens to `StreamHub` events
 pub struct PublisherManager {
     registry: Arc<dyn StreamRegistryTrait>,
     local_node_id: String,
-    /// Active publishers (stream_key -> media_id)
+    /// Active publishers (`stream_key` -> `media_id`)
     /// Live streaming is media-level, not room-level
     active_publishers: Arc<DashMap<String, String>>,
 }
@@ -36,7 +36,7 @@ impl PublisherManager {
         }
     }
 
-    /// Start listening to StreamHub broadcast events
+    /// Start listening to `StreamHub` broadcast events
     pub async fn start(self: Arc<Self>, mut event_receiver: BroadcastEventReceiver) {
         log::info!("Publisher manager started");
 
@@ -64,7 +64,7 @@ impl PublisherManager {
         log::warn!("Publisher manager stopped");
     }
 
-    /// Handle StreamHub broadcast events
+    /// Handle `StreamHub` broadcast events
     async fn handle_broadcast_event(&self, event: streamhub::define::BroadcastEvent) -> anyhow::Result<()> {
         match event {
             streamhub::define::BroadcastEvent::Publish { identifier, .. } => {
@@ -83,12 +83,9 @@ impl PublisherManager {
     /// Handle Publish event - Register publisher to Redis
     async fn handle_publish(&self, identifier: StreamIdentifier) -> anyhow::Result<()> {
         // Extract app_name and stream_name from RTMP identifier
-        let (app_name, stream_name) = match identifier {
-            StreamIdentifier::Rtmp { app_name, stream_name } => (app_name, stream_name),
-            _ => {
-                log::warn!("Ignoring non-RTMP publish event: {:?}", identifier);
-                return Ok(());
-            }
+        let (app_name, stream_name) = if let StreamIdentifier::Rtmp { app_name, stream_name } = identifier { (app_name, stream_name) } else {
+            log::warn!("Ignoring non-RTMP publish event: {:?}", identifier);
+            return Ok(());
         };
 
         log::info!(
@@ -117,7 +114,7 @@ impl PublisherManager {
                     stream_name
                 );
                 // Track active publisher with composite key
-                let publisher_key = format!("{}:{}", room_id, media_id);
+                let publisher_key = format!("{room_id}:{media_id}");
                 self.active_publishers.insert(stream_name.clone(), publisher_key);
             }
             Ok(false) => {
@@ -128,7 +125,7 @@ impl PublisherManager {
                     stream_name
                 );
                 // Another node is already publisher, reject this push
-                return Err(anyhow!("Publisher already exists for room {} / media {}", room_id, media_id));
+                return Err(anyhow!("Publisher already exists for room {room_id} / media {media_id}"));
             }
             Err(e) => {
                 log::error!("Failed to register publisher: {}", e);
@@ -139,7 +136,7 @@ impl PublisherManager {
         Ok(())
     }
 
-    /// Handle UnPublish event - Remove publisher from Redis
+    /// Handle `UnPublish` event - Remove publisher from Redis
     async fn handle_unpublish(&self, identifier: StreamIdentifier) -> anyhow::Result<()> {
         let (app_name, stream_name) = match identifier {
             StreamIdentifier::Rtmp { app_name, stream_name } => (app_name, stream_name),

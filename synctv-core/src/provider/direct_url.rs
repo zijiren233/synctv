@@ -1,4 +1,4 @@
-//! Direct URL MediaProvider
+//! Direct URL `MediaProvider`
 //!
 //! Provides direct playback for HTTP(S) URLs
 
@@ -8,11 +8,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-/// Direct URL MediaProvider
+/// Direct URL `MediaProvider`
 pub struct DirectUrlProvider {}
 
 impl DirectUrlProvider {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {}
     }
 
@@ -43,7 +44,7 @@ impl Default for DirectUrlProvider {
     }
 }
 
-/// DirectUrl source configuration
+/// `DirectUrl` source configuration
 #[derive(Debug, Deserialize, Serialize)]
 struct DirectUrlSourceConfig {
     url: String,
@@ -58,7 +59,7 @@ impl TryFrom<&Value> for DirectUrlSourceConfig {
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
         serde_json::from_value(value.clone()).map_err(|e| {
-            ProviderError::InvalidConfig(format!("Failed to parse DirectUrl source config: {}", e))
+            ProviderError::InvalidConfig(format!("Failed to parse DirectUrl source config: {e}"))
         })
     }
 }

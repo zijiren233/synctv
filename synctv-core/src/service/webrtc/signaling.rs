@@ -47,6 +47,7 @@ pub struct SignalingService {
 
 impl SignalingService {
     /// Create a new signaling service
+    #[must_use] 
     pub fn new(config: WebRTCConfig) -> Self {
         let session_manager = Arc::new(SessionManager::new(config.session_timeout_seconds));
         Self {
@@ -56,11 +57,13 @@ impl SignalingService {
     }
 
     /// Create a signaling service with default configuration
+    #[must_use] 
     pub fn with_defaults() -> Self {
         Self::new(WebRTCConfig::default())
     }
 
     /// Get ICE server configuration for clients
+    #[must_use] 
     pub fn get_ice_servers(&self) -> IceServerConfig {
         IceServerConfig {
             stun_servers: self.config.stun_servers.clone(),

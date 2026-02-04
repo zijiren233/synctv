@@ -1,28 +1,36 @@
 //! WebSocket handler with binary proto transmission
 //!
-//! This handler uses the unified StreamMessage trait from impls layer,
+//! This handler uses the unified `StreamMessage` trait from impls layer,
 //! enabling full code reuse between gRPC and WebSocket.
 //!
 //! All business logic (rate limiting, content filtering, permissions, broadcasting)
-//! is handled by StreamMessageHandler.run() with the WebSocketStream implementation.
+//! is handled by `StreamMessageHandler.run()` with the `WebSocketStream` implementation.
 
 use axum::{
-    extract::{Path, State, WebSocketUpgrade},
+    extract::{Path, Query, State, WebSocketUpgrade},
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
+use serde::Deserialize;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
-use crate::http::AppState;
+use crate::http::{AppError, AppState};
 use crate::impls::messaging::{StreamMessageHandler, StreamMessage, ProtoCodec, MessageSender};
 use synctv_core::models::{RoomId, UserId};
 use synctv_core::service::{RateLimiter, RateLimitConfig, ContentFilter, auth::JwtValidator};
 use crate::proto::client::{ClientMessage, ServerMessage};
 
-/// WebSocket stream implementation of StreamMessage trait
+/// Query parameters for WebSocket connection
+#[derive(Debug, Deserialize)]
+pub struct WsQuery {
+    /// JWT token for authentication
+    pub token: Option<String>,
+}
+
+/// WebSocket stream implementation of `StreamMessage` trait
 ///
-/// This adapts WebSocket's axum::extract::ws::WebSocket to our unified StreamMessage interface.
+/// This adapts WebSocket's `axum::extract::ws::WebSocket` to our unified `StreamMessage` interface.
 struct WebSocketStream {
     receiver: futures::stream::SplitStream<axum::extract::ws::WebSocket>,
     sender: WebSocketMessageSender,
@@ -39,7 +47,7 @@ impl StreamMessage for WebSocketStream {
             Some(Ok(axum::extract::ws::Message::Close(_))) => {
                 None // Graceful close
             }
-            Some(Err(e)) => Some(Err(format!("WebSocket error: {}", e))),
+            Some(Err(e)) => Some(Err(format!("WebSocket error: {e}"))),
             None => None, // Stream ended
             Some(Ok(_)) => {
                 // Ignore non-binary messages (text, ping, pong)
@@ -64,7 +72,7 @@ struct WebSocketMessageSender {
 }
 
 impl WebSocketMessageSender {
-    fn new(sender: tokio::sync::mpsc::UnboundedSender<Vec<u8>>) -> Self {
+    const fn new(sender: tokio::sync::mpsc::UnboundedSender<Vec<u8>>) -> Self {
         Self { sender }
     }
 }
@@ -78,37 +86,51 @@ impl crate::impls::messaging::MessageSender for WebSocketMessageSender {
         self.sender
             .clone()
             .send(bytes)
-            .map_err(|e| format!("Failed to send message: {}", e))
+            .map_err(|e| format!("Failed to send message: {e}"))
     }
 }
 
 /// WebSocket handler for room real-time updates
+///
+/// Clients should provide JWT token via query parameter:
+/// <ws://host/ws/room/{room_id}?token={jwt_token>}
 pub async fn websocket_handler(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
+    Query(query): Query<WsQuery>,
     ws: WebSocketUpgrade,
-) -> impl IntoResponse {
-    // TODO: Extract JWT from query parameter or header before upgrade
-    // For now, all WebSocket connections use anonymous user IDs
-    // In production, clients should send JWT via query param: ws://host/room/123?token=xxx
-    ws.on_upgrade(move |socket| handle_socket(socket, state, room_id))
+) -> Result<impl IntoResponse, AppError> {
+    // Extract and validate JWT token from query parameter
+    let token = query
+        .token
+        .ok_or_else(|| AppError::unauthorized("Missing token query parameter"))?;
+
+    // Create JWT validator
+    let validator = Arc::new(JwtValidator::new(Arc::new(state.jwt_service.clone())));
+
+    // Validate token and extract user_id
+    let user_id = validator
+        .validate_and_extract_user_id(&token)
+        .map_err(|e| AppError::unauthorized(format!("Invalid token: {e}")))?;
+
+    // Token is valid, upgrade to WebSocket
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state, room_id, user_id)))
 }
 
 async fn handle_socket(
     socket: axum::extract::ws::WebSocket,
     state: AppState,
     room_id: String,
+    user_id: UserId,
 ) {
-    // TODO: Extract user_id from JWT token passed via query parameter
-    let user_id = UserId::new();
-    // Try to get username from cache (will be None for anonymous users)
+    // Get username from user service
     let username = state
         .user_service
         .get_username(&user_id)
         .await
         .ok()
         .flatten()
-        .unwrap_or_else(|| "anonymous".to_string());
+        .unwrap_or_else(|| user_id.as_str().to_string());
 
     info!(
         "WebSocket connection established: user={}, room={}",
@@ -117,12 +139,9 @@ async fn handle_socket(
     );
 
     // Check if cluster_manager is available
-    let cluster_manager = match state.cluster_manager {
-        Some(cm) => cm,
-        None => {
-            error!("ClusterManager not available, WebSocket connection not supported");
-            return;
-        }
+    let cluster_manager = if let Some(cm) = state.cluster_manager { cm } else {
+        error!("ClusterManager not available, WebSocket connection not supported");
+        return;
     };
 
     let rid = RoomId::from_string(room_id.clone());

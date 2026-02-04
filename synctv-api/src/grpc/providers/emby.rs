@@ -8,18 +8,19 @@ use crate::impls::EmbyApiImpl;
 
 // Import generated proto types from synctv_proto
 use crate::proto::providers::emby::emby_provider_service_server::EmbyProviderService;
-use crate::proto::providers::emby::*;
+use crate::proto::providers::emby::{LoginRequest, LoginResponse, ListRequest, ListResponse, GetMeRequest, GetMeResponse, LogoutRequest, LogoutResponse, GetBindsRequest, GetBindsResponse, BindInfo};
 
 /// Emby Provider gRPC Service
 ///
-/// Thin wrapper that delegates to EmbyApiImpl.
+/// Thin wrapper that delegates to `EmbyApiImpl`.
 #[derive(Clone)]
 pub struct EmbyProviderGrpcService {
     app_state: Arc<AppState>,
 }
 
 impl EmbyProviderGrpcService {
-    pub fn new(app_state: Arc<AppState>) -> Self {
+    #[must_use] 
+    pub const fn new(app_state: Arc<AppState>) -> Self {
         Self { app_state }
     }
 }
@@ -103,7 +104,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         let credentials = self.app_state.user_provider_credential_repository
             .get_by_user(&auth_context.user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to query credentials: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to query credentials: {e}")))?;
 
         // Filter for Emby provider only and convert to BindInfo
         let binds: Vec<BindInfo> = credentials

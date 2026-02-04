@@ -1,6 +1,6 @@
-//! OAuth2 configuration loader (LoadModuleConfig pattern)
+//! `OAuth2` configuration loader (`LoadModuleConfig` pattern)
 //!
-//! Similar to Go's ModuleConfigLoader from sealos-state-metric
+//! Similar to Go's `ModuleConfigLoader` from sealos-state-metric
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -10,7 +10,7 @@ use tracing::info;
 
 /// Configuration loader
 ///
-/// Implements the Go LoadModuleConfig pattern:
+/// Implements the Go `LoadModuleConfig` pattern:
 /// 1. Parse full YAML
 /// 2. Navigate to section (e.g., "oauth2.github")
 /// 3. Decode section directly into provider's config struct
@@ -23,6 +23,7 @@ pub struct ConfigLoader {
 
 impl ConfigLoader {
     /// Create a new empty loader
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             raw_config: HashMap::new(),
@@ -44,7 +45,7 @@ impl ConfigLoader {
 
     /// Load provider section from config
     ///
-    /// This is the core method that implements the LoadModuleConfig pattern:
+    /// This is the core method that implements the `LoadModuleConfig` pattern:
     /// - Navigate to provider section (e.g., "oauth2.github")
     /// - Decode directly into provider's config struct
     ///
@@ -61,12 +62,12 @@ impl ConfigLoader {
     pub fn load_section<T: DeserializeOwned>(&self, section_key: &str) -> Result<T> {
         let value = self.navigate_to_section(section_key)?;
         serde_yaml::from_value(value.clone())
-            .context(format!("Failed to decode section '{}' into target type", section_key))
+            .context(format!("Failed to decode section '{section_key}' into target type"))
     }
 
     /// Navigate to a section key (e.g., "oauth2.github")
     ///
-    /// Similar to Go's `navigateToKey()` function in module_loader.go
+    /// Similar to Go's `navigateToKey()` function in `module_loader.go`
     fn navigate_to_section(&self, key: &str) -> Result<&serde_yaml::Value> {
         let parts: Vec<&str> = key.split('.').collect();
         let mut current: Option<&serde_yaml::Value> = None;
@@ -82,10 +83,11 @@ impl ConfigLoader {
             }
         }
 
-        current.ok_or_else(|| anyhow::anyhow!("Section '{}' not found in config", key))
+        current.ok_or_else(|| anyhow::anyhow!("Section '{key}' not found in config"))
     }
 
     /// Get all provider instance names from oauth2 section
+    #[must_use] 
     pub fn provider_instances(&self) -> Vec<String> {
         let mut instances = Vec::new();
 
@@ -108,7 +110,7 @@ impl ConfigLoader {
     /// 1. Checking for explicit `type` field in the section
     /// 2. Using the instance name if no `type` field is present
     pub fn get_provider_type(&self, instance_name: &str) -> Result<String> {
-        let section_key = format!("oauth2.{}", instance_name);
+        let section_key = format!("oauth2.{instance_name}");
         let value = self.navigate_to_section(&section_key)?;
 
         // Check for explicit `type` field

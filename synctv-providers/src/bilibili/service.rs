@@ -63,7 +63,8 @@ pub trait BilibiliInterface: Send + Sync {
 pub struct BilibiliService;
 
 impl BilibiliService {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -127,10 +128,10 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn parse_video_page(&self, request: ParseVideoPageReq) -> Result<VideoPageInfo, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -159,10 +160,10 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn get_video_url(&self, request: GetVideoUrlReq) -> Result<VideoUrl, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -181,17 +182,17 @@ impl BilibiliInterface for BilibiliService {
 
         Ok(VideoUrl {
             accept_description: url_info.accept_description,
-            accept_quality: url_info.accept_quality.into_iter().map(|q| q as u64).collect(),
-            current_quality: url_info.current_quality as u64,
+            accept_quality: url_info.accept_quality.into_iter().map(u64::from).collect(),
+            current_quality: u64::from(url_info.current_quality),
             url: url_info.url,
         })
     }
 
     async fn get_dash_video_url(&self, request: GetDashVideoUrlReq) -> Result<GetDashVideoUrlResp, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -204,19 +205,19 @@ impl BilibiliInterface for BilibiliService {
 
         Ok(GetDashVideoUrlResp {
             dash: Some((&dash).into()),
-            hevc_dash: if !hevc_dash.video_streams.is_empty() {
-                Some((&hevc_dash).into())
-            } else {
+            hevc_dash: if hevc_dash.video_streams.is_empty() {
                 None
+            } else {
+                Some((&hevc_dash).into())
             },
         })
     }
 
     async fn get_subtitles(&self, request: GetSubtitlesReq) -> Result<GetSubtitlesResp, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -231,10 +232,10 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn parse_pgc_page(&self, request: ParsePgcPageReq) -> Result<VideoPageInfo, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -263,10 +264,10 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn get_pgcurl(&self, request: GetPgcurlReq) -> Result<VideoUrl, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -285,17 +286,17 @@ impl BilibiliInterface for BilibiliService {
 
         Ok(VideoUrl {
             accept_description: url_info.accept_description,
-            accept_quality: url_info.accept_quality.into_iter().map(|q| q as u64).collect(),
-            current_quality: url_info.current_quality as u64,
+            accept_quality: url_info.accept_quality.into_iter().map(u64::from).collect(),
+            current_quality: u64::from(url_info.current_quality),
             url: url_info.url,
         })
     }
 
     async fn get_dash_pgcurl(&self, request: GetDashPgcurlReq) -> Result<GetDashPgcurlResp, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -308,19 +309,19 @@ impl BilibiliInterface for BilibiliService {
 
         Ok(GetDashPgcurlResp {
             dash: Some((&dash).into()),
-            hevc_dash: if !hevc_dash.video_streams.is_empty() {
-                Some((&hevc_dash).into())
-            } else {
+            hevc_dash: if hevc_dash.video_streams.is_empty() {
                 None
+            } else {
+                Some((&hevc_dash).into())
             },
         })
     }
 
     async fn user_info(&self, request: UserInfoReq) -> Result<UserInfoResp, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -348,10 +349,10 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn get_live_streams(&self, request: GetLiveStreamsReq) -> Result<GetLiveStreamsResp, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -367,7 +368,7 @@ impl BilibiliInterface for BilibiliService {
             live_streams: streams
                 .into_iter()
                 .map(|s| LiveStream {
-                    quality: s.quality as u64,
+                    quality: u64::from(s.quality),
                     urls: s.urls,
                     desc: s.desc,
                 })
@@ -376,10 +377,10 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn parse_live_page(&self, request: ParseLivePageReq) -> Result<VideoPageInfo, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {
@@ -408,10 +409,10 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn get_live_danmu_info(&self, request: GetLiveDanmuInfoReq) -> Result<GetLiveDanmuInfoResp, BilibiliError> {
-        let cookies = if !request.cookies.is_empty() {
-            request.cookies.clone()
-        } else {
+        let cookies = if request.cookies.is_empty() {
             HashMap::new()
+        } else {
+            request.cookies.clone()
         };
 
         let client = if cookies.is_empty() {

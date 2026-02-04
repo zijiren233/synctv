@@ -23,7 +23,8 @@ pub struct StreamRegistry {
 
 impl StreamRegistry {
     /// Create a new stream registry
-    pub fn new(redis: RedisConnectionManager) -> Self {
+    #[must_use] 
+    pub const fn new(redis: RedisConnectionManager) -> Self {
         Self { redis }
     }
 
@@ -36,7 +37,7 @@ impl StreamRegistry {
         node_id: &str,
         app_name: &str,
     ) -> anyhow::Result<bool> {
-        let key = format!("stream:publisher:{}:{}", room_id, media_id);
+        let key = format!("stream:publisher:{room_id}:{media_id}");
         let info = PublisherInfo {
             node_id: node_id.to_string(),
             app_name: app_name.to_string(),
@@ -58,7 +59,7 @@ impl StreamRegistry {
         Ok(registered)
     }
 
-    /// Try to register as publisher (simplified version for PublisherManager)
+    /// Try to register as publisher (simplified version for `PublisherManager`)
     /// Returns true if registered successfully, false if already exists
     pub async fn try_register_publisher(
         &self,
@@ -66,7 +67,7 @@ impl StreamRegistry {
         media_id: &str,
         node_id: &str,
     ) -> anyhow::Result<bool> {
-        let key = format!("stream:publisher:{}:{}", room_id, media_id);
+        let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
         // Create PublisherInfo with default values for registration
@@ -101,7 +102,7 @@ impl StreamRegistry {
 
     /// Refresh TTL for a publisher (called by heartbeat)
     pub async fn refresh_publisher_ttl(&self, room_id: &str, media_id: &str) -> Result<()> {
-        let key = format!("stream:publisher:{}:{}", room_id, media_id);
+        let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
         // Refresh TTL to 300 seconds
@@ -117,14 +118,14 @@ impl StreamRegistry {
 
     /// Unregister a publisher
     pub async fn unregister_publisher(&mut self, room_id: &str, media_id: &str) -> Result<()> {
-        let key = format!("stream:publisher:{}:{}", room_id, media_id);
+        let key = format!("stream:publisher:{room_id}:{media_id}");
         let _: () = self.redis.hdel(&key, "publisher").await?;
         Ok(())
     }
 
-    /// Unregister a publisher (non-mut version for PublisherManager)
+    /// Unregister a publisher (non-mut version for `PublisherManager`)
     pub async fn unregister_publisher_immut(&self, room_id: &str, media_id: &str) -> Result<()> {
-        let key = format!("stream:publisher:{}:{}", room_id, media_id);
+        let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
         let _: () = redis::cmd("HDEL")
@@ -144,7 +145,7 @@ impl StreamRegistry {
 
     /// Get publisher info for a media in a room (immutable version)
     pub async fn get_publisher_immut(&self, room_id: &str, media_id: &str) -> Result<Option<PublisherInfo>> {
-        let key = format!("stream:publisher:{}:{}", room_id, media_id);
+        let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
         let info_json: Option<String> = redis::cmd("HGET")
             .arg(&key)
@@ -170,7 +171,7 @@ impl StreamRegistry {
 
     /// Check if a stream is active (immutable version)
     pub async fn is_stream_active_immut(&self, room_id: &str, media_id: &str) -> anyhow::Result<bool> {
-        let key = format!("stream:publisher:{}:{}", room_id, media_id);
+        let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
         let exists: bool = redis::cmd("HEXISTS")
             .arg(&key)
@@ -181,7 +182,7 @@ impl StreamRegistry {
         Ok(exists)
     }
 
-    /// List all active streams (returns tuples of (room_id, media_id))
+    /// List all active streams (returns tuples of (`room_id`, `media_id`))
     pub async fn list_active_streams(&mut self) -> Result<Vec<(String, String)>> {
         self.list_active_streams_immut().await
     }

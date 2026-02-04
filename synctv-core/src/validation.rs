@@ -2,8 +2,6 @@
 //!
 //! This module provides production-grade input validation using the `validator` crate.
 
-use std::collections::HashMap;
-use std::fmt;
 
 /// Validation error
 #[derive(Debug, Clone, thiserror::Error)]
@@ -22,7 +20,6 @@ pub type ValidationResult<T> = Result<T, ValidationError>;
 pub struct UsernameValidator {
     min_length: usize,
     max_length: usize,
-    allowed_chars: Option<String>,
 }
 
 impl Default for UsernameValidator {
@@ -30,17 +27,18 @@ impl Default for UsernameValidator {
         Self {
             min_length: 3,
             max_length: 50,
-            allowed_chars: None, // Allow alphanumeric, underscore, hyphen
         }
     }
 }
 
 impl UsernameValidator {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn with_length(mut self, min: usize, max: usize) -> Self {
+    #[must_use] 
+    pub const fn with_length(mut self, min: usize, max: usize) -> Self {
         self.min_length = min;
         self.max_length = max;
         self
@@ -105,16 +103,19 @@ impl Default for PasswordValidator {
 }
 
 impl PasswordValidator {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn with_min_length(mut self, length: usize) -> Self {
+    #[must_use] 
+    pub const fn with_min_length(mut self, length: usize) -> Self {
         self.min_length = length;
         self
     }
 
-    pub fn require_special_char(mut self, required: bool) -> Self {
+    #[must_use] 
+    pub const fn require_special_char(mut self, required: bool) -> Self {
         self.require_special_char = required;
         self
     }
@@ -129,7 +130,7 @@ impl PasswordValidator {
         }
 
         // Check for uppercase
-        if self.require_uppercase && !password.chars().any(|c| c.is_uppercase()) {
+        if self.require_uppercase && !password.chars().any(char::is_uppercase) {
             return Err(ValidationError::Field {
                 field: "password".to_string(),
                 message: "must contain at least one uppercase letter".to_string(),
@@ -137,7 +138,7 @@ impl PasswordValidator {
         }
 
         // Check for lowercase
-        if self.require_lowercase && !password.chars().any(|c| c.is_lowercase()) {
+        if self.require_lowercase && !password.chars().any(char::is_lowercase) {
             return Err(ValidationError::Field {
                 field: "password".to_string(),
                 message: "must contain at least one lowercase letter".to_string(),
@@ -167,19 +168,12 @@ impl PasswordValidator {
 }
 
 /// Email validator
-pub struct EmailValidator {
-    require_tld: bool,
-}
+#[derive(Default)]
+pub struct EmailValidator {}
 
-impl Default for EmailValidator {
-    fn default() -> Self {
-        Self {
-            require_tld: true,
-        }
-    }
-}
 
 impl EmailValidator {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -202,30 +196,26 @@ impl EmailValidator {
 }
 
 /// URL validator
+#[derive(Default)]
 pub struct UrlValidator {
     allow_https_only: bool,
     allowed_domains: Option<Vec<String>>,
 }
 
-impl Default for UrlValidator {
-    fn default() -> Self {
-        Self {
-            allow_https_only: false,
-            allowed_domains: None,
-        }
-    }
-}
 
 impl UrlValidator {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn https_only(mut self) -> Self {
+    #[must_use] 
+    pub const fn https_only(mut self) -> Self {
         self.allow_https_only = true;
         self
     }
 
+    #[must_use] 
     pub fn with_allowed_domains(mut self, domains: Vec<String>) -> Self {
         self.allowed_domains = Some(domains);
         self
@@ -248,7 +238,7 @@ impl UrlValidator {
                         if !domains.iter().any(|d| host.ends_with(d)) {
                             return Err(ValidationError::Field {
                                 field: "url".to_string(),
-                                message: format!("domain not in allowed list: {:?}", domains),
+                                message: format!("domain not in allowed list: {domains:?}"),
                             });
                         }
                     }
@@ -280,11 +270,13 @@ impl Default for RoomNameValidator {
 }
 
 impl RoomNameValidator {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn with_length(mut self, min: usize, max: usize) -> Self {
+    #[must_use] 
+    pub const fn with_length(mut self, min: usize, max: usize) -> Self {
         self.min_length = min;
         self.max_length = max;
         self
@@ -306,7 +298,7 @@ impl RoomNameValidator {
         }
 
         // Check for control characters
-        if name.chars().any(|c| c.is_control()) {
+        if name.chars().any(char::is_control) {
             return Err(ValidationError::Field {
                 field: "room_name".to_string(),
                 message: "cannot contain control characters".to_string(),
@@ -323,7 +315,8 @@ pub struct Validator {
 }
 
 impl Validator {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {
             errors: Vec::new(),
         }
@@ -336,7 +329,8 @@ impl Validator {
         self
     }
 
-    pub fn is_valid(&self) -> bool {
+    #[must_use] 
+    pub const fn is_valid(&self) -> bool {
         self.errors.is_empty()
     }
 
@@ -347,7 +341,7 @@ impl Validator {
             Err(self.errors.into_iter().next().unwrap())
         } else {
             let messages: Vec<String> = self.errors.iter()
-                .map(|e| e.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
             Err(ValidationError::Multiple(messages.join("; ")))
         }

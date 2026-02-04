@@ -17,7 +17,7 @@ use super::proto::{stream_relay_service_client::StreamRelayServiceClient, PullRt
 use crate::relay::StreamRegistryTrait;
 
 /// gRPC Stream Puller
-/// Pulls RTMP stream from remote Publisher node via gRPC and publishes to local StreamHub
+/// Pulls RTMP stream from remote Publisher node via gRPC and publishes to local `StreamHub`
 pub struct GrpcStreamPuller {
     room_id: String,
     media_id: String,
@@ -44,7 +44,7 @@ impl GrpcStreamPuller {
         }
     }
 
-    /// Run the puller: connect to remote, pull stream, publish to local StreamHub
+    /// Run the puller: connect to remote, pull stream, publish to local `StreamHub`
     pub async fn run(mut self) -> anyhow::Result<()> {
         info!(
             room_id = %self.room_id,
@@ -60,7 +60,7 @@ impl GrpcStreamPuller {
         let publisher_url = format!("http://{}", self.publisher_node_addr);
         let mut client = StreamRelayServiceClient::connect(publisher_url)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to publisher: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to connect to publisher: {e}"))?;
 
         // 3. Pull RTMP stream
         let request = Request::new(PullRtmpStreamRequest {
@@ -71,7 +71,7 @@ impl GrpcStreamPuller {
         let mut stream = client
             .pull_rtmp_stream(request)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to pull stream: {}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to pull stream: {e}"))?
             .into_inner();
 
         info!("Connected to remote publisher, receiving stream data");
@@ -113,7 +113,7 @@ impl GrpcStreamPuller {
         Ok(())
     }
 
-    /// Publish to local StreamHub (similar to xiu ClientSession::publish_to_stream_hub)
+    /// Publish to local `StreamHub` (similar to xiu `ClientSession::publish_to_stream_hub`)
     async fn publish_to_local_stream_hub(&mut self) -> anyhow::Result<FrameDataSender> {
         let publisher_id = Uuid::new(RandomDigitCount::Four);
 
@@ -151,7 +151,7 @@ impl GrpcStreamPuller {
         let result = event_result_receiver
             .await
             .map_err(|_| anyhow::anyhow!("Publish result channel closed"))?
-            .map_err(|e| anyhow::anyhow!("Publish failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Publish failed: {e}"))?;
 
         let data_sender = result
             .0
@@ -164,7 +164,7 @@ impl GrpcStreamPuller {
         Ok(data_sender)
     }
 
-    /// Unpublish from local StreamHub
+    /// Unpublish from local `StreamHub`
     async fn unpublish_from_local_stream_hub(&mut self) -> anyhow::Result<()> {
         let stream_name = format!("{}/{}", self.room_id, self.media_id);
         let identifier = StreamIdentifier::Rtmp {

@@ -18,10 +18,10 @@ use synctv_core::service::{
 use crate::proto::client::{
     auth_service_server::AuthService, email_service_server::EmailService,
     media_service_server::MediaService, public_service_server::PublicService,
-    room_service_server::RoomService, user_service_server::UserService, *,
+    room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, DanmakuMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, GetPlaylistRequest, GetPlaylistResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, GetPlaylistsRequest, GetPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse,
 };
 
-/// Configuration for ClientService
+/// Configuration for `ClientService`
 #[derive(Clone)]
 pub struct ClientServiceConfig {
     pub user_service: CoreUserService,
@@ -36,7 +36,7 @@ pub struct ClientServiceConfig {
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
 }
 
-/// ClientService implementation
+/// `ClientService` implementation
 #[derive(Clone)]
 pub struct ClientServiceImpl {
     user_service: Arc<CoreUserService>,
@@ -53,6 +53,7 @@ pub struct ClientServiceImpl {
 
 impl ClientServiceImpl {
     #[allow(clippy::too_many_arguments)]
+    #[must_use] 
     pub fn new(
         user_service: CoreUserService,
         room_service: CoreRoomService,
@@ -79,7 +80,8 @@ impl ClientServiceImpl {
         }
     }
 
-    /// Create ClientService from configuration struct
+    /// Create `ClientService` from configuration struct
+    #[must_use] 
     pub fn from_config(config: ClientServiceConfig) -> Self {
         Self {
             user_service: Arc::new(config.user_service),
@@ -95,7 +97,7 @@ impl ClientServiceImpl {
         }
     }
 
-    /// Extract user_id from UserContext (injected by inject_user interceptor)
+    /// Extract `user_id` from `UserContext` (injected by `inject_user` interceptor)
     #[allow(clippy::result_large_err)]
     fn get_user_id(&self, request: &Request<impl std::fmt::Debug>) -> Result<UserId, Status> {
         let user_context = request
@@ -106,7 +108,7 @@ impl ClientServiceImpl {
         Ok(UserId::from_string(user_context.user_id.clone()))
     }
 
-    /// Extract RoomContext (injected by inject_room interceptor)
+    /// Extract `RoomContext` (injected by `inject_room` interceptor)
     #[allow(clippy::result_large_err)]
     fn get_room_context(
         &self,
@@ -120,7 +122,7 @@ impl ClientServiceImpl {
         Ok(room_context.clone())
     }
 
-    /// Extract room_id from RoomContext
+    /// Extract `room_id` from `RoomContext`
     #[allow(clippy::result_large_err)]
     fn get_room_id(&self, request: &Request<impl std::fmt::Debug>) -> Result<RoomId, Status> {
         let room_context = self.get_room_context(request)?;
@@ -406,7 +408,7 @@ impl UserService for ClientServiceImpl {
         self.user_service
             .logout(token)
             .await
-            .map_err(|e| Status::internal(format!("Failed to logout: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to logout: {e}")))?;
 
         Ok(Response::new(LogoutResponse { success: true }))
     }
@@ -423,7 +425,7 @@ impl UserService for ClientServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get user: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get user: {e}")))?;
 
         Ok(Response::new(GetProfileResponse {
             user: Some(User {
@@ -460,7 +462,7 @@ impl UserService for ClientServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get user: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get user: {e}")))?;
 
         // Update username
         user.username = req.new_username;
@@ -470,7 +472,7 @@ impl UserService for ClientServiceImpl {
             .user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update username: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update username: {e}")))?;
 
         // Convert to proto format
         let proto_user = User {
@@ -510,7 +512,7 @@ impl UserService for ClientServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get user: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get user: {e}")))?;
 
         // Verify old password
         if !synctv_core::service::auth::password::verify_password(
@@ -518,7 +520,7 @@ impl UserService for ClientServiceImpl {
             &user.password_hash,
         )
         .await
-        .map_err(|e| Status::internal(format!("Failed to verify password: {}", e)))?
+        .map_err(|e| Status::internal(format!("Failed to verify password: {e}")))?
         {
             return Err(Status::permission_denied("Invalid old password"));
         }
@@ -526,7 +528,7 @@ impl UserService for ClientServiceImpl {
         // Hash new password
         let new_hash = synctv_core::service::auth::password::hash_password(&req.new_password)
             .await
-            .map_err(|e| Status::internal(format!("Failed to hash password: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to hash password: {e}")))?;
 
         // Update password
         user.password_hash = new_hash;
@@ -535,7 +537,7 @@ impl UserService for ClientServiceImpl {
         self.user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update password: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update password: {e}")))?;
 
         Ok(Response::new(SetPasswordResponse { success: true }))
     }
@@ -547,11 +549,11 @@ impl UserService for ClientServiceImpl {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
-        let page = if req.page == 0 { 1 } else { req.page as i64 };
+        let page = if req.page == 0 { 1 } else { i64::from(req.page) };
         let page_size = if req.page_size == 0 || req.page_size > 50 {
             10
         } else {
-            req.page_size as i64
+            i64::from(req.page_size)
         };
 
         // Get rooms created by user with member count (optimized single query)
@@ -559,7 +561,7 @@ impl UserService for ClientServiceImpl {
             .room_service
             .list_rooms_by_creator_with_count(&user_id, page, page_size)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get rooms: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get rooms: {e}")))?;
 
         // Convert to proto format
         let mut room_protos: Vec<Room> = Vec::new();
@@ -599,11 +601,11 @@ impl UserService for ClientServiceImpl {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
-        let page = if req.page == 0 { 1 } else { req.page as i64 };
+        let page = if req.page == 0 { 1 } else { i64::from(req.page) };
         let page_size = if req.page_size == 0 || req.page_size > 50 {
             10
         } else {
-            req.page_size as i64
+            i64::from(req.page_size)
         };
 
         // Get rooms where user is a member with full details (optimized single query)
@@ -611,7 +613,7 @@ impl UserService for ClientServiceImpl {
             .room_service
             .list_joined_rooms_with_details(&user_id, page, page_size)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get joined rooms: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get joined rooms: {e}")))?;
 
         // Convert to proto format
         let mut room_with_roles: Vec<RoomWithRole> = Vec::new();
@@ -676,13 +678,13 @@ impl RoomService for ClientServiceImpl {
         }
 
         // Parse settings
-        let settings = if !req.settings.is_empty() {
+        let settings = if req.settings.is_empty() {
+            None
+        } else {
             Some(
                 serde_json::from_slice(&req.settings)
-                    .map_err(|e| Status::invalid_argument(format!("Invalid settings: {}", e)))?,
+                    .map_err(|e| Status::invalid_argument(format!("Invalid settings: {e}")))?,
             )
-        } else {
-            None
         };
 
         // Parse password
@@ -941,11 +943,11 @@ impl RoomService for ClientServiceImpl {
         let room_id = RoomId::from_string(req.room_id);
 
         // Parse settings from JSON bytes
-        let settings = if !req.settings.is_empty() {
-            serde_json::from_slice(&req.settings)
-                .map_err(|e| Status::invalid_argument(format!("Invalid settings: {}", e)))?
-        } else {
+        let settings = if req.settings.is_empty() {
             RoomSettings::default()
+        } else {
+            serde_json::from_slice(&req.settings)
+                .map_err(|e| Status::invalid_argument(format!("Invalid settings: {e}")))?
         };
 
         // Set settings
@@ -1155,7 +1157,7 @@ impl RoomService for ClientServiceImpl {
             .room_service
             .get_room_members(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room members: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get room members: {e}")))?;
 
         // Convert to response
         let member_list = members
@@ -1299,11 +1301,11 @@ impl RoomService for ClientServiceImpl {
             .room_service
             .get_room_settings(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room settings: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get room settings: {e}")))?;
 
         // Serialize settings to JSON bytes
         let settings_json = serde_json::to_vec(&settings)
-            .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to serialize settings: {e}")))?;
 
         Ok(Response::new(GetRoomSettingsResponse {
             settings: settings_json,
@@ -1319,14 +1321,14 @@ impl RoomService for ClientServiceImpl {
 
         // Parse the value as JSON
         let value: serde_json::Value = serde_json::from_slice(&req.value)
-            .map_err(|e| Status::invalid_argument(format!("Invalid JSON value: {}", e)))?;
+            .map_err(|e| Status::invalid_argument(format!("Invalid JSON value: {e}")))?;
 
         // Update single setting
         let settings_json = self
             .room_service
             .update_room_setting(&room_id, &req.key, &value)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update room setting: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update room setting: {e}")))?;
 
         Ok(Response::new(UpdateRoomSettingResponse {
             settings: settings_json.into_bytes(),
@@ -1344,7 +1346,7 @@ impl RoomService for ClientServiceImpl {
             .room_service
             .reset_room_settings(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to reset room settings: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to reset room settings: {e}")))?;
 
         Ok(Response::new(ResetRoomSettingsResponse {
             settings: settings_json.into_bytes(),
@@ -1373,8 +1375,8 @@ impl RoomService for ClientServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get user: {}", e)))?;
-        let username = user.username.clone();
+            .map_err(|e| Status::internal(format!("Failed to get user: {e}")))?;
+        let username = user.username;
 
         // Generate unique connection ID
         let connection_id = nanoid!(16);
@@ -1405,8 +1407,7 @@ impl RoomService for ClientServiceImpl {
             .join_room(&connection_id, room_id.clone())
         {
             return Err(Status::resource_exhausted(format!(
-                "Cannot join room: {}",
-                e
+                "Cannot join room: {e}"
             )));
         }
 
@@ -1435,13 +1436,13 @@ impl RoomService for ClientServiceImpl {
         let client_msg_tx = stream_handler.start();
 
         // Clone for cleanup task
-        let connection_id_clone = connection_id.clone();
+        let connection_id_clone = connection_id;
         let connection_manager_clone = self.connection_manager.clone();
         let cluster_manager_clone = self.cluster_manager.clone();
         let room_id_clone = room_id.clone();
         let user_id_clone = user_id.clone();
         let username_clone = username;
-        let _outgoing_tx_clone = outgoing_tx.clone();
+        let _outgoing_tx_clone = outgoing_tx;
 
         // Spawn task to handle incoming client messages
         tokio::spawn(async move {
@@ -1494,7 +1495,7 @@ impl RoomService for ClientServiceImpl {
         self.room_service
             .check_membership(&room_id, &user_id)
             .await
-            .map_err(|e| Status::permission_denied(format!("Not a member of the room: {}", e)))?;
+            .map_err(|e| Status::permission_denied(format!("Not a member of the room: {e}")))?;
 
         // Get chat history from database
         let limit = if req.limit == 0 || req.limit > 100 {
@@ -1514,7 +1515,7 @@ impl RoomService for ClientServiceImpl {
             .room_service
             .get_chat_history(&room_id, before, limit)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get chat history: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get chat history: {e}")))?;
 
         // Collect unique user IDs to batch fetch usernames
         let user_ids: Vec<UserId> = messages
@@ -1558,13 +1559,13 @@ impl RoomService for ClientServiceImpl {
     }
 }
 
-/// gRPC message sender for StreamMessageHandler
+/// gRPC message sender for `StreamMessageHandler`
 struct GrpcMessageSender {
     sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
 }
 
 impl GrpcMessageSender {
-    fn new(sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>) -> Self {
+    const fn new(sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>) -> Self {
         Self { sender }
     }
 }
@@ -1573,7 +1574,7 @@ impl MessageSender for GrpcMessageSender {
     fn send(&self, message: ServerMessage) -> Result<(), String> {
         self.sender
             .send(message)
-            .map_err(|e| format!("Failed to send message: {}", e))
+            .map_err(|e| format!("Failed to send message: {e}"))
     }
 }
 
@@ -1734,7 +1735,7 @@ impl MediaService for ClientServiceImpl {
             .update_playback(
                 room_id,
                 user_id,
-                |state| state.play(),
+                synctv_core::models::RoomPlaybackState::play,
                 PermissionBits::PLAY_PAUSE,
             )
             .await
@@ -1774,7 +1775,7 @@ impl MediaService for ClientServiceImpl {
             .update_playback(
                 room_id,
                 user_id,
-                |state| state.pause(),
+                synctv_core::models::RoomPlaybackState::pause,
                 PermissionBits::PLAY_PAUSE,
             )
             .await
@@ -1982,8 +1983,7 @@ impl MediaService for ClientServiceImpl {
             .await
             .map_err(|e| {
                 Status::permission_denied(format!(
-                    "User does not have permission to publish streams in this room: {}",
-                    e
+                    "User does not have permission to publish streams in this room: {e}"
                 ))
             })?;
 
@@ -2127,7 +2127,7 @@ impl PublicService for ClientServiceImpl {
             .room_service
             .list_rooms(&query)
             .await
-            .map_err(|e| Status::internal(format!("Failed to list rooms: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to list rooms: {e}")))?;
 
         let mut proto_rooms = Vec::new();
         for room in rooms {
@@ -2173,7 +2173,7 @@ impl PublicService for ClientServiceImpl {
         let limit = if req.limit == 0 || req.limit > 50 {
             10
         } else {
-            req.limit as i64
+            i64::from(req.limit)
         };
 
         let query = RoomListQuery {
@@ -2187,7 +2187,7 @@ impl PublicService for ClientServiceImpl {
             .room_service
             .list_rooms(&query)
             .await
-            .map_err(|e| Status::internal(format!("Failed to list rooms: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to list rooms: {e}")))?;
 
         let mut room_stats: Vec<(synctv_core::models::Room, i32, i32)> = Vec::new();
         for room in rooms {
@@ -2281,7 +2281,7 @@ impl EmailService for ClientServiceImpl {
             .user_service
             .get_by_email(&req.email)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Database error: {e}")))?;
 
         let user = match user {
             Some(u) => u,
@@ -2296,7 +2296,7 @@ impl EmailService for ClientServiceImpl {
         let _token = email_service
             .send_verification_email(&req.email, email_token_service, &user.id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to send email: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to send email: {e}")))?;
 
         tracing::info!("Sent verification email to {}", req.email);
 
@@ -2319,14 +2319,14 @@ impl EmailService for ClientServiceImpl {
             .user_service
             .get_by_email(&req.email)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {}", e)))?
+            .map_err(|e| Status::internal(format!("Database error: {e}")))?
             .ok_or_else(|| Status::not_found("User not found"))?;
 
         // Validate token
         let validated_user_id = email_token_service
             .validate_token(&req.token, synctv_core::service::EmailTokenType::EmailVerification)
             .await
-            .map_err(|e| Status::invalid_argument(format!("Invalid token: {}", e)))?;
+            .map_err(|e| Status::invalid_argument(format!("Invalid token: {e}")))?;
 
         // Verify token matches user
         if validated_user_id != user.id {
@@ -2337,7 +2337,7 @@ impl EmailService for ClientServiceImpl {
         self.user_service
             .set_email_verified(&user.id, true)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update email verification: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update email verification: {e}")))?;
 
         tracing::info!("Email verified for user {}", user.id.as_str());
 
@@ -2363,7 +2363,7 @@ impl EmailService for ClientServiceImpl {
             .user_service
             .get_by_email(&req.email)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Database error: {e}")))?;
 
         if user.is_none() {
             // Don't reveal whether email exists
@@ -2378,7 +2378,7 @@ impl EmailService for ClientServiceImpl {
         let _token = email_service
             .send_password_reset_email(&req.email, email_token_service, &user.id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to send email: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to send email: {e}")))?;
 
         tracing::info!("Password reset requested for user {}", user.id.as_str());
 
@@ -2401,14 +2401,14 @@ impl EmailService for ClientServiceImpl {
             .user_service
             .get_by_email(&req.email)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {}", e)))?
+            .map_err(|e| Status::internal(format!("Database error: {e}")))?
             .ok_or_else(|| Status::not_found("User not found"))?;
 
         // Validate token
         let validated_user_id = email_token_service
             .validate_token(&req.token, synctv_core::service::EmailTokenType::PasswordReset)
             .await
-            .map_err(|e| Status::invalid_argument(format!("Invalid token: {}", e)))?;
+            .map_err(|e| Status::invalid_argument(format!("Invalid token: {e}")))?;
 
         // Verify token matches user
         if validated_user_id != user.id {
@@ -2424,7 +2424,7 @@ impl EmailService for ClientServiceImpl {
         self.user_service
             .set_password(&user.id, &req.new_password)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update password: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update password: {e}")))?;
 
         tracing::info!("Password reset completed for user {}", user.id.as_str());
 

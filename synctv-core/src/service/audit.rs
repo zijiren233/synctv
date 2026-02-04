@@ -80,7 +80,8 @@ pub struct AuditService {
 
 impl AuditService {
     /// Create a new audit service
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -113,12 +114,12 @@ impl AuditService {
         // Insert into database
         // Note: This assumes an audit_logs table exists
         // In production, you would create the table with migrations
-        let query = r#"
+        let query = r"
             INSERT INTO audit_logs (
                 id, actor_id, actor_username, action, target_type, target_id,
                 details, ip_address, user_agent, created_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        "#;
+        ";
 
         let action_str = serde_json::to_string(&audit_log.action)?;
         let target_str = serde_json::to_string(&audit_log.target_type)?;

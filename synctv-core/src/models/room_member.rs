@@ -21,7 +21,8 @@ pub enum MemberStatus {
 
 
 impl MemberStatus {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Active => "active",
             Self::Pending => "pending",
@@ -29,15 +30,18 @@ impl MemberStatus {
         }
     }
 
-    pub fn is_active(&self) -> bool {
+    #[must_use] 
+    pub const fn is_active(&self) -> bool {
         matches!(self, Self::Active)
     }
 
-    pub fn is_pending(&self) -> bool {
+    #[must_use] 
+    pub const fn is_pending(&self) -> bool {
         matches!(self, Self::Pending)
     }
 
-    pub fn is_banned(&self) -> bool {
+    #[must_use] 
+    pub const fn is_banned(&self) -> bool {
         matches!(self, Self::Banned)
     }
 }
@@ -50,7 +54,7 @@ impl FromStr for MemberStatus {
             "active" => Ok(Self::Active),
             "pending" => Ok(Self::Pending),
             "banned" => Ok(Self::Banned),
-            _ => Err(format!("Unknown member status: {}", s)),
+            _ => Err(format!("Unknown member status: {s}")),
         }
     }
 }
@@ -73,13 +77,13 @@ pub struct RoomMember {
     pub status: MemberStatus,
 
     /// Allow/Deny permission pattern for member role
-    /// - effective_permissions = (role_default | added) & ~removed
+    /// - `effective_permissions` = (`role_default` | added) & ~removed
     pub added_permissions: u64,
     pub removed_permissions: u64,
 
     /// Allow/Deny permission pattern for admin role (overrides member-level permissions)
     /// - Only applies when role = Admin
-    /// - effective_permissions = (admin_default | admin_added) & ~admin_removed
+    /// - `effective_permissions` = (`admin_default` | `admin_added`) & ~`admin_removed`
     pub admin_added_permissions: u64,
     pub admin_removed_permissions: u64,
 
@@ -96,6 +100,7 @@ pub struct RoomMember {
 }
 
 impl RoomMember {
+    #[must_use] 
     pub fn new(room_id: RoomId, user_id: UserId, role: RoomRole) -> Self {
         let now = Utc::now();
         Self {
@@ -116,23 +121,25 @@ impl RoomMember {
         }
     }
 
-    pub fn is_active(&self) -> bool {
+    #[must_use] 
+    pub const fn is_active(&self) -> bool {
         self.status.is_active() && self.left_at.is_none()
     }
 
     /// Calculate effective permissions using Allow/Deny pattern
     ///
     /// Permission inheritance chain (three-layer override system):
-    /// 1. Global default permissions (from SettingsRegistry)
-    /// 2. Room-level override: (global | room_added) & ~room_removed
-    /// 3. Member-level override: (room_level | member_added/admin_added) & ~(member_removed/admin_removed)
+    /// 1. Global default permissions (from `SettingsRegistry`)
+    /// 2. Room-level override: (global | `room_added`) & ~`room_removed`
+    /// 3. Member-level override: (`room_level` | `member_added/admin_added`) & ~(`member_removed/admin_removed`)
     ///
     /// Arguments:
-    /// - role_default: Already-calculated permissions for this role
+    /// - `role_default`: Already-calculated permissions for this role
     ///   (global default with room-level overrides applied)
     ///
     /// This method then applies member-level overrides to get final permissions
-    pub fn effective_permissions(&self, role_default: PermissionBits) -> PermissionBits {
+    #[must_use] 
+    pub const fn effective_permissions(&self, role_default: PermissionBits) -> PermissionBits {
         match self.role {
             RoomRole::Creator => {
                 // Creator has all permissions (fixed, cannot be modified)
@@ -162,7 +169,8 @@ impl RoomMember {
     }
 
     /// Check if member has a specific permission (considers both status and effective permissions)
-    pub fn has_permission(&self, permission: u64, role_default: PermissionBits) -> bool {
+    #[must_use] 
+    pub const fn has_permission(&self, permission: u64, role_default: PermissionBits) -> bool {
         if !self.status.is_active() {
             return false;
         }
@@ -191,17 +199,17 @@ impl RoomMember {
     }
 
     /// Set added permissions (Allow pattern)
-    pub fn add_permissions(&mut self, permissions: u64) {
+    pub const fn add_permissions(&mut self, permissions: u64) {
         self.added_permissions |= permissions;
     }
 
     /// Set removed permissions (Deny pattern)
-    pub fn remove_permissions(&mut self, permissions: u64) {
+    pub const fn remove_permissions(&mut self, permissions: u64) {
         self.removed_permissions |= permissions;
     }
 
     /// Reset to role default (clear both added and removed)
-    pub fn reset_to_role_default(&mut self) {
+    pub const fn reset_to_role_default(&mut self) {
         self.added_permissions = 0;
         self.removed_permissions = 0;
         self.admin_added_permissions = 0;
@@ -230,8 +238,9 @@ impl RoomMemberWithUser {
     /// Calculate effective permissions for display
     ///
     /// Arguments:
-    /// - role_default: Already-calculated permissions for this role
+    /// - `role_default`: Already-calculated permissions for this role
     ///   (global default with room-level overrides applied)
+    #[must_use] 
     pub fn effective_permissions(&self, role_default: PermissionBits) -> PermissionBits {
         let member = RoomMember {
             room_id: self.room_id.clone(),

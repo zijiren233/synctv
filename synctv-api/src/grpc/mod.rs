@@ -109,6 +109,9 @@ pub async fn serve(
     // Extract message_hub reference before moving cluster_manager
     let message_hub_from_cluster = cluster_manager.message_hub().clone();
 
+    // Clone connection_manager for later use
+    let connection_manager_for_provider = connection_manager.clone();
+
     let client_service = ClientServiceImpl::new(
         user_service_clone,
         room_service_clone,
@@ -193,7 +196,7 @@ pub async fn serve(
             provider_instance_manager_for_provider.clone(),
         ));
         let emby_provider = Arc::new(EmbyProvider::new(
-            provider_instance_manager_for_provider.clone(),
+            provider_instance_manager_for_provider,
         ));
 
         let app_state = Arc::new(crate::http::AppState {
@@ -214,9 +217,11 @@ pub async fn serve(
             email_service: None,
             publish_key_service: None,
             notification_service: None,
+            live_streaming_infrastructure: None,
             client_api: Arc::new(crate::impls::ClientApiImpl::new(
                 user_service_for_provider,
                 room_service_for_provider,
+                Arc::new(connection_manager_for_provider.clone()),
             )),
             admin_api: None,
         });
@@ -241,7 +246,7 @@ pub async fn serve(
     router
         .serve(addr)
         .await
-        .map_err(|e| anyhow::anyhow!("gRPC server error: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("gRPC server error: {e}"))?;
 
     Ok(())
 }

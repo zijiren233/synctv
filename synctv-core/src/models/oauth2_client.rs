@@ -34,7 +34,8 @@ pub enum OAuth2Provider {
 }
 
 impl OAuth2Provider {
-    pub fn as_str(&self) -> &str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &str {
         match self {
             Self::QQ => "qq",
             Self::GitHub => "github",
@@ -49,7 +50,8 @@ impl OAuth2Provider {
         }
     }
 
-    /// Parse OAuth2 provider type from string name (case-insensitive)
+    /// Parse `OAuth2` provider type from string name (case-insensitive)
+    #[must_use] 
     pub fn from_str_name(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "qq" => Some(Self::QQ),
@@ -67,11 +69,13 @@ impl OAuth2Provider {
     }
 
     /// Check if this provider type uses OIDC standard
-    pub fn is_oidc(&self) -> bool {
+    #[must_use] 
+    pub const fn is_oidc(&self) -> bool {
         matches!(self, Self::Casdoor | Self::Logto | Self::Oidc | Self::Feishu | Self::Google | Self::Microsoft)
     }
 
     /// Get default scopes for this provider type
+    #[must_use] 
     pub fn default_scopes(&self) -> Vec<String> {
         if self.is_oidc() {
             vec!["openid".to_string(), "profile".to_string(), "email".to_string()]
@@ -83,7 +87,7 @@ impl OAuth2Provider {
 
 /// OAuth2/OIDC provider mapping (NO TOKENS)
 ///
-/// Maps OAuth2 provider accounts to local users.
+/// Maps `OAuth2` provider accounts to local users.
 /// Tokens are NOT stored - only identity information for lookups.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserOAuthProviderMapping {
@@ -99,13 +103,14 @@ pub struct UserOAuthProviderMapping {
 }
 
 impl UserOAuthProviderMapping {
-    /// Get the provider as OAuth2Provider enum
+    /// Get the provider as `OAuth2Provider` enum
+    #[must_use] 
     pub fn provider_enum(&self) -> Option<OAuth2Provider> {
         OAuth2Provider::from_str_name(&self.provider)
     }
 }
 
-/// OAuth2 user info from provider
+/// `OAuth2` user info from provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2UserInfo {
     pub provider: OAuth2Provider,
@@ -115,21 +120,21 @@ pub struct OAuth2UserInfo {
     pub avatar: Option<String>,
 }
 
-/// OAuth2 authorization URL response
+/// `OAuth2` authorization URL response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2AuthUrlResponse {
     pub url: String,
     pub state: String,
 }
 
-/// OAuth2 callback request
+/// `OAuth2` callback request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2CallbackRequest {
     pub code: String,
     pub state: String,
 }
 
-/// OAuth2 callback response
+/// `OAuth2` callback response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2CallbackResponse {
     pub token: Option<String>,  // JWT token if login

@@ -31,7 +31,8 @@ pub struct ProviderContext<'a> {
 
 impl<'a> ProviderContext<'a> {
     /// Create new context with defaults
-    pub fn new(key_prefix: &'a str) -> Self {
+    #[must_use] 
+    pub const fn new(key_prefix: &'a str) -> Self {
         Self {
             user_id: None,
             room_id: None,
@@ -43,31 +44,36 @@ impl<'a> ProviderContext<'a> {
     }
 
     /// Set user ID
-    pub fn with_user_id(mut self, user_id: &'a str) -> Self {
+    #[must_use] 
+    pub const fn with_user_id(mut self, user_id: &'a str) -> Self {
         self.user_id = Some(user_id);
         self
     }
 
     /// Set room ID
-    pub fn with_room_id(mut self, room_id: &'a str) -> Self {
+    #[must_use] 
+    pub const fn with_room_id(mut self, room_id: &'a str) -> Self {
         self.room_id = Some(room_id);
         self
     }
 
     /// Set base URL
-    pub fn with_base_url(mut self, base_url: &'a str) -> Self {
+    #[must_use] 
+    pub const fn with_base_url(mut self, base_url: &'a str) -> Self {
         self.base_url = Some(base_url);
         self
     }
 
     /// Set database pool
-    pub fn with_db(mut self, db: &'a PgPool) -> Self {
+    #[must_use] 
+    pub const fn with_db(mut self, db: &'a PgPool) -> Self {
         self.db = Some(db);
         self
     }
 
     /// Set Redis connection manager
-    pub fn with_redis(mut self, redis: &'a redis::aio::ConnectionManager) -> Self {
+    #[must_use] 
+    pub const fn with_redis(mut self, redis: &'a redis::aio::ConnectionManager) -> Self {
         self.redis = Some(redis);
         self
     }

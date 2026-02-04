@@ -57,7 +57,8 @@ impl std::fmt::Debug for PlaylistService {
 
 impl PlaylistService {
     /// Create a new playlist service
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         playlist_repo: PlaylistRepository,
         permission_service: PermissionService,
     ) -> Self {

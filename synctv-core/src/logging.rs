@@ -75,16 +75,17 @@ fn parse_log_level(level: &str) -> anyhow::Result<Level> {
         "info" => Ok(Level::INFO),
         "warn" | "warning" => Ok(Level::WARN),
         "error" => Ok(Level::ERROR),
-        _ => Err(anyhow::anyhow!("Invalid log level: {}", level)),
+        _ => Err(anyhow::anyhow!("Invalid log level: {level}")),
     }
 }
 
 /// Generate a trace ID for request tracing
+#[must_use] 
 pub fn generate_trace_id() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
     let trace_id: u128 = rng.gen();
-    format!("{:032x}", trace_id)
+    format!("{trace_id:032x}")
 }
 
 #[cfg(test)]

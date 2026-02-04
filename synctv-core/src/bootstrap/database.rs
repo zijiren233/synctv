@@ -25,7 +25,7 @@ pub async fn init_database(config: &Config) -> Result<PgPool> {
         .await
         .map_err(|e| {
             error!("Failed to connect to database: {}", e);
-            anyhow::anyhow!("Database connection failed: {}", e)
+            anyhow::anyhow!("Database connection failed: {e}")
         })?;
 
     info!("Database connected successfully");

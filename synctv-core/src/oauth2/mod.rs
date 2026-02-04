@@ -3,7 +3,7 @@
 //! # Architecture (similar to Go's synctv/internal/provider/providers)
 //!
 //! 1. **Provider Registry**: Map of provider type -> provider instance
-//! 2. **Factory Pattern**: create_provider() looks up registry and clones with config
+//! 2. **Factory Pattern**: `create_provider()` looks up registry and clones with config
 //! 3. **Decoupled**: Factory doesn't need to know about provider-specific configs
 //! 4. **Clone Pattern**: Each provider implements Clone to create instances
 
@@ -23,14 +23,14 @@ use async_trait::async_trait;
 // Provider Trait
 // ============================================================================
 
-/// OAuth2 provider trait
+/// `OAuth2` provider trait
 ///
-/// All OAuth2 providers must implement this trait.
+/// All `OAuth2` providers must implement this trait.
 /// Similar to Go's `provider.Interface` from synctv/internal/provider
 ///
 /// Only two methods needed:
-/// 1. NewAuthURL - generate authorization URL
-/// 2. GetUserInfo - exchange code for user info
+/// 1. `NewAuthURL` - generate authorization URL
+/// 2. `GetUserInfo` - exchange code for user info
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Provider type identifier (e.g., "github", "logto", "oidc")
@@ -52,7 +52,7 @@ pub trait Provider: Send + Sync {
     async fn get_user_info(&self, code: &str) -> Result<OAuth2UserInfo, Error>;
 }
 
-/// OAuth2 user info from provider
+/// `OAuth2` user info from provider
 #[derive(Debug, Clone)]
 pub struct OAuth2UserInfo {
     pub provider_user_id: String,
@@ -69,7 +69,7 @@ pub struct OAuth2UserInfo {
 ///
 /// Each provider type registers a factory function that knows how to
 /// create instances of that provider with configuration.
-/// All parameters (client_id, client_secret, redirect_url, etc.) are in config.
+/// All parameters (`client_id`, `client_secret`, `redirect_url`, etc.) are in config.
 pub type ProviderFactory = fn(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error>;
 
 /// Provider registry
@@ -79,7 +79,7 @@ pub type ProviderFactory = fn(config: &serde_yaml::Value) -> Result<Box<dyn Prov
 static PROVIDER_REGISTRY: LazyLock<RwLock<HashMap<String, ProviderFactory>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-/// Register an OAuth2 provider factory function
+/// Register an `OAuth2` provider factory function
 ///
 /// Call this for each provider type during initialization.
 /// Similar to Go's `RegisterProvider()` in providers.go
@@ -120,7 +120,7 @@ async fn get_provider_factory(provider_type: &str) -> Option<ProviderFactory> {
 ///
 /// # Arguments
 /// * `provider_type` - The type of provider ("github", "logto", "oidc", etc.)
-/// * `config` - Full configuration including client_id, client_secret, redirect_url, etc.
+/// * `config` - Full configuration including `client_id`, `client_secret`, `redirect_url`, etc.
 ///
 /// # Example
 ///
@@ -139,7 +139,7 @@ pub async fn create_provider(
 ) -> Result<Box<dyn Provider>, Error> {
     // Look up factory function in registry
     let factory = get_provider_factory(provider_type).await
-        .ok_or_else(|| Error::InvalidInput(format!("Unknown provider type: {}", provider_type)))?;
+        .ok_or_else(|| Error::InvalidInput(format!("Unknown provider type: {provider_type}")))?;
 
     // Call factory function to create provider instance
     factory(config)

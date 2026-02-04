@@ -18,7 +18,7 @@ use std::io::Result;
 /// HLS storage trait for pluggable backends
 ///
 /// Pure key-value storage interface. The storage layer should NOT know about:
-/// - Segment metadata/lifecycle (handled by SegmentManager)
+/// - Segment metadata/lifecycle (handled by `SegmentManager`)
 /// - M3U8 generation (handled by HLS layer)
 ///
 /// Storage layer does: write, read, delete, exists, cleanup, and optionally provides public URLs.
@@ -27,7 +27,7 @@ pub trait HlsStorage: Send + Sync {
     /// Write data to storage
     ///
     /// # Arguments
-    /// * `key` - Storage key (e.g., "live/room_123/segment_0.ts")
+    /// * `key` - Storage key (e.g., "`live/room_123/segment_0.ts`")
     /// * `data` - Binary data to store
     async fn write(&self, key: &str, data: Bytes) -> Result<()>;
 
@@ -37,7 +37,7 @@ pub trait HlsStorage: Send + Sync {
     /// * `key` - Storage key
     ///
     /// # Returns
-    /// Binary data or NotFound error
+    /// Binary data or `NotFound` error
     async fn read(&self, key: &str) -> Result<Bytes>;
 
     /// Delete single key from storage
@@ -55,7 +55,7 @@ pub trait HlsStorage: Send + Sync {
     /// Cleanup expired data
     ///
     /// Storage backend scans and deletes all data older than the specified duration.
-    /// Upper layer (SegmentManager) calls this periodically to cleanup old segments.
+    /// Upper layer (`SegmentManager`) calls this periodically to cleanup old segments.
     ///
     /// # Use Cases
     /// - Normal cleanup: Delete segments older than retention period
@@ -69,9 +69,9 @@ pub trait HlsStorage: Send + Sync {
     /// Number of keys successfully deleted
     ///
     /// # Implementation Notes
-    /// - **FileStorage**: Scan directory, check file mtime, delete old files
-    /// - **MemoryStorage**: Iterate DashMap, check write timestamp, delete old entries
-    /// - **OssStorage**: List objects, check LastModified, delete old objects
+    /// - **`FileStorage`**: Scan directory, check file mtime, delete old files
+    /// - **`MemoryStorage`**: Iterate `DashMap`, check write timestamp, delete old entries
+    /// - **`OssStorage`**: List objects, check `LastModified`, delete old objects
     ///
     /// Note: With hash-based keys, prefix filtering is not possible.
     /// All expired data will be cleaned up regardless of original key prefix.
@@ -86,7 +86,7 @@ pub trait HlsStorage: Send + Sync {
     /// Get public URL for direct access (async)
     ///
     /// Use cases:
-    /// - **OSS Storage with CDN**: Return CDN URL (e.g., "https://cdn.example.com/hls/segment.ts")
+    /// - **OSS Storage with CDN**: Return CDN URL (e.g., "<https://cdn.example.com/hls/segment.ts>")
     /// - **OSS Storage without CDN**: Generate temporary presigned URL with expiration
     /// - **File/Memory Storage**: Return None, let HTTP layer generate local URLs
     ///

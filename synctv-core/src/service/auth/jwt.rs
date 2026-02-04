@@ -31,6 +31,7 @@ pub struct Claims {
 }
 
 impl Claims {
+    #[must_use] 
     pub fn user_id(&self) -> UserId {
         UserId::from_string(self.sub.clone())
     }
@@ -41,10 +42,12 @@ impl Claims {
             .map_err(|_| Error::Internal(format!("Invalid role in token: {}", self.role)))
     }
 
+    #[must_use] 
     pub fn is_access_token(&self) -> bool {
         self.typ == "access"
     }
 
+    #[must_use] 
     pub fn is_refresh_token(&self) -> bool {
         self.typ == "refresh"
     }
@@ -74,10 +77,10 @@ impl JwtService {
     /// * `public_key_pem` - RSA public key in PEM format
     pub fn new(private_key_pem: &[u8], public_key_pem: &[u8]) -> Result<Self> {
         let encoding_key = EncodingKey::from_rsa_pem(private_key_pem)
-            .map_err(|e| Error::Internal(format!("Failed to load private key: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to load private key: {e}")))?;
 
         let decoding_key = DecodingKey::from_rsa_pem(public_key_pem)
-            .map_err(|e| Error::Internal(format!("Failed to load public key: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to load public key: {e}")))?;
 
         Ok(Self {
             encoding_key: Arc::new(encoding_key),
@@ -144,7 +147,7 @@ impl JwtService {
 
         let header = Header::new(self.algorithm);
         encode(&header, &claims, &self.encoding_key)
-            .map_err(|e| Error::Internal(format!("Failed to sign token: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to sign token: {e}")))
     }
 
     /// Verify a token and extract claims
@@ -168,7 +171,7 @@ impl JwtService {
                 jsonwebtoken::errors::ErrorKind::InvalidSignature => {
                     Error::Authentication("Invalid token signature".to_string())
                 }
-                _ => Error::Authentication(format!("Token verification failed: {}", e)),
+                _ => Error::Authentication(format!("Token verification failed: {e}")),
             })?;
 
         Ok(token_data.claims)
@@ -219,7 +222,7 @@ impl JwtService {
 
         let header = Header::new(self.algorithm);
         encode(&header, &claims_with_standard, &self.encoding_key)
-            .map_err(|e| Error::Internal(format!("Failed to sign custom token: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to sign custom token: {e}")))
     }
 
     /// Verify a custom JWT token
@@ -248,7 +251,7 @@ impl JwtService {
                 jsonwebtoken::errors::ErrorKind::InvalidSignature => {
                     Error::Authentication("Invalid token signature".to_string())
                 }
-                _ => Error::Authentication(format!("Token verification failed: {}", e)),
+                _ => Error::Authentication(format!("Token verification failed: {e}")),
             })?;
 
         Ok(token_data.claims)

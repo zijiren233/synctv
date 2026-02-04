@@ -14,7 +14,7 @@ use std::collections::HashMap;
 /// Publisher node - accepts RTMP push and serves to Pullers
 ///
 /// Note: In the xiu architecture, frame data distribution to local subscribers
-/// is handled automatically by the StreamHub when a session publishes.
+/// is handled automatically by the `StreamHub` when a session publishes.
 /// The Publisher here primarily handles:
 /// 1. Caching frames in GOP cache for fast startup
 /// 2. Broadcasting to gRPC relay clients (Puller nodes on other servers)
@@ -24,7 +24,7 @@ pub struct Publisher {
     node_id: String,
     gop_cache: Arc<GopCache>,
     registry: Arc<dyn StreamRegistryTrait>,
-    /// Event sender for StreamHub (for Publish/UnPublish events)
+    /// Event sender for `StreamHub` (for Publish/UnPublish events)
     stream_hub_sender: Option<StreamHubEventSender>,
     /// Channel for gRPC relay to Puller nodes
     relay_senders: Arc<tokio::sync::Mutex<HashMap<String, mpsc::UnboundedSender<Result<RtmpPacket, Status>>>>>,
@@ -181,6 +181,7 @@ pub struct PublisherRelayService {
 }
 
 impl PublisherRelayService {
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             publishers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -218,7 +219,7 @@ impl StreamRelayService for PublisherRelayService {
         let publishers = self.publishers.lock().await;
 
         let publisher = publishers.get(&key)
-            .ok_or_else(|| Status::not_found(format!("No publisher for {}", key)))?;
+            .ok_or_else(|| Status::not_found(format!("No publisher for {key}")))?;
 
         let publisher = publisher.clone();
         drop(publishers);

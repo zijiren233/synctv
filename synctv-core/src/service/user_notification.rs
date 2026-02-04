@@ -25,7 +25,8 @@ pub struct UserNotificationService {
 }
 
 impl UserNotificationService {
-    pub fn new(repository: NotificationRepository) -> Self {
+    #[must_use] 
+    pub const fn new(repository: NotificationRepository) -> Self {
         Self { repository }
     }
 
@@ -51,8 +52,8 @@ impl UserNotificationService {
         let req = CreateNotificationRequest {
             user_id,
             notification_type: NotificationType::RoomInvitation,
-            title: format!("Room Invitation: {}", room_name),
-            content: format!("{} invited you to join the room \"{}\"", inviter_name, room_name),
+            title: format!("Room Invitation: {room_name}"),
+            content: format!("{inviter_name} invited you to join the room \"{room_name}\""),
             data,
         };
 
@@ -95,7 +96,7 @@ impl UserNotificationService {
         let req = CreateNotificationRequest {
             user_id,
             notification_type: NotificationType::RoomEvent,
-            title: format!("Room Event: {}", room_name),
+            title: format!("Room Event: {room_name}"),
             content: event,
             data,
         };

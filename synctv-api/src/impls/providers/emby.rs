@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use synctv_core::provider::EmbyProvider;
-use crate::proto::providers::emby::*;
+use crate::proto::providers::emby::{LoginRequest, LoginResponse, ListRequest, ListResponse, MediaItem, GetMeRequest, GetMeResponse, LogoutRequest, LogoutResponse};
 
 /// Emby API implementation
 ///
@@ -17,7 +17,8 @@ pub struct EmbyApiImpl {
 }
 
 impl EmbyApiImpl {
-    pub fn new(provider: Arc<EmbyProvider>) -> Self {
+    #[must_use] 
+    pub const fn new(provider: Arc<EmbyProvider>) -> Self {
         Self { provider }
     }
 
@@ -31,8 +32,7 @@ impl EmbyApiImpl {
         // Extract admin status from user policy
         let is_admin = user_info.policy
             .as_ref()
-            .map(|p| p.is_administrator)
-            .unwrap_or(false);
+            .is_some_and(|p| p.is_administrator);
 
         Ok(LoginResponse {
             user_id: user_info.id,

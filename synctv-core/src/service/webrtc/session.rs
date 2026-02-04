@@ -21,11 +21,13 @@ impl SessionId {
     }
 
     /// Create session ID from string
-    pub fn from_string(s: String) -> Self {
+    #[must_use] 
+    pub const fn from_string(s: String) -> Self {
         Self(s)
     }
 
     /// Get session ID as string reference
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -77,6 +79,7 @@ pub struct Session {
 
 impl Session {
     /// Create a new session
+    #[must_use] 
     pub fn new(room_id: RoomId, media_type: MediaType, max_participants: usize) -> Self {
         let now = chrono::Utc::now();
         Self {
@@ -93,6 +96,7 @@ impl Session {
     }
 
     /// Check if session is full
+    #[must_use] 
     pub fn is_full(&self) -> bool {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -127,6 +131,7 @@ impl Session {
     }
 
     /// Get session duration (if ended)
+    #[must_use] 
     pub fn duration(&self) -> Option<chrono::Duration> {
         match (self.started_at, self.ended_at) {
             (Some(start), Some(end)) => Some(end.signed_duration_since(start)),
@@ -136,6 +141,7 @@ impl Session {
     }
 
     /// Check if session has timed out
+    #[must_use] 
     pub fn has_timed_out(&self, timeout_seconds: i64) -> bool {
         let now = chrono::Utc::now();
         let last_activity = match (self.started_at, self.ended_at) {
@@ -159,6 +165,7 @@ pub struct SessionManager {
 
 impl SessionManager {
     /// Create a new session manager
+    #[must_use] 
     pub fn new(session_timeout_seconds: u64) -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),

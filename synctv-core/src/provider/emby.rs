@@ -1,6 +1,6 @@
-//! Emby/Jellyfin MediaProvider Adapter
+//! Emby/Jellyfin `MediaProvider` Adapter
 //!
-//! Adapter that calls EmbyClient to implement MediaProvider trait
+//! Adapter that calls `EmbyClient` to implement `MediaProvider` trait
 
 use super::{
     provider_client::{create_remote_emby_client, load_local_emby_client, EmbyClientArc},
@@ -13,16 +13,17 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Emby MediaProvider
+/// Emby `MediaProvider`
 ///
-/// Holds a reference to ProviderInstanceManager to select appropriate provider instance.
+/// Holds a reference to `ProviderInstanceManager` to select appropriate provider instance.
 pub struct EmbyProvider {
     provider_instance_manager: Arc<ProviderInstanceManager>,
 }
 
 impl EmbyProvider {
-    /// Create a new EmbyProvider with ProviderInstanceManager
-    pub fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
+    /// Create a new `EmbyProvider` with `ProviderInstanceManager`
+    #[must_use] 
+    pub const fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
         Self {
             provider_instance_manager,
         }
@@ -31,7 +32,7 @@ impl EmbyProvider {
     /// Get Emby client for the given instance name
     ///
     /// Selection priority:
-    /// 1. Instance specified by instance_name parameter
+    /// 1. Instance specified by `instance_name` parameter
     /// 2. Fallback to singleton local client
     async fn get_client(&self, instance_name: Option<&str>) -> EmbyClientArc {
         if let Some(name) = instance_name {
@@ -62,7 +63,7 @@ impl EmbyProvider {
             user_id: String::new(), // Empty = get current user
         };
 
-        client.me(me_req).await.map_err(|e| e.into())
+        client.me(me_req).await.map_err(std::convert::Into::into)
     }
 
     /// List Emby library items
@@ -72,7 +73,7 @@ impl EmbyProvider {
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::emby::FsListResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.fs_list(req).await.map_err(|e| e.into())
+        client.fs_list(req).await.map_err(std::convert::Into::into)
     }
 
     /// Get Emby user info
@@ -82,7 +83,7 @@ impl EmbyProvider {
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::emby::MeResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.me(req).await.map_err(|e| e.into())
+        client.me(req).await.map_err(std::convert::Into::into)
     }
 }
 
@@ -102,7 +103,7 @@ impl TryFrom<&Value> for EmbySourceConfig {
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
         serde_json::from_value(value.clone()).map_err(|e| {
-            ProviderError::InvalidConfig(format!("Failed to parse Emby source config: {}", e))
+            ProviderError::InvalidConfig(format!("Failed to parse Emby source config: {e}"))
         })
     }
 }
@@ -165,10 +166,10 @@ impl MediaProvider for EmbyProvider {
 
         // Process media sources
         for (idx, source) in playback_info.media_source_info.iter().enumerate() {
-            let mode_name = if !source.name.is_empty() {
-                source.name.clone()
+            let mode_name = if source.name.is_empty() {
+                format!("source_{idx}")
             } else {
-                format!("source_{}", idx)
+                source.name.clone()
             };
 
             // Get direct stream URL (no transcoding)
@@ -250,7 +251,7 @@ impl MediaProvider for EmbyProvider {
                 );
 
                 playback_infos.insert(
-                    format!("{}_transcode", mode_name),
+                    format!("{mode_name}_transcode"),
                     PlaybackInfo {
                         urls: vec![transcode_url],
                         format: "hls".to_string(), // Emby transcodes to HLS
@@ -277,6 +278,6 @@ impl MediaProvider for EmbyProvider {
     }
 
     fn cache_key(&self, _ctx: &ProviderContext<'_>, source_config: &Value) -> String {
-        format!("emby:{}", source_config)
+        format!("emby:{source_config}")
     }
 }

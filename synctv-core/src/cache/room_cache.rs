@@ -20,7 +20,7 @@ pub struct RoomCache {
 }
 
 /// Cached room data
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CachedRoom {
     id: String,
     name: String,
@@ -30,7 +30,7 @@ pub struct CachedRoom {
 }
 
 impl RoomCache {
-    /// Create a new RoomCache
+    /// Create a new `RoomCache`
     ///
     /// # Arguments
     /// * `redis_client` - Optional Redis client. If None, only L1 caching is used.
@@ -75,13 +75,13 @@ impl RoomCache {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
             let key = format!("{}{}", self.key_prefix, room_id.0);
             let room_json: Option<String> = conn
                 .get(&key)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to get room from cache: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to get room from cache: {e}")))?;
 
             if let Some(json) = room_json {
                 tracing::debug!(
@@ -90,7 +90,7 @@ impl RoomCache {
                 );
 
                 let room: CachedRoom = serde_json::from_str(&json).map_err(|e| {
-                    Error::Internal(format!("Failed to deserialize cached room: {}", e))
+                    Error::Internal(format!("Failed to deserialize cached room: {e}"))
                 })?;
 
                 // Populate L1 cache
@@ -116,23 +116,23 @@ impl RoomCache {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
             let key = format!("{}{}", self.key_prefix, room_id.0);
             let json = serde_json::to_string(&room).map_err(|e| {
-                Error::Internal(format!("Failed to serialize room for caching: {}", e))
+                Error::Internal(format!("Failed to serialize room for caching: {e}"))
             })?;
 
             if self.l2_ttl_seconds > 0 {
                 let _: () = conn
                     .set_ex(&key, json, self.l2_ttl_seconds)
                     .await
-                    .map_err(|e| Error::Internal(format!("Failed to set room in cache: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to set room in cache: {e}")))?;
             } else {
                 let _: () = conn
                     .set(&key, json)
                     .await
-                    .map_err(|e| Error::Internal(format!("Failed to set room in cache: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to set room in cache: {e}")))?;
             }
 
             tracing::debug!(
@@ -157,13 +157,13 @@ impl RoomCache {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
             let key = format!("{}{}", self.key_prefix, room_id.0);
             let _: () = conn
                 .del(&key)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to invalidate room cache: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to invalidate room cache: {e}")))?;
 
             tracing::debug!(room_id = %room_id.0, "Room cache invalidated");
         }
@@ -173,8 +173,8 @@ impl RoomCache {
 
     /// Get multiple rooms at once
     ///
-    /// More efficient than calling get() multiple times.
-    /// Returns a map of room_id -> CachedRoom.
+    /// More efficient than calling `get()` multiple times.
+    /// Returns a map of `room_id` -> `CachedRoom`.
     pub async fn get_batch(&self, room_ids: &[RoomId]) -> Result<std::collections::HashMap<RoomId, CachedRoom>> {
         let mut result = std::collections::HashMap::new();
         let mut missing_ids = Vec::new();
@@ -194,7 +194,7 @@ impl RoomCache {
                 let mut conn = client
                     .get_multiplexed_async_connection()
                     .await
-                    .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
                 let mut pipe = redis::pipe();
                 for room_id in &missing_ids {
@@ -205,7 +205,7 @@ impl RoomCache {
                 let room_jsons: Vec<Option<String>> = pipe
                     .query_async(&mut conn)
                     .await
-                    .map_err(|e| Error::Internal(format!("Failed to batch get rooms: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to batch get rooms: {e}")))?;
 
                 // Update L1 cache and result
                 for (room_id, room_json_opt) in missing_ids.iter().zip(room_jsons) {

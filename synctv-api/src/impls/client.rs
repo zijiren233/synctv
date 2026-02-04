@@ -7,22 +7,27 @@ use std::sync::Arc;
 use std::str::FromStr;
 use synctv_core::models::{UserId, RoomId, ProviderType};
 use synctv_core::service::{UserService, RoomService};
+use synctv_cluster::sync::ConnectionManager;
 
 /// Client API implementation
 #[derive(Clone)]
 pub struct ClientApiImpl {
     pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
+    pub connection_manager: Arc<ConnectionManager>,
 }
 
 impl ClientApiImpl {
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         user_service: Arc<UserService>,
         room_service: Arc<RoomService>,
+        connection_manager: Arc<ConnectionManager>,
     ) -> Self {
         Self {
             user_service,
             room_service,
+            connection_manager,
         }
     }
 
@@ -165,7 +170,17 @@ impl ClientApiImpl {
         let (rooms, total) = self.room_service.list_rooms(&query).await
             .map_err(|e| e.to_string())?;
 
-        let room_list: Vec<_> = rooms.into_iter().map(|r| room_to_proto_basic(&r, None)).collect();
+        let room_list: Vec<_> = rooms
+            .into_iter()
+            .map(|r| {
+                let member_count = self
+                    .connection_manager
+                    .room_connection_count(&r.id)
+                    .try_into()
+                    .ok();
+                room_to_proto_basic(&r, None, member_count)
+            })
+            .collect();
 
         Ok(crate::proto::client::ListRoomsResponse {
             rooms: room_list,
@@ -191,7 +206,14 @@ impl ClientApiImpl {
             let permissions = role.permissions().0;
 
             crate::proto::client::RoomWithRole {
-                room: Some(room_to_proto_basic(&room, None)),
+                room: Some(room_to_proto_basic(
+                    &room,
+                    None,
+                    self.connection_manager
+                        .room_connection_count(&room.id)
+                        .try_into()
+                        .ok(),
+                )),
                 permissions,
                 role: role_str.to_string(),
             }
@@ -210,10 +232,10 @@ impl ClientApiImpl {
     ) -> Result<crate::proto::client::CreateRoomResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
 
-        let settings = if !req.settings.is_empty() {
-            Some(serde_json::from_slice(&req.settings).map_err(|e| e.to_string())?)
-        } else {
+        let settings = if req.settings.is_empty() {
             None
+        } else {
+            Some(serde_json::from_slice(&req.settings).map_err(|e| e.to_string())?)
         };
 
         let password = if req.password.is_empty() { None } else { Some(req.password) };
@@ -221,8 +243,10 @@ impl ClientApiImpl {
         let (room, _member) = self.room_service.create_room(req.name, uid, password, settings).await
             .map_err(|e| e.to_string())?;
 
+        let member_count = self.connection_manager.room_connection_count(&room.id).try_into().ok();
+
         Ok(crate::proto::client::CreateRoomResponse {
-            room: Some(room_to_proto_basic(&room, None)),
+            room: Some(room_to_proto_basic(&room, None, member_count)),
         })
     }
 
@@ -237,8 +261,10 @@ impl ClientApiImpl {
         let playback_state = self.room_service.get_playback_state(&rid).await.ok()
             .map(|s| playback_state_to_proto(&s));
 
+        let member_count = self.connection_manager.room_connection_count(&rid).try_into().ok();
+
         Ok(crate::proto::client::GetRoomResponse {
-            room: Some(room_to_proto_basic(&room, None)),
+            room: Some(room_to_proto_basic(&room, None, member_count)),
             playback_state,
         })
     }
@@ -266,8 +292,10 @@ impl ClientApiImpl {
             .map(room_member_to_proto)
             .collect();
 
+        let member_count = self.connection_manager.room_connection_count(&rid).try_into().ok();
+
         Ok(crate::proto::client::JoinRoomResponse {
-            room: Some(room_to_proto_basic(&room, None)),
+            room: Some(room_to_proto_basic(&room, None, member_count)),
             members: proto_members,
             playback_state,
         })
@@ -314,12 +342,12 @@ impl ClientApiImpl {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
-        let settings = if !req.settings.is_empty() {
-            serde_json::from_slice::<synctv_core::models::RoomSettings>(&req.settings)
-                .map_err(|e| e.to_string())?
-        } else {
+        let settings = if req.settings.is_empty() {
             // Get current settings from room_settings table
             self.room_service.get_room_settings(&rid).await
+                .map_err(|e| e.to_string())?
+        } else {
+            serde_json::from_slice::<synctv_core::models::RoomSettings>(&req.settings)
                 .map_err(|e| e.to_string())?
         };
 
@@ -330,8 +358,10 @@ impl ClientApiImpl {
         let room = self.room_service.get_room(&rid).await
             .map_err(|e| e.to_string())?;
 
+        let member_count = self.connection_manager.room_connection_count(&rid).try_into().ok();
+
         Ok(crate::proto::client::SetRoomSettingsResponse {
-            room: Some(room_to_proto_basic(&room, None)),
+            room: Some(room_to_proto_basic(&room, None, member_count)),
         })
     }
 
@@ -634,8 +664,7 @@ impl ClientApiImpl {
 
         // Handle role update if provided
         if !req.role.is_empty() {
-            let new_role = synctv_core::models::RoomRole::from_str(&req.role)
-                .map_err(|e| e.to_string())?;
+            let new_role = synctv_core::models::RoomRole::from_str(&req.role)?;
             // Update the member role
             self.room_service.member_service().set_member_role(
                 rid.clone(),
@@ -729,6 +758,7 @@ fn user_to_proto(user: &synctv_core::models::User) -> crate::proto::client::User
 fn room_to_proto_basic(
     room: &synctv_core::models::Room,
     settings: Option<&synctv_core::models::RoomSettings>,
+    member_count: Option<i32>,
 ) -> crate::proto::client::Room {
     let room_settings = settings.cloned().unwrap_or_default();
     crate::proto::client::Room {
@@ -738,10 +768,11 @@ fn room_to_proto_basic(
         status: room.status.as_str().to_string(),
         settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
         created_at: room.created_at.timestamp(),
-        member_count: 0, // TODO: Fetch actual member count
+        member_count: member_count.unwrap_or(0),
     }
 }
 
+#[must_use] 
 pub fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::client::Media {
     // Try to extract URL from source_config
     let url = media.source_config.get("url")

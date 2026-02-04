@@ -3,14 +3,14 @@
 //! Provides FLV and HLS streaming endpoints for live video.
 //!
 //! Architecture:
-//! - Uses synctv-stream's LiveStreamingInfrastructure via AppState
+//! - Uses synctv-stream's `LiveStreamingInfrastructure` via `AppState`
 //! - Implements lazy-load FLV streaming
 //! - Implements HLS playlist generation and segment serving
 //!
 //! Endpoints (matching synctv-go paths):
-//! - GET /api/room/movie/live/flv/:media_id - FLV streaming
-//! - GET /api/room/movie/live/hls/list/:media_id - HLS playlist
-//! - GET /api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts - HLS segment
+//! - GET /`api/room/movie/live/flv/:media_id` - FLV streaming
+//! - GET /`api/room/movie/live/hls/list/:media_id` - HLS playlist
+//! - GET /`api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts` - HLS segment
 
 use axum::{
     body::Body,
@@ -20,12 +20,11 @@ use axum::{
     routing::get,
     Router,
 };
-use bytes::Bytes;
 use serde::Deserialize;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use crate::http::{AppState, AppResult};
+use crate::http::{AppError, AppResult, AppState};
 use synctv_stream::api::{FlvStreamingApi, HlsStreamingApi};
 
 /// Query parameters for live streaming endpoints
@@ -39,12 +38,12 @@ pub struct LiveQuery {
 
 /// Create live streaming router
 ///
-/// Uses AppState for state (live_streaming_infrastructure must be configured)
+/// Uses `AppState` for state (`live_streaming_infrastructure` must be configured)
 ///
 /// Routes match synctv-go path patterns:
-/// - /api/room/movie/live/flv/:media_id
-/// - /api/room/movie/live/hls/list/:media_id
-/// - /api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts
+/// - /`api/room/movie/live/flv/:media_id`
+/// - /`api/room/movie/live/hls/list/:media_id`
+/// - /`api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts`
 pub fn create_live_router() -> Router<AppState> {
     Router::new()
         // FLV streaming endpoint
@@ -67,7 +66,7 @@ pub fn create_live_router() -> Router<AppState> {
 
 /// Handle FLV streaming request
 ///
-/// GET /api/room/movie/live/flv/:media_id?roomId=:room_id&token=:token
+/// GET /`api/room/movie/live/flv/:media_id?roomId=:room_id&token=:token`
 ///
 /// Streaming endpoint for HTTP-FLV live streaming.
 /// Creates a lazy-load pull stream on first request.
@@ -94,7 +93,7 @@ async fn handle_flv_stream(
     // Create FLV streaming session with lazy-load pull
     let rx = FlvStreamingApi::create_session_with_pull(infrastructure, &room_id, &media_id)
         .await
-        .map_err(|e| AppError::internal_server_error(format!("Failed to create FLV session: {}", e)))?;
+        .map_err(|e| AppError::internal_server_error(format!("Failed to create FLV session: {e}")))?;
 
     // Convert to streaming response
     let body = Body::from_stream(UnboundedReceiverStream::new(rx));
@@ -114,7 +113,7 @@ async fn handle_flv_stream(
 
 /// Handle HLS playlist request
 ///
-/// GET /api/room/movie/live/hls/list/:media_id?roomId=:room_id&token=:token
+/// GET /`api/room/movie/live/hls/list/:media_id?roomId=:room_id&token=:token`
 ///
 /// Returns M3U8 playlist with references to TS segments.
 /// Creates a lazy-load pull stream on first request.
@@ -139,7 +138,7 @@ async fn handle_hls_playlist(
 
     // Build segment URL base following synctv-go pattern
     // TS segments are at: /api/room/movie/live/hls/data/{roomId}/{movieId}/
-    let segment_url_base = format!("/api/room/movie/live/hls/data/{}/{}/", room_id, media_id);
+    let segment_url_base = format!("/api/room/movie/live/hls/data/{room_id}/{media_id}/");
 
     // Generate HLS playlist with simple URL format
     let playlist = HlsStreamingApi::generate_playlist_with_pull_simple(
@@ -149,7 +148,7 @@ async fn handle_hls_playlist(
         &segment_url_base,
     )
     .await
-    .map_err(|e| AppError::internal_server_error(format!("Failed to generate HLS playlist: {}", e)))?;
+    .map_err(|e| AppError::internal_server_error(format!("Failed to generate HLS playlist: {e}")))?;
 
     debug!(
         room_id = %room_id,
@@ -168,7 +167,7 @@ async fn handle_hls_playlist(
 
 /// Handle HLS segment request
 ///
-/// GET /api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts
+/// GET /`api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts`
 ///
 /// Serves individual HLS TS segments.
 ///
@@ -228,9 +227,9 @@ async fn handle_hls_segment(
 
 /// Handle HLS segment request (disguised as PNG)
 ///
-/// GET /api/room/movie/live/hls/data/:room_id/:media_id/:segment.png
+/// GET /`api/room/movie/live/hls/data/:room_id/:media_id/:segment.png`
 ///
-/// Serves TS segments disguised as PNG images (TSDisguisedAsPng feature).
+/// Serves TS segments disguised as PNG images (`TSDisguisedAsPng` feature).
 /// Adds a PNG header to TS data to bypass certain filters.
 ///
 /// # Response

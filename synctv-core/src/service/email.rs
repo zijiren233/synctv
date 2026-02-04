@@ -78,6 +78,7 @@ impl std::fmt::Debug for EmailService {
 
 impl EmailService {
     /// Create a new email service
+    #[must_use] 
     pub fn new(config: Option<EmailConfig>) -> Self {
         Self {
             config,
@@ -88,6 +89,7 @@ impl EmailService {
     }
 
     /// Create with custom TTL
+    #[must_use] 
     pub fn with_ttl(config: Option<EmailConfig>, code_ttl_minutes: i64) -> Self {
         Self {
             config,
@@ -178,7 +180,7 @@ impl EmailService {
         if let Some(config) = &self.config {
             if let Err(e) = self.send_email(config, email, &code).await {
                 tracing::error!("Failed to send email: {}", e);
-                return Err(Error::Internal(format!("Failed to send email: {}", e)));
+                return Err(Error::Internal(format!("Failed to send email: {e}")));
             }
         }
 
@@ -269,7 +271,7 @@ impl EmailService {
                 .await
             {
                 tracing::error!("Failed to send verification email: {}", e);
-                return Err(Error::Internal(format!("Failed to send email: {}", e)));
+                return Err(Error::Internal(format!("Failed to send email: {e}")));
             }
         } else {
             tracing::warn!("Email service not configured, returning token directly");
@@ -304,7 +306,7 @@ impl EmailService {
                 .await
             {
                 tracing::error!("Failed to send password reset email: {}", e);
-                return Err(Error::Internal(format!("Failed to send email: {}", e)));
+                return Err(Error::Internal(format!("Failed to send email: {e}")));
             }
         } else {
             tracing::warn!("Email service not configured, returning token directly");
@@ -325,12 +327,11 @@ impl EmailService {
         let body = format!(
             "Welcome to SyncTV!\n\n\
             Please verify your email address by clicking the link below or entering the code:\n\n\
-            Verification Code: {}\n\n\
+            Verification Code: {token}\n\n\
             This code will expire in 24 hours.\n\n\
             If you didn't create a SyncTV account, please ignore this email.\n\
             Best regards,\n\
-            The SyncTV Team",
-            token
+            The SyncTV Team"
         );
 
         self.send_email_impl(config, to, subject, &body).await
@@ -346,12 +347,11 @@ impl EmailService {
         let subject = "Reset your SyncTV password";
         let body = format!(
             "You requested a password reset for your SyncTV account.\n\n\
-            Your password reset code is: {}\n\n\
+            Your password reset code is: {token}\n\n\
             This code will expire in 1 hour.\n\n\
             If you didn't request a password reset, please ignore this email and your password will remain unchanged.\n\
             Best regards,\n\
-            The SyncTV Team",
-            token
+            The SyncTV Team"
         );
 
         self.send_email_impl(config, to, subject, &body).await
@@ -395,7 +395,8 @@ impl EmailService {
     }
 
     /// Check if email service is configured
-    pub fn is_configured(&self) -> bool {
+    #[must_use] 
+    pub const fn is_configured(&self) -> bool {
         self.config.is_some()
     }
 }

@@ -1,6 +1,6 @@
 //! Bilibili gRPC Server Implementation
 //!
-//! Thin wrapper around BilibiliService that implements gRPC server trait.
+//! Thin wrapper around `BilibiliService` that implements gRPC server trait.
 
 use super::bilibili::{
     bilibili_server::Bilibili, Empty, GetDashPgcurlReq, GetDashPgcurlResp, GetDashVideoUrlReq,
@@ -15,13 +15,14 @@ use tonic::{Request, Response, Status};
 
 /// Bilibili gRPC server
 ///
-/// Thin wrapper that delegates to BilibiliService for actual implementation.
+/// Thin wrapper that delegates to `BilibiliService` for actual implementation.
 pub struct BilibiliService {
     service: BilibiliServiceImpl,
 }
 
 impl BilibiliService {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {
             service: BilibiliServiceImpl::new(),
         }
@@ -39,7 +40,7 @@ impl Bilibili for BilibiliService {
     async fn new_qr_code(&self, request: Request<Empty>) -> Result<Response<NewQrCodeResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.new_qr_code(req).await
-            .map_err(|e| Status::internal(format!("new_qr_code failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("new_qr_code failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -49,7 +50,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<LoginWithQrCodeResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.login_with_qr_code(req).await
-            .map_err(|e| Status::internal(format!("login_with_qr_code failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("login_with_qr_code failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -59,14 +60,14 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<NewCaptchaResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.new_captcha(req).await
-            .map_err(|e| Status::internal(format!("new_captcha failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("new_captcha failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
     async fn new_sms(&self, request: Request<NewSmsReq>) -> Result<Response<NewSmsResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.new_sms(req).await
-            .map_err(|e| Status::internal(format!("new_sms failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("new_sms failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -76,7 +77,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<LoginWithSmsResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.login_with_sms(req).await
-            .map_err(|e| Status::internal(format!("login_with_sms failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("login_with_sms failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -86,7 +87,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<VideoPageInfo>, Status> {
         let req = request.into_inner();
         let resp = self.service.parse_video_page(req).await
-            .map_err(|e| Status::internal(format!("parse_video_page failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("parse_video_page failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -96,7 +97,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<VideoUrl>, Status> {
         let req = request.into_inner();
         let resp = self.service.get_video_url(req).await
-            .map_err(|e| Status::internal(format!("get_video_url failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("get_video_url failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -106,7 +107,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<GetDashVideoUrlResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.get_dash_video_url(req).await
-            .map_err(|e| Status::internal(format!("get_dash_video_url failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("get_dash_video_url failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -116,7 +117,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<GetSubtitlesResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.get_subtitles(req).await
-            .map_err(|e| Status::internal(format!("get_subtitles failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("get_subtitles failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -126,7 +127,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<VideoPageInfo>, Status> {
         let req = request.into_inner();
         let resp = self.service.parse_pgc_page(req).await
-            .map_err(|e| Status::internal(format!("parse_pgc_page failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("parse_pgc_page failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -136,7 +137,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<VideoUrl>, Status> {
         let req = request.into_inner();
         let resp = self.service.get_pgcurl(req).await
-            .map_err(|e| Status::internal(format!("get_pgcurl failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("get_pgcurl failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -146,7 +147,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<GetDashPgcurlResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.get_dash_pgcurl(req).await
-            .map_err(|e| Status::internal(format!("get_dash_pgcurl failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("get_dash_pgcurl failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -156,14 +157,14 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<UserInfoResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.user_info(req).await
-            .map_err(|e| Status::internal(format!("user_info failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("user_info failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
     async fn r#match(&self, request: Request<MatchReq>) -> Result<Response<MatchResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.r#match(req).await
-            .map_err(|e| Status::internal(format!("match failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("match failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -173,7 +174,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<GetLiveStreamsResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.get_live_streams(req).await
-            .map_err(|e| Status::internal(format!("get_live_streams failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("get_live_streams failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -183,7 +184,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<VideoPageInfo>, Status> {
         let req = request.into_inner();
         let resp = self.service.parse_live_page(req).await
-            .map_err(|e| Status::internal(format!("parse_live_page failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("parse_live_page failed: {e}")))?;
         Ok(Response::new(resp))
     }
 
@@ -193,7 +194,7 @@ impl Bilibili for BilibiliService {
     ) -> Result<Response<GetLiveDanmuInfoResp>, Status> {
         let req = request.into_inner();
         let resp = self.service.get_live_danmu_info(req).await
-            .map_err(|e| Status::internal(format!("get_live_danmu_info failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("get_live_danmu_info failed: {e}")))?;
         Ok(Response::new(resp))
     }
 }

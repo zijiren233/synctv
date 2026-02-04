@@ -48,7 +48,8 @@ pub struct AddMemberOptions {
 
 impl AddMemberOptions {
     /// Create default options (all checks enabled, no max limit)
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {
             check_room_active: true,
             check_duplicate: true,
@@ -59,32 +60,37 @@ impl AddMemberOptions {
     }
 
     /// Set max members limit (enables the check)
-    pub fn with_max_members(mut self, max: u64) -> Self {
+    #[must_use] 
+    pub const fn with_max_members(mut self, max: u64) -> Self {
         self.max_members = max;
         self.check_max_members = true;
         self
     }
 
     /// Skip max members check
-    pub fn skip_max_members_check(mut self) -> Self {
+    #[must_use] 
+    pub const fn skip_max_members_check(mut self) -> Self {
         self.check_max_members = false;
         self
     }
 
     /// Skip room active check
-    pub fn skip_active_check(mut self) -> Self {
+    #[must_use] 
+    pub const fn skip_active_check(mut self) -> Self {
         self.check_room_active = false;
         self
     }
 
     /// Skip duplicate membership check
-    pub fn skip_duplicate_check(mut self) -> Self {
+    #[must_use] 
+    pub const fn skip_duplicate_check(mut self) -> Self {
         self.check_duplicate = false;
         self
     }
 
     /// Skip cache invalidation
-    pub fn skip_cache_invalidation(mut self) -> Self {
+    #[must_use] 
+    pub const fn skip_cache_invalidation(mut self) -> Self {
         self.invalidate_cache = false;
         self
     }
@@ -109,7 +115,8 @@ impl std::fmt::Debug for MemberService {
 
 impl MemberService {
     /// Create a new member service
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         member_repo: RoomMemberRepository,
         room_repo: RoomRepository,
         permission_service: PermissionService,
@@ -235,8 +242,8 @@ impl MemberService {
     /// Set member Allow/Deny permissions
     ///
     /// This implements the Allow/Deny pattern:
-    /// - added_permissions: Extra permissions to add to role default
-    /// - removed_permissions: Permissions to remove from role default
+    /// - `added_permissions`: Extra permissions to add to role default
+    /// - `removed_permissions`: Permissions to remove from role default
     pub async fn set_member_permissions(
         &self,
         room_id: RoomId,

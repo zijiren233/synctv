@@ -21,6 +21,7 @@ pub struct NodeInfo {
 }
 
 impl NodeInfo {
+    #[must_use] 
     pub fn new(node_id: String, grpc_address: String, http_address: String) -> Self {
         Self {
             node_id,
@@ -32,6 +33,7 @@ impl NodeInfo {
     }
 
     /// Check if node is stale (no recent heartbeat)
+    #[must_use] 
     pub fn is_stale(&self, timeout_secs: i64) -> bool {
         let now = Utc::now();
         let elapsed = now.signed_duration_since(self.last_heartbeat);
@@ -57,7 +59,7 @@ impl NodeRegistry {
         let redis_client = if let Some(url) = redis_url {
             Some(
                 redis::Client::open(url)
-                    .map_err(|e| Error::Configuration(format!("Failed to connect to Redis: {}", e)))?,
+                    .map_err(|e| Error::Configuration(format!("Failed to connect to Redis: {e}")))?,
             )
         } else {
             None
@@ -79,11 +81,11 @@ impl NodeRegistry {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(&self.node_id);
             let value = serde_json::to_string(&node_info)
-                .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {}", e)))?;
+                .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?;
 
             // Set with expiration (heartbeat_timeout * 2 for safety)
             redis::cmd("SETEX")
@@ -92,7 +94,7 @@ impl NodeRegistry {
                 .arg(&value)
                 .query_async::<()>(&mut conn)
                 .await
-                .map_err(|e| Error::Database(format!("Redis SETEX failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis SETEX failed: {e}")))?;
         }
 
         // Also update local cache
@@ -108,7 +110,7 @@ impl NodeRegistry {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(&self.node_id);
 
@@ -118,7 +120,7 @@ impl NodeRegistry {
                 .arg(self.heartbeat_timeout_secs * 2)
                 .query_async::<()>(&mut conn)
                 .await
-                .map_err(|e| Error::Database(format!("Redis EXPIRE failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis EXPIRE failed: {e}")))?;
         }
 
         // Update local heartbeat time
@@ -136,7 +138,7 @@ impl NodeRegistry {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(&self.node_id);
 
@@ -144,7 +146,7 @@ impl NodeRegistry {
                 .arg(&key)
                 .query_async::<()>(&mut conn)
                 .await
-                .map_err(|e| Error::Database(format!("Redis DEL failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis DEL failed: {e}")))?;
         }
 
         // Remove from local cache
@@ -160,7 +162,7 @@ impl NodeRegistry {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             // Get all node keys
             let pattern = format!("{}:*", Self::KEY_PREFIX);
@@ -168,7 +170,7 @@ impl NodeRegistry {
                 .arg(&pattern)
                 .query_async(&mut conn)
                 .await
-                .map_err(|e| Error::Database(format!("Redis KEYS failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis KEYS failed: {e}")))?;
 
             let mut nodes = Vec::new();
             for key in keys {
@@ -176,7 +178,7 @@ impl NodeRegistry {
                     .arg(&key)
                     .query_async(&mut conn)
                     .await
-                    .map_err(|e| Error::Database(format!("Redis GET failed: {}", e)))?;
+                    .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
 
                 if let Some(value) = value {
                     if let Ok(node_info) = serde_json::from_str::<NodeInfo>(&value) {
@@ -208,18 +210,18 @@ impl NodeRegistry {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(node_id);
             let value: Option<String> = redis::cmd("GET")
                 .arg(&key)
                 .query_async(&mut conn)
                 .await
-                .map_err(|e| Error::Database(format!("Redis GET failed: {}", e)))?;
+                .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
 
             if let Some(value) = value {
                 let node_info: NodeInfo = serde_json::from_str(&value)
-                    .map_err(|e| Error::Serialization(format!("Failed to deserialize node info: {}", e)))?;
+                    .map_err(|e| Error::Serialization(format!("Failed to deserialize node info: {e}")))?;
 
                 if node_info.is_stale(self.heartbeat_timeout_secs) {
                     return Ok(None);

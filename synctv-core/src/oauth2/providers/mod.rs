@@ -1,4 +1,4 @@
-//! OAuth2 provider implementations
+//! `OAuth2` provider implementations
 //!
 //! Each provider is implemented as a separate module with:
 //! 1. Its own provider struct
@@ -18,7 +18,7 @@ pub use google::{GoogleProvider, GoogleConfig};
 pub use logto::{LogtoProvider, LogtoConfig};
 pub use oidc::{OidcProvider, OidcConfig};
 
-/// Initialize OAuth2 provider registry
+/// Initialize `OAuth2` provider registry
 ///
 /// Call this during application startup to register all available provider types.
 pub fn init_providers() {

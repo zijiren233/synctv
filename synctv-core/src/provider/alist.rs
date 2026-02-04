@@ -1,7 +1,7 @@
-//! Alist MediaProvider Adapter
+//! Alist `MediaProvider` Adapter
 //!
-//! Adapter that calls AlistProviderClient to implement MediaProvider trait.
-//! ProviderClient abstracts local/remote implementation, so MediaProvider doesn't need to know.
+//! Adapter that calls `AlistProviderClient` to implement `MediaProvider` trait.
+//! `ProviderClient` abstracts local/remote implementation, so `MediaProvider` doesn't need to know.
 
 use super::{
     provider_client::{
@@ -17,16 +17,17 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Alist MediaProvider
+/// Alist `MediaProvider`
 ///
-/// Holds a reference to ProviderInstanceManager to select appropriate provider instance.
+/// Holds a reference to `ProviderInstanceManager` to select appropriate provider instance.
 pub struct AlistProvider {
     provider_instance_manager: Arc<ProviderInstanceManager>,
 }
 
 impl AlistProvider {
-    /// Create a new AlistProvider with ProviderInstanceManager
-    pub fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
+    /// Create a new `AlistProvider` with `ProviderInstanceManager`
+    #[must_use] 
+    pub const fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
         Self {
             provider_instance_manager,
         }
@@ -35,7 +36,7 @@ impl AlistProvider {
     /// Get Alist client for the given instance name
     ///
     /// Selection priority:
-    /// 1. Instance specified by instance_name parameter
+    /// 1. Instance specified by `instance_name` parameter
     /// 2. Fallback to singleton local client
     async fn get_client(&self, instance_name: Option<&str>) -> AlistClientArc {
         if let Some(name) = instance_name {
@@ -68,38 +69,38 @@ impl AlistProvider {
 
     /// Login to Alist
     ///
-    /// Takes grpc-generated LoginReq and returns token string
+    /// Takes grpc-generated `LoginReq` and returns token string
     pub async fn login(
         &self,
         req: synctv_providers::grpc::alist::LoginReq,
         instance_name: Option<&str>,
     ) -> Result<String, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.login(req).await.map_err(|e| e.into())
+        client.login(req).await.map_err(std::convert::Into::into)
     }
 
     /// List Alist directory
     ///
-    /// Takes grpc-generated FsListReq and returns FsListResp
+    /// Takes grpc-generated `FsListReq` and returns `FsListResp`
     pub async fn fs_list(
         &self,
         req: synctv_providers::grpc::alist::FsListReq,
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::alist::FsListResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.fs_list(req).await.map_err(|e| e.into())
+        client.fs_list(req).await.map_err(std::convert::Into::into)
     }
 
     /// Get Alist user info
     ///
-    /// Takes grpc-generated MeReq and returns MeResp
+    /// Takes grpc-generated `MeReq` and returns `MeResp`
     pub async fn me(
         &self,
         req: synctv_providers::grpc::alist::MeReq,
         instance_name: Option<&str>,
     ) -> Result<synctv_providers::grpc::alist::MeResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        client.me(req).await.map_err(|e| e.into())
+        client.me(req).await.map_err(std::convert::Into::into)
     }
 }
 
@@ -120,7 +121,7 @@ impl TryFrom<&Value> for AlistSourceConfig {
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
         serde_json::from_value(value.clone()).map_err(|e| {
-            ProviderError::InvalidConfig(format!("Failed to parse Alist source config: {}", e))
+            ProviderError::InvalidConfig(format!("Failed to parse Alist source config: {e}"))
         })
     }
 }
@@ -190,14 +191,14 @@ impl MediaProvider for AlistProvider {
             // Add transcoding quality options
             for (idx, task) in preview.transcoding_tasks.iter().enumerate() {
                 if !task.url.is_empty() {
-                    let quality_name = if !task.template_name.is_empty() {
-                        task.template_name.clone()
+                    let quality_name = if task.template_name.is_empty() {
+                        format!("quality_{idx}")
                     } else {
-                        format!("quality_{}", idx)
+                        task.template_name.clone()
                     };
 
                     playback_infos.insert(
-                        format!("transcoded_{}", quality_name),
+                        format!("transcoded_{quality_name}"),
                         PlaybackInfo {
                             urls: vec![task.url.clone()],
                             format: "hls".to_string(),

@@ -226,7 +226,7 @@ impl From<HttpFsGetResp> for crate::grpc::alist::FsGetResp {
             raw_url: resp.raw_url,
             readme: resp.readme,
             provider: resp.provider,
-            related: resp.related.into_iter().map(|r| r.into()).collect(),
+            related: resp.related.into_iter().map(std::convert::Into::into).collect(),
         }
     }
 }
@@ -248,7 +248,7 @@ impl From<HttpFsListContent> for crate::grpc::alist::fs_list_resp::FsListContent
 impl From<HttpFsListResp> for crate::grpc::alist::FsListResp {
     fn from(resp: HttpFsListResp) -> Self {
         Self {
-            content: resp.content.into_iter().map(|item| item.into()).collect(),
+            content: resp.content.into_iter().map(std::convert::Into::into).collect(),
             total: resp.total,
             readme: resp.readme,
             write: resp.write,
@@ -297,13 +297,13 @@ impl From<HttpVideoPreviewPlayInfo> for crate::grpc::alist::fs_other_resp::Video
             category: preview.category,
             live_transcoding_subtitle_task_list: preview.live_transcoding_subtitle_task_list
                 .into_iter()
-                .map(|sub| sub.into())
+                .map(std::convert::Into::into)
                 .collect(),
             live_transcoding_task_list: preview.live_transcoding_task_list
                 .into_iter()
-                .map(|task| task.into())
+                .map(std::convert::Into::into)
                 .collect(),
-            meta: preview.meta.map(|m| m.into()),
+            meta: preview.meta.map(std::convert::Into::into),
         }
     }
 }
@@ -313,7 +313,7 @@ impl From<HttpFsOtherResp> for crate::grpc::alist::FsOtherResp {
         Self {
             drive_id: resp.drive_id,
             file_id: resp.file_id,
-            video_preview_play_info: resp.video_preview_play_info.map(|preview| preview.into()),
+            video_preview_play_info: resp.video_preview_play_info.map(std::convert::Into::into),
         }
     }
 }
@@ -349,7 +349,7 @@ impl From<HttpFsSearchContent> for crate::grpc::alist::fs_search_resp::FsSearchC
 impl From<HttpFsSearchResp> for crate::grpc::alist::FsSearchResp {
     fn from(resp: HttpFsSearchResp) -> Self {
         Self {
-            content: resp.content.into_iter().map(|item| item.into()).collect(),
+            content: resp.content.into_iter().map(std::convert::Into::into).collect(),
             total: resp.total,
         }
     }

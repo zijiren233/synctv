@@ -38,7 +38,7 @@ impl RtmpStreamingServer {
 
     pub async fn start(&mut self) -> StreamResult<()> {
         let socket_addr: std::net::SocketAddr = self.rtmp_address.parse()
-            .map_err(|e| crate::error::StreamError::InvalidAddress(format!("Invalid RTMP address: {}", e)))?;
+            .map_err(|e| crate::error::StreamError::InvalidAddress(format!("Invalid RTMP address: {e}")))?;
 
         let listener = TcpListener::bind(socket_addr).await
             .map_err(crate::error::StreamError::IoError)?;

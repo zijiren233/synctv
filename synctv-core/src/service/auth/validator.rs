@@ -20,7 +20,8 @@ pub struct JwtValidator {
 
 impl JwtValidator {
     /// Create a new JWT validator
-    pub fn new(jwt_service: Arc<JwtService>) -> Self {
+    #[must_use] 
+    pub const fn new(jwt_service: Arc<JwtService>) -> Self {
         Self { jwt_service }
     }
 
@@ -53,7 +54,7 @@ impl JwtValidator {
 
     /// Validate JWT token and return user ID
     ///
-    /// Convenience method that extracts just the user_id from the token.
+    /// Convenience method that extracts just the `user_id` from the token.
     ///
     /// # Arguments
     /// * `token` - JWT token string
@@ -93,7 +94,7 @@ impl JwtValidator {
 
     /// Validate JWT from HTTP Authorization header and extract user ID
     ///
-    /// Convenience method for HTTP middleware that only needs the user_id.
+    /// Convenience method for HTTP middleware that only needs the `user_id`.
     ///
     /// # Arguments
     /// * `auth_header` - Authorization header value (e.g., "Bearer <token>")
@@ -148,7 +149,7 @@ impl JwtValidator {
 
     /// Validate JWT from gRPC metadata and extract user ID
     ///
-    /// Convenience method for gRPC interceptors that only need the user_id.
+    /// Convenience method for gRPC interceptors that only need the `user_id`.
     ///
     /// # Arguments
     /// * `metadata` - gRPC request metadata
@@ -163,7 +164,7 @@ impl JwtValidator {
     /// Validate JWT from gRPC metadata and return as gRPC Status
     ///
     /// This method is specifically designed for gRPC interceptors,
-    /// returning tonic::Status instead of crate::Error.
+    /// returning `tonic::Status` instead of `crate::Error`.
     ///
     /// # Arguments
     /// * `metadata` - gRPC request metadata
@@ -172,16 +173,16 @@ impl JwtValidator {
     /// Claims extracted from the token
     ///
     /// # Errors
-    /// - tonic::Status::unauthenticated for any validation failure
+    /// - `tonic::Status::unauthenticated` for any validation failure
     #[allow(clippy::result_large_err)]
     pub fn validate_grpc_as_status(&self, metadata: &MetadataMap) -> std::result::Result<Claims, Status> {
         let token = self
             .extract_grpc_token(metadata)
-            .map_err(|e| Status::unauthenticated(format!("Token extraction failed: {}", e)))?;
+            .map_err(|e| Status::unauthenticated(format!("Token extraction failed: {e}")))?;
 
         self.jwt_service
             .verify_access_token(&token)
-            .map_err(|e| Status::unauthenticated(format!("Token verification failed: {}", e)))
+            .map_err(|e| Status::unauthenticated(format!("Token verification failed: {e}")))
     }
 }
 

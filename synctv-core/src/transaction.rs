@@ -39,7 +39,7 @@ impl UnitOfWork {
     }
 
     /// Get the transaction for repository operations
-    pub fn transaction(&mut self) -> &mut Transaction<'static, Postgres> {
+    pub const fn transaction(&mut self) -> &mut Transaction<'static, Postgres> {
         self.tx.as_mut().expect("Transaction already consumed")
     }
 }

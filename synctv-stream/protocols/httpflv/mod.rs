@@ -33,7 +33,8 @@ pub struct HttpFlvState {
 }
 
 impl HttpFlvState {
-    pub fn new(registry: Arc<StreamRegistry>, stream_hub_event_sender: StreamHubEventSender) -> Self {
+    #[must_use] 
+    pub const fn new(registry: Arc<StreamRegistry>, stream_hub_event_sender: StreamHubEventSender) -> Self {
         Self {
             registry,
             stream_hub_event_sender,
@@ -43,7 +44,7 @@ impl HttpFlvState {
 
 /// Create HTTP-FLV router
 /// Routes:
-/// - GET /live/flv/:media_id - FLV streaming (requires auth with room_id in Extension)
+/// - GET /`live/flv/:media_id` - FLV streaming (requires auth with `room_id` in Extension)
 pub fn create_flv_router(state: HttpFlvState) -> Router {
     Router::new()
         .route("/live/flv/:media_id", get(handle_flv_stream))
@@ -51,7 +52,7 @@ pub fn create_flv_router(state: HttpFlvState) -> Router {
 }
 
 /// Handle FLV streaming request
-/// Path: GET /live/flv/:media_id
+/// Path: GET /`live/flv/:media_id`
 /// Requires: Extension<RoomId> from auth middleware
 async fn handle_flv_stream(
     Path(media_id): Path<String>,
@@ -85,7 +86,7 @@ async fn handle_flv_stream(
     let (tx, rx) = mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
 
     // Spawn FLV session
-    let stream_name = format!("{}/{}", room_id, media_id);
+    let stream_name = format!("{room_id}/{media_id}");
     let mut flv_session = HttpFlvSession::new(
         "live".to_string(),
         stream_name,
@@ -127,6 +128,7 @@ pub struct HttpFlvSession {
 }
 
 impl HttpFlvSession {
+    #[must_use] 
     pub fn new(
         app_name: String,
         stream_name: String,
@@ -191,10 +193,10 @@ impl HttpFlvSession {
                         // Write FLV header
                         self.muxer
                             .write_flv_header(self.has_audio, self.has_video)
-                            .map_err(|e| anyhow::anyhow!("Failed to write FLV header: {:?}", e))?;
+                            .map_err(|e| anyhow::anyhow!("Failed to write FLV header: {e:?}"))?;
                         self.muxer
                             .write_previous_tag_size(0)
-                            .map_err(|e| anyhow::anyhow!("Failed to write tag size: {:?}", e))?;
+                            .map_err(|e| anyhow::anyhow!("Failed to write tag size: {e:?}"))?;
                         self.flush_response_data()?;
 
                         // Write cached frames
@@ -236,7 +238,7 @@ impl HttpFlvSession {
                 let mut amf_writer = Amf0Writer::new();
                 amf_writer
                     .write_string(&String::from("@setDataFrame"))
-                    .map_err(|e| anyhow::anyhow!("Failed to write AMF string: {:?}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Failed to write AMF string: {e:?}"))?;
                 let (_, right) = data.split_at(amf_writer.len());
                 (BytesMut::from(right), timestamp, 18) // SCRIPT_DATA_AMF
             }
@@ -247,13 +249,13 @@ impl HttpFlvSession {
 
         self.muxer
             .write_flv_tag_header(tag_type, data_len, timestamp)
-            .map_err(|e| anyhow::anyhow!("Failed to write FLV tag header: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to write FLV tag header: {e:?}"))?;
         self.muxer
             .write_flv_tag_body(data)
-            .map_err(|e| anyhow::anyhow!("Failed to write FLV tag body: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to write FLV tag body: {e:?}"))?;
         self.muxer
             .write_previous_tag_size(data_len + HEADER_LENGTH)
-            .map_err(|e| anyhow::anyhow!("Failed to write tag size: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to write tag size: {e:?}"))?;
 
         self.flush_response_data()?;
 
@@ -301,8 +303,8 @@ impl HttpFlvSession {
 
         let result = event_result_receiver
             .await
-            .map_err(|e| anyhow::anyhow!("Event result channel error: {}", e))?
-            .map_err(|e| anyhow::anyhow!("Subscribe failed: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Event result channel error: {e}"))?
+            .map_err(|e| anyhow::anyhow!("Subscribe failed: {e:?}"))?;
         self.data_receiver = result
             .0
             .frame_receiver

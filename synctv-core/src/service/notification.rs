@@ -68,27 +68,28 @@ pub enum RoomEvent {
 }
 
 impl RoomEvent {
-    /// Convert RoomEvent to JSON string
+    /// Convert `RoomEvent` to JSON string
     pub fn to_json(&self) -> Result<String> {
         serde_json::to_string(self)
-            .map_err(|e| crate::Error::Internal(format!("Failed to serialize event: {}", e)))
+            .map_err(|e| crate::Error::Internal(format!("Failed to serialize event: {e}")))
     }
 
     /// Get event type name
-    pub fn event_type(&self) -> &'static str {
+    #[must_use] 
+    pub const fn event_type(&self) -> &'static str {
         match self {
-            RoomEvent::UserJoined { .. } => "user_joined",
-            RoomEvent::UserLeft { .. } => "user_left",
-            RoomEvent::ChatMessage { .. } => "chat_message",
-            RoomEvent::Danmaku { .. } => "danmaku",
-            RoomEvent::PlaybackStateChanged { .. } => "playback_state_changed",
-            RoomEvent::MediaAdded { .. } => "media_added",
-            RoomEvent::MediaRemoved { .. } => "media_removed",
-            RoomEvent::PlaylistReordered { .. } => "playlist_reordered",
-            RoomEvent::PermissionChanged { .. } => "permission_changed",
-            RoomEvent::MemberKicked { .. } => "member_kicked",
-            RoomEvent::SettingsUpdated { .. } => "settings_updated",
-            RoomEvent::RoomDeleted => "room_deleted",
+            Self::UserJoined { .. } => "user_joined",
+            Self::UserLeft { .. } => "user_left",
+            Self::ChatMessage { .. } => "chat_message",
+            Self::Danmaku { .. } => "danmaku",
+            Self::PlaybackStateChanged { .. } => "playback_state_changed",
+            Self::MediaAdded { .. } => "media_added",
+            Self::MediaRemoved { .. } => "media_removed",
+            Self::PlaylistReordered { .. } => "playlist_reordered",
+            Self::PermissionChanged { .. } => "permission_changed",
+            Self::MemberKicked { .. } => "member_kicked",
+            Self::SettingsUpdated { .. } => "settings_updated",
+            Self::RoomDeleted => "room_deleted",
         }
     }
 }
@@ -127,7 +128,7 @@ impl Default for NotificationConfig {
 /// Notification service
 ///
 /// Provides a high-level API for broadcasting room events.
-/// Uses an EventBroadcaster implementation for actual distribution.
+/// Uses an `EventBroadcaster` implementation for actual distribution.
 #[derive(Clone)]
 pub struct NotificationService {
     /// Event broadcaster
@@ -171,11 +172,13 @@ impl NotificationService {
     ///
     /// Returns a receiver that can be used to receive events for all rooms.
     /// This is useful for components that need to react to all room events.
+    #[must_use] 
     pub fn subscribe(&self) -> broadcast::Receiver<(RoomId, RoomEvent)> {
         self.event_tx.subscribe()
     }
 
     /// Get the event broadcaster
+    #[must_use] 
     pub fn broadcaster(&self) -> &Arc<dyn EventBroadcaster> {
         &self.broadcaster
     }

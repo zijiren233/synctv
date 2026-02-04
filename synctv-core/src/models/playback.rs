@@ -15,6 +15,7 @@ pub struct RoomPlaybackState {
 }
 
 impl RoomPlaybackState {
+    #[must_use] 
     pub fn new(room_id: RoomId) -> Self {
         Self {
             room_id,

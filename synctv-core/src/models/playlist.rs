@@ -31,17 +31,20 @@ pub struct Playlist {
 
 impl Playlist {
     /// Check if this is a root playlist
-    pub fn is_root(&self) -> bool {
+    #[must_use] 
+    pub const fn is_root(&self) -> bool {
         self.parent_id.is_none() && self.name.is_empty()
     }
 
     /// Check if this is a dynamic folder
-    pub fn is_dynamic(&self) -> bool {
+    #[must_use] 
+    pub const fn is_dynamic(&self) -> bool {
         self.source_provider.is_some()
     }
 
     /// Check if this is a static folder
-    pub fn is_static(&self) -> bool {
+    #[must_use] 
+    pub const fn is_static(&self) -> bool {
         self.source_provider.is_none()
     }
 }

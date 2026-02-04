@@ -5,7 +5,7 @@ use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use super::error::BilibiliError;
-use super::types::{self as types, *};
+use super::types::{self as types, VideoInfo, Quality, PlayUrlInfo, DurlItem, AnimeInfo};
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
 const REFERER: &str = "https://www.bilibili.com";
@@ -48,7 +48,7 @@ impl BilibiliClient {
         if let Some(cookies) = &self.cookies {
             let cookie_str = cookies
                 .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
+                .map(|(k, v)| format!("{k}={v}"))
                 .collect::<Vec<_>>()
                 .join("; ");
             req.header("Cookie", cookie_str)
@@ -104,7 +104,7 @@ impl BilibiliClient {
             data: Option<LoginData>,
         }
 
-        let url = format!("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={}", key);
+        let url = format!("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={key}");
         let req = self.client
             .get(&url)
             .header("Referer", "https://passport.bilibili.com/login");
@@ -233,7 +233,7 @@ impl BilibiliClient {
         // Get BUVID cookies
         let buvid_cookies = self.get_buvid_cookies().await?;
 
-        let seccode = format!("{}|jordan", validate);
+        let seccode = format!("{validate}|jordan");
         let params = [
             ("cid", "86"),
             ("tel", phone),
@@ -253,7 +253,7 @@ impl BilibiliClient {
 
         // Add BUVID cookies
         for (name, value) in buvid_cookies {
-            req = req.header("Cookie", format!("{}={}", name, value));
+            req = req.header("Cookie", format!("{name}={value}"));
         }
 
         let resp = req.send().await?;
@@ -332,12 +332,14 @@ impl BilibiliClient {
     }
 
     /// Extract BVID from URL
+    #[must_use] 
     pub fn extract_bvid(url: &str) -> Option<String> {
         let re = Regex::new(r"BV[a-zA-Z0-9]+").unwrap();
         re.find(url).map(|m| m.as_str().to_string())
     }
 
     /// Extract EPID from URL
+    #[must_use] 
     pub fn extract_epid(url: &str) -> Option<String> {
         let re = Regex::new(r"ep(\d+)").unwrap();
         re.captures(url).and_then(|cap| cap.get(1))
@@ -345,6 +347,7 @@ impl BilibiliClient {
     }
 
     /// Check if URL is a short link (b23.tv)
+    #[must_use] 
     pub fn is_short_link(url: &str) -> bool {
         url.contains("b23.tv")
     }
@@ -357,7 +360,7 @@ impl BilibiliClient {
 
     /// Get video information by BVID
     pub async fn get_video_info(&self, bvid: &str) -> Result<VideoInfo, BilibiliError> {
-        let url = format!("https://api.bilibili.com/x/web-interface/view?bvid={}", bvid);
+        let url = format!("https://api.bilibili.com/x/web-interface/view?bvid={bvid}");
         let response = self.client.get(&url).send().await?;
 
         let json: serde_json::Value = response.json().await?;
@@ -417,7 +420,7 @@ impl BilibiliClient {
 
     /// Get anime information by EPID
     pub async fn get_anime_info(&self, epid: &str) -> Result<AnimeInfo, BilibiliError> {
-        let url = format!("https://api.bilibili.com/pgc/view/web/season?ep_id={}", epid);
+        let url = format!("https://api.bilibili.com/pgc/view/web/season?ep_id={epid}");
         let response = self.client.get(&url).send().await?;
         let json: serde_json::Value = response.json().await?;
 
@@ -439,10 +442,10 @@ impl BilibiliClient {
 
     /// Parse video page to get video information
     pub async fn parse_video_page(&self, aid: u64, bvid: &str) -> Result<VideoPageInfo, BilibiliError> {
-        let url = if !bvid.is_empty() {
-            format!("https://api.bilibili.com/x/web-interface/view?bvid={}", bvid)
+        let url = if bvid.is_empty() {
+            format!("https://api.bilibili.com/x/web-interface/view?aid={aid}")
         } else {
-            format!("https://api.bilibili.com/x/web-interface/view?aid={}", aid)
+            format!("https://api.bilibili.com/x/web-interface/view?bvid={bvid}")
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
@@ -479,10 +482,10 @@ impl BilibiliClient {
     /// Get video playback URL (normal video, not DASH)
     pub async fn get_video_url(&self, aid: u64, bvid: &str, cid: u64, quality: Option<u32>) -> Result<VideoUrlInfo, BilibiliError> {
         let qn = quality.unwrap_or(80); // Default to 1080P
-        let url = if !bvid.is_empty() {
-            format!("https://api.bilibili.com/x/player/playurl?bvid={}&cid={}&qn={}", bvid, cid, qn)
+        let url = if bvid.is_empty() {
+            format!("https://api.bilibili.com/x/player/playurl?aid={aid}&cid={cid}&qn={qn}")
         } else {
-            format!("https://api.bilibili.com/x/player/playurl?aid={}&cid={}&qn={}", aid, cid, qn)
+            format!("https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&qn={qn}")
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
@@ -511,10 +514,10 @@ impl BilibiliClient {
 
     /// Get DASH video URL - returns structured DASH data for upper layer to generate MPD
     pub async fn get_dash_video_url(&self, aid: u64, bvid: &str, cid: u64) -> Result<(DashData, DashData), BilibiliError> {
-        let url = if !bvid.is_empty() {
-            format!("https://api.bilibili.com/x/player/wbi/playurl?bvid={}&cid={}&fnval=4048", bvid, cid)
+        let url = if bvid.is_empty() {
+            format!("https://api.bilibili.com/x/player/wbi/playurl?aid={aid}&cid={cid}&fnval=4048")
         } else {
-            format!("https://api.bilibili.com/x/player/wbi/playurl?aid={}&cid={}&fnval=4048", aid, cid)
+            format!("https://api.bilibili.com/x/player/wbi/playurl?bvid={bvid}&cid={cid}&fnval=4048")
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
@@ -534,10 +537,10 @@ impl BilibiliClient {
 
     /// Get subtitles for a video
     pub async fn get_subtitles(&self, aid: u64, bvid: &str, cid: u64) -> Result<HashMap<String, String>, BilibiliError> {
-        let url = if !bvid.is_empty() {
-            format!("https://api.bilibili.com/x/player/v2?bvid={}&cid={}", bvid, cid)
+        let url = if bvid.is_empty() {
+            format!("https://api.bilibili.com/x/player/v2?aid={aid}&cid={cid}")
         } else {
-            format!("https://api.bilibili.com/x/player/v2?aid={}&cid={}", aid, cid)
+            format!("https://api.bilibili.com/x/player/v2?bvid={bvid}&cid={cid}")
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
@@ -587,9 +590,9 @@ impl BilibiliClient {
     /// Parse PGC (anime/bangumi) page
     pub async fn parse_pgc_page(&self, epid: u64, ssid: u64) -> Result<VideoPageInfo, BilibiliError> {
         let url = if epid != 0 {
-            format!("https://api.bilibili.com/pgc/view/web/season?ep_id={}", epid)
+            format!("https://api.bilibili.com/pgc/view/web/season?ep_id={epid}")
         } else {
-            format!("https://api.bilibili.com/pgc/view/web/season?season_id={}", ssid)
+            format!("https://api.bilibili.com/pgc/view/web/season?season_id={ssid}")
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
@@ -632,8 +635,7 @@ impl BilibiliClient {
     pub async fn get_pgc_url(&self, epid: u64, cid: u64, quality: Option<u32>) -> Result<VideoUrlInfo, BilibiliError> {
         let qn = quality.unwrap_or(80);
         let url = format!(
-            "https://api.bilibili.com/pgc/player/web/playurl?ep_id={}&cid={}&qn={}",
-            epid, cid, qn
+            "https://api.bilibili.com/pgc/player/web/playurl?ep_id={epid}&cid={cid}&qn={qn}"
         );
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
@@ -663,8 +665,7 @@ impl BilibiliClient {
     /// Get DASH PGC URL - returns structured DASH data for upper layer to generate MPD
     pub async fn get_dash_pgc_url(&self, epid: u64, cid: u64) -> Result<(DashData, DashData), BilibiliError> {
         let url = format!(
-            "https://api.bilibili.com/pgc/player/web/playurl?ep_id={}&cid={}&fnval=4048",
-            epid, cid
+            "https://api.bilibili.com/pgc/player/web/playurl?ep_id={epid}&cid={cid}&fnval=4048"
         );
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
@@ -717,7 +718,7 @@ impl BilibiliClient {
 
     /// Parse live page
     pub async fn parse_live_page(&self, room_id: u64) -> Result<VideoPageInfo, BilibiliError> {
-        let url = format!("https://api.live.bilibili.com/room/v1/Room/get_info?room_id={}", room_id);
+        let url = format!("https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}");
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = req.send().await?;
@@ -751,10 +752,9 @@ impl BilibiliClient {
 
     /// Get live streams
     pub async fn get_live_streams(&self, room_id: u64, hls: bool) -> Result<Vec<LiveStream>, BilibiliError> {
-        let _protocol = if hls { 0 } else { 1 }; // 0: http_stream (FLV), 1: http_hls (HLS)
+        let _protocol = i32::from(!hls); // 0: http_stream (FLV), 1: http_hls (HLS)
         let url = format!(
-            "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id={}&protocol=0,1&format=0,1,2&codec=0,1&qn=10000&platform=web&ptype=8",
-            room_id
+            "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id={room_id}&protocol=0,1&format=0,1,2&codec=0,1&qn=10000&platform=web&ptype=8"
         );
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
@@ -778,9 +778,7 @@ impl BilibiliClient {
                                 let quality = codec["current_qn"].as_u64().unwrap_or(0) as u32;
                                 let desc = codec["accept_qn"].as_array()
                                     .and_then(|arr| arr.first())
-                                    .and_then(|v| v.as_u64())
-                                    .map(|q| format!("{}P", q))
-                                    .unwrap_or_else(|| "Unknown".to_string());
+                                    .and_then(serde_json::Value::as_u64).map_or_else(|| "Unknown".to_string(), |q| format!("{q}P"));
 
                                 let urls: Vec<String> = codec["url_info"].as_array()
                                     .map(|arr| {
@@ -788,7 +786,7 @@ impl BilibiliClient {
                                             .filter_map(|item| {
                                                 let host = item["host"].as_str()?;
                                                 let path = codec["base_url"].as_str()?;
-                                                Some(format!("{}{}", host, path))
+                                                Some(format!("{host}{path}"))
                                             })
                                             .collect()
                                     })
@@ -813,7 +811,7 @@ impl BilibiliClient {
 
     /// Get live danmaku server info
     pub async fn get_live_danmu_info(&self, room_id: u64) -> Result<LiveDanmuInfo, BilibiliError> {
-        let url = format!("https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id={}", room_id);
+        let url = format!("https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id={room_id}");
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = req.send().await?;
@@ -1000,14 +998,14 @@ impl From<&DashData> for crate::grpc::bilibili::DashInfo {
         Self {
             duration: data.duration,
             min_buffer_time: data.min_buffer_time,
-            video_streams: data.video_streams.iter().map(|v| v.into()).collect(),
-            audio_streams: data.audio_streams.iter().map(|a| a.into()).collect(),
+            video_streams: data.video_streams.iter().map(std::convert::Into::into).collect(),
+            audio_streams: data.audio_streams.iter().map(std::convert::Into::into).collect(),
         }
     }
 }
 
 /// Parse DASH info into structured format
-/// Returns (regular_dash, hevc_dash) where HEVC codecs are separated
+/// Returns (`regular_dash`, `hevc_dash`) where HEVC codecs are separated
 fn parse_dash_info(dash_info: &types::DashInfo) -> Result<(DashData, DashData), BilibiliError> {
     let duration = dash_info.duration;
     let min_buffer_time = dash_info.min_buffer_time;

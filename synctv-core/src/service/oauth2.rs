@@ -9,13 +9,13 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::{
-    models::{oauth2_client::*, UserId},
+    models::{oauth2_client::OAuth2Provider, UserId},
     repository::UserOAuthProviderRepository,
     oauth2::Provider as OAuth2ProviderTrait,
     Error, Result,
 };
 
-/// OAuth2 state (for CSRF protection during authorization flow)
+/// `OAuth2` state (for CSRF protection during authorization flow)
 #[derive(Debug, Clone)]
 pub struct OAuth2State {
     pub instance_name: String,
@@ -23,7 +23,7 @@ pub struct OAuth2State {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// OAuth2 user info from provider (service layer)
+/// `OAuth2` user info from provider (service layer)
 #[derive(Debug, Clone)]
 pub struct OAuth2UserInfo {
     pub provider: OAuth2Provider,
@@ -33,7 +33,7 @@ pub struct OAuth2UserInfo {
     pub avatar: Option<String>,
 }
 
-/// OAuth2 authentication service
+/// `OAuth2` authentication service
 ///
 /// Handles OAuth2/OIDC login flow:
 /// 1. Generate authorization URL with PKCE
@@ -58,7 +58,8 @@ impl std::fmt::Debug for OAuth2Service {
 }
 
 impl OAuth2Service {
-    /// Create new OAuth2 service
+    /// Create new `OAuth2` service
+    #[must_use] 
     pub fn new(repository: UserOAuthProviderRepository) -> Self {
         Self {
             repository,
@@ -68,7 +69,7 @@ impl OAuth2Service {
         }
     }
 
-    /// Register an OAuth2 provider instance
+    /// Register an `OAuth2` provider instance
     ///
     /// # Arguments
     /// * `instance_name` - Unique instance name (e.g., "github", "logto1", "logto2")
@@ -97,14 +98,14 @@ impl OAuth2Service {
     ) -> Result<(String, String)> {
         let providers = self.providers.read().await;
         let provider = providers.get(instance_name)
-            .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {}", instance_name)))?;
+            .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {instance_name}")))?;
 
         // Generate state token
         let state_token = nanoid::nanoid!(32);
 
         // Generate authorization URL using provider
         let auth_url = provider.new_auth_url(&state_token).await
-            .map_err(|e| Error::Internal(format!("Failed to generate authorization URL: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to generate authorization URL: {e}")))?;
 
         // Store state for verification during callback
         let oauth_state = OAuth2State {
@@ -124,7 +125,7 @@ impl OAuth2Service {
         Ok((auth_url, state_token))
     }
 
-    /// Verify OAuth2 state during callback
+    /// Verify `OAuth2` state during callback
     pub async fn verify_state(&self, state_token: &str) -> Result<OAuth2State> {
         let mut states = self.states.write().await;
         states
@@ -142,16 +143,16 @@ impl OAuth2Service {
         let provider_types = self.provider_types.read().await;
 
         let provider = providers.get(instance_name)
-            .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {}", instance_name)))?;
+            .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {instance_name}")))?;
 
         let provider_type = provider_types.get(instance_name)
-            .ok_or_else(|| Error::InvalidInput(format!("Provider type not found: {}", instance_name)))?;
+            .ok_or_else(|| Error::InvalidInput(format!("Provider type not found: {instance_name}")))?;
 
         debug!("Exchanging code for user info from {}", instance_name);
 
         // Use provider to get user info
         let user_info = provider.get_user_info(code).await
-            .map_err(|e| Error::Internal(format!("Failed to get user info: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to get user info: {e}")))?;
 
         // Convert provider user info to service user info
         let service_user_info = OAuth2UserInfo {
@@ -187,7 +188,7 @@ impl OAuth2Service {
             .await
     }
 
-    /// Find user by OAuth2 provider
+    /// Find user by `OAuth2` provider
     pub async fn find_user_by_provider(
         &self,
         provider: &OAuth2Provider,
@@ -203,7 +204,7 @@ impl OAuth2Service {
         }
     }
 
-    /// Get all OAuth2 providers for a user
+    /// Get all `OAuth2` providers for a user
     pub async fn get_user_providers(&self, user_id: &UserId) -> Result<Vec<OAuth2Provider>> {
         let mappings = self.repository.find_by_user(user_id).await?;
         Ok(mappings
@@ -212,7 +213,7 @@ impl OAuth2Service {
             .collect())
     }
 
-    /// Unlink OAuth2 provider from user
+    /// Unlink `OAuth2` provider from user
     pub async fn unlink_provider(
         &self,
         user_id: &UserId,
@@ -224,7 +225,7 @@ impl OAuth2Service {
             .await
     }
 
-    /// Clean up expired OAuth2 states (maintenance task)
+    /// Clean up expired `OAuth2` states (maintenance task)
     pub async fn cleanup_expired_states(&self, max_age_seconds: i64) -> Result<()> {
         let mut states = self.states.write().await;
         let now = chrono::Utc::now();

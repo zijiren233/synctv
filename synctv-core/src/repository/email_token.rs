@@ -27,7 +27,8 @@ pub struct EmailTokenRepository {
 }
 
 impl EmailTokenRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -40,11 +41,11 @@ impl EmailTokenRepository {
         expires_at: chrono::DateTime<Utc>,
     ) -> Result<EmailToken> {
         let row = sqlx::query(
-            r#"
+            r"
             INSERT INTO email_tokens (token, user_id, token_type, expires_at, created_at)
             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
             RETURNING id, token, user_id, token_type, expires_at, used_at, created_at
-            "#,
+            ",
         )
         .bind(token)
         .bind(user_id.as_str())
@@ -60,11 +61,11 @@ impl EmailTokenRepository {
     /// Get token by token string
     pub async fn get(&self, token: &str) -> Result<Option<EmailToken>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT id, token, user_id, token_type, expires_at, used_at, created_at
             FROM email_tokens
             WHERE token = $1
-            "#,
+            ",
         )
         .bind(token)
         .fetch_optional(&self.pool)
@@ -79,12 +80,12 @@ impl EmailTokenRepository {
     /// Mark token as used
     pub async fn mark_as_used(&self, token: &str) -> Result<EmailToken> {
         let row = sqlx::query(
-            r#"
+            r"
             UPDATE email_tokens
             SET used_at = CURRENT_TIMESTAMP
             WHERE token = $1
             RETURNING id, token, user_id, token_type, expires_at, used_at, created_at
-            "#,
+            ",
         )
         .bind(token)
         .fetch_one(&self.pool)
@@ -106,10 +107,10 @@ impl EmailTokenRepository {
         token_type: EmailTokenType,
     ) -> Result<u64> {
         let result = sqlx::query(
-            r#"
+            r"
             DELETE FROM email_tokens
             WHERE user_id = $1 AND token_type = $2 AND used_at IS NULL
-            "#,
+            ",
         )
         .bind(user_id.as_str())
         .bind(token_type.as_str())
@@ -123,10 +124,10 @@ impl EmailTokenRepository {
     /// Cleanup expired tokens
     pub async fn cleanup_expired(&self) -> Result<usize> {
         let result = sqlx::query(
-            r#"
+            r"
             DELETE FROM email_tokens
             WHERE expires_at < CURRENT_TIMESTAMP
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await

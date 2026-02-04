@@ -33,7 +33,8 @@ impl std::fmt::Debug for ChatService {
 
 impl ChatService {
     /// Create a new chat service
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         chat_repository: Arc<ChatRepository>,
         rate_limiter: RateLimiter,
         content_filter: ContentFilter,
@@ -69,7 +70,7 @@ impl ChatService {
             .check_rate_limit(&rate_key, 10, 1)
             .await
         {
-            return Err(Error::InvalidInput(format!("Rate limit exceeded: {}", e)));
+            return Err(Error::InvalidInput(format!("Rate limit exceeded: {e}")));
         }
 
         // Validate content length
@@ -94,7 +95,7 @@ impl ChatService {
         let filtered_content = self
             .content_filter
             .filter_chat(&content)
-            .map_err(|e| Error::InvalidInput(format!("Content filter error: {}", e)))?;
+            .map_err(|e| Error::InvalidInput(format!("Content filter error: {e}")))?;
 
         // Create message
         let message = ChatMessage::new(room_id.clone(), user_id.clone(), filtered_content);
@@ -182,7 +183,7 @@ impl ChatService {
             .check_rate_limit(&rate_key, 20, 1)
             .await
         {
-            return Err(Error::InvalidInput(format!("Rate limit exceeded: {}", e)));
+            return Err(Error::InvalidInput(format!("Rate limit exceeded: {e}")));
         }
 
         // Validate content length
@@ -205,7 +206,7 @@ impl ChatService {
         let filtered_content = self
             .content_filter
             .filter_danmaku(&request.content)
-            .map_err(|e| Error::InvalidInput(format!("Content filter error: {}", e)))?;
+            .map_err(|e| Error::InvalidInput(format!("Content filter error: {e}")))?;
 
         // Log before moving values
         info!(

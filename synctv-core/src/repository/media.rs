@@ -16,7 +16,8 @@ pub struct MediaRepository {
 }
 
 impl MediaRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -26,14 +27,14 @@ impl MediaRepository {
         let metadata_json = serde_json::to_value(&media.metadata)?;
 
         let row = sqlx::query(
-            r#"
+            r"
             INSERT INTO media (id, playlist_id, room_id, creator_id, name, position,
                               source_provider, source_config, metadata, provider_instance_name, added_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              RETURNING id, playlist_id, room_id, creator_id, name, position,
                        source_provider, source_config, metadata, provider_instance_name,
                        added_at, deleted_at
-            "#
+            "
         )
         .bind(media.id.as_str())
         .bind(media.playlist_id.as_str())
@@ -66,14 +67,14 @@ impl MediaRepository {
             let metadata_json = serde_json::to_value(&item.metadata)?;
 
             let row = sqlx::query(
-                r#"
+                r"
                 INSERT INTO media (id, playlist_id, room_id, creator_id, name, position,
                                   source_provider, source_config, metadata, provider_instance_name, added_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                  RETURNING id, playlist_id, room_id, creator_id, name, position,
                            source_provider, source_config, metadata, provider_instance_name,
                            added_at, deleted_at
-                "#
+                "
             )
             .bind(item.id.as_str())
             .bind(item.playlist_id.as_str())
@@ -104,7 +105,7 @@ impl MediaRepository {
         let metadata_json = serde_json::to_value(&media.metadata)?;
 
         let row = sqlx::query(
-            r#"
+            r"
             UPDATE media
             SET name = $2, position = $3, source_config = $4, metadata = $5,
                 provider_instance_name = $6
@@ -112,7 +113,7 @@ impl MediaRepository {
              RETURNING id, playlist_id, room_id, creator_id, name, position,
                        source_provider, source_config, metadata, provider_instance_name,
                        added_at, deleted_at
-            "#
+            "
         )
         .bind(media.id.as_str())
         .bind(&media.name)
@@ -129,13 +130,13 @@ impl MediaRepository {
     /// Get media by ID
     pub async fn get_by_id(&self, media_id: &MediaId) -> Result<Option<Media>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT id, playlist_id, room_id, creator_id, name, position,
                    source_provider, source_config, metadata, provider_instance_name,
                    added_at, deleted_at
              FROM media
              WHERE id = $1 AND deleted_at IS NULL
-            "#
+            "
         )
         .bind(media_id.as_str())
         .fetch_optional(&self.pool)
@@ -150,14 +151,14 @@ impl MediaRepository {
     /// Get playlist for a room (all media in room's root playlist and sub-playlists)
     pub async fn get_playlist(&self, room_id: &RoomId) -> Result<Vec<Media>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT id, playlist_id, room_id, creator_id, name, position,
                    source_provider, source_config, metadata, provider_instance_name,
                    added_at, deleted_at
              FROM media
              WHERE room_id = $1 AND deleted_at IS NULL
              ORDER BY playlist_id, position ASC
-            "#
+            "
         )
         .bind(room_id.as_str())
         .fetch_all(&self.pool)
@@ -169,14 +170,14 @@ impl MediaRepository {
     /// Get media in a specific playlist
     pub async fn get_by_playlist(&self, playlist_id: &PlaylistId) -> Result<Vec<Media>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT id, playlist_id, room_id, creator_id, name, position,
                    source_provider, source_config, metadata, provider_instance_name,
                    added_at, deleted_at
              FROM media
              WHERE playlist_id = $1 AND deleted_at IS NULL
              ORDER BY position ASC
-            "#
+            "
         )
         .bind(playlist_id.as_str())
         .fetch_all(&self.pool)
@@ -196,9 +197,9 @@ impl MediaRepository {
 
         // Get total count
         let total: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*) FROM media WHERE playlist_id = $1 AND deleted_at IS NULL
-            "#
+            "
         )
         .bind(playlist_id.as_str())
         .fetch_one(&self.pool)
@@ -206,7 +207,7 @@ impl MediaRepository {
 
         // Get paginated results
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT id, playlist_id, room_id, creator_id, name, position,
                    source_provider, source_config, metadata, provider_instance_name,
                    added_at, deleted_at
@@ -214,11 +215,11 @@ impl MediaRepository {
              WHERE playlist_id = $1 AND deleted_at IS NULL
              ORDER BY position ASC
              LIMIT $2 OFFSET $3
-            "#
+            "
         )
         .bind(playlist_id.as_str())
-        .bind(page_size as i64)
-        .bind(offset as i64)
+        .bind(i64::from(page_size))
+        .bind(i64::from(offset))
         .fetch_all(&self.pool)
         .await?;
 
@@ -230,11 +231,11 @@ impl MediaRepository {
     /// Delete media from playlist (soft delete)
     pub async fn delete(&self, media_id: &MediaId) -> Result<bool> {
         let result = sqlx::query(
-            r#"
+            r"
             UPDATE media
              SET deleted_at = $2
              WHERE id = $1 AND deleted_at IS NULL
-            "#
+            "
         )
         .bind(media_id.as_str())
         .bind(chrono::Utc::now())
@@ -247,11 +248,11 @@ impl MediaRepository {
     /// Delete all media in a playlist
     pub async fn delete_by_playlist(&self, playlist_id: &PlaylistId) -> Result<usize> {
         let result = sqlx::query(
-            r#"
+            r"
             UPDATE media
              SET deleted_at = $2
              WHERE playlist_id = $1 AND deleted_at IS NULL
-            "#
+            "
         )
         .bind(playlist_id.as_str())
         .bind(chrono::Utc::now())
@@ -297,9 +298,9 @@ impl MediaRepository {
     /// Get next available position in playlist
     pub async fn get_next_position(&self, playlist_id: &PlaylistId) -> Result<i32> {
         let max_pos: Option<i32> = sqlx::query_scalar(
-            r#"
+            r"
             SELECT MAX(position) FROM media WHERE playlist_id = $1 AND deleted_at IS NULL
-            "#
+            "
         )
         .bind(playlist_id.as_str())
         .fetch_one(&self.pool)
@@ -311,9 +312,9 @@ impl MediaRepository {
     /// Count media items in a playlist
     pub async fn count_by_playlist(&self, playlist_id: &PlaylistId) -> Result<i64> {
         let count: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*) FROM media WHERE playlist_id = $1 AND deleted_at IS NULL
-            "#
+            "
         )
         .bind(playlist_id.as_str())
         .fetch_one(&self.pool)

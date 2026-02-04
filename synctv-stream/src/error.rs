@@ -58,12 +58,12 @@ pub type StreamResult<T> = Result<T, StreamError>;
 
 impl From<redis::RedisError> for StreamError {
     fn from(err: redis::RedisError) -> Self {
-        StreamError::RedisError(err.to_string())
+        Self::RedisError(err.to_string())
     }
 }
 
 impl From<tonic::transport::Error> for StreamError {
     fn from(err: tonic::transport::Error) -> Self {
-        StreamError::GrpcError(err.to_string())
+        Self::GrpcError(err.to_string())
     }
 }

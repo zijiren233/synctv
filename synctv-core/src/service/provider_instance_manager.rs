@@ -18,7 +18,7 @@ use tonic_health::pb::{health_client::HealthClient, HealthCheckRequest};
 /// When no remote instance is found, providers fallback to singleton local clients.
 ///
 /// Architecture:
-/// - `instances`: HashMap of remote gRPC channels (indexed by name)
+/// - `instances`: `HashMap` of remote gRPC channels (indexed by name)
 /// - `get(name)`: Returns Some(channel) if remote instance found, None otherwise
 #[derive(Debug)]
 pub struct ProviderInstanceManager {
@@ -30,7 +30,8 @@ pub struct ProviderInstanceManager {
 }
 
 impl ProviderInstanceManager {
-    /// Create a new ProviderInstanceManager
+    /// Create a new `ProviderInstanceManager`
+    #[must_use] 
     pub fn new(repository: Arc<ProviderInstanceRepository>) -> Self {
         Self {
             instances: Arc::new(RwLock::new(HashMap::new())),
@@ -82,7 +83,7 @@ impl ProviderInstanceManager {
         // Parse timeout
         let timeout = config
             .parse_timeout()
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         // Create endpoint
         let mut endpoint = Endpoint::from_shared(config.endpoint.clone())?
@@ -224,7 +225,7 @@ impl ProviderInstanceManager {
             .repository
             .get_by_name(name)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Instance '{}' not found", name))?;
+            .ok_or_else(|| anyhow::anyhow!("Instance '{name}' not found"))?;
 
         // Create connection and add to registry
         let channel = Self::create_grpc_channel(&config).await?;

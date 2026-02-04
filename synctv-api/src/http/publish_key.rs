@@ -9,7 +9,7 @@ use axum::{
     routing::post,
     Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tracing::info;
 
 use crate::http::{AppState, AppError, AppResult, middleware::AuthUser};
@@ -48,7 +48,7 @@ pub fn create_publish_key_router() -> Router<AppState> {
 /// Requires authentication
 ///
 /// Generates a JWT token for a specific media item.
-/// Stream name format: {room_id}/{media_id}
+/// Stream name format: {`room_id}/{media_id`}
 ///
 /// Based on synctv-go implementation:
 /// - Endpoint: POST /api/room/movie/:movieId/live/publishKey
@@ -73,13 +73,13 @@ pub async fn generate_publish_key(
         .room_service
         .check_permission(&room_id, &user_id, synctv_core::models::PermissionBits::START_LIVE)
         .await
-        .map_err(|e| AppError::forbidden(format!("Permission denied: {}", e)))?;
+        .map_err(|e| AppError::forbidden(format!("Permission denied: {e}")))?;
 
     // Generate publish key for this specific media item
     let publish_key = publish_key_service
         .generate_publish_key(room_id.clone(), media_id.clone(), user_id.clone())
         .await
-        .map_err(|e| AppError::internal_server_error(format!("Failed to generate publish key: {}", e)))?;
+        .map_err(|e| AppError::internal_server_error(format!("Failed to generate publish key: {e}")))?;
 
     // Construct RTMP URL and stream key
     // Stream name format: {room_id}/{media_id}

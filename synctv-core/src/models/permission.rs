@@ -68,10 +68,10 @@ impl PermissionBits {
     /// Kick member
     pub const KICK_MEMBER: u64 = 1 << 21;
 
-    /// Invite user (alias for APPROVE_MEMBER)
+    /// Invite user (alias for `APPROVE_MEMBER`)
     pub const INVITE_USER: u64 = 1 << 20;
 
-    /// Kick user (alias for KICK_MEMBER)
+    /// Kick user (alias for `KICK_MEMBER`)
     pub const KICK_USER: u64 = 1 << 21;
 
     /// Ban/unban member
@@ -80,7 +80,7 @@ impl PermissionBits {
     /// Set member permissions
     pub const SET_MEMBER_PERMISSIONS: u64 = 1 << 23;
 
-    /// Grant permissions to members (alias for SET_MEMBER_PERMISSIONS)
+    /// Grant permissions to members (alias for `SET_MEMBER_PERMISSIONS`)
     pub const GRANT_PERMISSION: u64 = 1 << 23;
 
     /// Manage admins (promote/demote)
@@ -97,7 +97,7 @@ impl PermissionBits {
     /// Delete chat messages
     pub const DELETE_CHAT: u64 = 1 << 32;
 
-    /// Delete messages (alias for DELETE_CHAT)
+    /// Delete messages (alias for `DELETE_CHAT`)
     pub const DELETE_MESSAGE: u64 = 1 << 32;
 
     /// View room statistics
@@ -111,28 +111,28 @@ impl PermissionBits {
 
     // ===== Aliases for backward compatibility =====
 
-    /// Update room settings (alias for SET_ROOM_SETTINGS)
+    /// Update room settings (alias for `SET_ROOM_SETTINGS`)
     pub const UPDATE_ROOM_SETTINGS: u64 = 1 << 30;
 
-    /// Add media (alias for ADD_MOVIE)
+    /// Add media (alias for `ADD_MOVIE`)
     pub const ADD_MEDIA: u64 = 1 << 1;
 
-    /// Remove media (alias for DELETE_MOVIE_ANY)
+    /// Remove media (alias for `DELETE_MOVIE_ANY`)
     pub const REMOVE_MEDIA: u64 = 1 << 3;
 
-    /// Switch media (alias for CHANGE_CURRENT_MOVIE)
+    /// Switch media (alias for `CHANGE_CURRENT_MOVIE`)
     pub const SWITCH_MEDIA: u64 = 1 << 11;
 
-    /// Play/pause (alias for PLAY_CONTROL)
+    /// Play/pause (alias for `PLAY_CONTROL`)
     pub const PLAY_PAUSE: u64 = 1 << 10;
 
-    /// Seek (alias for PLAY_CONTROL)
+    /// Seek (alias for `PLAY_CONTROL`)
     pub const SEEK: u64 = 1 << 10;
 
-    /// Change speed (alias for CHANGE_PLAYBACK_RATE)
+    /// Change speed (alias for `CHANGE_PLAYBACK_RATE`)
     pub const CHANGE_SPEED: u64 = 1 << 12;
 
-    /// Revoke permission (alias for SET_MEMBER_PERMISSIONS)
+    /// Revoke permission (alias for `SET_MEMBER_PERMISSIONS`)
     pub const REVOKE_PERMISSION: u64 = 1 << 23;
 
     // ===== View Permissions (40-49) =====
@@ -191,41 +191,46 @@ impl PermissionBits {
 
     pub const NONE: u64 = 0;
 
-    pub fn new(bits: u64) -> Self {
+    #[must_use] 
+    pub const fn new(bits: u64) -> Self {
         Self(bits)
     }
 
-    pub fn empty() -> Self {
+    #[must_use] 
+    pub const fn empty() -> Self {
         Self(Self::NONE)
     }
 
     /// Check if has specific permission
-    pub fn has(&self, permission: u64) -> bool {
+    #[must_use] 
+    pub const fn has(&self, permission: u64) -> bool {
         (self.0 & permission) != 0
     }
 
     /// Check if has all specified permissions
-    pub fn has_all(&self, permissions: u64) -> bool {
+    #[must_use] 
+    pub const fn has_all(&self, permissions: u64) -> bool {
         (self.0 & permissions) == permissions
     }
 
     /// Check if has any of the specified permissions
-    pub fn has_any(&self, permissions: u64) -> bool {
+    #[must_use] 
+    pub const fn has_any(&self, permissions: u64) -> bool {
         (self.0 & permissions) != 0
     }
 
     /// Add permission (Allow pattern)
-    pub fn grant(&mut self, permission: u64) {
+    pub const fn grant(&mut self, permission: u64) {
         self.0 |= permission;
     }
 
     /// Remove permission (Deny pattern)
-    pub fn revoke(&mut self, permission: u64) {
+    pub const fn revoke(&mut self, permission: u64) {
         self.0 &= !permission;
     }
 
     /// Set permission state
-    pub fn set(&mut self, permission: u64, enabled: bool) {
+    pub const fn set(&mut self, permission: u64, enabled: bool) {
         if enabled {
             self.grant(permission);
         } else {
@@ -234,17 +239,17 @@ impl PermissionBits {
     }
 
     /// Add permissions (alias for grant)
-    pub fn add(&mut self, permission: u64) {
+    pub const fn add(&mut self, permission: u64) {
         self.grant(permission);
     }
 
     /// Remove permissions (alias for revoke)
-    pub fn remove(&mut self, permission: u64) {
+    pub const fn remove(&mut self, permission: u64) {
         self.revoke(permission);
     }
 
     /// Toggle permission
-    pub fn toggle(&mut self, permission: u64) {
+    pub const fn toggle(&mut self, permission: u64) {
         self.0 ^= permission;
     }
 }
@@ -264,22 +269,23 @@ impl Default for PermissionBits {
 pub enum Role {
     /// Room creator - has all permissions (fixed, cannot be modified)
     Creator,
-    /// Room administrator - inherits from DEFAULT_ADMIN with possible custom overrides
+    /// Room administrator - inherits from `DEFAULT_ADMIN` with possible custom overrides
     Admin,
-    /// Regular member - inherits from DEFAULT_MEMBER with possible custom overrides
+    /// Regular member - inherits from `DEFAULT_MEMBER` with possible custom overrides
     Member,
-    /// Guest - inherits from DEFAULT_GUEST with possible custom overrides
+    /// Guest - inherits from `DEFAULT_GUEST` with possible custom overrides
     Guest,
 }
 
 impl Role {
     /// Get base permissions for this role (before custom Allow/Deny modifications)
-    pub fn permissions(&self) -> PermissionBits {
+    #[must_use] 
+    pub const fn permissions(&self) -> PermissionBits {
         match self {
-            Role::Creator => PermissionBits(PermissionBits::ALL),
-            Role::Admin => PermissionBits(PermissionBits::DEFAULT_ADMIN),
-            Role::Member => PermissionBits(PermissionBits::DEFAULT_MEMBER),
-            Role::Guest => PermissionBits(PermissionBits::DEFAULT_GUEST),
+            Self::Creator => PermissionBits(PermissionBits::ALL),
+            Self::Admin => PermissionBits(PermissionBits::DEFAULT_ADMIN),
+            Self::Member => PermissionBits(PermissionBits::DEFAULT_MEMBER),
+            Self::Guest => PermissionBits(PermissionBits::DEFAULT_GUEST),
         }
     }
 }
@@ -289,11 +295,11 @@ impl FromStr for Role {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "creator" => Ok(Role::Creator),
-            "admin" => Ok(Role::Admin),
-            "member" => Ok(Role::Member),
-            "guest" => Ok(Role::Guest),
-            _ => Err(format!("Unknown role: {}", s)),
+            "creator" => Ok(Self::Creator),
+            "admin" => Ok(Self::Admin),
+            "member" => Ok(Self::Member),
+            "guest" => Ok(Self::Guest),
+            _ => Err(format!("Unknown role: {s}")),
         }
     }
 }
@@ -301,10 +307,10 @@ impl FromStr for Role {
 impl std::fmt::Display for Role {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Role::Creator => write!(f, "creator"),
-            Role::Admin => write!(f, "admin"),
-            Role::Member => write!(f, "member"),
-            Role::Guest => write!(f, "guest"),
+            Self::Creator => write!(f, "creator"),
+            Self::Admin => write!(f, "admin"),
+            Self::Member => write!(f, "member"),
+            Self::Guest => write!(f, "guest"),
         }
     }
 }

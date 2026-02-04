@@ -17,7 +17,7 @@ pub struct ProviderInstance {
     /// Instance name (primary key, unique identifier)
     pub name: String,
 
-    /// gRPC service endpoint (e.g., "grpc://beijing.example.com:50051")
+    /// gRPC service endpoint (e.g., "<grpc://beijing.example.com:50051>")
     pub endpoint: String,
 
     /// Human-readable description
@@ -53,6 +53,7 @@ pub struct ProviderInstance {
 
 impl ProviderInstance {
     /// Check if this instance supports a specific provider type
+    #[must_use] 
     pub fn supports_provider(&self, provider: &str) -> bool {
         self.providers.contains(&provider.to_string())
     }
@@ -102,15 +103,17 @@ pub struct UserProviderCredential {
 }
 
 impl UserProviderCredential {
-    /// Fixed server_id for Bilibili (ensures one credential per user)
+    /// Fixed `server_id` for Bilibili (ensures one credential per user)
     pub const BILIBILI_SERVER_ID: &'static str = "bilibili";
 
-    /// Generate server_id for Alist/Emby from host URL
+    /// Generate `server_id` for Alist/Emby from host URL
+    #[must_use] 
     pub fn generate_server_id(host: &str) -> String {
         format!("{:x}", md5::compute(host.as_bytes()))
     }
 
     /// Check if this credential has expired
+    #[must_use] 
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
             expires_at <= Utc::now()
@@ -120,6 +123,7 @@ impl UserProviderCredential {
     }
 
     /// Check if this credential is still valid (not expired)
+    #[must_use] 
     pub fn is_valid(&self) -> bool {
         !self.is_expired()
     }
@@ -156,12 +160,14 @@ pub enum ProviderCredential {
 
 impl ProviderCredential {
     /// Create Bilibili credential from cookies map
-    pub fn bilibili(cookies: HashMap<String, String>) -> Self {
+    #[must_use] 
+    pub const fn bilibili(cookies: HashMap<String, String>) -> Self {
         Self::Bilibili { cookies }
     }
 
     /// Create Alist credential
-    pub fn alist(host: String, username: String, password: String) -> Self {
+    #[must_use] 
+    pub const fn alist(host: String, username: String, password: String) -> Self {
         Self::Alist {
             host,
             username,
@@ -170,7 +176,8 @@ impl ProviderCredential {
     }
 
     /// Create Emby credential
-    pub fn emby(host: String, api_key: String, emby_user_id: String) -> Self {
+    #[must_use] 
+    pub const fn emby(host: String, api_key: String, emby_user_id: String) -> Self {
         Self::Emby {
             host,
             api_key,
@@ -179,7 +186,8 @@ impl ProviderCredential {
     }
 
     /// Get the provider type name
-    pub fn provider_type(&self) -> &'static str {
+    #[must_use] 
+    pub const fn provider_type(&self) -> &'static str {
         match self {
             Self::Bilibili { .. } => "bilibili",
             Self::Alist { .. } => "alist",

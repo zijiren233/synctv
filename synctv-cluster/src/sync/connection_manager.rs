@@ -17,6 +17,7 @@ pub struct ConnectionInfo {
 }
 
 impl ConnectionInfo {
+    #[must_use] 
     pub fn new(connection_id: String, user_id: UserId) -> Self {
         let now = Instant::now();
         Self {
@@ -29,10 +30,12 @@ impl ConnectionInfo {
         }
     }
 
+    #[must_use] 
     pub fn duration(&self) -> Duration {
         self.connected_at.elapsed()
     }
 
+    #[must_use] 
     pub fn idle_duration(&self) -> Duration {
         self.last_activity.elapsed()
     }
@@ -72,13 +75,13 @@ impl Default for ConnectionLimits {
 /// Connection manager for tracking active gRPC streaming connections
 #[derive(Clone)]
 pub struct ConnectionManager {
-    /// All active connections by connection_id
+    /// All active connections by `connection_id`
     connections: Arc<DashMap<String, ConnectionInfo>>,
 
-    /// Connections by user_id
+    /// Connections by `user_id`
     user_connections: Arc<DashMap<UserId, Vec<String>>>,
 
-    /// Connections by room_id
+    /// Connections by `room_id`
     room_connections: Arc<DashMap<RoomId, Vec<String>>>,
 
     /// Connection limits
@@ -90,7 +93,8 @@ pub struct ConnectionManager {
 }
 
 impl ConnectionManager {
-    /// Create a new ConnectionManager
+    /// Create a new `ConnectionManager`
+    #[must_use] 
     pub fn new(limits: ConnectionLimits) -> Self {
         Self {
             connections: Arc::new(DashMap::new()),
@@ -261,42 +265,47 @@ impl ConnectionManager {
     }
 
     /// Get connection count
+    #[must_use] 
     pub fn connection_count(&self) -> usize {
         self.connections.len()
     }
 
     /// Get connection count for a user
+    #[must_use] 
     pub fn user_connection_count(&self, user_id: &UserId) -> usize {
         self.user_connections
             .get(user_id)
-            .map(|conns| conns.len())
-            .unwrap_or(0)
+            .map_or(0, |conns| conns.len())
     }
 
     /// Get connection count for a room
+    #[must_use] 
     pub fn room_connection_count(&self, room_id: &RoomId) -> usize {
         self.room_connections
             .get(room_id)
-            .map(|conns| conns.len())
-            .unwrap_or(0)
+            .map_or(0, |conns| conns.len())
     }
 
     /// Get total connections ever established
+    #[must_use] 
     pub fn total_connections(&self) -> u64 {
         self.total_connections.load(Ordering::Relaxed)
     }
 
     /// Get total messages processed
+    #[must_use] 
     pub fn total_messages(&self) -> u64 {
         self.total_messages.load(Ordering::Relaxed)
     }
 
     /// Get connection info
+    #[must_use] 
     pub fn get_connection(&self, connection_id: &str) -> Option<ConnectionInfo> {
         self.connections.get(connection_id).map(|c| c.clone())
     }
 
     /// Get all connections for a user
+    #[must_use] 
     pub fn get_user_connections(&self, user_id: &UserId) -> Vec<ConnectionInfo> {
         if let Some(conn_ids) = self.user_connections.get(user_id) {
             conn_ids
@@ -309,6 +318,7 @@ impl ConnectionManager {
     }
 
     /// Get all connections in a room
+    #[must_use] 
     pub fn get_room_connections(&self, room_id: &RoomId) -> Vec<ConnectionInfo> {
         if let Some(conn_ids) = self.room_connections.get(room_id) {
             conn_ids
@@ -321,6 +331,7 @@ impl ConnectionManager {
     }
 
     /// Get metrics summary
+    #[must_use] 
     pub fn metrics(&self) -> ConnectionMetrics {
         ConnectionMetrics {
             active_connections: self.connection_count(),

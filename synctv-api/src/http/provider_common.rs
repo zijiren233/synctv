@@ -27,7 +27,7 @@ async fn list_instances(State(state): State<AppState>) -> impl IntoResponse {
     }))
 }
 
-/// Convert ProviderError to HTTP response
+/// Convert `ProviderError` to HTTP response
 pub fn error_response(e: ProviderError) -> (StatusCode, Json<serde_json::Value>) {
     let (status, message, details) = match &e {
         ProviderError::NetworkError(msg) => (StatusCode::BAD_GATEWAY, msg.clone(), msg.clone()),
@@ -48,6 +48,7 @@ pub fn error_response(e: ProviderError) -> (StatusCode, Json<serde_json::Value>)
 }
 
 /// Convert String error to HTTP response (for implementation layer errors)
+#[must_use] 
 pub fn parse_provider_error(error_msg: &str) -> ProviderError {
     // Parse common error patterns and convert to ProviderError
     let lower = error_msg.to_lowercase();
@@ -64,7 +65,7 @@ pub fn parse_provider_error(error_msg: &str) -> ProviderError {
     }
 }
 
-/// Extract instance_name from query parameter
+/// Extract `instance_name` from query parameter
 #[derive(Debug, Deserialize)]
 pub struct InstanceQuery {
     #[serde(default)]
@@ -72,6 +73,7 @@ pub struct InstanceQuery {
 }
 
 impl InstanceQuery {
+    #[must_use] 
     pub fn as_deref(&self) -> Option<&str> {
         self.instance_name.as_deref()
     }

@@ -20,7 +20,7 @@ pub struct UserCache {
 }
 
 /// Cached user data
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CachedUser {
     id: String,
     username: String,
@@ -30,7 +30,7 @@ pub struct CachedUser {
 }
 
 impl UserCache {
-    /// Create a new UserCache
+    /// Create a new `UserCache`
     ///
     /// # Arguments
     /// * `redis_client` - Optional Redis client. If None, only L1 caching is used.
@@ -75,13 +75,13 @@ impl UserCache {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
             let key = format!("{}{}", self.key_prefix, user_id.as_str());
             let user_json: Option<String> = conn
                 .get(&key)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to get user from cache: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to get user from cache: {e}")))?;
 
             if let Some(json) = user_json {
                 tracing::debug!(
@@ -90,7 +90,7 @@ impl UserCache {
                 );
 
                 let user: CachedUser = serde_json::from_str(&json).map_err(|e| {
-                    Error::Internal(format!("Failed to deserialize cached user: {}", e))
+                    Error::Internal(format!("Failed to deserialize cached user: {e}"))
                 })?;
 
                 // Populate L1 cache
@@ -116,23 +116,23 @@ impl UserCache {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
             let key = format!("{}{}", self.key_prefix, user_id.as_str());
             let json = serde_json::to_string(&user).map_err(|e| {
-                Error::Internal(format!("Failed to serialize user for caching: {}", e))
+                Error::Internal(format!("Failed to serialize user for caching: {e}"))
             })?;
 
             if self.l2_ttl_seconds > 0 {
                 let _: () = conn
                     .set_ex(&key, json, self.l2_ttl_seconds)
                     .await
-                    .map_err(|e| Error::Internal(format!("Failed to set user in cache: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to set user in cache: {e}")))?;
             } else {
                 let _: () = conn
                     .set(&key, json)
                     .await
-                    .map_err(|e| Error::Internal(format!("Failed to set user in cache: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to set user in cache: {e}")))?;
             }
 
             tracing::debug!(
@@ -157,13 +157,13 @@ impl UserCache {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
             let key = format!("{}{}", self.key_prefix, user_id.as_str());
             let _: () = conn
                 .del(&key)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to invalidate user cache: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to invalidate user cache: {e}")))?;
 
             tracing::debug!(user_id = %user_id.as_str(), "User cache invalidated");
         }
@@ -173,8 +173,8 @@ impl UserCache {
 
     /// Get multiple users at once
     ///
-    /// More efficient than calling get() multiple times.
-    /// Returns a map of user_id -> CachedUser.
+    /// More efficient than calling `get()` multiple times.
+    /// Returns a map of `user_id` -> `CachedUser`.
     pub async fn get_batch(&self, user_ids: &[UserId]) -> Result<std::collections::HashMap<UserId, CachedUser>> {
         let mut result = std::collections::HashMap::new();
         let mut missing_ids = Vec::new();
@@ -194,7 +194,7 @@ impl UserCache {
                 let mut conn = client
                     .get_multiplexed_async_connection()
                     .await
-                    .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
                 let mut pipe = redis::pipe();
                 for user_id in &missing_ids {
@@ -205,7 +205,7 @@ impl UserCache {
                 let user_jsons: Vec<Option<String>> = pipe
                     .query_async(&mut conn)
                     .await
-                    .map_err(|e| Error::Internal(format!("Failed to batch get users: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to batch get users: {e}")))?;
 
                 // Update L1 cache and result
                 for (user_id, user_json_opt) in missing_ids.iter().zip(user_jsons) {

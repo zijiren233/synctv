@@ -42,30 +42,35 @@ pub mod timeout {
 
     impl TimeoutConfig {
         /// Create custom timeout config
+        #[must_use] 
         pub fn new() -> Self {
             Self::default()
         }
 
         /// Set database query timeout
-        pub fn with_db_query_timeout(mut self, timeout: Duration) -> Self {
+        #[must_use] 
+        pub const fn with_db_query_timeout(mut self, timeout: Duration) -> Self {
             self.db_query = timeout;
             self
         }
 
         /// Set Redis timeout
-        pub fn with_redis_timeout(mut self, timeout: Duration) -> Self {
+        #[must_use] 
+        pub const fn with_redis_timeout(mut self, timeout: Duration) -> Self {
             self.redis = timeout;
             self
         }
 
         /// Set HTTP request timeout
-        pub fn with_http_timeout(mut self, timeout: Duration) -> Self {
+        #[must_use] 
+        pub const fn with_http_timeout(mut self, timeout: Duration) -> Self {
             self.http = timeout;
             self
         }
 
         /// Set gRPC timeout
-        pub fn with_grpc_timeout(mut self, timeout: Duration) -> Self {
+        #[must_use] 
+        pub const fn with_grpc_timeout(mut self, timeout: Duration) -> Self {
             self.grpc = timeout;
             self
         }
@@ -97,24 +102,28 @@ pub mod retry {
 
     impl RetryConfig {
         /// Create custom retry config
+        #[must_use] 
         pub fn new() -> Self {
             Self::default()
         }
 
         /// Set max retry attempts
-        pub fn with_max_attempts(mut self, attempts: u32) -> Self {
+        #[must_use] 
+        pub const fn with_max_attempts(mut self, attempts: u32) -> Self {
             self.max_attempts = attempts;
             self
         }
 
         /// Set base delay between retries
-        pub fn with_base_delay(mut self, delay: Duration) -> Self {
+        #[must_use] 
+        pub const fn with_base_delay(mut self, delay: Duration) -> Self {
             self.base_delay_ms = delay.as_millis() as u64;
             self
         }
 
         /// Set max delay between retries
-        pub fn with_max_delay(mut self, delay: Duration) -> Self {
+        #[must_use] 
+        pub const fn with_max_delay(mut self, delay: Duration) -> Self {
             self.max_delay_ms = delay.as_millis() as u64;
             self
         }
@@ -136,6 +145,7 @@ pub mod retry {
     }
 
     /// Calculate delay before next retry using exponential backoff
+    #[must_use] 
     pub fn calculate_retry_delay(attempt: u32, base_delay_ms: u64, max_delay_ms: u64) -> Duration {
         let delay_ms = (base_delay_ms * 2_u64.pow(attempt.saturating_sub(1))).min(max_delay_ms);
         Duration::from_millis(delay_ms)
@@ -192,6 +202,7 @@ pub mod circuit_breaker {
 
     impl CircuitBreaker {
         /// Create new circuit breaker
+        #[must_use] 
         pub fn new(config: CircuitBreakerConfig) -> Self {
             Self {
                 config,
@@ -206,6 +217,7 @@ pub mod circuit_breaker {
         }
 
         /// Check if request is allowed
+        #[must_use] 
         pub fn allow_request(&self) -> bool {
             let mut state = self.state.lock().unwrap();
 
@@ -272,6 +284,7 @@ pub mod circuit_breaker {
         }
 
         /// Get current state
+        #[must_use] 
         pub fn state(&self) -> CircuitState {
             let state = self.state.lock().unwrap();
             state.state

@@ -29,6 +29,7 @@ pub struct HealthMonitor {
 
 impl HealthMonitor {
     /// Create a new health monitor
+    #[must_use] 
     pub fn new(node_registry: Arc<NodeRegistry>, check_interval_secs: u64) -> Self {
         Self {
             node_registry,

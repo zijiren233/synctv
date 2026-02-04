@@ -29,7 +29,7 @@ pub async fn hash_password(password: &str) -> Result<String> {
             .p_cost(4)     // 4 parallel threads
             .output_len(32) // 32 bytes output
             .build()
-            .map_err(|e| Error::Internal(format!("Failed to build Argon2 params: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to build Argon2 params: {e}")))?;
 
         let argon2 = Argon2::new(
             argon2::Algorithm::Argon2id,
@@ -40,13 +40,13 @@ pub async fn hash_password(password: &str) -> Result<String> {
         // Hash the password
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| Error::Internal(format!("Failed to hash password: {}", e)))?
+            .map_err(|e| Error::Internal(format!("Failed to hash password: {e}")))?
             .to_string();
 
         Ok(password_hash)
     })
     .await
-    .map_err(|e| Error::Internal(format!("Password hashing task failed: {}", e)))?
+    .map_err(|e| Error::Internal(format!("Password hashing task failed: {e}")))?
 }
 
 /// Verify a password against a stored hash
@@ -59,18 +59,18 @@ pub async fn verify_password(password: &str, hash: &str) -> Result<bool> {
     task::spawn_blocking(move || {
         // Parse the PHC string
         let parsed_hash = PasswordHash::new(&hash)
-            .map_err(|e| Error::Internal(format!("Invalid password hash format: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Invalid password hash format: {e}")))?;
 
         // Verify the password
         let argon2 = Argon2::default();
         match argon2.verify_password(password.as_bytes(), &parsed_hash) {
             Ok(()) => Ok(true),
             Err(argon2::password_hash::Error::Password) => Ok(false),
-            Err(e) => Err(Error::Internal(format!("Password verification failed: {}", e))),
+            Err(e) => Err(Error::Internal(format!("Password verification failed: {e}"))),
         }
     })
     .await
-    .map_err(|e| Error::Internal(format!("Password verification task failed: {}", e)))?
+    .map_err(|e| Error::Internal(format!("Password verification task failed: {e}")))?
 }
 
 #[cfg(test)]

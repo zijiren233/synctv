@@ -14,6 +14,7 @@ pub struct ChatMessage {
 }
 
 impl ChatMessage {
+    #[must_use] 
     pub fn new(room_id: RoomId, user_id: UserId, content: String) -> Self {
         Self {
             id: super::id::generate_id(),
@@ -25,7 +26,8 @@ impl ChatMessage {
         }
     }
 
-    pub fn is_deleted(&self) -> bool {
+    #[must_use] 
+    pub const fn is_deleted(&self) -> bool {
         self.deleted_at.is_some()
     }
 }
@@ -46,7 +48,7 @@ pub struct ChatHistoryQuery {
 impl Default for ChatHistoryQuery {
     fn default() -> Self {
         Self {
-            room_id: RoomId::from_string("".to_string()),
+            room_id: RoomId::from_string(String::new()),
             limit: 100,
             before: None,
         }
@@ -72,6 +74,7 @@ pub enum DanmakuPosition {
 }
 
 impl DanmakuMessage {
+    #[must_use] 
     pub fn new(
         room_id: RoomId,
         user_id: UserId,

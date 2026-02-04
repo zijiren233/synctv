@@ -46,16 +46,38 @@ pub async fn get_playlist(
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(50);
 
-    let (playlist, total) = state
+    // Get root playlist info
+    let root_playlist = state
+        .room_service
+        .playlist_service()
+        .get_root_playlist(&room_id)
+        .await?;
+
+    // Get paginated media from playlist
+    let (media_list_db, total) = state
         .room_service
         .get_playlist_paginated(&room_id, page, page_size)
         .await?;
 
     // Convert to proto format
-    let media_list: Vec<Media> = playlist.into_iter().map(|m| media_to_proto(&m)).collect();
+    let media_list: Vec<Media> = media_list_db.into_iter().map(|m| media_to_proto(&m)).collect();
+
+    // Convert playlist to proto
+    let playlist_proto = crate::proto::client::Playlist {
+        id: root_playlist.id.as_str().to_string(),
+        room_id: root_playlist.room_id.as_str().to_string(),
+        name: root_playlist.name.clone(),
+        parent_id: root_playlist.parent_id.as_ref().map(|id| id.as_str().to_string()).unwrap_or_default(),
+        position: root_playlist.position,
+        is_folder: true, // Root playlist is always a folder
+        is_dynamic: root_playlist.source_provider.is_some(),
+        item_count: total as i32,
+        created_at: root_playlist.created_at.timestamp(),
+        updated_at: root_playlist.updated_at.timestamp(),
+    };
 
     Ok(Json(GetPlaylistResponse {
-        playlist: None, // TODO: Get actual playlist info
+        playlist: Some(playlist_proto),
         media: media_list,
         total: total as i32,
     }))

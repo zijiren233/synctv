@@ -28,7 +28,8 @@ pub struct LoadBalancer {
 
 impl LoadBalancer {
     /// Create a new load balancer
-    pub fn new(node_registry: Arc<NodeRegistry>, strategy: LoadBalancingStrategy) -> Self {
+    #[must_use] 
+    pub const fn new(node_registry: Arc<NodeRegistry>, strategy: LoadBalancingStrategy) -> Self {
         Self {
             node_registry,
             strategy,
@@ -81,7 +82,7 @@ impl LoadBalancer {
             .node_registry
             .get_node(node_id)
             .await?
-            .ok_or_else(|| Error::NotFound(format!("Node {} not found", node_id)))?;
+            .ok_or_else(|| Error::NotFound(format!("Node {node_id} not found")))?;
 
         Ok(node.node_id)
     }

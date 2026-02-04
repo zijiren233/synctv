@@ -20,7 +20,7 @@ pub struct UsernameCache {
 }
 
 impl UsernameCache {
-    /// Create a new UsernameCache
+    /// Create a new `UsernameCache`
     ///
     /// # Arguments
     /// * `redis_url` - Optional Redis URL. If None, only in-memory caching is used.
@@ -36,7 +36,7 @@ impl UsernameCache {
         let redis_client = if let Some(url) = redis_url {
             Some(
                 Client::open(url)
-                    .map_err(|e| Error::Internal(format!("Failed to connect to Redis: {}", e)))?,
+                    .map_err(|e| Error::Internal(format!("Failed to connect to Redis: {e}")))?,
             )
         } else {
             None
@@ -72,13 +72,13 @@ impl UsernameCache {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
             let key = format!("{}{}", self.key_prefix, user_id.as_str());
             let username: Option<String> = conn
                 .get(&key)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to get username from cache: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to get username from cache: {e}")))?;
 
             if let Some(username) = username {
                 tracing::debug!(user_id = %user_id.as_str(), username = %username, "Username cache hit (Redis)");
@@ -106,7 +106,7 @@ impl UsernameCache {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
             let key = format!("{}{}", self.key_prefix, user_id.as_str());
 
@@ -114,12 +114,12 @@ impl UsernameCache {
                 let _: () = conn
                     .set_ex(&key, username, self.ttl_seconds)
                     .await
-                    .map_err(|e| Error::Internal(format!("Failed to set username in cache: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to set username in cache: {e}")))?;
             } else {
                 let _: () = conn
                     .set(&key, username)
                     .await
-                    .map_err(|e| Error::Internal(format!("Failed to set username in cache: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to set username in cache: {e}")))?;
             }
 
             tracing::debug!(
@@ -135,8 +135,8 @@ impl UsernameCache {
 
     /// Get multiple usernames at once
     ///
-    /// More efficient than calling get() multiple times.
-    /// Returns a map of user_id -> username.
+    /// More efficient than calling `get()` multiple times.
+    /// Returns a map of `user_id` -> username.
     pub async fn get_batch(&self, user_ids: &[UserId]) -> Result<HashMap<UserId, String>> {
         let mut result = HashMap::new();
         let mut missing_ids = Vec::new();
@@ -156,7 +156,7 @@ impl UsernameCache {
                 let mut conn = client
                     .get_multiplexed_async_connection()
                     .await
-                    .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
                 let mut pipe = redis::pipe();
                 for user_id in &missing_ids {
@@ -167,7 +167,7 @@ impl UsernameCache {
                 let usernames: Vec<Option<String>> = pipe
                     .query_async(&mut conn)
                     .await
-                    .map_err(|e| Error::Internal(format!("Failed to batch get usernames: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to batch get usernames: {e}")))?;
 
                 // Update memory cache and result
                 for (user_id, username_opt) in missing_ids.iter().zip(usernames) {
@@ -200,13 +200,13 @@ impl UsernameCache {
             let mut conn = client
                 .get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
             let key = format!("{}{}", self.key_prefix, user_id.as_str());
             let _: () = conn
                 .del(&key)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to invalidate username cache: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to invalidate username cache: {e}")))?;
 
             tracing::debug!(user_id = %user_id.as_str(), "Username cache invalidated");
         }

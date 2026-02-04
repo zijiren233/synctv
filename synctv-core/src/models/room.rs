@@ -18,7 +18,8 @@ pub enum RoomStatus {
 }
 
 impl RoomStatus {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Pending => "pending",
             Self::Active => "active",
@@ -26,15 +27,18 @@ impl RoomStatus {
         }
     }
 
-    pub fn is_banned(&self) -> bool {
+    #[must_use] 
+    pub const fn is_banned(&self) -> bool {
         matches!(self, Self::Banned)
     }
 
-    pub fn is_pending(&self) -> bool {
+    #[must_use] 
+    pub const fn is_pending(&self) -> bool {
         matches!(self, Self::Pending)
     }
 
-    pub fn is_active(&self) -> bool {
+    #[must_use] 
+    pub const fn is_active(&self) -> bool {
         matches!(self, Self::Active)
     }
 }
@@ -91,6 +95,7 @@ pub struct Room {
 }
 
 impl Room {
+    #[must_use] 
     pub fn new(name: String, created_by: UserId) -> Self {
         let now = Utc::now();
         Self {
@@ -104,6 +109,7 @@ impl Room {
         }
     }
 
+    #[must_use] 
     pub fn is_active(&self) -> bool {
         self.status == RoomStatus::Active && self.deleted_at.is_none()
     }
@@ -123,7 +129,7 @@ pub struct UpdateRoomRequest {
     pub settings: Option<JsonValue>,
 }
 
-/// Room with settings loaded from room_settings table
+/// Room with settings loaded from `room_settings` table
 #[derive(Debug, Clone)]
 pub struct RoomWithSettings {
     pub room: Room,
@@ -153,16 +159,16 @@ impl Default for RoomListQuery {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RoomSettings {
     pub require_password: bool,
-    /// Auto-play settings (deprecated, use auto_play)
+    /// Auto-play settings (deprecated, use `auto_play`)
     #[serde(default)]
     pub auto_play_next: bool,
     /// Auto-play settings
     #[serde(default)]
     pub auto_play: AutoPlaySettings,
-    /// Legacy: loop playlist (use auto_play.mode instead)
+    /// Legacy: loop playlist (use `auto_play.mode` instead)
     #[serde(default)]
     pub loop_playlist: bool,
-    /// Legacy: shuffle playlist (use auto_play.mode instead)
+    /// Legacy: shuffle playlist (use `auto_play.mode` instead)
     #[serde(default)]
     pub shuffle_playlist: bool,
     pub allow_guest_join: bool,
@@ -212,13 +218,14 @@ pub struct RoomSettings {
 impl RoomSettings {
     /// Calculate effective permissions for a role based on global defaults and room overrides
     ///
-    /// Formula: (global_default | added) & ~removed
+    /// Formula: (`global_default` | added) & ~removed
     ///
     /// Arguments:
-    /// - global_default: Default permissions from global settings
-    /// - added_permissions: Additional permissions from room settings (Optional)
-    /// - removed_permissions: Removed permissions from room settings (Optional)
-    pub fn effective_permissions_for_role(
+    /// - `global_default`: Default permissions from global settings
+    /// - `added_permissions`: Additional permissions from room settings (Optional)
+    /// - `removed_permissions`: Removed permissions from room settings (Optional)
+    #[must_use] 
+    pub const fn effective_permissions_for_role(
         global_default: PermissionBits,
         added_permissions: Option<u64>,
         removed_permissions: Option<u64>,
@@ -240,8 +247,9 @@ impl RoomSettings {
 
     /// Get effective permissions for Admin role
     ///
-    /// Requires global default admin permissions from SettingsRegistry
-    pub fn admin_permissions(&self, global_default: PermissionBits) -> PermissionBits {
+    /// Requires global default admin permissions from `SettingsRegistry`
+    #[must_use] 
+    pub const fn admin_permissions(&self, global_default: PermissionBits) -> PermissionBits {
         Self::effective_permissions_for_role(
             global_default,
             self.admin_added_permissions,
@@ -251,8 +259,9 @@ impl RoomSettings {
 
     /// Get effective permissions for Member role
     ///
-    /// Requires global default member permissions from SettingsRegistry
-    pub fn member_permissions(&self, global_default: PermissionBits) -> PermissionBits {
+    /// Requires global default member permissions from `SettingsRegistry`
+    #[must_use] 
+    pub const fn member_permissions(&self, global_default: PermissionBits) -> PermissionBits {
         Self::effective_permissions_for_role(
             global_default,
             self.member_added_permissions,
@@ -262,8 +271,9 @@ impl RoomSettings {
 
     /// Get effective permissions for Guest
     ///
-    /// Requires global default guest permissions from SettingsRegistry
-    pub fn guest_permissions(&self, global_default: PermissionBits) -> PermissionBits {
+    /// Requires global default guest permissions from `SettingsRegistry`
+    #[must_use] 
+    pub const fn guest_permissions(&self, global_default: PermissionBits) -> PermissionBits {
         Self::effective_permissions_for_role(
             global_default,
             self.guest_added_permissions,
@@ -272,7 +282,7 @@ impl RoomSettings {
     }
 }
 
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 
@@ -289,10 +299,10 @@ pub struct RoomWithCount {
 impl Display for PlayMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PlayMode::Sequential => write!(f, "sequential"),
-            PlayMode::RepeatOne => write!(f, "repeat_one"),
-            PlayMode::RepeatAll => write!(f, "repeat_all"),
-            PlayMode::Shuffle => write!(f, "shuffle"),
+            Self::Sequential => write!(f, "sequential"),
+            Self::RepeatOne => write!(f, "repeat_one"),
+            Self::RepeatAll => write!(f, "repeat_all"),
+            Self::Shuffle => write!(f, "shuffle"),
         }
     }
 }
@@ -302,11 +312,11 @@ impl std::str::FromStr for PlayMode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "sequential" => Ok(PlayMode::Sequential),
-            "repeat_one" => Ok(PlayMode::RepeatOne),
-            "repeat_all" => Ok(PlayMode::RepeatAll),
-            "shuffle" => Ok(PlayMode::Shuffle),
-            _ => Err(Error::InvalidInput(format!("Invalid PlayMode: {}", s))),
+            "sequential" => Ok(Self::Sequential),
+            "repeat_one" => Ok(Self::RepeatOne),
+            "repeat_all" => Ok(Self::RepeatAll),
+            "shuffle" => Ok(Self::Shuffle),
+            _ => Err(Error::InvalidInput(format!("Invalid PlayMode: {s}"))),
         }
     }
 }
@@ -316,7 +326,7 @@ impl Display for AutoPlaySettings {
         // Use JSON representation for complex types
         let json = serde_json::to_string(self)
             .map_err(|_| std::fmt::Error)?;
-        write!(f, "{}", json)
+        write!(f, "{json}")
     }
 }
 
@@ -325,7 +335,7 @@ impl std::str::FromStr for AutoPlaySettings {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         serde_json::from_str(s)
-            .map_err(|e| Error::InvalidInput(format!("Invalid AutoPlaySettings: {}", e)))
+            .map_err(|e| Error::InvalidInput(format!("Invalid AutoPlaySettings: {e}")))
     }
 }
 
@@ -334,7 +344,7 @@ impl Display for RoomSettings {
         // Use JSON representation for the entire settings struct
         let json = serde_json::to_string(self)
             .map_err(|_| std::fmt::Error)?;
-        write!(f, "{}", json)
+        write!(f, "{json}")
     }
 }
 
@@ -343,6 +353,6 @@ impl std::str::FromStr for RoomSettings {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         serde_json::from_str(s)
-            .map_err(|e| Error::InvalidInput(format!("Invalid RoomSettings: {}", e)))
+            .map_err(|e| Error::InvalidInput(format!("Invalid RoomSettings: {e}")))
     }
 }

@@ -8,11 +8,11 @@ pub struct TokenBlacklistService {
 }
 
 impl TokenBlacklistService {
-    /// Create a new TokenBlacklistService
-    /// If redis_url is None, token blacklist will be disabled (logout becomes no-op)
+    /// Create a new `TokenBlacklistService`
+    /// If `redis_url` is None, token blacklist will be disabled (logout becomes no-op)
     pub fn new(redis_url: Option<String>) -> Result<Self> {
         let redis_client = if let Some(url) = redis_url {
-            Some(Client::open(url).map_err(|e| Error::Internal(format!("Failed to connect to Redis: {}", e)))?)
+            Some(Client::open(url).map_err(|e| Error::Internal(format!("Failed to connect to Redis: {e}")))?)
         } else {
             None
         };
@@ -21,7 +21,7 @@ impl TokenBlacklistService {
     }
 
     /// Add a token to the blacklist
-    /// The token will be blacklisted until it expires (ttl_seconds)
+    /// The token will be blacklisted until it expires (`ttl_seconds`)
     pub async fn blacklist_token(&self, token: &str, ttl_seconds: i64) -> Result<()> {
         if ttl_seconds <= 0 {
             // Token already expired, no need to blacklist
@@ -31,13 +31,13 @@ impl TokenBlacklistService {
         if let Some(client) = &self.redis_client {
             let mut conn = client.get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
-            let key = format!("token:blacklist:{}", token);
+            let key = format!("token:blacklist:{token}");
 
             let _: () = conn.set_ex(&key, "1", ttl_seconds as u64)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to blacklist token: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to blacklist token: {e}")))?;
 
             tracing::info!("Token blacklisted: {} (TTL: {}s)", &token[..10.min(token.len())], ttl_seconds);
         } else {
@@ -52,13 +52,13 @@ impl TokenBlacklistService {
         if let Some(client) = &self.redis_client {
             let mut conn = client.get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
-            let key = format!("token:blacklist:{}", token);
+            let key = format!("token:blacklist:{token}");
 
             let exists: bool = conn.exists(&key)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to check token blacklist: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to check token blacklist: {e}")))?;
 
             Ok(exists)
         } else {
@@ -72,20 +72,21 @@ impl TokenBlacklistService {
         if let Some(client) = &self.redis_client {
             let mut conn = client.get_multiplexed_async_connection()
                 .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
-            let key = format!("token:blacklist:{}", token);
+            let key = format!("token:blacklist:{token}");
 
             let _: () = conn.del(&key)
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to remove token from blacklist: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to remove token from blacklist: {e}")))?;
         }
 
         Ok(())
     }
 
     /// Check if the service is enabled (Redis configured)
-    pub fn is_enabled(&self) -> bool {
+    #[must_use] 
+    pub const fn is_enabled(&self) -> bool {
         self.redis_client.is_some()
     }
 }

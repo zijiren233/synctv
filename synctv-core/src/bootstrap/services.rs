@@ -41,7 +41,7 @@ pub struct Services {
     pub user_provider_credential_repo: Arc<UserProviderCredentialRepository>,
     /// Providers manager
     pub providers_manager: Arc<ProvidersManager>,
-    /// OAuth2 service (optional, requires configuration)
+    /// `OAuth2` service (optional, requires configuration)
     pub oauth2_service: Option<Arc<OAuth2Service>>,
     /// Settings service
     pub settings_service: Arc<SettingsService>,
@@ -70,10 +70,10 @@ pub async fn init_services(
     info!("JWT service initialized");
 
     // Initialize token blacklist and rate limiter (both use Redis)
-    let redis_url = if !config.redis.url.is_empty() {
-        Some(config.redis.url.clone())
-    } else {
+    let redis_url = if config.redis.url.is_empty() {
         None
+    } else {
+        Some(config.redis.url.clone())
     };
 
     // Initialize token blacklist service
@@ -220,10 +220,10 @@ pub async fn init_services(
     })
 }
 
-/// Initialize OAuth2 service with modular provider system
+/// Initialize `OAuth2` service with modular provider system
 ///
 /// Uses factory pattern to create providers from configuration.
-/// OAuth2 configuration is part of the main config file.
+/// `OAuth2` configuration is part of the main config file.
 async fn init_oauth2_service(
     pool: PgPool,
     config: &Config,
@@ -238,7 +238,7 @@ async fn init_oauth2_service(
     // Extract provider instance names from the YAML mapping
     let provider_instances = if let Some(mapping) = providers_value.as_mapping() {
         mapping.keys()
-            .filter_map(|k| k.as_str().map(|s| s.to_string()))
+            .filter_map(|k| k.as_str().map(std::string::ToString::to_string))
             .collect::<Vec<_>>()
     } else {
         Vec::new()
@@ -258,7 +258,7 @@ async fn init_oauth2_service(
     for instance_name in provider_instances {
         // Get the full config for this instance
         let full_config = providers_value.get(&instance_name)
-            .ok_or_else(|| anyhow::anyhow!("Provider instance {} not found in config", instance_name))?;
+            .ok_or_else(|| anyhow::anyhow!("Provider instance {instance_name} not found in config"))?;
 
         // Get provider type from config (check for explicit "type" field)
         let provider_type = if let Some(map) = full_config.as_mapping() {
@@ -313,29 +313,26 @@ fn load_jwt_service(config: &Config) -> Result<JwtService, anyhow::Error> {
     let private_key = std::fs::read(&config.jwt.private_key_path);
     let public_key = std::fs::read(&config.jwt.public_key_path);
 
-    match (private_key, public_key) {
-        (Ok(priv_key), Ok(pub_key)) => {
-            info!("Loaded JWT keys from files");
-            JwtService::new(&priv_key, &pub_key)
-                .map_err(|e| anyhow::anyhow!("Failed to initialize JWT service: {}", e))
-        }
-        _ => {
-            // In development, generate temporary keys
-            error!("JWT key files not found. Generating temporary keys for development.");
-            error!("WARNING: These keys will not persist across restarts!");
-            error!("For production, generate keys with: openssl genrsa -out jwt_private.pem 2048");
-            error!("                                  openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem");
+    if let (Ok(priv_key), Ok(pub_key)) = (private_key, public_key) {
+        info!("Loaded JWT keys from files");
+        JwtService::new(&priv_key, &pub_key)
+            .map_err(|e| anyhow::anyhow!("Failed to initialize JWT service: {e}"))
+    } else {
+        // In development, generate temporary keys
+        error!("JWT key files not found. Generating temporary keys for development.");
+        error!("WARNING: These keys will not persist across restarts!");
+        error!("For production, generate keys with: openssl genrsa -out jwt_private.pem 2048");
+        error!("                                  openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem");
 
-            // For now, return error - keys must be provided
-            Err(anyhow::anyhow!(
-                "JWT keys not found at {} and {}. Please generate keys with:\n  openssl genrsa -out {} 2048\n  openssl rsa -in {} -pubout -out {}",
-                config.jwt.private_key_path,
-                config.jwt.public_key_path,
-                config.jwt.private_key_path,
-                config.jwt.private_key_path,
-                config.jwt.public_key_path
-            ))
-        }
+        // For now, return error - keys must be provided
+        Err(anyhow::anyhow!(
+            "JWT keys not found at {} and {}. Please generate keys with:\n  openssl genrsa -out {} 2048\n  openssl rsa -in {} -pubout -out {}",
+            config.jwt.private_key_path,
+            config.jwt.public_key_path,
+            config.jwt.private_key_path,
+            config.jwt.private_key_path,
+            config.jwt.public_key_path
+        ))
     }
 }
 

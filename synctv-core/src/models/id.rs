@@ -12,14 +12,17 @@ pub fn generate_id() -> String {
 pub struct UserId(pub String);
 
 impl UserId {
+    #[must_use] 
     pub fn new() -> Self {
         Self(generate_id())
     }
 
-    pub fn from_string(id: String) -> Self {
+    #[must_use] 
+    pub const fn from_string(id: String) -> Self {
         Self(id)
     }
 
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -43,14 +46,17 @@ impl std::fmt::Display for UserId {
 pub struct RoomId(pub String);
 
 impl RoomId {
+    #[must_use] 
     pub fn new() -> Self {
         Self(generate_id())
     }
 
-    pub fn from_string(id: String) -> Self {
+    #[must_use] 
+    pub const fn from_string(id: String) -> Self {
         Self(id)
     }
 
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -74,14 +80,17 @@ impl std::fmt::Display for RoomId {
 pub struct MediaId(pub String);
 
 impl MediaId {
+    #[must_use] 
     pub fn new() -> Self {
         Self(generate_id())
     }
 
-    pub fn from_string(id: String) -> Self {
+    #[must_use] 
+    pub const fn from_string(id: String) -> Self {
         Self(id)
     }
 
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -105,14 +114,17 @@ impl std::fmt::Display for MediaId {
 pub struct PlaylistId(pub String);
 
 impl PlaylistId {
+    #[must_use] 
     pub fn new() -> Self {
         Self(generate_id())
     }
 
-    pub fn from_string(id: String) -> Self {
+    #[must_use] 
+    pub const fn from_string(id: String) -> Self {
         Self(id)
     }
 
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }

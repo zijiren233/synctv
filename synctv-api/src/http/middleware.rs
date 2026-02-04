@@ -38,11 +38,9 @@ where
         // Create or extract JWT validator
         let validator = parts
             .extensions
-            .get::<JwtValidatorExt>()
-            .map(|v| v.0.clone())
-            .unwrap_or_else(|| {
+            .get::<JwtValidatorExt>().map_or_else(|| {
                 Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())))
-            });
+            }, |v| v.0.clone());
 
         // Extract Authorization header
         let auth_header = parts
@@ -53,12 +51,12 @@ where
         // Parse Bearer token and validate using unified validator
         let auth_str = auth_header
             .to_str()
-            .map_err(|e| AppError::unauthorized(format!("Invalid Authorization header: {}", e)))?;
+            .map_err(|e| AppError::unauthorized(format!("Invalid Authorization header: {e}")))?;
 
         let user_id = validator
             .validate_http_extract_user_id(auth_str)
-            .map_err(|e| AppError::unauthorized(format!("{}", e)))?;
+            .map_err(|e| AppError::unauthorized(format!("{e}")))?;
 
-        Ok(AuthUser { user_id })
+        Ok(Self { user_id })
     }
 }

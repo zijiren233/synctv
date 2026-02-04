@@ -1,6 +1,6 @@
-//! OAuth2 HTTP handlers
+//! `OAuth2` HTTP handlers
 //!
-//! Provides OAuth2 login endpoints for GitHub, Google, Microsoft, Discord
+//! Provides `OAuth2` login endpoints for GitHub, Google, Microsoft, Discord
 
 use axum::{
     extract::{Path, Query, State},
@@ -19,20 +19,20 @@ use synctv_core::service::JwtService;
 
 use super::{AppResult, AppState};
 
-/// OAuth2 authorization request query params
+/// `OAuth2` authorization request query params
 #[derive(Debug, Deserialize)]
 pub struct OAuth2AuthQuery {
     pub redirect: Option<String>,
 }
 
-/// OAuth2 authorization URL response
+/// `OAuth2` authorization URL response
 #[derive(Debug, Serialize)]
 pub struct AuthUrlResponse {
     pub url: String,
     pub state: String,
 }
 
-/// OAuth2 callback response (JSON)
+/// `OAuth2` callback response (JSON)
 #[derive(Debug, Serialize)]
 pub struct OAuth2CallbackJsonResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,7 +43,7 @@ pub struct OAuth2CallbackJsonResponse {
     pub message: Option<String>,
 }
 
-/// Get OAuth2 authorization URL
+/// Get `OAuth2` authorization URL
 ///
 /// GET /api/oauth2/:instance/authorize?redirect=<url>
 pub async fn get_authorize_url(
@@ -70,7 +70,7 @@ pub async fn get_authorize_url(
     Ok(Json(AuthUrlResponse { url, state: state_token }))
 }
 
-/// OAuth2 callback handler
+/// `OAuth2` callback handler
 ///
 /// GET /api/oauth2/:instance/callback?code=xxx&state=xxx
 pub async fn oauth2_callback_get(
@@ -81,7 +81,7 @@ pub async fn oauth2_callback_get(
     handle_oauth2_callback(state, instance_name, params, None).await
 }
 
-/// OAuth2 callback handler (POST version)
+/// `OAuth2` callback handler (POST version)
 ///
 /// POST /api/oauth2/:instance/callback
 /// Body: { "code": "xxx", "state": "xxx" }
@@ -93,7 +93,7 @@ pub async fn oauth2_callback_post(
     handle_oauth2_callback(state, instance_name, req, None).await
 }
 
-/// Handle OAuth2 callback (shared logic)
+/// Handle `OAuth2` callback (shared logic)
 async fn handle_oauth2_callback(
     state: AppState,
     instance_name: String,
@@ -234,7 +234,7 @@ async fn handle_oauth2_callback(
     }))
 }
 
-/// Bind OAuth2 provider to authenticated user
+/// Bind `OAuth2` provider to authenticated user
 ///
 /// POST /api/oauth2/:instance/bind
 pub async fn bind_provider(
@@ -264,7 +264,7 @@ pub async fn bind_provider(
     Ok(Json(AuthUrlResponse { url, state: state_token }))
 }
 
-/// Unbind OAuth2 provider from authenticated user
+/// Unbind `OAuth2` provider from authenticated user
 ///
 /// DELETE /api/oauth2/:instance/bind
 pub async fn unbind_provider(
@@ -283,7 +283,7 @@ pub async fn unbind_provider(
     ))
 }
 
-/// Get list of OAuth2 providers bound to user
+/// Get list of `OAuth2` providers bound to user
 ///
 /// GET /api/oauth2/providers
 pub async fn list_providers(

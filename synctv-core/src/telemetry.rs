@@ -28,7 +28,7 @@ pub async fn init_tracing(
         .finish();
 
     tracing::subscriber::set_global_default(subscriber)
-        .map_err(|e| format!("Failed to set tracing subscriber: {}", e))?;
+        .map_err(|e| format!("Failed to set tracing subscriber: {e}"))?;
 
     tracing::info!("Tracing initialized for service: {}", service_name);
 

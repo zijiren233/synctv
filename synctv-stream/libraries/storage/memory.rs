@@ -20,12 +20,13 @@ use tracing as log;
 #[derive(Clone)]
 pub struct MemoryStorage {
     /// Store data in memory with concurrent access
-    /// Key: storage key, Value: (data, write_time)
+    /// Key: storage key, Value: (data, `write_time`)
     data: Arc<DashMap<String, (Bytes, Instant)>>,
 }
 
 impl MemoryStorage {
     /// Create new memory storage
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             data: Arc::new(DashMap::new()),
@@ -33,11 +34,13 @@ impl MemoryStorage {
     }
 
     /// Get current memory usage in bytes
+    #[must_use] 
     pub fn memory_usage(&self) -> usize {
         self.data.iter().map(|entry| entry.value().0.len()).sum()
     }
 
     /// Get number of stored keys
+    #[must_use] 
     pub fn key_count(&self) -> usize {
         self.data.len()
     }
@@ -68,19 +71,16 @@ impl HlsStorage for MemoryStorage {
     }
 
     async fn read(&self, key: &str) -> Result<Bytes> {
-        match self.data.get(key) {
-            Some(entry) => {
-                let (data, _) = entry.value();
-                log::trace!("Read from memory: {} ({} bytes)", key, data.len());
-                Ok(data.clone())
-            }
-            None => {
-                log::warn!("Key not found in memory: {}", key);
-                Err(Error::new(
-                    ErrorKind::NotFound,
-                    format!("Key not found: {}", key),
-                ))
-            }
+        if let Some(entry) = self.data.get(key) {
+            let (data, _) = entry.value();
+            log::trace!("Read from memory: {} ({} bytes)", key, data.len());
+            Ok(data.clone())
+        } else {
+            log::warn!("Key not found in memory: {}", key);
+            Err(Error::new(
+                ErrorKind::NotFound,
+                format!("Key not found: {key}"),
+            ))
         }
     }
 
@@ -97,7 +97,7 @@ impl HlsStorage for MemoryStorage {
     }
 
     async fn cleanup(&self, older_than: Duration) -> Result<usize> {
-        let cutoff_time = Instant::now() - older_than;
+        let cutoff_time = Instant::now().checked_sub(older_than).unwrap();
         let mut deleted = 0;
 
         // Collect expired keys

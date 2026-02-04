@@ -1,14 +1,14 @@
-//! Type-safe SQL query builder using SeaQuery
+//! Type-safe SQL query builder using `SeaQuery`
 //!
 //! This module provides a safe, composable way to build SQL WHERE clauses
-//! using SeaQuery. All queries are properly parameterized to prevent SQL injection.
+//! using `SeaQuery`. All queries are properly parameterized to prevent SQL injection.
 
 use sea_query::{Cond, Expr, Iden, SimpleExpr, Value as SeaValue};
 use sea_query::extension::postgres::PgExpr;
 
 /// SQL condition builder
 ///
-/// This is a wrapper around SeaQuery's `Cond` that provides a more ergonomic API
+/// This is a wrapper around `SeaQuery`'s `Cond` that provides a more ergonomic API
 /// for building database queries in a type-safe manner.
 #[derive(Clone, Debug)]
 pub struct Filter {
@@ -17,6 +17,7 @@ pub struct Filter {
 
 impl Filter {
     /// Create a new filter with no conditions (matches everything)
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             condition: Cond::all(),
@@ -89,7 +90,7 @@ impl Filter {
     /// Add an IN condition: column IN (values)
     pub fn in_list(mut self, column: impl Into<ColumnRef>, values: Vec<FilterValue>) -> Self {
         let col = column.into();
-        let sea_values: Vec<SeaValue> = values.into_iter().map(|v| v.into_sea_value()).collect();
+        let sea_values: Vec<SeaValue> = values.into_iter().map(FilterValue::into_sea_value).collect();
         self.condition = self.condition.add(Expr::col(col).is_in(sea_values));
         self
     }
@@ -124,7 +125,8 @@ impl Filter {
         self
     }
 
-    /// Build the SQL condition and return as SeaQuery Cond
+    /// Build the SQL condition and return as `SeaQuery` Cond
+    #[must_use] 
     pub fn build(self) -> Cond {
         self.condition
     }
@@ -149,24 +151,24 @@ pub enum ColumnRef {
 
 impl From<&str> for ColumnRef {
     fn from(s: &str) -> Self {
-        ColumnRef::Simple(s.to_string())
+        Self::Simple(s.to_string())
     }
 }
 
 impl From<String> for ColumnRef {
     fn from(s: String) -> Self {
-        ColumnRef::Simple(s)
+        Self::Simple(s)
     }
 }
 
 impl Iden for ColumnRef {
     fn unquoted(&self, s: &mut dyn std::fmt::Write) {
         match self {
-            ColumnRef::Simple(name) => {
-                write!(s, "{}", name).unwrap();
+            Self::Simple(name) => {
+                write!(s, "{name}").unwrap();
             }
-            ColumnRef::Qualified { table, column } => {
-                write!(s, "{}.{}", table, column).unwrap();
+            Self::Qualified { table, column } => {
+                write!(s, "{table}.{column}").unwrap();
             }
         }
     }
@@ -186,59 +188,59 @@ pub enum FilterValue {
 }
 
 impl FilterValue {
-    /// Convert to SeaQuery Value (for parameterized queries)
+    /// Convert to `SeaQuery` Value (for parameterized queries)
     fn into_sea_value(self) -> SeaValue {
         match self {
-            FilterValue::Null => SeaValue::String(None),
-            FilterValue::Bool(b) => SeaValue::Bool(Some(b)),
-            FilterValue::Int(i) => SeaValue::Int(Some(i as i32)),
-            FilterValue::Float(f) => SeaValue::Float(Some(f as f32)),
-            FilterValue::String(s) => SeaValue::String(Some(Box::new(s))),
+            Self::Null => SeaValue::String(None),
+            Self::Bool(b) => SeaValue::Bool(Some(b)),
+            Self::Int(i) => SeaValue::Int(Some(i as i32)),
+            Self::Float(f) => SeaValue::Float(Some(f as f32)),
+            Self::String(s) => SeaValue::String(Some(Box::new(s))),
         }
     }
 }
 
 impl From<bool> for FilterValue {
     fn from(b: bool) -> Self {
-        FilterValue::Bool(b)
+        Self::Bool(b)
     }
 }
 
 impl From<i32> for FilterValue {
     fn from(i: i32) -> Self {
-        FilterValue::Int(i as i64)
+        Self::Int(i64::from(i))
     }
 }
 
 impl From<i64> for FilterValue {
     fn from(i: i64) -> Self {
-        FilterValue::Int(i)
+        Self::Int(i)
     }
 }
 
 impl From<f64> for FilterValue {
     fn from(f: f64) -> Self {
-        FilterValue::Float(f)
+        Self::Float(f)
     }
 }
 
 impl From<&str> for FilterValue {
     fn from(s: &str) -> Self {
-        FilterValue::String(s.to_string())
+        Self::String(s.to_string())
     }
 }
 
 impl From<String> for FilterValue {
     fn from(s: String) -> Self {
-        FilterValue::String(s)
+        Self::String(s)
     }
 }
 
 impl From<Option<bool>> for FilterValue {
     fn from(opt: Option<bool>) -> Self {
         match opt {
-            Some(b) => FilterValue::Bool(b),
-            None => FilterValue::Null,
+            Some(b) => Self::Bool(b),
+            None => Self::Null,
         }
     }
 }
@@ -246,8 +248,8 @@ impl From<Option<bool>> for FilterValue {
 impl From<Option<i32>> for FilterValue {
     fn from(opt: Option<i32>) -> Self {
         match opt {
-            Some(i) => FilterValue::Int(i as i64),
-            None => FilterValue::Null,
+            Some(i) => Self::Int(i64::from(i)),
+            None => Self::Null,
         }
     }
 }
@@ -255,8 +257,8 @@ impl From<Option<i32>> for FilterValue {
 impl From<Option<i64>> for FilterValue {
     fn from(opt: Option<i64>) -> Self {
         match opt {
-            Some(i) => FilterValue::Int(i),
-            None => FilterValue::Null,
+            Some(i) => Self::Int(i),
+            None => Self::Null,
         }
     }
 }
@@ -264,8 +266,8 @@ impl From<Option<i64>> for FilterValue {
 impl From<Option<String>> for FilterValue {
     fn from(opt: Option<String>) -> Self {
         match opt {
-            Some(s) => FilterValue::String(s),
-            None => FilterValue::Null,
+            Some(s) => Self::String(s),
+            None => Self::Null,
         }
     }
 }
@@ -273,8 +275,8 @@ impl From<Option<String>> for FilterValue {
 impl From<Option<&str>> for FilterValue {
     fn from(opt: Option<&str>) -> Self {
         match opt {
-            Some(s) => FilterValue::String(s.to_string()),
-            None => FilterValue::Null,
+            Some(s) => Self::String(s.to_string()),
+            None => Self::Null,
         }
     }
 }

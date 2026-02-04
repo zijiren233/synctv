@@ -77,9 +77,10 @@ pub struct SettingsGroup {
 
 impl SettingsGroup {
     /// Create a new settings group
+    #[must_use] 
     pub fn new(group: String, value: String) -> Self {
         Self {
-            key: format!("{}.default", group),
+            key: format!("{group}.default"),
             group,
             value,
             created_at: Utc::now(),
@@ -90,7 +91,7 @@ impl SettingsGroup {
     /// Parse value as JSON value
     pub fn parse_json(&self) -> anyhow::Result<JsonValue> {
         serde_json::from_str(&self.value)
-            .map_err(|e| anyhow::anyhow!("Failed to parse settings value: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to parse settings value: {e}"))
     }
 
     /// Get value as JSON object
@@ -122,6 +123,7 @@ pub enum SettingsError {
 }
 
 /// Default settings for server group
+#[must_use] 
 pub fn default_server_settings() -> JsonValue {
     serde_json::json!({
         "allow_registration": true,
@@ -136,6 +138,7 @@ pub fn default_server_settings() -> JsonValue {
 }
 
 /// Default settings for email group
+#[must_use] 
 pub fn default_email_settings() -> JsonValue {
     serde_json::json!({
         "enabled": false,
@@ -149,6 +152,7 @@ pub fn default_email_settings() -> JsonValue {
 }
 
 /// Default settings for OAuth group
+#[must_use] 
 pub fn default_oauth_settings() -> JsonValue {
     serde_json::json!({
         "github_enabled": false,
@@ -159,6 +163,7 @@ pub fn default_oauth_settings() -> JsonValue {
 }
 
 /// Get default settings for a group
+#[must_use] 
 pub fn get_default_settings(group_name: &str) -> Option<JsonValue> {
     match group_name {
         "server" => Some(default_server_settings()),

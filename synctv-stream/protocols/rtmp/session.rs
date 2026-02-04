@@ -1,13 +1,12 @@
 use crate::{
-    libraries::gop_cache::{GopCache, GopFrame, FrameType as GopFrameType},
-    relay::{StreamRegistry, registry_trait::StreamRegistryTrait},
+    libraries::gop_cache::GopCache,
+    relay::registry_trait::StreamRegistryTrait,
     protocols::rtmp::auth::RtmpAuthCallback,
     error::{StreamResult, StreamError},
 };
 use streamhub::{
     define::{
-        FrameData, NotifyInfo, PublishType, PublisherInfo, StreamHubEvent, StreamHubEventSender,
-        SubscribeType, SubscriberInfo,
+        NotifyInfo, PublishType, PublisherInfo, StreamHubEvent, StreamHubEventSender,
     },
     stream::StreamIdentifier,
     utils::{RandomDigitCount, Uuid},
@@ -16,7 +15,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 pub struct SyncTvRtmpSession {
     remote_addr: SocketAddr,
@@ -111,15 +110,13 @@ impl SyncTvRtmpSession {
             }
             Ok(false) => {
                 return Err(StreamError::PublisherExists(format!(
-                    "Publisher already exists for room {} / media {}",
-                    room_id, media_id
+                    "Publisher already exists for room {room_id} / media {media_id}"
                 )));
             }
             Err(e) => {
                 error!("Failed to register publisher: {}", e);
                 return Err(StreamError::RedisError(format!(
-                    "Publisher registration failed: {}",
-                    e
+                    "Publisher registration failed: {e}"
                 )));
             }
         }
@@ -130,7 +127,7 @@ impl SyncTvRtmpSession {
             .await
             .map_err(|e| {
                 error!("Failed to publish to StreamHub: {}", e);
-                StreamError::StreamHubError(format!("Publish failed: {}", e))
+                StreamError::StreamHubError(format!("Publish failed: {e}"))
             })?;
 
         Ok(())
@@ -194,7 +191,7 @@ impl SyncTvRtmpSession {
             .await
             .map_err(|e| {
                 error!("Failed to get publisher info: {}", e);
-                StreamError::RedisError(format!("Failed to check publisher: {}", e))
+                StreamError::RedisError(format!("Failed to check publisher: {e}"))
             })?
             .ok_or_else(|| StreamError::NoPublisher(format!(
                 "No active publisher for room {} / media {}",
@@ -211,7 +208,7 @@ impl SyncTvRtmpSession {
         Ok(())
     }
 
-    /// Publish to StreamHub
+    /// Publish to `StreamHub`
     async fn publish_to_stream_hub(
         &mut self,
         room_id: &str,
@@ -229,7 +226,7 @@ impl SyncTvRtmpSession {
             },
         };
 
-        let stream_name = format!("{}/{}", room_id, media_id);
+        let stream_name = format!("{room_id}/{media_id}");
         let identifier = StreamIdentifier::Rtmp {
             app_name: "live".to_string(),
             stream_name: stream_name.clone(),
@@ -252,7 +249,7 @@ impl SyncTvRtmpSession {
         let result = event_result_receiver
             .await
             .map_err(|_| anyhow::anyhow!("Publish result channel closed"))?
-            .map_err(|e| anyhow::anyhow!("Publish failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Publish failed: {e}"))?;
 
         let data_sender = result
             .0
@@ -268,13 +265,13 @@ impl SyncTvRtmpSession {
         Ok(data_sender)
     }
 
-    /// Unpublish from StreamHub
+    /// Unpublish from `StreamHub`
     async fn unpublish_from_stream_hub(
         &mut self,
         room_id: &str,
         media_id: &str,
     ) -> anyhow::Result<()> {
-        let stream_name = format!("{}/{}", room_id, media_id);
+        let stream_name = format!("{room_id}/{media_id}");
         let identifier = StreamIdentifier::Rtmp {
             app_name: "live".to_string(),
             stream_name,

@@ -1,4 +1,4 @@
-//! Bootstrap module for initializing the SyncTV server
+//! Bootstrap module for initializing the `SyncTV` server
 //!
 //! This module handles:
 //! - Database initialization

@@ -46,7 +46,7 @@ impl Default for ClusterConfig {
 ///
 /// This is the main entry point for all cross-cluster functionality.
 /// It manages:
-/// - Local message broadcasting via RoomMessageHub
+/// - Local message broadcasting via `RoomMessageHub`
 /// - Cross-node synchronization via Redis Pub/Sub
 /// - Message deduplication
 /// - Connection lifecycle
@@ -71,7 +71,10 @@ impl ClusterManager {
         ));
 
         // Start Redis pub/sub if Redis URL is provided
-        let redis_publish_tx = if !config.redis_url.is_empty() {
+        let redis_publish_tx = if config.redis_url.is_empty() {
+            warn!("Redis URL not provided, running in single-node mode");
+            None
+        } else {
             let redis_pubsub = Arc::new(
                 RedisPubSub::new(
                     &config.redis_url,
@@ -81,9 +84,6 @@ impl ClusterManager {
             );
 
             Some(redis_pubsub.clone().start().await?)
-        } else {
-            warn!("Redis URL not provided, running in single-node mode");
-            None
         };
 
         Ok(Self {
@@ -100,17 +100,20 @@ impl ClusterManager {
     }
 
     /// Get the message hub (for subscriptions)
-    pub fn message_hub(&self) -> &Arc<RoomMessageHub> {
+    #[must_use] 
+    pub const fn message_hub(&self) -> &Arc<RoomMessageHub> {
         &self.message_hub
     }
 
     /// Get the deduplicator
-    pub fn deduplicator(&self) -> &Arc<MessageDeduplicator> {
+    #[must_use] 
+    pub const fn deduplicator(&self) -> &Arc<MessageDeduplicator> {
         &self.deduplicator
     }
 
     /// Get the Redis publish sender
-    pub fn redis_publish_tx(&self) -> Option<&mpsc::UnboundedSender<PublishRequest>> {
+    #[must_use] 
+    pub const fn redis_publish_tx(&self) -> Option<&mpsc::UnboundedSender<PublishRequest>> {
         self.redis_publish_tx.as_ref()
     }
 
@@ -128,8 +131,7 @@ impl ClusterManager {
             debug!(
                 event_type = %event.event_type(),
                 room_id = %event.room_id()
-                    .map(|id| id.as_str())
-                    .unwrap_or("n/a"),
+                    .map_or("n/a", synctv_core::models::RoomId::as_str),
                 "Duplicate event detected, skipping"
             );
             return BroadcastResult {
@@ -209,6 +211,7 @@ impl ClusterManager {
     }
 
     /// Get cluster metrics
+    #[must_use] 
     pub fn metrics(&self) -> ClusterMetrics {
         ClusterMetrics {
             node_id: self.node_id.clone(),
@@ -220,6 +223,7 @@ impl ClusterManager {
     }
 
     /// Get subscribers in a room
+    #[must_use] 
     pub fn get_room_subscribers(&self, room_id: &RoomId) -> Vec<(UserId, ConnectionId)> {
         self.message_hub.get_room_subscribers(room_id)
     }

@@ -53,7 +53,7 @@ impl SegmentManager {
 
     /// Start periodic cleanup task
     ///
-    /// This spawns a background task that periodically calls storage.cleanup()
+    /// This spawns a background task that periodically calls `storage.cleanup()`
     /// to delete expired segments.
     pub fn start_cleanup_task(self: Arc<Self>) {
         let manager = Arc::clone(&self);
@@ -95,6 +95,7 @@ impl SegmentManager {
     }
 
     /// Get storage backend for direct access
+    #[must_use] 
     pub fn storage(&self) -> &Arc<dyn HlsStorage> {
         &self.storage
     }

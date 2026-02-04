@@ -1,4 +1,4 @@
-//! Logto OAuth2 provider
+//! Logto `OAuth2` provider
 
 use crate::oauth2::{Provider, OAuth2UserInfo};
 use crate::Error;
@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Logto OAuth2 provider configuration
+/// Logto `OAuth2` provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogtoConfig {
     pub client_id: String,
@@ -20,7 +20,7 @@ pub struct LogtoConfig {
     pub endpoint: String,
 }
 
-/// Logto OAuth2 provider
+/// Logto `OAuth2` provider
 ///
 /// Supports multiple instances (e.g., logto1, logto2) with different endpoints.
 /// Similar to Go's logtoProvider in synctv/internal/provider/providers/logto.go
@@ -32,14 +32,15 @@ pub struct LogtoProvider {
 
 impl LogtoProvider {
     /// Create a new Logto provider with configuration
+    #[must_use] 
     pub fn create(client_id: String, client_secret: String, redirect_url: String, endpoint: &str) -> Self {
         let endpoint = endpoint.trim_end_matches('/');
         let client = Arc::new(
             BasicClient::new(
                 ClientId::new(client_id),
                 Some(ClientSecret::new(client_secret)),
-                AuthUrl::new(format!("{}/oidc/auth", endpoint)).unwrap(),
-                Some(TokenUrl::new(format!("{}/oidc/token", endpoint)).unwrap()),
+                AuthUrl::new(format!("{endpoint}/oidc/auth")).unwrap(),
+                Some(TokenUrl::new(format!("{endpoint}/oidc/token")).unwrap()),
             )
             .set_redirect_uri(RedirectUrl::new(redirect_url).unwrap()),
         );
@@ -54,7 +55,7 @@ impl LogtoProvider {
 
 #[async_trait]
 impl Provider for LogtoProvider {
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "logto"
     }
 
@@ -73,7 +74,7 @@ impl Provider for LogtoProvider {
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
             .request_async(oauth2::reqwest::async_http_client)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to exchange code: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to exchange code: {e}")))?;
 
         // Fetch user info from Logto
         let resp = self
@@ -82,9 +83,9 @@ impl Provider for LogtoProvider {
             .header("Authorization", format!("Bearer {}", token.access_token().secret()))
             .send()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch user info: {}", e)))?
+            .map_err(|e| Error::Internal(format!("Failed to fetch user info: {e}")))?
             .error_for_status()
-            .map_err(|e| Error::Internal(format!("Logto API error: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Logto API error: {e}")))?;
 
         #[derive(Deserialize)]
         struct LogtoUser {
@@ -98,7 +99,7 @@ impl Provider for LogtoProvider {
         let user: LogtoUser = resp
             .json()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to parse user info: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to parse user info: {e}")))?;
 
         let username = user.username.or(user.name).unwrap_or_default();
 
@@ -114,7 +115,7 @@ impl Provider for LogtoProvider {
 /// Factory function for Logto provider
 pub fn logto_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error> {
     let config: LogtoConfig = serde_yaml::from_value(config.clone())
-        .map_err(|e| Error::InvalidInput(format!("Invalid Logto config: {}", e)))?;
+        .map_err(|e| Error::InvalidInput(format!("Invalid Logto config: {e}")))?;
 
     Ok(Box::new(LogtoProvider::create(
         config.client_id,

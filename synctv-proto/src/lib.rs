@@ -1,6 +1,6 @@
-//! SyncTV Protocol Definitions
+//! `SyncTV` Protocol Definitions
 //!
-//! This crate contains all protobuf definitions and generated code for SyncTV's
+//! This crate contains all protobuf definitions and generated code for `SyncTV`'s
 //! external APIs.
 
 // Client API

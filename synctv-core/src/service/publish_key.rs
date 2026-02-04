@@ -62,7 +62,8 @@ impl std::fmt::Debug for PublishKeyService {
 
 impl PublishKeyService {
     /// Create a new publish key service
-    pub fn new(jwt_service: JwtService, token_ttl_hours: i64) -> Self {
+    #[must_use] 
+    pub const fn new(jwt_service: JwtService, token_ttl_hours: i64) -> Self {
         Self {
             jwt_service,
             token_ttl_hours,
@@ -70,7 +71,8 @@ impl PublishKeyService {
     }
 
     /// Create a new publish key service with default TTL (24 hours)
-    pub fn with_default_ttl(jwt_service: JwtService) -> Self {
+    #[must_use] 
+    pub const fn with_default_ttl(jwt_service: JwtService) -> Self {
         Self::new(jwt_service, 24)
     }
 
@@ -82,7 +84,7 @@ impl PublishKeyService {
     /// * `user_id` - User ID requesting the publish key
     ///
     /// # Returns
-    /// A PublishKey containing the JWT token and metadata
+    /// A `PublishKey` containing the JWT token and metadata
     pub async fn generate_publish_key(
         &self,
         room_id: RoomId,
@@ -91,7 +93,7 @@ impl PublishKeyService {
     ) -> Result<PublishKey> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| Error::Internal(format!("Time error: {}", e)))?
+            .map_err(|e| Error::Internal(format!("Time error: {e}")))?
             .as_secs() as i64;
 
         let exp = now + (self.token_ttl_hours * 3600);
@@ -109,7 +111,7 @@ impl PublishKeyService {
 
         // Serialize claims to JSON
         let claims_json = serde_json::to_value(&claims)
-            .map_err(|e| Error::Internal(format!("Failed to serialize claims: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to serialize claims: {e}")))?;
 
         // Sign with JWT service (using RS256)
         let token = self
@@ -142,12 +144,12 @@ impl PublishKeyService {
 
         // Deserialize claims
         let claims: PublishClaims = serde_json::from_value(claims_value)
-            .map_err(|e| Error::Authentication(format!("Invalid token format: {}", e)))?;
+            .map_err(|e| Error::Authentication(format!("Invalid token format: {e}")))?;
 
         // Check expiration
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| Error::Internal(format!("Time error: {}", e)))?
+            .map_err(|e| Error::Internal(format!("Time error: {e}")))?
             .as_secs() as i64;
 
         if now > claims.exp {

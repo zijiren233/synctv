@@ -4,10 +4,9 @@
 
 use async_trait::async_trait;
 use anyhow::Result;
-use chrono::Utc;
 use super::registry::{PublisherInfo, StreamRegistry};
 
-/// StreamRegistry trait for publisher registration
+/// `StreamRegistry` trait for publisher registration
 #[async_trait]
 pub trait StreamRegistryTrait: Send + Sync {
     /// Register a publisher for a media in a room (atomic operation)
@@ -41,7 +40,7 @@ pub trait StreamRegistryTrait: Send + Sync {
     /// Check if a stream is active (has a publisher)
     async fn is_stream_active(&self, room_id: &str, media_id: &str) -> Result<bool>;
 
-    /// List all active streams (returns tuples of (room_id, media_id))
+    /// List all active streams (returns tuples of (`room_id`, `media_id`))
     async fn list_active_streams(&self) -> Result<Vec<(String, String)>>;
 }
 
@@ -72,19 +71,19 @@ impl StreamRegistryTrait for StreamRegistry {
     }
 
     async fn unregister_publisher(&self, room_id: &str, media_id: &str) -> Result<()> {
-        StreamRegistry::unregister_publisher_immut(self, room_id, media_id).await
+        Self::unregister_publisher_immut(self, room_id, media_id).await
     }
 
     async fn get_publisher(&self, room_id: &str, media_id: &str) -> Result<Option<PublisherInfo>> {
-        StreamRegistry::get_publisher_immut(self, room_id, media_id).await
+        Self::get_publisher_immut(self, room_id, media_id).await
     }
 
     async fn is_stream_active(&self, room_id: &str, media_id: &str) -> Result<bool> {
-        StreamRegistry::is_stream_active_immut(self, room_id, media_id).await
+        Self::is_stream_active_immut(self, room_id, media_id).await
     }
 
     async fn list_active_streams(&self) -> Result<Vec<(String, String)>> {
-        StreamRegistry::list_active_streams_immut(self).await
+        Self::list_active_streams_immut(self).await
     }
 }
 

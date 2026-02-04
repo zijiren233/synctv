@@ -24,7 +24,8 @@ impl BloomConfig {
     /// # Arguments
     /// * `expected_elements` - Expected number of elements to store
     /// * `false_positive_probability` - Desired false positive rate (e.g., 0.01 for 1%)
-    pub fn new(expected_elements: u64, false_positive_probability: f64) -> Self {
+    #[must_use] 
+    pub const fn new(expected_elements: u64, false_positive_probability: f64) -> Self {
         Self {
             expected_elements,
             false_positive_probability,
@@ -32,6 +33,7 @@ impl BloomConfig {
     }
 
     /// Calculate optimal number of bits
+    #[must_use] 
     pub fn calculate_bits(&self) -> u64 {
         let m = -(self.expected_elements as f64 * self.false_positive_probability.ln())
             / std::f64::consts::LN_2.powi(2);
@@ -39,6 +41,7 @@ impl BloomConfig {
     }
 
     /// Calculate optimal number of hash functions
+    #[must_use] 
     pub fn calculate_hash_functions(&self) -> u32 {
         let m = self.calculate_bits() as f64;
         let n = self.expected_elements as f64;
@@ -64,11 +67,13 @@ pub struct BloomFilter {
 
 impl BloomFilter {
     /// Create a new bloom filter with default configuration
+    #[must_use] 
     pub fn new() -> Self {
         Self::with_config(BloomConfig::default())
     }
 
     /// Create a new bloom filter with custom configuration
+    #[must_use] 
     pub fn with_config(config: BloomConfig) -> Self {
         let max_items = config.expected_elements as usize;
         let desired_fp_prob = config.false_positive_probability;
@@ -82,6 +87,7 @@ impl BloomFilter {
     }
 
     /// Create a bloom filter optimized for a specific expected size
+    #[must_use] 
     pub fn with_capacity(expected_elements: u64) -> Self {
         Self::with_config(BloomConfig::new(expected_elements, 0.01))
     }
@@ -125,14 +131,16 @@ impl BloomFilter {
     }
 
     /// Get the current configuration
-    pub fn config(&self) -> &BloomConfig {
+    #[must_use] 
+    pub const fn config(&self) -> &BloomConfig {
         &self.config
     }
 
     /// Get the current false positive rate
     ///
-    /// Note: GrowableBloom maintains the configured FP rate by growing
-    pub fn false_positive_rate(&self) -> f64 {
+    /// Note: `GrowableBloom` maintains the configured FP rate by growing
+    #[must_use] 
+    pub const fn false_positive_rate(&self) -> f64 {
         self.config.false_positive_probability
     }
 
@@ -205,6 +213,7 @@ impl ProtectedCache {
     /// # Arguments
     /// * `expected_elements` - Expected number of elements in the filter
     /// * `max_null_keys` - Maximum null keys to cache (default: 10000)
+    #[must_use] 
     pub fn new(expected_elements: u64, max_null_keys: usize) -> Self {
         Self {
             bloom_filter: Arc::new(BloomFilter::with_capacity(expected_elements)),
@@ -214,6 +223,7 @@ impl ProtectedCache {
     }
 
     /// Create with default configuration (1M elements, 10K null keys)
+    #[must_use] 
     pub fn with_defaults() -> Self {
         Self::new(1_000_000, 10_000)
     }
@@ -268,7 +278,7 @@ impl ProtectedCache {
 
     /// Quick check if key definitely doesn't exist (bloom filter only)
     ///
-    /// This is faster than check_exists but only checks the bloom filter,
+    /// This is faster than `check_exists` but only checks the bloom filter,
     /// not the null cache. Use this for pre-filtering.
     pub async fn check_exists_quick(&self, key: &str) -> bool {
         self.bloom_filter.contains(key).await
@@ -303,6 +313,7 @@ impl ProtectedCache {
     }
 
     /// Get the bloom filter reference
+    #[must_use] 
     pub fn bloom_filter(&self) -> &BloomFilter {
         &self.bloom_filter
     }

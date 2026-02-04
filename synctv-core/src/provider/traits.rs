@@ -109,8 +109,8 @@ pub struct DirectoryItem {
 /// Core interface that all providers must implement.
 /// Only `generate_playback()` is mandatory.
 ///
-/// Note: MediaProvider is a capability provider, not a concrete instance.
-/// It may use different provider_instances internally via ProviderInstanceManager.
+/// Note: `MediaProvider` is a capability provider, not a concrete instance.
+/// It may use different `provider_instances` internally via `ProviderInstanceManager`.
 #[async_trait]
 pub trait MediaProvider: Send + Sync {
     // ========== Basic Information ==========
@@ -120,22 +120,22 @@ pub trait MediaProvider: Send + Sync {
 
     // ========== Core Method (MANDATORY) ==========
 
-    /// Generate playback information from source_config
+    /// Generate playback information from `source_config`
     ///
     /// This is the ONLY mandatory method. Called when user plays media.
     ///
     /// # Flow
-    /// 1. Read media from database (includes source_config)
-    /// 2. Call generate_playback(source_config)
-    /// 3. Return PlaybackResult to client
+    /// 1. Read media from database (includes `source_config`)
+    /// 2. Call `generate_playback(source_config)`
+    /// 3. Return `PlaybackResult` to client
     ///
     /// # Caching
     /// Results are cached in Redis based on `cache_key()`
     ///
     /// # Returns
-    /// PlaybackResult with multiple modes:
+    /// `PlaybackResult` with multiple modes:
     /// - "direct": Direct URLs from provider API
-    /// - "proxied": URLs proxied through SyncTV server
+    /// - "proxied": URLs proxied through `SyncTV` server
     /// - Custom modes: Provider-specific (e.g., "cdn1", "cdn2")
     ///
     /// # Example
@@ -160,7 +160,7 @@ pub trait MediaProvider: Send + Sync {
     ///
     /// # Returns
     /// - Shared: "synctv:playback:{provider}:{hash}:shared"
-    /// - User: "synctv:playback:{provider}:{hash}:user:{user_id}"
+    /// - User: "`synctv:playback:{provider}:{hash}:user:{user_id`}"
     fn cache_key(&self, ctx: &ProviderContext<'_>, source_config: &Value) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -171,7 +171,7 @@ pub trait MediaProvider: Send + Sync {
 
         let is_shared = source_config
             .get("shared")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
 
         if is_shared {
@@ -201,15 +201,15 @@ pub trait MediaProvider: Send + Sync {
 
     // ========== Validation ==========
 
-    /// Validate source_config before saving to database
+    /// Validate `source_config` before saving to database
     ///
-    /// Called when user adds media via add_media API.
+    /// Called when user adds media via `add_media` API.
     ///
     /// # Flow
-    /// 1. User calls parse endpoint → gets ParseResult
-    /// 2. Client constructs source_config from ParseResult
-    /// 3. Client calls add_media API with source_config
-    /// 4. Server calls validate_source_config()
+    /// 1. User calls parse endpoint → gets `ParseResult`
+    /// 2. Client constructs `source_config` from `ParseResult`
+    /// 3. Client calls `add_media` API with `source_config`
+    /// 4. Server calls `validate_source_config()`
     /// 5. If valid, save to database
     async fn validate_source_config(
         &self,
@@ -269,7 +269,7 @@ pub trait MediaProvider: Send + Sync {
 /// Optional trait for providers that support dynamic folders
 ///
 /// Implemented by: Alist, Emby
-/// Not implemented by: Bilibili, DirectUrl, RTMP
+/// Not implemented by: Bilibili, `DirectUrl`, RTMP
 ///
 /// This trait enables providers to:
 /// 1. List contents of dynamic folders (playlists)
@@ -281,7 +281,7 @@ pub trait DynamicFolder: MediaProvider {
     /// Used to browse dynamic folders and load their contents.
     ///
     /// # Arguments
-    /// - `ctx`: Provider context (includes user_id, room_id, etc.)
+    /// - `ctx`: Provider context (includes `user_id`, `room_id`, etc.)
     /// - `playlist`: The dynamic folder (playlist object)
     /// - `relative_path`: Relative path within the dynamic folder (e.g., "subfolder/video.mp4")
     /// - `page`: Page number (0-indexed)
@@ -303,7 +303,7 @@ pub trait DynamicFolder: MediaProvider {
     /// Used by the auto-play system to get the next item when current media finishes.
     ///
     /// # Arguments
-    /// - `ctx`: Provider context (includes user_id, room_id, etc.)
+    /// - `ctx`: Provider context (includes `user_id`, `room_id`, etc.)
     /// - `playlist`: The dynamic folder (playlist object)
     /// - `playing_media`: Currently playing media object
     /// - `relative_path`: Current relative path in the dynamic folder
@@ -315,8 +315,8 @@ pub trait DynamicFolder: MediaProvider {
     ///
     /// # Implementation Notes
     /// - **Sequential**: Return next item in order, None at end
-    /// - **RepeatOne**: Return playing_media again
-    /// - **RepeatAll**: Wrap around to first item
+    /// - **`RepeatOne`**: Return `playing_media` again
+    /// - **`RepeatAll`**: Wrap around to first item
     /// - **Shuffle**: Return random item from playlist
     ///
     /// # Example
@@ -350,13 +350,13 @@ pub struct NextPlayItem {
     /// Item type
     pub item_type: ItemType,
 
-    /// Provider source_config (to be stored in Media.source_config)
+    /// Provider `source_config` (to be stored in `Media.source_config`)
     pub source_config: serde_json::Value,
 
     /// Metadata (duration, thumbnail, etc.)
     pub metadata: serde_json::Value,
 
-    /// Provider-specific data for next() calls
+    /// Provider-specific data for `next()` calls
     /// e.g., Emby playlist index, Alist folder current path
     #[serde(skip_serializing_if = "serde_json::Value::is_null")]
     pub provider_data: serde_json::Value,

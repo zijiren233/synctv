@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use synctv_core::provider::AlistProvider;
-use crate::proto::providers::alist::*;
+use crate::proto::providers::alist::{LoginRequest, LoginResponse, ListRequest, ListResponse, FileItem, GetMeRequest, GetMeResponse, LogoutRequest, LogoutResponse};
 
 /// Alist API implementation
 ///
@@ -17,16 +17,17 @@ pub struct AlistApiImpl {
 }
 
 impl AlistApiImpl {
-    pub fn new(provider: Arc<AlistProvider>) -> Self {
+    #[must_use] 
+    pub const fn new(provider: Arc<AlistProvider>) -> Self {
         Self { provider }
     }
 
     /// Login to Alist
     pub async fn login(&self, req: LoginRequest, instance_name: Option<&str>) -> Result<LoginResponse, String> {
-        let (password, hashed) = if !req.hashed_password.is_empty() {
-            (req.hashed_password, true)
-        } else {
+        let (password, hashed) = if req.hashed_password.is_empty() {
             (req.password, false)
+        } else {
+            (req.hashed_password, true)
         };
 
         let login_req = synctv_providers::grpc::alist::LoginReq {

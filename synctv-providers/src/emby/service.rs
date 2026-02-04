@@ -42,7 +42,8 @@ pub trait EmbyInterface: Send + Sync {
 pub struct EmbyService;
 
 impl EmbyService {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self
     }
 }

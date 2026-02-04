@@ -1,4 +1,4 @@
-//! Google OAuth2 provider
+//! Google `OAuth2` provider
 
 use crate::oauth2::{Provider, OAuth2UserInfo};
 use crate::Error;
@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Google OAuth2 provider configuration
+/// Google `OAuth2` provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleConfig {
     pub client_id: String,
@@ -19,7 +19,7 @@ pub struct GoogleConfig {
     pub redirect_url: String,
 }
 
-/// Google OAuth2 provider
+/// Google `OAuth2` provider
 pub struct GoogleProvider {
     client: Arc<BasicClient>,
     http_client: Arc<Client>,
@@ -27,6 +27,7 @@ pub struct GoogleProvider {
 
 impl GoogleProvider {
     /// Create a new Google provider with configuration
+    #[must_use] 
     pub fn create(client_id: String, client_secret: String, redirect_url: String) -> Self {
         let client = Arc::new(
             BasicClient::new(
@@ -47,7 +48,7 @@ impl GoogleProvider {
 
 #[async_trait]
 impl Provider for GoogleProvider {
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "google"
     }
 
@@ -66,7 +67,7 @@ impl Provider for GoogleProvider {
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
             .request_async(oauth2::reqwest::async_http_client)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to exchange code: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to exchange code: {e}")))?;
 
         // Fetch user info
         let resp = self
@@ -75,9 +76,9 @@ impl Provider for GoogleProvider {
             .header("Authorization", format!("Bearer {}", token.access_token().secret()))
             .send()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch user info: {}", e)))?
+            .map_err(|e| Error::Internal(format!("Failed to fetch user info: {e}")))?
             .error_for_status()
-            .map_err(|e| Error::Internal(format!("Google API error: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Google API error: {e}")))?;
 
         #[derive(Deserialize)]
         struct GoogleUser {
@@ -90,7 +91,7 @@ impl Provider for GoogleProvider {
         let user: GoogleUser = resp
             .json()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to parse user info: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to parse user info: {e}")))?;
 
         Ok(OAuth2UserInfo {
             provider_user_id: user.id,
@@ -104,7 +105,7 @@ impl Provider for GoogleProvider {
 /// Factory function for Google provider
 pub fn google_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error> {
     let config: GoogleConfig = serde_yaml::from_value(config.clone())
-        .map_err(|e| Error::InvalidInput(format!("Invalid Google config: {}", e)))?;
+        .map_err(|e| Error::InvalidInput(format!("Invalid Google config: {e}")))?;
 
     Ok(Box::new(GoogleProvider::create(
         config.client_id,

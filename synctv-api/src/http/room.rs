@@ -12,7 +12,7 @@ use synctv_core::models::{
 };
 
 use super::{middleware::AuthUser, AppResult, AppState};
-use crate::proto::client::*;
+use crate::proto::client::{CreateRoomResponse, CreateRoomRequest, GetRoomResponse, JoinRoomResponse, JoinRoomRequest, LeaveRoomResponse, LeaveRoomRequest, DeleteRoomResponse, DeleteRoomRequest, AddMediaResponse, AddMediaRequest, RemoveMediaResponse, RemoveMediaRequest, GetPlaylistResponse, SwapMediaResponse, SwapMediaRequest, PlayResponse, PlayRequest, PauseResponse, SeekResponse, SeekRequest, ChangeSpeedResponse, ChangeSpeedRequest, SwitchMediaResponse, SwitchMediaRequest, GetPlaybackStateResponse, GetPlaybackStateRequest, GetRoomMembersResponse, CheckRoomResponse, ListRoomsResponse, ListRoomsRequest, SetRoomSettingsResponse, SetRoomSettingsRequest};
 
 /// Room settings for HTTP requests
 #[derive(Debug, Clone, Default)]
@@ -53,7 +53,7 @@ fn build_room_settings_bytes(
     });
 
     serde_json::to_vec(&settings)
-        .map_err(|e| format!("Failed to serialize settings: {}", e))
+        .map_err(|e| format!("Failed to serialize settings: {e}"))
 }
 
 // ==================== Room Management Endpoints ====================
@@ -79,13 +79,13 @@ pub async fn create_room(
         .unwrap_or("")
         .to_string();
 
-    let max_members = req.get("max_members").and_then(|v| v.as_i64()).map(|v| v as i32);
-    let allow_guest_join = req.get("allow_guest_join").and_then(|v| v.as_bool());
-    let auto_play_next = req.get("auto_play_next").and_then(|v| v.as_bool());
-    let loop_playlist = req.get("loop_playlist").and_then(|v| v.as_bool());
-    let shuffle_playlist = req.get("shuffle_playlist").and_then(|v| v.as_bool());
-    let chat_enabled = req.get("chat_enabled").and_then(|v| v.as_bool());
-    let danmaku_enabled = req.get("danmaku_enabled").and_then(|v| v.as_bool());
+    let max_members = req.get("max_members").and_then(serde_json::Value::as_i64).map(|v| v as i32);
+    let allow_guest_join = req.get("allow_guest_join").and_then(serde_json::Value::as_bool);
+    let auto_play_next = req.get("auto_play_next").and_then(serde_json::Value::as_bool);
+    let loop_playlist = req.get("loop_playlist").and_then(serde_json::Value::as_bool);
+    let shuffle_playlist = req.get("shuffle_playlist").and_then(serde_json::Value::as_bool);
+    let chat_enabled = req.get("chat_enabled").and_then(serde_json::Value::as_bool);
+    let danmaku_enabled = req.get("danmaku_enabled").and_then(serde_json::Value::as_bool);
 
     // Build settings JSON
     let settings_bytes = build_room_settings_bytes(
@@ -209,17 +209,15 @@ pub async fn add_media(
         .to_string();
 
     let title = req.get("title")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
+        .and_then(|v| v.as_str()).map_or_else(|| {
             // Extract title from URL
             url.split('/').next_back().unwrap_or("Unknown").to_string()
-        });
+        }, std::string::ToString::to_string);
 
     // Build source config JSON
     let source_config = serde_json::json!({"url": url});
     let source_config_bytes = serde_json::to_vec(&source_config)
-        .map_err(|e| super::AppError::bad_request(format!("Invalid source config: {}", e)))?;
+        .map_err(|e| super::AppError::bad_request(format!("Invalid source config: {e}")))?;
 
     let proto_req = AddMediaRequest {
         playlist_id: String::new(), // Default/empty playlist
@@ -343,7 +341,7 @@ pub async fn seek(
     Json(req): Json<serde_json::Value>,
 ) -> AppResult<Json<SeekResponse>> {
     let position = req.get("position")
-        .and_then(|v| v.as_f64())
+        .and_then(serde_json::Value::as_f64)
         .ok_or_else(|| super::AppError::bad_request("Missing or invalid position field"))?;
 
     let proto_req = SeekRequest { position };
@@ -364,7 +362,7 @@ pub async fn change_speed(
     Json(req): Json<serde_json::Value>,
 ) -> AppResult<Json<ChangeSpeedResponse>> {
     let speed = req.get("speed")
-        .and_then(|v| v.as_f64())
+        .and_then(serde_json::Value::as_f64)
         .ok_or_else(|| super::AppError::bad_request("Missing or invalid speed field"))?;
 
     let proto_req = ChangeSpeedRequest { speed };
@@ -510,7 +508,7 @@ pub async fn set_room_settings_admin(
     // Build settings JSON from request fields
     let settings_json = req.clone();
     let settings_bytes = serde_json::to_vec(&settings_json)
-        .map_err(|e| super::AppError::bad_request(format!("Invalid settings JSON: {}", e)))?;
+        .map_err(|e| super::AppError::bad_request(format!("Invalid settings JSON: {e}")))?;
 
     let proto_req = SetRoomSettingsRequest {
         room_id: room_id.clone(),
@@ -552,7 +550,7 @@ pub async fn set_room_password(
     } else {
         let hash = synctv_core::service::auth::password::hash_password(&password)
             .await
-            .map_err(|e| super::AppError::internal(format!("Failed to hash password: {}", e)))?;
+            .map_err(|e| super::AppError::internal(format!("Failed to hash password: {e}")))?;
         Some(hash)
     };
 
@@ -561,7 +559,7 @@ pub async fn set_room_password(
         .room_service
         .update_room_password(&room_id_obj, password_hash)
         .await
-        .map_err(|e| super::AppError::internal(format!("Failed to update password: {}", e)))?;
+        .map_err(|e| super::AppError::internal(format!("Failed to update password: {e}")))?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -587,13 +585,13 @@ pub async fn check_password(
         .room_service
         .get_room(&room_id_obj)
         .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
+        .map_err(|e| super::AppError::not_found(format!("Room not found: {e}")))?;
 
     let is_valid = state
         .room_service
         .check_room_password(&room_id_obj, &password)
         .await
-        .map_err(|e| super::AppError::internal(format!("Password verification failed: {}", e)))?;
+        .map_err(|e| super::AppError::internal(format!("Password verification failed: {e}")))?;
 
     Ok(Json(serde_json::json!({
         "valid": is_valid
@@ -611,15 +609,15 @@ pub async fn get_room_settings(
         .room_service
         .get_room(&room_id_obj)
         .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
+        .map_err(|e| super::AppError::not_found(format!("Room not found: {e}")))?;
 
     // Load settings from service layer
     let room_settings = state.room_service.get_room_settings(&room_id_obj).await
-        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {}", e)))?;
+        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {e}")))?;
 
     // Convert to JSON and hide password hash
     let mut settings_json = serde_json::to_value(&room_settings)
-        .map_err(|e| super::AppError::internal(format!("Failed to serialize settings: {}", e)))?;
+        .map_err(|e| super::AppError::internal(format!("Failed to serialize settings: {e}")))?;
 
     if let Some(obj) = settings_json.as_object_mut() {
         obj.remove("password");
@@ -663,17 +661,15 @@ pub async fn push_media_batch(
             .to_string();
 
         let title = item.get("title")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
+            .and_then(|v| v.as_str()).map_or_else(|| {
                 // Extract title from URL
                 url.split('/').next_back().unwrap_or("Unknown").to_string()
-            });
+            }, std::string::ToString::to_string);
 
         // Build source config JSON
         let source_config = serde_json::json!({"url": url});
         let source_config_bytes = serde_json::to_vec(&source_config)
-            .map_err(|e| super::AppError::bad_request(format!("Invalid source config: {}", e)))?;
+            .map_err(|e| super::AppError::bad_request(format!("Invalid source config: {e}")))?;
 
         let proto_req = AddMediaRequest {
             playlist_id: String::new(),
@@ -709,10 +705,10 @@ pub async fn edit_media(
     // Build metadata from request
     let title = req.get("title")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
     let url = req.get("url")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     // Build metadata JSON
     let metadata = url.as_ref().map(|url| serde_json::json!({"url": url}));
@@ -722,7 +718,7 @@ pub async fn edit_media(
         .room_service
         .edit_media(room_id_obj, auth.user_id, media_id_obj, title, metadata)
         .await
-        .map_err(|e| super::AppError::internal_server_error(format!("Failed to edit media: {}", e)))?;
+        .map_err(|e| super::AppError::internal_server_error(format!("Failed to edit media: {e}")))?;
 
     // Convert to response
     let media_url = media.source_config.get("url")
@@ -762,12 +758,12 @@ pub async fn clear_playlist(
 
     // Get current playlist
     let media_list = state.room_service.get_playlist(&room_id_obj).await
-        .map_err(|e| super::AppError::internal_server_error(format!("Failed to get playlist: {}", e)))?;
+        .map_err(|e| super::AppError::internal_server_error(format!("Failed to get playlist: {e}")))?;
 
     // Remove all media
     for media in media_list {
         state.room_service.remove_media(room_id_obj.clone(), auth.user_id.clone(), media.id.clone()).await
-            .map_err(|e| super::AppError::internal_server_error(format!("Failed to remove media: {}", e)))?;
+            .map_err(|e| super::AppError::internal_server_error(format!("Failed to remove media: {e}")))?;
     }
 
     Ok(Json(serde_json::json!({

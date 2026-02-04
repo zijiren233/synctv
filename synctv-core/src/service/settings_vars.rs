@@ -4,7 +4,7 @@
 //!
 //! - All settings share a single `Arc<RwLock<HashMap<String, String>>` for raw values
 //! - Each setting has its own typed cache
-//! - Type conversion via standard Rust traits (Display, FromStr)
+//! - Type conversion via standard Rust traits (Display, `FromStr`)
 //! - Reading returns cached value (synchronous, fast)
 //! - Writing saves to storage + database (async)
 //!
@@ -88,6 +88,7 @@ pub struct SettingsStorage {
 }
 
 impl SettingsStorage {
+    #[must_use] 
     pub fn new(settings_service: Arc<SettingsService>) -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashMap::default())),
@@ -104,6 +105,7 @@ impl SettingsStorage {
     }
 
     /// Get a provider by key
+    #[must_use] 
     pub fn get_provider(&self, key: &str) -> Option<Arc<dyn SettingProvider>> {
         self.setting_providers.read().ok()?.get(key).cloned()
     }
@@ -115,18 +117,19 @@ impl SettingsStorage {
             .settings_service
             .get_all_values()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to load settings: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to load settings: {e}"))?;
 
         let mut storage = self
             .inner
             .write()
-            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
         *storage = all_values.into_iter().collect();
 
         Ok(())
     }
 
     /// Get raw string value for a key
+    #[must_use] 
     pub fn get_raw(&self, key: &str) -> Option<String> {
         let storage = self.inner.read().ok()?;
         storage.get(key).cloned()
@@ -139,7 +142,7 @@ impl SettingsStorage {
             let mut storage = self
                 .inner
                 .write()
-                .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
             storage.insert(key.to_string(), value.clone());
         }
 
@@ -154,10 +157,10 @@ impl SettingsStorage {
     }
 
     /// Validate a setting value by key
+    #[must_use] 
     pub fn validate(&self, key: &str, value: &str) -> bool {
         self.get_provider(key)
-            .map(|p| p.is_valid_raw(value).is_ok())
-            .unwrap_or(true)
+            .is_none_or(|p| p.is_valid_raw(value).is_ok())
     }
 }
 
@@ -165,7 +168,7 @@ impl SettingsStorage {
 ///
 /// Generic over any type that implements:
 /// - `Clone` - for copying values
-/// - `Display` - for formatting to string (via to_string())
+/// - `Display` - for formatting to string (via `to_string()`)
 /// - `std::str::FromStr` - for parsing from string
 pub struct Setting<T>
 where
@@ -208,7 +211,7 @@ where
     ///
     /// # Arguments
     ///
-    /// * `key` - Setting key in format "group.name" (e.g., "server.signup_enabled")
+    /// * `key` - Setting key in format "group.name" (e.g., "`server.signup_enabled`")
     /// * `storage` - Shared settings storage
     /// * `default_value` - Default value if setting doesn't exist
     pub fn new(key: &'static str, storage: Arc<SettingsStorage>, default_value: T) -> Self {
@@ -340,7 +343,7 @@ where
     }
 
     /// Get the setting key
-    pub fn key(&self) -> &str {
+    pub const fn key(&self) -> &str {
         self.key
     }
 }

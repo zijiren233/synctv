@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::str::FromStr;
 use synctv_core::models::{UserId, RoomId};
 use synctv_core::service::{RoomService, UserService, SettingsService, EmailService};
+use synctv_cluster::sync::ConnectionManager;
 
 /// Admin API implementation
 #[derive(Clone)]
@@ -15,20 +16,24 @@ pub struct AdminApiImpl {
     pub user_service: Arc<UserService>,
     pub settings_service: Arc<SettingsService>,
     pub email_service: Arc<EmailService>,
+    pub connection_manager: Arc<ConnectionManager>,
 }
 
 impl AdminApiImpl {
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         room_service: Arc<RoomService>,
         user_service: Arc<UserService>,
         settings_service: Arc<SettingsService>,
         email_service: Arc<EmailService>,
+        connection_manager: Arc<ConnectionManager>,
     ) -> Self {
         Self {
             room_service,
             user_service,
             settings_service,
             email_service,
+            connection_manager,
         }
     }
 
@@ -50,7 +55,18 @@ impl AdminApiImpl {
         let (rooms, total) = self.room_service.list_rooms(&query).await
             .map_err(|e| e.to_string())?;
 
-        let room_list: Vec<_> = rooms.into_iter().map(|r| admin_room_to_proto(&r, None)).collect();
+        let room_list: Vec<_> = rooms
+            .into_iter()
+            .map(|r| {
+                // Get online member count from connection manager
+                let member_count = self
+                    .connection_manager
+                    .room_connection_count(&r.id)
+                    .try_into()
+                    .ok();
+                admin_room_to_proto(&r, None, member_count)
+            })
+            .collect();
 
         Ok(crate::proto::admin::ListRoomsResponse {
             rooms: room_list,
@@ -67,7 +83,14 @@ impl AdminApiImpl {
             .map_err(|e| e.to_string())?;
 
         Ok(crate::proto::admin::GetRoomResponse {
-            room: Some(admin_room_to_proto(&room, None)),
+            room: Some(admin_room_to_proto(
+                &room,
+                None,
+                self.connection_manager
+                    .room_connection_count(&room.id)
+                    .try_into()
+                    .ok(),
+            )),
         })
     }
 
@@ -166,8 +189,7 @@ impl AdminApiImpl {
             .map_err(|e| e.to_string())?;
 
         // Parse role from string
-        let new_role = synctv_core::models::UserRole::from_str(&req.role)
-            .map_err(|e| e.to_string())?;
+        let new_role = synctv_core::models::UserRole::from_str(&req.role)?;
 
         let updated_user = synctv_core::models::User {
             role: new_role,
@@ -320,6 +342,7 @@ impl AdminApiImpl {
 fn admin_room_to_proto(
     room: &synctv_core::models::Room,
     settings: Option<&synctv_core::models::RoomSettings>,
+    member_count: Option<i32>,
 ) -> crate::proto::admin::AdminRoom {
     let room_settings = settings.cloned().unwrap_or_default();
     crate::proto::admin::AdminRoom {
@@ -329,7 +352,7 @@ fn admin_room_to_proto(
         creator_username: String::new(), // Would need to fetch user
         status: room.status.as_str().to_string(),
         settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
-        member_count: 0, // TODO: Fetch actual member count
+        member_count: member_count.unwrap_or(0),
         created_at: room.created_at.timestamp(),
         updated_at: room.updated_at.timestamp(),
     }

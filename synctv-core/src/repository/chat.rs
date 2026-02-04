@@ -13,18 +13,19 @@ pub struct ChatRepository {
 }
 
 impl ChatRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
     /// Create a new chat message
     pub async fn create(&self, message: &ChatMessage) -> Result<ChatMessage> {
         let row = sqlx::query(
-            r#"
+            r"
             INSERT INTO chat_messages (id, room_id, user_id, content, created_at)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id, room_id, user_id, content, created_at, deleted_at
-            "#,
+            ",
         )
         .bind(&message.id)
         .bind(message.room_id.as_str())
@@ -49,13 +50,13 @@ impl ChatRepository {
 
         let rows = if let Some(before_time) = before {
             sqlx::query(
-                r#"
+                r"
                 SELECT id, room_id, user_id, content, created_at, deleted_at
                 FROM chat_messages
                 WHERE room_id = $1 AND created_at < $2 AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $3
-                "#,
+                ",
             )
             .bind(room_id.as_str())
             .bind(before_time)
@@ -64,13 +65,13 @@ impl ChatRepository {
             .await?
         } else {
             sqlx::query(
-                r#"
+                r"
                 SELECT id, room_id, user_id, content, created_at, deleted_at
                 FROM chat_messages
                 WHERE room_id = $1 AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $2
-                "#,
+                ",
             )
             .bind(room_id.as_str())
             .bind(limit)
@@ -86,11 +87,11 @@ impl ChatRepository {
     /// Get a specific message by ID
     pub async fn get_by_id(&self, message_id: &str) -> Result<Option<ChatMessage>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT id, room_id, user_id, content, created_at, deleted_at
             FROM chat_messages
             WHERE id = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(message_id)
         .fetch_optional(&self.pool)
@@ -105,11 +106,11 @@ impl ChatRepository {
     /// Soft delete a message
     pub async fn delete(&self, message_id: &str) -> Result<bool> {
         let result = sqlx::query(
-            r#"
+            r"
             UPDATE chat_messages
             SET deleted_at = $2
             WHERE id = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(message_id)
         .bind(Utc::now())
@@ -122,11 +123,11 @@ impl ChatRepository {
     /// Get message count for a room
     pub async fn count_by_room(&self, room_id: &RoomId) -> Result<i64> {
         let count: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*) as count
             FROM chat_messages
             WHERE room_id = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(room_id.as_str())
         .fetch_one(&self.pool)
@@ -138,7 +139,7 @@ impl ChatRepository {
     /// Delete old messages for a room (keep only last N messages)
     pub async fn cleanup_old_messages(&self, room_id: &RoomId, keep_count: i32) -> Result<u64> {
         let result = sqlx::query(
-            r#"
+            r"
             DELETE FROM chat_messages
             WHERE room_id = $1
             AND id NOT IN (
@@ -147,7 +148,7 @@ impl ChatRepository {
                 ORDER BY created_at DESC
                 LIMIT $2
             )
-            "#,
+            ",
         )
         .bind(room_id.as_str())
         .bind(keep_count)
@@ -157,7 +158,7 @@ impl ChatRepository {
         Ok(result.rows_affected())
     }
 
-    /// Convert database row to ChatMessage
+    /// Convert database row to `ChatMessage`
     fn row_to_message(&self, row: PgRow) -> Result<ChatMessage> {
         Ok(ChatMessage {
             id: row.try_get("id")?,

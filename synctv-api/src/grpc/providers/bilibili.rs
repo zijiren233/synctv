@@ -8,18 +8,19 @@ use crate::impls::BilibiliApiImpl;
 
 // Import generated proto types from synctv_proto
 use crate::proto::providers::bilibili::bilibili_provider_service_server::BilibiliProviderService;
-use crate::proto::providers::bilibili::*;
+use crate::proto::providers::bilibili::{ParseRequest, ParseResponse, LoginQrRequest, QrCodeResponse, CheckQrRequest, QrStatusResponse, GetCaptchaRequest, CaptchaResponse, SendSmsRequest, SendSmsResponse, LoginSmsRequest, LoginSmsResponse, UserInfoRequest, UserInfoResponse, LogoutRequest, LogoutResponse};
 
 /// Bilibili Provider gRPC Service
 ///
-/// Thin wrapper that delegates to BilibiliApiImpl.
+/// Thin wrapper that delegates to `BilibiliApiImpl`.
 #[derive(Clone)]
 pub struct BilibiliProviderGrpcService {
     app_state: Arc<AppState>,
 }
 
 impl BilibiliProviderGrpcService {
-    pub fn new(app_state: Arc<AppState>) -> Self {
+    #[must_use] 
+    pub const fn new(app_state: Arc<AppState>) -> Self {
         Self { app_state }
     }
 }

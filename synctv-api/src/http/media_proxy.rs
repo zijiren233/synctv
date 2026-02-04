@@ -15,7 +15,7 @@ use crate::http::middleware::AuthUser;
 use crate::http::AppState;
 use synctv_core::models::{MediaId, RoomId};
 
-/// GET /api/rooms/:room_id/media/:media_id/proxy - Proxy video stream from provider
+/// GET /`api/rooms/:room_id/media/:media_id/proxy` - Proxy video stream from provider
 pub async fn proxy_media_stream(
     _auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,
@@ -30,7 +30,7 @@ pub async fn proxy_media_stream(
         .room_service
         .get_playlist(&room_id)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to get playlist: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to get playlist: {e}"))?;
 
     // Find the media in the playlist
     let media = playlist
@@ -50,13 +50,13 @@ pub async fn proxy_media_stream(
     // Use reqwest to fetch the content
     let client = reqwest::Client::builder()
         .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
 
     // Build the proxy request
     let mut request = client.get(original_url);
 
     // Copy relevant headers from the original request
-    for (name, value) in headers.iter() {
+    for (name, value) in &headers {
         // Skip headers that shouldn't be proxied
         if matches!(
             name.as_str(),
@@ -91,7 +91,7 @@ pub async fn proxy_media_stream(
     let proxy_response = request
         .send()
         .await
-        .map_err(|e| anyhow::anyhow!("Proxy request failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Proxy request failed: {e}"))?;
 
     let status = proxy_response.status();
     let response_headers = proxy_response.headers().clone();
@@ -100,13 +100,13 @@ pub async fn proxy_media_stream(
     let body_bytes = proxy_response
         .bytes()
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to read response body: {e}"))?;
 
     // Build the response
     let mut builder = Response::builder().status(status);
 
     // Copy relevant headers from the proxy response
-    for (name, value) in response_headers.iter() {
+    for (name, value) in &response_headers {
         // Skip headers that shouldn't be forwarded
         if matches!(
             name.as_str(),
@@ -132,12 +132,12 @@ pub async fn proxy_media_stream(
 
     let response = builder
         .body(Body::from(body_bytes))
-        .map_err(|e| anyhow::anyhow!("Failed to build response: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to build response: {e}"))?;
 
     Ok(response)
 }
 
-/// OPTIONS /api/rooms/:room_id/media/:media_id/proxy - CORS preflight
+/// OPTIONS /`api/rooms/:room_id/media/:media_id/proxy` - CORS preflight
 pub async fn proxy_media_stream_options() -> impl IntoResponse {
     (
         StatusCode::OK,

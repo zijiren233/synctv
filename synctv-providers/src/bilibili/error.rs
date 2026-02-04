@@ -25,12 +25,12 @@ pub enum BilibiliError {
 
 impl From<reqwest::Error> for BilibiliError {
     fn from(err: reqwest::Error) -> Self {
-        BilibiliError::Network(err.to_string())
+        Self::Network(err.to_string())
     }
 }
 
 impl From<serde_json::Error> for BilibiliError {
     fn from(err: serde_json::Error) -> Self {
-        BilibiliError::Parse(err.to_string())
+        Self::Parse(err.to_string())
     }
 }

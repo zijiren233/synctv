@@ -4,7 +4,6 @@ mod server;
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{error, info};
-use tokio::sync::mpsc;
 
 use synctv_core::{
     logging,
@@ -13,7 +12,7 @@ use synctv_core::{
 };
 use synctv_cluster::sync::{RoomMessageHub, ConnectionManager, ClusterManager, ClusterConfig};
 
-use server::{SyncTvServer, Services, StreamingState};
+use server::{SyncTvServer, Services};
 
 /// Generate a unique node ID for this server instance
 fn generate_node_id() -> String {
@@ -27,15 +26,13 @@ fn generate_node_id() -> String {
 
     // Get local IP address if available
     let local_ip = UdpSocket::bind("0.0.0.0:0")
-        .and_then(|s| s.connect("8.8.8.8:80").map(|_| s))
-        .and_then(|s| s.local_addr())
-        .map(|addr| addr.ip().to_string())
-        .unwrap_or_else(|_| "0.0.0.0".to_string());
+        .and_then(|s| s.connect("8.8.8.8:80").map(|()| s))
+        .and_then(|s| s.local_addr()).map_or_else(|_| "0.0.0.0".to_string(), |addr| addr.ip().to_string());
 
     // Add random suffix for uniqueness
     let suffix = nanoid::nanoid!(6);
 
-    format!("{}_{}-{}", hostname, local_ip, suffix)
+    format!("{hostname}_{local_ip}-{suffix}")
 }
 
 #[tokio::main]
@@ -59,7 +56,7 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| {
             error!("Failed to run migrations: {}", e);
-            anyhow::anyhow!("Migration failed: {}", e)
+            anyhow::anyhow!("Migration failed: {e}")
         })?;
     info!("Migrations completed");
 
@@ -71,7 +68,23 @@ async fn main() -> Result<()> {
     info!("RoomMessageHub initialized");
 
     // 7. Initialize ClusterManager (unified cluster management)
-    let cluster_manager = if !config.redis.url.is_empty() {
+    let cluster_manager = if config.redis.url.is_empty() {
+        info!("Redis not configured, using single-node ClusterManager");
+        // Create a single-node ClusterManager (no Redis)
+        let cluster_config = ClusterConfig {
+            redis_url: String::new(),
+            node_id: generate_node_id(),
+            dedup_window: std::time::Duration::from_secs(5),
+            cleanup_interval: std::time::Duration::from_secs(30),
+        };
+        match ClusterManager::new(cluster_config).await {
+            Ok(manager) => Some(Arc::new(manager)),
+            Err(e) => {
+                error!("Failed to create single-node ClusterManager: {}", e);
+                None
+            }
+        }
+    } else {
         let cluster_config = ClusterConfig {
             redis_url: config.redis.url.clone(),
             node_id: generate_node_id(),
@@ -89,22 +102,6 @@ async fn main() -> Result<()> {
                 None
             }
         }
-    } else {
-        info!("Redis not configured, using single-node ClusterManager");
-        // Create a single-node ClusterManager (no Redis)
-        let cluster_config = ClusterConfig {
-            redis_url: String::new(),
-            node_id: generate_node_id(),
-            dedup_window: std::time::Duration::from_secs(5),
-            cleanup_interval: std::time::Duration::from_secs(30),
-        };
-        match ClusterManager::new(cluster_config).await {
-            Ok(manager) => Some(Arc::new(manager)),
-            Err(e) => {
-                error!("Failed to create single-node ClusterManager: {}", e);
-                None
-            }
-        }
     };
 
     // 8. Initialize connection manager
@@ -118,82 +115,10 @@ async fn main() -> Result<()> {
         .and_then(|cm| cm.redis_publish_tx().cloned());
 
     // 9. Initialize streaming components (RTMP server)
-    let streaming_state = if !config.redis.url.is_empty() {
-        info!("Initializing RTMP server...");
-
-        match redis::Client::open(config.redis.url.clone()) {
-            Ok(redis_client) => {
-                match redis_client.get_connection_manager().await {
-                    Ok(redis_conn) => {
-                        // Create StreamRegistry
-                        let registry = synctv_stream::relay::StreamRegistry::new(redis_conn);
-
-                        // Create GOP cache for pull streams
-                        let gop_cache_config = synctv_stream::cache::GopCacheConfig::default();
-                        let gop_cache = Arc::new(synctv_stream::cache::GopCache::new(
-                            gop_cache_config,
-                        ));
-
-                        // Create PullStreamManager
-                        let node_id = generate_node_id();
-                        let pull_manager = Arc::new(synctv_stream::streaming::PullStreamManager::new(
-                            gop_cache.clone(),
-                            registry.clone(),
-                            node_id.clone(),
-                        ));
-
-                        // Create RTMP authentication callback
-                        let rtmp_auth = Arc::new(rtmp::SyncTvRtmpAuth::new(
-                            synctv_services.room_service.clone(),
-                            synctv_services.jwt_service.clone(),
-                        ));
-
-                        // Create StreamHub event sender for RTMP server
-                        let (stream_hub_event_sender, _stream_hub_event_receiver) =
-                            mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
-
-                        // Start RTMP server in background
-                        let rtmp_address = format!("{}:{}", config.server.host, config.streaming.rtmp_port);
-                        let mut rtmp_server = synctv_stream::RtmpStreamingServer::new(
-                            rtmp_address.clone(),
-                            gop_cache,
-                            registry.clone(),
-                            node_id,
-                            rtmp_auth,
-                            stream_hub_event_sender,
-                        );
-
-                        tokio::spawn(async move {
-                            info!("Starting RTMP server on rtmp://{}...", rtmp_address);
-                            if let Err(e) = rtmp_server.start().await {
-                                error!("RTMP server error: {}", e);
-                            }
-                        });
-
-                        info!("RTMP server initialized successfully");
-
-                        Some(StreamingState {
-                            registry,
-                            pull_manager,
-                        })
-                    }
-                    Err(e) => {
-                        error!("Failed to create Redis connection manager for streaming: {}", e);
-                        info!("Streaming routes disabled");
-                        None
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Failed to create Redis client for streaming: {}", e);
-                info!("Streaming routes disabled");
-                None
-            }
-        }
-    } else {
-        info!("Redis not configured, streaming routes disabled");
-        None
-    };
+    // TODO: Refactor streaming initialization to use new API
+    // The streaming infrastructure has been refactored with new interfaces (RtmpServer, LiveStreamingInfrastructure)
+    // Need to update this code to use the new API instead of the old RtmpStreamingServer
+    let streaming_state = None;
 
     // 10. Create server with all services
     let provider_instance_manager = synctv_services.provider_instance_manager.clone();

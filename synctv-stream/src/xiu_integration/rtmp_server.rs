@@ -5,7 +5,6 @@
 //
 // This module provides configuration types for convenience.
 
-use anyhow::Result;
 use std::net::SocketAddr;
 
 /// RTMP server configuration
@@ -37,10 +36,10 @@ impl Default for RtmpConfig {
 /// This is a convenience wrapper around the actual RTMP server
 /// implemented in streaming/rtmp.rs.
 ///
-/// The actual server uses xiu's rtmp::rtmp::RtmpServer which:
+/// The actual server uses xiu's `rtmp::rtmp::RtmpServer` which:
 /// 1. Handles RTMP handshake and protocol
-/// 2. Integrates with StreamHub for event handling
-/// 3. Calls PublisherManager for Redis registration
+/// 2. Integrates with `StreamHub` for event handling
+/// 3. Calls `PublisherManager` for Redis registration
 /// 4. Supports GOP cache for fast viewer startup
 pub struct RtmpServer {
     config: RtmpConfig,
@@ -48,12 +47,14 @@ pub struct RtmpServer {
 
 impl RtmpServer {
     /// Create a new RTMP server configuration
-    pub fn new(config: RtmpConfig) -> Self {
+    #[must_use] 
+    pub const fn new(config: RtmpConfig) -> Self {
         Self { config }
     }
 
     /// Get the RTMP server configuration
-    pub fn config(&self) -> &RtmpConfig {
+    #[must_use] 
+    pub const fn config(&self) -> &RtmpConfig {
         &self.config
     }
 
@@ -61,6 +62,7 @@ impl RtmpServer {
     ///
     /// This returns the configuration needed to create the actual
     /// server in streaming/rtmp.rs
+    #[must_use] 
     pub fn build(&self) -> (String, usize) {
         (self.config.listen_addr.to_string(), self.config.gop_num)
     }

@@ -65,6 +65,7 @@ struct StreamGopCache {
 
 impl GopCache {
     /// Create a new GOP cache
+    #[must_use] 
     pub fn new(config: GopCacheConfig) -> Self {
         Self {
             config,
@@ -144,6 +145,7 @@ impl GopCache {
 
     /// Get all cached frames for a stream
     /// Returns frames from all complete GOPs plus the current GOP
+    #[must_use] 
     pub fn get_frames(&self, stream_id: &str) -> Vec<GopFrame> {
         if !self.config.enabled {
             return Vec::new();
@@ -175,6 +177,7 @@ impl GopCache {
     }
 
     /// Get cache statistics for a stream
+    #[must_use] 
     pub fn get_stats(&self, stream_id: &str) -> Option<GopCacheStats> {
         self.caches.get(stream_id).map(|cache| {
             let cache = cache.read();
@@ -183,13 +186,14 @@ impl GopCache {
                 current_gop_frames: cache.current_gop.len(),
                 total_size: cache.total_size,
                 total_frames: cache.gops.iter()
-                    .map(|gop| gop.len())
+                    .map(std::vec::Vec::len)
                     .sum::<usize>() + cache.current_gop.len(),
             }
         })
     }
 
     /// Get total cache size across all streams
+    #[must_use] 
     pub fn total_size(&self) -> usize {
         self.caches
             .iter()

@@ -36,6 +36,7 @@ pub struct OidcProvider {
 
 impl OidcProvider {
     /// Create a new OIDC provider with issuer (uses .well-known discovery)
+    #[must_use] 
     pub fn create(
         client_id: String,
         client_secret: String,
@@ -47,20 +48,21 @@ impl OidcProvider {
             BasicClient::new(
                 ClientId::new(client_id),
                 Some(ClientSecret::new(client_secret)),
-                AuthUrl::new(format!("{}/authorize", issuer)).unwrap(),
-                Some(TokenUrl::new(format!("{}/token", issuer)).unwrap()),
+                AuthUrl::new(format!("{issuer}/authorize")).unwrap(),
+                Some(TokenUrl::new(format!("{issuer}/token")).unwrap()),
             )
             .set_redirect_uri(RedirectUrl::new(redirect_url).unwrap()),
         );
 
         Self {
             client,
-            userinfo_url: Some(format!("{}/userinfo", issuer)),
+            userinfo_url: Some(format!("{issuer}/userinfo")),
             http_client: Arc::new(Client::new()),
         }
     }
 
     /// Create a new OIDC provider with custom endpoints
+    #[must_use] 
     pub fn create_with_endpoints(
         client_id: String,
         client_secret: String,
@@ -100,7 +102,7 @@ impl OidcProvider {
 
 #[async_trait]
 impl Provider for OidcProvider {
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "oidc"
     }
 
@@ -119,7 +121,7 @@ impl Provider for OidcProvider {
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
             .request_async(oauth2::reqwest::async_http_client)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to exchange code: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to exchange code: {e}")))?;
 
         // Fetch user info from userinfo endpoint
         let userinfo_url = self
@@ -133,9 +135,9 @@ impl Provider for OidcProvider {
             .header("Authorization", format!("Bearer {}", token.access_token().secret()))
             .send()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch user info: {}", e)))?
+            .map_err(|e| Error::Internal(format!("Failed to fetch user info: {e}")))?
             .error_for_status()
-            .map_err(|e| Error::Internal(format!("OIDC API error: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("OIDC API error: {e}")))?;
 
         #[derive(Deserialize)]
         struct OidcUser {
@@ -148,7 +150,7 @@ impl Provider for OidcProvider {
         let user: OidcUser = resp
             .json()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to parse user info: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to parse user info: {e}")))?;
 
         Ok(OAuth2UserInfo {
             provider_user_id: user.sub,
@@ -162,7 +164,7 @@ impl Provider for OidcProvider {
 /// Factory function for OIDC provider
 pub fn oidc_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error> {
     let config: OidcConfig = serde_yaml::from_value(config.clone())
-        .map_err(|e| Error::InvalidInput(format!("Invalid OIDC config: {}", e)))?;
+        .map_err(|e| Error::InvalidInput(format!("Invalid OIDC config: {e}")))?;
 
     // Use create_with_endpoints if any custom endpoint is specified
     let provider = if config.auth_url.is_some()

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use super::synctv::cluster::cluster_service_server::ClusterService;
-use super::synctv::cluster::*;
+use super::synctv::cluster::{NodeInfo, RegisterNodeRequest, RegisterNodeResponse, HeartbeatRequest, HeartbeatResponse, GetNodesRequest, GetNodesResponse, DeregisterNodeRequest, DeregisterNodeResponse, SyncRoomStateRequest, SyncRoomStateResponse, BroadcastEventRequest, BroadcastEventResponse, GetUserOnlineStatusRequest, GetUserOnlineStatusResponse, GetRoomConnectionsRequest, GetRoomConnectionsResponse};
 use crate::discovery::{NodeInfo as DiscoveryNodeInfo, NodeRegistry};
 
 /// Cluster gRPC service
@@ -19,13 +19,14 @@ pub struct ClusterServer {
 
 impl ClusterServer {
     /// Create a new cluster server
+    #[must_use] 
     pub fn new(node_registry: Arc<NodeRegistry>, _node_id: String) -> Self {
         Self {
             node_registry,
         }
     }
 
-    /// Convert discovery NodeInfo to proto NodeInfo
+    /// Convert discovery `NodeInfo` to proto `NodeInfo`
     fn discovery_to_proto_node(&self, discovery: &DiscoveryNodeInfo) -> NodeInfo {
         NodeInfo {
             node_id: discovery.node_id.clone(),

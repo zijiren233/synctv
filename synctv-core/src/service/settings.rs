@@ -33,6 +33,7 @@ impl std::fmt::Debug for SettingsService {
 }
 
 impl SettingsService {
+    #[must_use] 
     pub fn new(repository: SettingsRepository) -> Self {
         Self {
             repository,
@@ -46,7 +47,7 @@ impl SettingsService {
         info!("Initializing settings service");
 
         let settings = self.repository.get_all().await.map_err(|e| {
-            Error::Internal(format!("Failed to load settings: {}", e))
+            Error::Internal(format!("Failed to load settings: {e}"))
         })?;
 
         let mut cache = self.cache.write().await;
@@ -107,7 +108,7 @@ impl SettingsService {
             .repository
             .get(key)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get setting: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to get setting: {e}")))?;
 
         // Update cache
         {
@@ -131,7 +132,7 @@ impl SettingsService {
             .repository
             .update(key, &value)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to update setting: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to update setting: {e}")))?;
 
         // Update cache
         {
@@ -148,7 +149,7 @@ impl SettingsService {
     }
 
 
-    /// Get a specific setting value by key (e.g., "server.allow_registration")
+    /// Get a specific setting value by key (e.g., "`server.allow_registration`")
     pub async fn get_value(&self, key: &str) -> Option<String> {
         let setting = self.get(key).await.ok()?;
         Some(setting.value)
@@ -183,6 +184,7 @@ impl SettingsService {
 }
 
 /// Helper to get default settings for a group
+#[must_use] 
 pub fn get_default_settings_json(group: &str) -> Option<serde_json::Value> {
     get_default_settings(group)
 }

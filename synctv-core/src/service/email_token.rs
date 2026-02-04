@@ -21,17 +21,19 @@ pub enum EmailTokenType {
 }
 
 impl EmailTokenType {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            EmailTokenType::EmailVerification => "email_verification",
-            EmailTokenType::PasswordReset => "password_reset",
+            Self::EmailVerification => "email_verification",
+            Self::PasswordReset => "password_reset",
         }
     }
 
-    pub fn expiration_duration(&self) -> Duration {
+    #[must_use] 
+    pub const fn expiration_duration(&self) -> Duration {
         match self {
-            EmailTokenType::EmailVerification => Duration::hours(24),  // 24 hours
-            EmailTokenType::PasswordReset => Duration::hours(1),      // 1 hour
+            Self::EmailVerification => Duration::hours(24),  // 24 hours
+            Self::PasswordReset => Duration::hours(1),      // 1 hour
         }
     }
 }
@@ -43,7 +45,8 @@ pub struct EmailTokenService {
 }
 
 impl EmailTokenService {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self {
             repository: EmailTokenRepository::new(pool),
         }
@@ -75,7 +78,7 @@ impl EmailTokenService {
 
     /// Validate and consume an email token
     ///
-    /// Returns the user_id if token is valid
+    /// Returns the `user_id` if token is valid
     /// Marks token as used
     pub async fn validate_token(
         &self,

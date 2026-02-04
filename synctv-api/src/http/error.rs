@@ -83,47 +83,47 @@ impl IntoResponse for AppError {
     }
 }
 
-/// Convert synctv_core errors to HTTP errors
+/// Convert `synctv_core` errors to HTTP errors
 impl From<synctv_core::Error> for AppError {
     fn from(err: synctv_core::Error) -> Self {
         use synctv_core::Error;
 
         match err {
-            Error::NotFound(msg) => AppError::not_found(msg),
-            Error::AlreadyExists(msg) => AppError::conflict(msg),
-            Error::Unauthorized(msg) => AppError::unauthorized(msg),
-            Error::Authentication(msg) => AppError::unauthorized(msg),
-            Error::Authorization(msg) => AppError::forbidden(msg),
-            Error::PermissionDenied(msg) => AppError::forbidden(msg),
-            Error::InvalidInput(msg) => AppError::bad_request(msg),
+            Error::NotFound(msg) => Self::not_found(msg),
+            Error::AlreadyExists(msg) => Self::conflict(msg),
+            Error::Unauthorized(msg) => Self::unauthorized(msg),
+            Error::Authentication(msg) => Self::unauthorized(msg),
+            Error::Authorization(msg) => Self::forbidden(msg),
+            Error::PermissionDenied(msg) => Self::forbidden(msg),
+            Error::InvalidInput(msg) => Self::bad_request(msg),
             Error::Database(e) => {
                 tracing::error!("Database error: {}", e);
-                AppError::internal_server_error("Database error")
+                Self::internal_server_error("Database error")
             }
             Error::Redis(e) => {
                 tracing::error!("Redis error: {}", e);
-                AppError::internal_server_error("Service temporarily unavailable")
+                Self::internal_server_error("Service temporarily unavailable")
             }
             Error::Serialization(e) => {
                 tracing::error!("Serialization error: {}", e);
-                AppError::internal_server_error("Data processing error")
+                Self::internal_server_error("Data processing error")
             }
             Error::Deserialization { context } => {
                 tracing::error!("Deserialization error: {}", context);
-                AppError::internal_server_error("Data processing error")
+                Self::internal_server_error("Data processing error")
             }
             Error::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
-                AppError::internal_server_error("Internal server error")
+                Self::internal_server_error("Internal server error")
             }
         }
     }
 }
 
-/// Convert serde_json errors to HTTP errors
+/// Convert `serde_json` errors to HTTP errors
 impl From<serde_json::Error> for AppError {
     fn from(err: serde_json::Error) -> Self {
-        AppError::bad_request(format!("JSON error: {}", err))
+        Self::bad_request(format!("JSON error: {err}"))
     }
 }
 
@@ -131,6 +131,6 @@ impl From<serde_json::Error> for AppError {
 impl From<anyhow::Error> for AppError {
     fn from(err: anyhow::Error) -> Self {
         tracing::error!("Anyhow error: {}", err);
-        AppError::internal_server_error("Internal server error")
+        Self::internal_server_error("Internal server error")
     }
 }

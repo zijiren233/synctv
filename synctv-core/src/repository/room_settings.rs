@@ -1,11 +1,11 @@
 //! Room settings repository
 //!
-//! Manages loading and saving room settings from/to the room_settings table.
+//! Manages loading and saving room settings from/to the `room_settings` table.
 //!
 //! # Architecture
 //!
 //! This repository uses a **key-value based storage** approach:
-//! - Each room setting is stored as a separate row (room_id, key, value)
+//! - Each room setting is stored as a separate row (`room_id`, key, value)
 //! - Settings are loaded and merged with defaults
 //! - Uses serde for automatic serialization/deserialization
 
@@ -23,11 +23,12 @@ pub struct RoomSettingsRepository {
 }
 
 impl RoomSettingsRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    /// Get all settings for a room as RoomSettings struct
+    /// Get all settings for a room as `RoomSettings` struct
     ///
     /// This uses **automatic serde deserialization** - no manual mapping needed!
     /// The entire settings struct is stored as a single JSON value under key "_settings".
@@ -36,11 +37,11 @@ impl RoomSettingsRepository {
 
         // Try to load the complete settings JSON first
         let row = sqlx::query(
-            r#"
+            r"
             SELECT value
             FROM room_settings
             WHERE room_id = $1 AND key = '_settings'
-        "#
+        "
         )
         .bind(room_id_str)
         .fetch_optional(&self.pool)
@@ -50,7 +51,7 @@ impl RoomSettingsRepository {
             let value: String = row.try_get("value")?;
             // Deserialize directly using serde - no manual mapping!
             let settings: RoomSettings = serde_json::from_str(&value)
-                .map_err(|e| Error::Internal(format!("Failed to deserialize room settings: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to deserialize room settings: {e}")))?;
             Ok(settings)
         } else {
             // No settings stored, return defaults
@@ -63,12 +64,12 @@ impl RoomSettingsRepository {
         let room_id_str = room_id.as_str();
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO room_settings (room_id, key, value)
             VALUES ($1, $2, $3)
             ON CONFLICT (room_id, key)
             DO UPDATE SET value = $3, updated_at = NOW()
-        "#
+        "
         )
         .bind(room_id_str)
         .bind(key)
@@ -84,11 +85,11 @@ impl RoomSettingsRepository {
         let room_id_str = room_id.as_str();
 
         let result = sqlx::query(
-            r#"
+            r"
             SELECT value
             FROM room_settings
             WHERE room_id = $1 AND key = $2
-        "#
+        "
         )
         .bind(room_id_str)
         .bind(key)
@@ -112,7 +113,7 @@ impl RoomSettingsRepository {
 
         // Serialize entire settings struct to JSON - one line!
         let json_value = serde_json::to_string(settings)
-            .map_err(|e| Error::Internal(format!("Failed to serialize room settings: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to serialize room settings: {e}")))?;
 
         // Delete old settings
         sqlx::query("DELETE FROM room_settings WHERE room_id = $1 AND key = '_settings'")
@@ -122,12 +123,12 @@ impl RoomSettingsRepository {
 
         // Insert new settings as single JSON value
         sqlx::query(
-            r#"
+            r"
             INSERT INTO room_settings (room_id, key, value)
             VALUES ($1, '_settings', $2)
             ON CONFLICT (room_id, key)
             DO UPDATE SET value = $2, updated_at = NOW()
-        "#
+        "
         )
         .bind(room_id_str)
         .bind(&json_value)
@@ -162,16 +163,16 @@ impl RoomSettingsRepository {
         Ok(())
     }
 
-    /// Get all settings for a room as raw HashMap (for type-safe settings system)
+    /// Get all settings for a room as raw `HashMap` (for type-safe settings system)
     pub async fn get_all_raw(&self, room_id: &RoomId) -> Result<std::collections::HashMap<String, String>> {
         let room_id_str = room_id.as_str();
 
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT key, value
             FROM room_settings
             WHERE room_id = $1
-        "#
+        "
         )
         .bind(room_id_str)
         .fetch_all(&self.pool)

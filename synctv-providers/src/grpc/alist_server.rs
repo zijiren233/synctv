@@ -1,6 +1,6 @@
 //! Alist gRPC Server Implementation
 //!
-//! Thin wrapper around AlistService that implements gRPC server trait.
+//! Thin wrapper around `AlistService` that implements gRPC server trait.
 
 use super::alist::{
     alist_server::Alist, FsGetReq, FsGetResp, FsListReq, FsListResp, FsOtherReq, FsOtherResp,
@@ -11,13 +11,14 @@ use tonic::{Request, Response, Status};
 
 /// Alist gRPC server
 ///
-/// Thin wrapper that delegates to AlistService for actual implementation.
+/// Thin wrapper that delegates to `AlistService` for actual implementation.
 pub struct AlistService {
     service: AlistServiceImpl,
 }
 
 impl AlistService {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {
             service: AlistServiceImpl::new(),
         }
@@ -40,7 +41,7 @@ impl Alist for AlistService {
             .service
             .login(req)
             .await
-            .map_err(|e| Status::internal(format!("Login failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Login failed: {e}")))?;
 
         Ok(Response::new(LoginResp { token }))
     }
@@ -53,7 +54,7 @@ impl Alist for AlistService {
             .service
             .me(req)
             .await
-            .map_err(|e| Status::internal(format!("me failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("me failed: {e}")))?;
 
         Ok(Response::new(resp))
     }
@@ -66,7 +67,7 @@ impl Alist for AlistService {
             .service
             .fs_get(req)
             .await
-            .map_err(|e| Status::internal(format!("fs_get failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("fs_get failed: {e}")))?;
 
         Ok(Response::new(resp))
     }
@@ -79,7 +80,7 @@ impl Alist for AlistService {
             .service
             .fs_list(req)
             .await
-            .map_err(|e| Status::internal(format!("fs_list failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("fs_list failed: {e}")))?;
 
         Ok(Response::new(resp))
     }
@@ -95,7 +96,7 @@ impl Alist for AlistService {
             .service
             .fs_other(req)
             .await
-            .map_err(|e| Status::internal(format!("fs_other failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("fs_other failed: {e}")))?;
 
         Ok(Response::new(resp))
     }
@@ -111,7 +112,7 @@ impl Alist for AlistService {
             .service
             .fs_search(req)
             .await
-            .map_err(|e| Status::internal(format!("fs_search failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("fs_search failed: {e}")))?;
 
         Ok(Response::new(resp))
     }

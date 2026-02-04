@@ -28,7 +28,7 @@ pub async fn update_room_settings(
 
     // Parse JSON value into RoomSettings
     let settings: RoomSettings = serde_json::from_value(req.settings)
-        .map_err(|e| AppError::bad_request(format!("Invalid settings: {}", e)))?;
+        .map_err(|e| AppError::bad_request(format!("Invalid settings: {e}")))?;
 
     state
         .room_service

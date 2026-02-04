@@ -30,7 +30,8 @@ impl std::fmt::Debug for PlaybackService {
 
 impl PlaybackService {
     /// Create a new playback service
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         playback_repo: RoomPlaybackStateRepository,
         permission_service: PermissionService,
         media_service: MediaService,

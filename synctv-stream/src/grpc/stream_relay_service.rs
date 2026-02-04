@@ -10,13 +10,13 @@ use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
-use super::proto::*;
+use super::proto::{RtmpPacket, stream_relay_service_server, PullRtmpStreamRequest, FrameType};
 use crate::libraries::GopCache;
 use crate::relay::StreamRegistry;
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<RtmpPacket, Status>> + Send>>;
 
-/// StreamRelayService implementation
+/// `StreamRelayService` implementation
 /// Publisher nodes use this to serve RTMP packets to Puller nodes via subscription
 pub struct StreamRelayServiceImpl {
     gop_cache: Arc<GopCache>,
@@ -26,6 +26,7 @@ pub struct StreamRelayServiceImpl {
 }
 
 impl StreamRelayServiceImpl {
+    #[must_use] 
     pub fn new(
         gop_cache: Arc<GopCache>,
         registry: Arc<StreamRegistry>,
@@ -44,7 +45,7 @@ impl StreamRelayServiceImpl {
 #[tonic::async_trait]
 impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl {
     /// Pull RTMP stream from publisher node (server streaming)
-    /// Similar to FLV/HLS: subscribe to StreamHub and forward data
+    /// Similar to FLV/HLS: subscribe to `StreamHub` and forward data
     type PullRtmpStreamStream = ResponseStream;
 
     async fn pull_rtmp_stream(
@@ -63,7 +64,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         let publisher_info = registry
             .get_publisher(&req.room_id, &req.media_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get publisher: {}", e)))?
+            .map_err(|e| Status::internal(format!("Failed to get publisher: {e}")))?
             .ok_or_else(|| Status::not_found("No active publisher for this media"))?;
 
         if publisher_info.node_id != self.node_id {
@@ -120,7 +121,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         let subscribe_result = event_result_receiver
             .await
             .map_err(|_| Status::internal("Subscribe result channel closed"))?
-            .map_err(|e| Status::internal(format!("Subscribe failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Subscribe failed: {e}")))?;
 
         let mut frame_receiver = subscribe_result
             .0
@@ -201,7 +202,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
 }
 
 impl StreamRelayServiceImpl {
-    /// Unsubscribe from StreamHub
+    /// Unsubscribe from `StreamHub`
     async fn unsubscribe_from_hub(
         event_sender: Arc<Mutex<StreamHubEventSender>>,
         subscriber_id: Uuid,

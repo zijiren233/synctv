@@ -1,4 +1,4 @@
-//! RTMP MediaProvider
+//! RTMP `MediaProvider`
 //!
 //! Provides playback URLs for RTMP live streams
 
@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-/// RTMP MediaProvider
+/// RTMP `MediaProvider`
 pub struct RtmpProvider {
     base_url: String,
 }
@@ -92,6 +92,6 @@ impl MediaProvider for RtmpProvider {
             .get("room_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        format!("rtmp:{}", room_id)
+        format!("rtmp:{room_id}")
     }
 }

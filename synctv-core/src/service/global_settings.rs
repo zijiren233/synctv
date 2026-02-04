@@ -59,6 +59,7 @@ impl std::fmt::Debug for SettingsRegistry {
 
 impl SettingsRegistry {
     /// Create a new settings registry with all setting instances
+    #[must_use] 
     pub fn new(settings_service: Arc<SettingsService>) -> Self {
         let storage = Arc::new(SettingsStorage::new(settings_service));
 

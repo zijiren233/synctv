@@ -1,6 +1,6 @@
 //! Bilibili Provider Client
 //!
-//! Pure HTTP client for Bilibili API, independent of MediaProvider.
+//! Pure HTTP client for Bilibili API, independent of `MediaProvider`.
 //!
 //! # Features
 //! - Video parsing (BVID/EPID extraction)

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use synctv_core::provider::BilibiliProvider;
-use crate::proto::providers::bilibili::*;
+use crate::proto::providers::bilibili::{ParseRequest, ParseResponse, VideoInfo, LoginQrRequest, QrCodeResponse, CheckQrRequest, QrStatusResponse, GetCaptchaRequest, CaptchaResponse, SendSmsRequest, SendSmsResponse, LoginSmsRequest, LoginSmsResponse, UserInfoRequest, UserInfoResponse, LogoutRequest, LogoutResponse};
 
 /// Bilibili API implementation
 ///
@@ -17,7 +17,8 @@ pub struct BilibiliApiImpl {
 }
 
 impl BilibiliApiImpl {
-    pub fn new(provider: Arc<BilibiliProvider>) -> Self {
+    #[must_use] 
+    pub const fn new(provider: Arc<BilibiliProvider>) -> Self {
         Self { provider }
     }
 

@@ -26,11 +26,11 @@ pub enum NotificationType {
 impl std::fmt::Display for NotificationType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NotificationType::RoomInvitation => write!(f, "room_invitation"),
-            NotificationType::SystemAnnouncement => write!(f, "system_announcement"),
-            NotificationType::RoomEvent => write!(f, "room_event"),
-            NotificationType::PasswordReset => write!(f, "password_reset"),
-            NotificationType::EmailVerification => write!(f, "email_verification"),
+            Self::RoomInvitation => write!(f, "room_invitation"),
+            Self::SystemAnnouncement => write!(f, "system_announcement"),
+            Self::RoomEvent => write!(f, "room_event"),
+            Self::PasswordReset => write!(f, "password_reset"),
+            Self::EmailVerification => write!(f, "email_verification"),
         }
     }
 }
@@ -40,12 +40,12 @@ impl std::str::FromStr for NotificationType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "room_invitation" => Ok(NotificationType::RoomInvitation),
-            "system_announcement" => Ok(NotificationType::SystemAnnouncement),
-            "room_event" => Ok(NotificationType::RoomEvent),
-            "password_reset" => Ok(NotificationType::PasswordReset),
-            "email_verification" => Ok(NotificationType::EmailVerification),
-            _ => Err(anyhow::anyhow!("Invalid notification type: {}", s)),
+            "room_invitation" => Ok(Self::RoomInvitation),
+            "system_announcement" => Ok(Self::SystemAnnouncement),
+            "room_event" => Ok(Self::RoomEvent),
+            "password_reset" => Ok(Self::PasswordReset),
+            "email_verification" => Ok(Self::EmailVerification),
+            _ => Err(anyhow::anyhow!("Invalid notification type: {s}")),
         }
     }
 }

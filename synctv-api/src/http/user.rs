@@ -31,7 +31,7 @@ pub async fn logout(
     Ok(Json(response))
 }
 
-/// Get current user info (equivalent to GetProfile)
+/// Get current user info (equivalent to `GetProfile`)
 pub async fn get_me(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -124,7 +124,7 @@ pub async fn delete_my_room(
         .room_service
         .get_room(&room_id_obj)
         .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {}", e)))?;
+        .map_err(|e| super::AppError::not_found(format!("Room not found: {e}")))?;
 
     if room.created_by != auth.user_id {
         return Err(super::AppError::forbidden("You can only delete your own rooms"));

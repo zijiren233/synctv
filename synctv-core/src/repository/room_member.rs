@@ -15,7 +15,8 @@ pub struct RoomMemberRepository {
 }
 
 impl RoomMemberRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -178,7 +179,7 @@ impl RoomMemberRepository {
         self.row_to_member(row)
     }
 
-    /// Remove user from room (soft delete - set left_at)
+    /// Remove user from room (soft delete - set `left_at`)
     pub async fn remove(&self, room_id: &RoomId, user_id: &UserId) -> Result<bool> {
         let result = sqlx::query(
             "UPDATE room_members
@@ -282,7 +283,7 @@ impl RoomMemberRepository {
         .await?;
 
         let online_set: std::collections::HashSet<_> =
-            online_user_ids.iter().map(|id| id.as_str()).collect();
+            online_user_ids.iter().map(super::super::models::id::UserId::as_str).collect();
 
         rows.into_iter()
             .map(|row| {
@@ -547,7 +548,7 @@ impl RoomMemberRepository {
     }
 
     /// Get rooms where a user is a member with full room details and member count (optimized)
-    /// Returns (room, role, status, member_count) tuples
+    /// Returns (room, role, status, `member_count`) tuples
     pub async fn list_by_user_with_details(
         &self,
         user_id: &UserId,
@@ -569,7 +570,7 @@ impl RoomMemberRepository {
 
         // Get rooms with user role and member count in single query
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT
                 r.id, r.name, r.created_by, r.status,
                 r.created_at, r.updated_at, r.deleted_at,
@@ -585,7 +586,7 @@ impl RoomMemberRepository {
             WHERE rm.user_id = $1 AND rm.left_at IS NULL AND r.deleted_at IS NULL
             ORDER BY rm.joined_at DESC
             LIMIT $2 OFFSET $3
-            "#
+            "
         )
         .bind(user_id.as_str())
         .bind(page_size)
@@ -668,7 +669,7 @@ impl RoomMemberRepository {
             .collect()
     }
 
-    /// Convert database row to RoomMember
+    /// Convert database row to `RoomMember`
     fn row_to_member(&self, row: PgRow) -> Result<RoomMember> {
         let role_str: String = row.try_get("role")?;
         let role = match role_str.as_str() {
@@ -676,7 +677,7 @@ impl RoomMemberRepository {
             "admin" => RoomRole::Admin,
             "member" => RoomRole::Member,
             "guest" => RoomRole::Guest,
-            _ => return Err(Error::InvalidInput(format!("Unknown role: {}", role_str))),
+            _ => return Err(Error::InvalidInput(format!("Unknown role: {role_str}"))),
         };
 
         let status_str: String = row.try_get("status")?;
@@ -684,7 +685,7 @@ impl RoomMemberRepository {
             "active" => MemberStatus::Active,
             "pending" => MemberStatus::Pending,
             "banned" => MemberStatus::Banned,
-            _ => return Err(Error::InvalidInput(format!("Unknown status: {}", status_str))),
+            _ => return Err(Error::InvalidInput(format!("Unknown status: {status_str}"))),
         };
 
         let banned_by: Option<String> = row.try_get("banned_by")?;
@@ -707,7 +708,7 @@ impl RoomMemberRepository {
         })
     }
 
-    /// Convert database row to RoomMemberWithUser
+    /// Convert database row to `RoomMemberWithUser`
     fn row_to_member_with_user(&self, row: PgRow) -> Result<RoomMemberWithUser> {
         let role_str: String = row.try_get("role")?;
         let role = match role_str.as_str() {
@@ -715,7 +716,7 @@ impl RoomMemberRepository {
             "admin" => RoomRole::Admin,
             "member" => RoomRole::Member,
             "guest" => RoomRole::Guest,
-            _ => return Err(Error::InvalidInput(format!("Unknown role: {}", role_str))),
+            _ => return Err(Error::InvalidInput(format!("Unknown role: {role_str}"))),
         };
 
         let status_str: String = row.try_get("status")?;
@@ -723,7 +724,7 @@ impl RoomMemberRepository {
             "active" => MemberStatus::Active,
             "pending" => MemberStatus::Pending,
             "banned" => MemberStatus::Banned,
-            _ => return Err(Error::InvalidInput(format!("Unknown status: {}", status_str))),
+            _ => return Err(Error::InvalidInput(format!("Unknown status: {status_str}"))),
         };
 
         Ok(RoomMemberWithUser {

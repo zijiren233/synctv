@@ -31,6 +31,7 @@ impl std::fmt::Debug for PermissionService {
 
 impl PermissionService {
     /// Create a new permission service with caching
+    #[must_use] 
     pub fn new(
         member_repo: RoomMemberRepository,
         _room_repo: RoomRepository,
@@ -51,6 +52,7 @@ impl PermissionService {
     }
 
     /// Create a permission service without caching
+    #[must_use] 
     pub fn without_cache(
         member_repo: RoomMemberRepository,
         _room_repo: RoomRepository,
@@ -73,7 +75,7 @@ impl PermissionService {
         self.room_settings_repo = Some(repo);
     }
 
-    /// Get global default permissions for a role from SettingsRegistry
+    /// Get global default permissions for a role from `SettingsRegistry`
     fn get_global_default_permissions(&self, role: &crate::models::RoomRole) -> PermissionBits {
         if let Some(registry) = &self.settings_registry {
             match role {
@@ -129,8 +131,9 @@ impl PermissionService {
     /// Calculate role default permissions with room-level overrides applied
     ///
     /// This combines:
-    /// 1. Global default permissions (from SettingsRegistry)
-    /// 2. Room-level overrides: (global | room_added) & ~room_removed
+    /// 1. Global default permissions (from `SettingsRegistry`)
+    /// 2. Room-level overrides: (global | `room_added`) & ~`room_removed`
+    #[must_use] 
     pub fn calculate_role_default_permissions(
         &self,
         role: &crate::models::RoomRole,
@@ -176,7 +179,7 @@ impl PermissionService {
     /// Get user's effective permissions in a room (with caching)
     ///
     /// This implements the Allow/Deny permission pattern:
-    /// effective_permissions = (role_default | added) & ~removed
+    /// `effective_permissions` = (`role_default` | added) & ~removed
     pub async fn get_user_permissions(
         &self,
         room_id: &RoomId,
@@ -226,7 +229,7 @@ impl PermissionService {
         self.cache.invalidate_all();
     }
 
-    /// Check if user can perform an action (alias for check_permission)
+    /// Check if user can perform an action (alias for `check_permission`)
     pub async fn can(
         &self,
         room_id: &RoomId,
@@ -289,7 +292,7 @@ impl PermissionService {
             .get(room_id, user_id)
             .await?;
 
-        Ok(member.map(|m| m.role == crate::models::RoomRole::Creator).unwrap_or(false))
+        Ok(member.is_some_and(|m| m.role == crate::models::RoomRole::Creator))
     }
 
     /// Check if user is room admin or creator
@@ -303,7 +306,7 @@ impl PermissionService {
             .get(room_id, user_id)
             .await?;
 
-        Ok(member.map(|m| matches!(m.role, crate::models::RoomRole::Admin | crate::models::RoomRole::Creator)).unwrap_or(false))
+        Ok(member.is_some_and(|m| matches!(m.role, crate::models::RoomRole::Admin | crate::models::RoomRole::Creator)))
     }
 }
 

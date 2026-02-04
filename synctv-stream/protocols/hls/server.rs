@@ -125,7 +125,7 @@ async fn start_http_server(
         .route("/live/:app/:stream/:segment", axum::routing::get(serve_segment))
         .with_state(state);
 
-    let addr = format!("0.0.0.0:{}", port);
+    let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
     log::info!("HLS HTTP server listening on {}", addr);
@@ -140,40 +140,37 @@ async fn serve_m3u8(
     Path((app, stream)): Path<(String, String)>,
     State(state): State<HlsServerState>,
 ) -> Response {
-    let registry_key = format!("{}/{}", app, stream);
+    let registry_key = format!("{app}/{stream}");
 
     // Look up stream in registry
-    match state.stream_registry.get(&registry_key) {
-        Some(stream_state) => {
-            // Generate M3U8 dynamically from current segment list
-            let state_lock = stream_state.read();
+    if let Some(stream_state) = state.stream_registry.get(&registry_key) {
+        // Generate M3U8 dynamically from current segment list
+        let state_lock = stream_state.read();
 
-            // Use closure to generate TS URLs with custom format
-            // This allows adding authentication tokens, CDN URLs, etc.
-            let app_clone = app.clone();
-            let stream_clone = stream.clone();
-            let m3u8_content = state_lock.generate_m3u8(move |ts_name| {
-                // Generate URL for each TS segment
-                // Format: /live/{app}/{stream}/{ts_name}.ts
-                // You can add query parameters here for authentication:
-                // format!("/live/{}/{}/{}.ts?token={}", app_clone, stream_clone, ts_name, token)
-                format!("/live/{}/{}/{}.ts", app_clone, stream_clone, ts_name)
-            });
+        // Use closure to generate TS URLs with custom format
+        // This allows adding authentication tokens, CDN URLs, etc.
+        let app_clone = app;
+        let stream_clone = stream;
+        let m3u8_content = state_lock.generate_m3u8(move |ts_name| {
+            // Generate URL for each TS segment
+            // Format: /live/{app}/{stream}/{ts_name}.ts
+            // You can add query parameters here for authentication:
+            // format!("/live/{}/{}/{}.ts?token={}", app_clone, stream_clone, ts_name, token)
+            format!("/live/{app_clone}/{stream_clone}/{ts_name}.ts")
+        });
 
-            (
-                StatusCode::OK,
-                [
-                    ("Content-Type", "application/vnd.apple.mpegurl"),
-                    ("Cache-Control", "no-cache"),
-                ],
-                m3u8_content,
-            )
-                .into_response()
-        }
-        None => {
-            log::warn!("Stream not found: {}", registry_key);
-            (StatusCode::NOT_FOUND, "Stream not found or ended").into_response()
-        }
+        (
+            StatusCode::OK,
+            [
+                ("Content-Type", "application/vnd.apple.mpegurl"),
+                ("Cache-Control", "no-cache"),
+            ],
+            m3u8_content,
+        )
+            .into_response()
+    } else {
+        log::warn!("Stream not found: {}", registry_key);
+        (StatusCode::NOT_FOUND, "Stream not found or ended").into_response()
     }
 }
 
@@ -188,7 +185,7 @@ async fn serve_segment(
         .unwrap_or(&segment_filename);
 
     // Build storage key: app-stream-ts_name (no prefix, no ext)
-    let storage_key = format!("{}-{}-{}", app, stream, ts_name);
+    let storage_key = format!("{app}-{stream}-{ts_name}");
 
     match state.segment_manager.storage().read(&storage_key).await {
         Ok(data) => {

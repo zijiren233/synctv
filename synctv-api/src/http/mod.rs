@@ -52,6 +52,7 @@ pub struct RouterConfig {
     pub emby_provider: Arc<EmbyProvider>,
     pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
     pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
+    pub connection_manager: Arc<synctv_cluster::sync::ConnectionManager>,
     pub jwt_service: synctv_core::service::JwtService,
     pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
@@ -102,6 +103,7 @@ pub fn create_router(
     emby_provider: Arc<EmbyProvider>,
     message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
     cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
+    connection_manager: Arc<synctv_cluster::sync::ConnectionManager>,
     jwt_service: synctv_core::service::JwtService,
     redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
     oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
@@ -116,6 +118,7 @@ pub fn create_router(
     let client_api = Arc::new(crate::impls::ClientApiImpl::new(
         user_service.clone(),
         room_service.clone(),
+        connection_manager.clone(),
     ));
 
     // AdminApi requires SettingsService and EmailService
@@ -127,6 +130,7 @@ pub fn create_router(
             user_service.clone(),
             settings_svc.clone(),
             email_svc.clone(),
+            connection_manager,
         )))
     } else {
         None
@@ -135,7 +139,7 @@ pub fn create_router(
     let state = AppState {
         user_service,
         room_service,
-        provider_instance_manager: provider_instance_manager.clone(),
+        provider_instance_manager,
         user_provider_credential_repository,
         alist_provider,
         bilibili_provider,
@@ -316,6 +320,7 @@ pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
         config.emby_provider,
         config.message_hub,
         config.cluster_manager,
+        config.connection_manager,
         config.jwt_service,
         config.redis_publish_tx,
         config.oauth2_service,

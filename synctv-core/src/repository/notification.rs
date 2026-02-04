@@ -18,7 +18,8 @@ pub struct NotificationRepository {
 }
 
 impl NotificationRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -28,11 +29,11 @@ impl NotificationRepository {
         let now = Utc::now();
 
         let row = sqlx::query(
-            r#"
+            r"
             INSERT INTO notifications (id, user_id, type, title, content, data, is_read, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id, user_id, type, title, content, data, is_read, created_at, updated_at
-            "#,
+            ",
         )
         .bind(id)
         .bind(req.user_id.as_str())
@@ -52,11 +53,11 @@ impl NotificationRepository {
     /// Get notification by ID
     pub async fn get_by_id(&self, notification_id: Uuid) -> Result<Option<Notification>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
             FROM notifications
             WHERE id = $1
-            "#,
+            ",
         )
         .bind(notification_id)
         .fetch_optional(&self.pool)
@@ -81,67 +82,67 @@ impl NotificationRepository {
         let rows = if let Some(notification_type) = &query.notification_type {
             if let Some(is_read) = query.is_read {
                 sqlx::query(
-                    r#"
+                    r"
                     SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
                     FROM notifications
                     WHERE user_id = $1 AND type = $2 AND is_read = $3
                     ORDER BY created_at DESC
                     LIMIT $4 OFFSET $5
-                    "#,
+                    ",
                 )
                 .bind(user_id.as_str())
                 .bind(notification_type.to_string())
                 .bind(is_read)
                 .bind(page_size)
-                .bind(offset as i64)
+                .bind(i64::from(offset))
                 .fetch_all(&self.pool)
                 .await?
             } else {
                 sqlx::query(
-                    r#"
+                    r"
                     SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
                     FROM notifications
                     WHERE user_id = $1 AND type = $2
                     ORDER BY created_at DESC
                     LIMIT $3 OFFSET $4
-                    "#,
+                    ",
                 )
                 .bind(user_id.as_str())
                 .bind(notification_type.to_string())
                 .bind(page_size)
-                .bind(offset as i64)
+                .bind(i64::from(offset))
                 .fetch_all(&self.pool)
                 .await?
             }
         } else if let Some(is_read) = query.is_read {
             sqlx::query(
-                r#"
+                r"
                 SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
                 FROM notifications
                 WHERE user_id = $1 AND is_read = $2
                 ORDER BY created_at DESC
                 LIMIT $3 OFFSET $4
-                "#,
+                ",
             )
             .bind(user_id.as_str())
             .bind(is_read)
             .bind(page_size)
-            .bind(offset as i64)
+            .bind(i64::from(offset))
             .fetch_all(&self.pool)
             .await?
         } else {
             sqlx::query(
-                r#"
+                r"
                 SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
                 FROM notifications
                 WHERE user_id = $1
                 ORDER BY created_at DESC
                 LIMIT $2 OFFSET $3
-                "#,
+                ",
             )
             .bind(user_id.as_str())
             .bind(page_size)
-            .bind(offset as i64)
+            .bind(i64::from(offset))
             .fetch_all(&self.pool)
             .await?
         };
@@ -161,11 +162,11 @@ impl NotificationRepository {
         let count: i64 = if let Some(notification_type) = notification_type {
             if let Some(is_read) = is_read {
                 sqlx::query_scalar(
-                    r#"
+                    r"
                     SELECT COUNT(*)
                     FROM notifications
                     WHERE user_id = $1 AND type = $2 AND is_read = $3
-                    "#,
+                    ",
                 )
                 .bind(user_id.as_str())
                 .bind(notification_type.to_string())
@@ -174,11 +175,11 @@ impl NotificationRepository {
                 .await?
             } else {
                 sqlx::query_scalar(
-                    r#"
+                    r"
                     SELECT COUNT(*)
                     FROM notifications
                     WHERE user_id = $1 AND type = $2
-                    "#,
+                    ",
                 )
                 .bind(user_id.as_str())
                 .bind(notification_type.to_string())
@@ -187,11 +188,11 @@ impl NotificationRepository {
             }
         } else if let Some(is_read) = is_read {
             sqlx::query_scalar(
-                r#"
+                r"
                 SELECT COUNT(*)
                 FROM notifications
                 WHERE user_id = $1 AND is_read = $2
-                "#,
+                ",
             )
             .bind(user_id.as_str())
             .bind(is_read)
@@ -199,11 +200,11 @@ impl NotificationRepository {
             .await?
         } else {
             sqlx::query_scalar(
-                r#"
+                r"
                 SELECT COUNT(*)
                 FROM notifications
                 WHERE user_id = $1
-                "#,
+                ",
             )
             .bind(user_id.as_str())
             .fetch_one(&self.pool)
@@ -216,11 +217,11 @@ impl NotificationRepository {
     /// Get unread count for a user
     pub async fn count_unread(&self, user_id: &UserId) -> Result<i64> {
         let count: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*)
             FROM notifications
             WHERE user_id = $1 AND is_read = FALSE
-            "#,
+            ",
         )
         .bind(user_id.as_str())
         .fetch_one(&self.pool)
@@ -236,11 +237,11 @@ impl NotificationRepository {
         }
 
         let result = sqlx::query(
-            r#"
+            r"
             UPDATE notifications
             SET is_read = TRUE, updated_at = NOW()
             WHERE user_id = $1 AND id = ANY($2)
-            "#,
+            ",
         )
         .bind(user_id.as_str())
         .bind(notification_ids)
@@ -258,11 +259,11 @@ impl NotificationRepository {
     ) -> Result<u64> {
         let result = if let Some(before_time) = before {
             sqlx::query(
-                r#"
+                r"
                 UPDATE notifications
                 SET is_read = TRUE, updated_at = NOW()
                 WHERE user_id = $1 AND is_read = FALSE AND created_at <= $2
-                "#,
+                ",
             )
             .bind(user_id.as_str())
             .bind(before_time)
@@ -270,11 +271,11 @@ impl NotificationRepository {
             .await?
         } else {
             sqlx::query(
-                r#"
+                r"
                 UPDATE notifications
                 SET is_read = TRUE, updated_at = NOW()
                 WHERE user_id = $1 AND is_read = FALSE
-                "#,
+                ",
             )
             .bind(user_id.as_str())
             .execute(&self.pool)
@@ -287,10 +288,10 @@ impl NotificationRepository {
     /// Delete a notification
     pub async fn delete(&self, user_id: &UserId, notification_id: Uuid) -> Result<()> {
         let result = sqlx::query(
-            r#"
+            r"
             DELETE FROM notifications
             WHERE user_id = $1 AND id = $2
-            "#,
+            ",
         )
         .bind(user_id.as_str())
         .bind(notification_id)
@@ -307,10 +308,10 @@ impl NotificationRepository {
     /// Delete all read notifications for a user
     pub async fn delete_all_read(&self, user_id: &UserId) -> Result<u64> {
         let result = sqlx::query(
-            r#"
+            r"
             DELETE FROM notifications
             WHERE user_id = $1 AND is_read = TRUE
-            "#,
+            ",
         )
         .bind(user_id.as_str())
         .execute(&self.pool)
@@ -323,7 +324,7 @@ impl NotificationRepository {
     fn row_to_notification(&self, row: sqlx::postgres::PgRow) -> Result<Notification> {
         let type_str: String = row.try_get("type")?;
         let notification_type = type_str.parse()
-            .map_err(|e| Error::Internal(format!("Invalid notification type: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Invalid notification type: {e}")))?;
 
         Ok(Notification {
             id: row.try_get("id")?,

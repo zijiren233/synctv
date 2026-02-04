@@ -4,7 +4,7 @@
 //!
 //! Three-stage workflow:
 //! 1. Parse - Parse user input to get options
-//! 2. Add Media - Store source_config in database
+//! 2. Add Media - Store `source_config` in database
 //! 3. Generate Playback - Dynamically generate playback info when playing
 
 use crate::{
@@ -20,16 +20,16 @@ use std::sync::Arc;
 /// Request to add a media item
 ///
 /// Design note: According to the three-stage workflow,
-/// clients should call parse endpoint first, then construct source_config,
-/// and finally call add_media with the validated source_config.
+/// clients should call parse endpoint first, then construct `source_config`,
+/// and finally call `add_media` with the validated `source_config`.
 ///
-/// Uses provider registry pattern - provider_instance_name identifies which
-/// provider instance to use (e.g., "bilibili_main", "alist_company").
+/// Uses provider registry pattern - `provider_instance_name` identifies which
+/// provider instance to use (e.g., "`bilibili_main`", "`alist_company`").
 #[derive(Debug, Clone)]
 pub struct AddMediaRequest {
     pub playlist_id: PlaylistId,
     pub name: String,
-    /// Provider instance name (e.g., "bilibili_main", "alist_company")
+    /// Provider instance name (e.g., "`bilibili_main`", "`alist_company`")
     /// The provider will be looked up from the provider registry
     pub provider_instance_name: String,
     pub source_config: JsonValue,
@@ -49,7 +49,7 @@ pub struct EditMediaRequest {
 ///
 /// Responsible for media operations based on the new architecture:
 /// - Media belongs to a playlist (not directly to room)
-/// - Media stores source_config (persistent configuration)
+/// - Media stores `source_config` (persistent configuration)
 /// - Playback info is generated dynamically by providers
 /// - Uses provider registry pattern to avoid enum switching
 #[derive(Clone)]
@@ -68,7 +68,8 @@ impl std::fmt::Debug for MediaService {
 
 impl MediaService {
     /// Create a new media service
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         media_repo: MediaRepository,
         playlist_repo: PlaylistRepository,
         permission_service: PermissionService,
@@ -86,8 +87,8 @@ impl MediaService {
     ///
     /// Three-stage workflow - Stage 2:
     /// 1. Client calls parse endpoint (Stage 1)
-    /// 2. Client constructs source_config
-    /// 3. Client calls add_media with source_config
+    /// 2. Client constructs `source_config`
+    /// 3. Client calls `add_media` with `source_config`
     /// 4. Service validates using provider and stores in database
     pub async fn add_media(
         &self,
@@ -132,7 +133,7 @@ impl MediaService {
         provider
             .validate_source_config(&ctx, &request.source_config)
             .await
-            .map_err(|e| Error::InvalidInput(format!("Invalid source_config: {}", e)))?;
+            .map_err(|e| Error::InvalidInput(format!("Invalid source_config: {e}")))?;
 
         // Get next position in playlist
         let position = self.media_repo.get_next_position(&request.playlist_id).await?;

@@ -19,12 +19,13 @@ pub struct ProviderRegistry {
     /// Registered provider factories by type name
     factories: HashMap<String, ProviderFactory>,
 
-    /// Created provider instances by instance_id
+    /// Created provider instances by `instance_id`
     instances: HashMap<String, Arc<dyn MediaProvider>>,
 }
 
 impl ProviderRegistry {
     /// Create new empty registry
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             factories: HashMap::new(),
@@ -48,7 +49,7 @@ impl ProviderRegistry {
     ///
     /// # Arguments
     /// - `provider_type`: Type of provider (e.g., "bilibili", "alist")
-    /// - `instance_id`: Unique instance ID (e.g., "bilibili_main", "alist_company")
+    /// - `instance_id`: Unique instance ID (e.g., "`bilibili_main`", "`alist_company`")
     /// - `config`: Provider-specific configuration
     ///
     /// # Example
@@ -83,11 +84,13 @@ impl ProviderRegistry {
     /// let provider = registry.get_instance("bilibili_main")?;
     /// let result = provider.generate_playback(&ctx, &source_config).await?;
     /// ```
+    #[must_use] 
     pub fn get_instance(&self, instance_id: &str) -> Option<Arc<dyn MediaProvider>> {
         self.instances.get(instance_id).cloned()
     }
 
     /// List all registered instances
+    #[must_use] 
     pub fn list_instances(&self) -> Vec<String> {
         self.instances.keys().cloned().collect()
     }

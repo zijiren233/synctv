@@ -1,16 +1,16 @@
 //! OAuth2/OIDC provider repository
 //!
-//! This repository manages OAuth2 provider mappings (NOT TOKENS).
+//! This repository manages `OAuth2` provider mappings (NOT TOKENS).
 
 use sqlx::{PgPool, FromRow};
 use crate::{
-    models::{oauth2_client::*, UserId},
+    models::{oauth2_client::{OAuth2Provider, OAuth2UserInfo, UserOAuthProviderMapping}, UserId},
     Result,
 };
 
 /// OAuth2/OIDC provider repository
 ///
-/// Manages mappings between OAuth2 providers and local users.
+/// Manages mappings between `OAuth2` providers and local users.
 /// Tokens are NOT stored - only provider identity information.
 #[derive(Clone)]
 pub struct UserOAuthProviderRepository {
@@ -19,11 +19,12 @@ pub struct UserOAuthProviderRepository {
 
 impl UserOAuthProviderRepository {
     /// Create new repository
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    /// Insert or update OAuth2 provider mapping
+    /// Insert or update `OAuth2` provider mapping
     pub async fn upsert(
         &self,
         user_id: &UserId,
@@ -34,7 +35,7 @@ impl UserOAuthProviderRepository {
         let id = nanoid::nanoid!(12);
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO oauth2_clients (id, provider, provider_user_id, user_id, username, email, avatar_url)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (provider, provider_user_id)
@@ -44,7 +45,7 @@ impl UserOAuthProviderRepository {
                 email = EXCLUDED.email,
                 avatar_url = EXCLUDED.avatar_url,
                 updated_at = CURRENT_TIMESTAMP
-            "#
+            "
         )
         .bind(&id)
         .bind(provider.as_str())
@@ -59,7 +60,7 @@ impl UserOAuthProviderRepository {
         Ok(())
     }
 
-    /// Find user by OAuth2 provider and provider user ID
+    /// Find user by `OAuth2` provider and provider user ID
     pub async fn find_by_provider(
         &self,
         provider: &OAuth2Provider,
@@ -73,10 +74,10 @@ impl UserOAuthProviderRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|r| r.into()))
+        Ok(row.map(std::convert::Into::into))
     }
 
-    /// Find all OAuth2 providers for a user
+    /// Find all `OAuth2` providers for a user
     pub async fn find_by_user(&self, user_id: &UserId) -> Result<Vec<UserOAuthProviderMapping>> {
         let rows = sqlx::query_as::<_, OAuth2ClientRow>(
             "SELECT * FROM oauth2_clients WHERE user_id = $1"
@@ -85,10 +86,10 @@ impl UserOAuthProviderRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(|r| r.into()).collect())
+        Ok(rows.into_iter().map(std::convert::Into::into).collect())
     }
 
-    /// Delete OAuth2 provider mapping
+    /// Delete `OAuth2` provider mapping
     pub async fn delete(
         &self,
         user_id: &UserId,
@@ -108,7 +109,7 @@ impl UserOAuthProviderRepository {
     }
 }
 
-/// Row representation for SQL queries (user_id as String)
+/// Row representation for SQL queries (`user_id` as String)
 #[derive(FromRow)]
 struct OAuth2ClientRow {
     pub id: String,

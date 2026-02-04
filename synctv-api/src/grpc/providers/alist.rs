@@ -8,18 +8,19 @@ use crate::impls::AlistApiImpl;
 
 // Import generated proto types from synctv_proto
 use crate::proto::providers::alist::alist_provider_service_server::AlistProviderService;
-use crate::proto::providers::alist::*;
+use crate::proto::providers::alist::{LoginRequest, LoginResponse, ListRequest, ListResponse, GetMeRequest, GetMeResponse, LogoutRequest, LogoutResponse, GetBindsRequest, GetBindsResponse, BindInfo};
 
 /// Alist Provider gRPC Service
 ///
-/// Thin wrapper that delegates to AlistApiImpl.
+/// Thin wrapper that delegates to `AlistApiImpl`.
 #[derive(Clone)]
 pub struct AlistProviderGrpcService {
     app_state: Arc<AppState>,
 }
 
 impl AlistProviderGrpcService {
-    pub fn new(app_state: Arc<AppState>) -> Self {
+    #[must_use] 
+    pub const fn new(app_state: Arc<AppState>) -> Self {
         Self { app_state }
     }
 }
@@ -103,7 +104,7 @@ impl AlistProviderService for AlistProviderGrpcService {
         let credentials = self.app_state.user_provider_credential_repository
             .get_by_user(&auth_context.user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to query credentials: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to query credentials: {e}")))?;
 
         // Filter for Alist provider only and convert to BindInfo
         let binds: Vec<BindInfo> = credentials

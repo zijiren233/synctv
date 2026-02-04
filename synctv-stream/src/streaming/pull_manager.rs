@@ -5,7 +5,7 @@
 
 use crate::{
     libraries::gop_cache::GopCache,
-    relay::{registry_trait::StreamRegistryTrait, puller::Puller},
+    relay::registry_trait::StreamRegistryTrait,
     error::StreamResult,
     grpc::GrpcStreamPuller,
 };
@@ -48,7 +48,7 @@ impl PullStreamManager {
         room_id: &str,
         media_id: &str,
     ) -> StreamResult<Arc<PullStream>> {
-        let stream_key = format!("{}:{}", room_id, media_id);
+        let stream_key = format!("{room_id}:{media_id}");
 
         // Check if healthy pull stream already exists
         if let Some(stream) = self.streams.get(&stream_key) {
@@ -61,10 +61,9 @@ impl PullStreamManager {
                 );
                 stream.increment_subscriber_count();
                 return Ok(stream.clone());
-            } else {
-                // Remove unhealthy stream
-                self.streams.remove(&stream_key);
             }
+            // Remove unhealthy stream
+            self.streams.remove(&stream_key);
         }
 
         // Lazy-load: Create new pull stream on first FLV request
@@ -78,11 +77,11 @@ impl PullStreamManager {
         let publisher_info = self.registry.get_publisher(room_id, media_id).await
             .map_err(|e| {
                 log::error!("Failed to get publisher for {} / {}: {}", room_id, media_id, e);
-                crate::error::StreamError::RegistryError(format!("Failed to get publisher: {}", e))
+                crate::error::StreamError::RegistryError(format!("Failed to get publisher: {e}"))
             })?
             .ok_or_else(|| {
                 log::warn!("No publisher found for {} / {}", room_id, media_id);
-                crate::error::StreamError::NoPublisher(format!("{} / {}", room_id, media_id))
+                crate::error::StreamError::NoPublisher(format!("{room_id} / {media_id}"))
             })?;
 
         // Create pull stream with gRPC puller
@@ -251,6 +250,7 @@ impl PullStream {
     }
 
     /// Get the current subscriber count
+    #[must_use] 
     pub fn subscriber_count(&self) -> usize {
         // Use try_read for non-blocking access
         if let Ok(count) = self.subscriber_count.try_read() {
@@ -277,6 +277,7 @@ impl PullStream {
     }
 
     /// Get the last active time
+    #[must_use] 
     pub fn last_active_time(&self) -> Instant {
         if let Ok(time) = self.last_active.try_read() {
             *time
@@ -293,11 +294,13 @@ impl PullStream {
     }
 
     /// Get the stream key for this pull stream
+    #[must_use] 
     pub fn stream_key(&self) -> String {
         format!("{}:{}", self.room_id, self.media_id)
     }
 
     /// Get cached GOP frames for instant playback
+    #[must_use] 
     pub fn get_cached_frames(&self) -> Vec<crate::libraries::gop_cache::GopFrame> {
         let stream_key = self.stream_key();
         self.gop_cache.get_frames(&stream_key)

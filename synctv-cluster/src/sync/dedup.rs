@@ -21,6 +21,7 @@ pub struct DedupKey {
 
 impl DedupKey {
     /// Create a deduplication key from a cluster event
+    #[must_use] 
     pub fn from_event(event: &crate::sync::events::ClusterEvent) -> Self {
         Self {
             event_type: event.event_type().to_string(),
@@ -58,6 +59,7 @@ impl MessageDeduplicator {
     /// # Arguments
     /// * `dedup_window` - How long to remember events (default 5 seconds)
     /// * `cleanup_interval` - How often to clean expired entries (default 30 seconds)
+    #[must_use] 
     pub fn new(dedup_window: Duration, cleanup_interval: Duration) -> Self {
         let dedup = Self {
             entries: Arc::new(DashMap::new()),
@@ -75,6 +77,7 @@ impl MessageDeduplicator {
     }
 
     /// Create with default settings (5 second window)
+    #[must_use] 
     pub fn with_defaults() -> Self {
         Self::new(
             Duration::from_secs(5),
@@ -83,6 +86,7 @@ impl MessageDeduplicator {
     }
 
     /// Check if an event should be processed (not a duplicate)
+    #[must_use] 
     pub fn should_process(&self, key: &DedupKey) -> bool {
         let now = Instant::now();
 
@@ -91,11 +95,10 @@ impl MessageDeduplicator {
             if entry.expires_at > now {
                 // Within dedup window, skip
                 return false;
-            } else {
-                // Expired, remove and process
-                self.entries.remove(key);
-                return true;
             }
+            // Expired, remove and process
+            self.entries.remove(key);
+            return true;
         }
 
         // Key doesn't exist, add it
@@ -133,11 +136,13 @@ impl MessageDeduplicator {
     }
 
     /// Get the number of tracked events
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Check if there are any tracked events
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

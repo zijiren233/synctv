@@ -1,4 +1,4 @@
-//! GitHub OAuth2 provider
+//! GitHub `OAuth2` provider
 
 use crate::oauth2::{Provider, OAuth2UserInfo};
 use crate::Error;
@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// GitHub OAuth2 provider configuration
+/// GitHub `OAuth2` provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubConfig {
     pub client_id: String,
@@ -19,7 +19,7 @@ pub struct GitHubConfig {
     pub redirect_url: String,
 }
 
-/// GitHub OAuth2 provider
+/// GitHub `OAuth2` provider
 pub struct GitHubProvider {
     client: Arc<BasicClient>,
     http_client: Arc<Client>,
@@ -27,6 +27,7 @@ pub struct GitHubProvider {
 
 impl GitHubProvider {
     /// Create a new GitHub provider with configuration
+    #[must_use] 
     pub fn create(client_id: String, client_secret: String, redirect_url: String) -> Self {
         let client = Arc::new(
             BasicClient::new(
@@ -47,7 +48,7 @@ impl GitHubProvider {
 
 #[async_trait]
 impl Provider for GitHubProvider {
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "github"
     }
 
@@ -66,7 +67,7 @@ impl Provider for GitHubProvider {
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
             .request_async(oauth2::reqwest::async_http_client)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to exchange code: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to exchange code: {e}")))?;
 
         // Fetch user info
         let resp = self
@@ -76,9 +77,9 @@ impl Provider for GitHubProvider {
             .header("User-Agent", "synctv-rs")
             .send()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch user info: {}", e)))?
+            .map_err(|e| Error::Internal(format!("Failed to fetch user info: {e}")))?
             .error_for_status()
-            .map_err(|e| Error::Internal(format!("GitHub API error: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("GitHub API error: {e}")))?;
 
         #[derive(Deserialize)]
         struct GitHubUser {
@@ -91,7 +92,7 @@ impl Provider for GitHubProvider {
         let user: GitHubUser = resp
             .json()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to parse user info: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to parse user info: {e}")))?;
 
         Ok(OAuth2UserInfo {
             provider_user_id: user.id.to_string(),
@@ -105,7 +106,7 @@ impl Provider for GitHubProvider {
 /// Factory function for GitHub provider
 pub fn github_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error> {
     let config: GitHubConfig = serde_yaml::from_value(config.clone())
-        .map_err(|e| Error::InvalidInput(format!("Invalid GitHub config: {}", e)))?;
+        .map_err(|e| Error::InvalidInput(format!("Invalid GitHub config: {e}")))?;
 
     Ok(Box::new(GitHubProvider::create(
         config.client_id,

@@ -110,7 +110,8 @@ pub enum NotificationLevel {
 
 impl ClusterEvent {
     /// Get the room ID for events that belong to a specific room
-    pub fn room_id(&self) -> Option<&RoomId> {
+    #[must_use] 
+    pub const fn room_id(&self) -> Option<&RoomId> {
         match self {
             Self::ChatMessage { room_id, .. }
             | Self::Danmaku { room_id, .. }
@@ -126,7 +127,8 @@ impl ClusterEvent {
     }
 
     /// Get the user ID that initiated this event
-    pub fn user_id(&self) -> Option<&UserId> {
+    #[must_use] 
+    pub const fn user_id(&self) -> Option<&UserId> {
         match self {
             Self::ChatMessage { user_id, .. }
             | Self::Danmaku { user_id, .. }
@@ -142,7 +144,8 @@ impl ClusterEvent {
     }
 
     /// Get the timestamp of this event
-    pub fn timestamp(&self) -> &DateTime<Utc> {
+    #[must_use] 
+    pub const fn timestamp(&self) -> &DateTime<Utc> {
         match self {
             Self::ChatMessage { timestamp, .. }
             | Self::Danmaku { timestamp, .. }
@@ -158,7 +161,8 @@ impl ClusterEvent {
     }
 
     /// Get a short description of the event type
-    pub fn event_type(&self) -> &'static str {
+    #[must_use] 
+    pub const fn event_type(&self) -> &'static str {
         match self {
             Self::ChatMessage { .. } => "chat_message",
             Self::Danmaku { .. } => "danmaku",

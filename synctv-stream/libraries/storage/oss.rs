@@ -49,11 +49,11 @@ pub struct OssConfig {
     pub region: Option<String>,
     /// Base path prefix in bucket (e.g., "hls/")
     pub base_path: String,
-    /// Public URL prefix for serving (e.g., "https://cdn.example.com/hls/")
+    /// Public URL prefix for serving (e.g., "<https://cdn.example.com/hls>/")
     /// If empty, will generate presigned temporary URLs
     pub public_url_prefix: String,
     /// Presigned URL expiration time in seconds (default: 3600 = 1 hour)
-    /// Only used when public_url_prefix is empty
+    /// Only used when `public_url_prefix` is empty
     pub presign_expires_in: u64,
 }
 
@@ -113,7 +113,7 @@ impl HlsStorage for OssStorage {
         self.operator
             .write(&object_key, data)
             .await
-            .map_err(|e| Error::other(format!("OSS write failed: {}", e)))?;
+            .map_err(|e| Error::other(format!("OSS write failed: {e}")))?;
 
         log::trace!("Wrote to OSS: {} ({} bytes) for key: {}", object_key, size, key);
 
@@ -127,7 +127,7 @@ impl HlsStorage for OssStorage {
         let buffer = self.operator
             .read(&object_key)
             .await
-            .map_err(|e| Error::new(ErrorKind::NotFound, format!("OSS read failed: {}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::NotFound, format!("OSS read failed: {e}")))?;
 
         // Convert OpenDAL Buffer to Bytes
         let data = Bytes::from(buffer.to_vec());
@@ -144,7 +144,7 @@ impl HlsStorage for OssStorage {
         self.operator
             .delete(&object_key)
             .await
-            .map_err(|e| Error::other(format!("OSS delete failed: {}", e)))?;
+            .map_err(|e| Error::other(format!("OSS delete failed: {e}")))?;
 
         log::trace!("Deleted from OSS: {} for key: {}", object_key, key);
 
@@ -167,12 +167,12 @@ impl HlsStorage for OssStorage {
     async fn cleanup(&self, older_than: Duration) -> Result<usize> {
         // Convert Duration to chrono Duration
         let chrono_duration = ChronoDuration::from_std(older_than)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid duration: {}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid duration: {e}")))?;
         let cutoff_time: DateTime<Utc> = Utc::now() - chrono_duration;
         let mut deleted = 0;
 
         let base_path = if self.config.base_path.is_empty() {
-            "".to_string()
+            String::new()
         } else {
             self.config.base_path.clone()
         };
@@ -181,13 +181,13 @@ impl HlsStorage for OssStorage {
         let lister = self.operator
             .lister(&base_path)
             .await
-            .map_err(|e| Error::other(format!("OSS list failed: {}", e)))?;
+            .map_err(|e| Error::other(format!("OSS list failed: {e}")))?;
 
         // Iterate through objects and delete old ones
         use futures::TryStreamExt;
         let mut entries = lister;
         while let Some(entry) = entries.try_next().await
-            .map_err(|e| Error::other(format!("OSS list iteration failed: {}", e)))? {
+            .map_err(|e| Error::other(format!("OSS list iteration failed: {e}")))? {
 
             let path = entry.path();
 
@@ -239,7 +239,7 @@ impl HlsStorage for OssStorage {
         let presigned_req = self.operator
             .presign_read(&object_key, expires_in)
             .await
-            .map_err(|e| Error::other(format!("Failed to presign URL: {}", e)))?;
+            .map_err(|e| Error::other(format!("Failed to presign URL: {e}")))?;
 
         // Get the presigned URL
         let url = presigned_req.uri().to_string();

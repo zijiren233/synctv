@@ -24,15 +24,16 @@ pub struct Subscriber {
 /// This handles local message distribution (single node)
 #[derive(Clone, Debug)]
 pub struct RoomMessageHub {
-    /// Map of room_id -> list of subscribers
+    /// Map of `room_id` -> list of subscribers
     rooms: Arc<DashMap<RoomId, Vec<Subscriber>>>,
 
-    /// Map of connection_id -> (room_id, user_id) for cleanup
+    /// Map of `connection_id` -> (`room_id`, `user_id`) for cleanup
     connections: Arc<DashMap<ConnectionId, (RoomId, UserId)>>,
 }
 
 impl RoomMessageHub {
-    /// Create a new RoomMessageHub
+    /// Create a new `RoomMessageHub`
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             rooms: Arc::new(DashMap::new()),
@@ -113,7 +114,7 @@ impl RoomMessageHub {
         if let Some(subscribers) = self.rooms.get(room_id) {
             for subscriber in subscribers.iter() {
                 match subscriber.sender.send(event.clone()) {
-                    Ok(_) => {
+                    Ok(()) => {
                         sent_count += 1;
                         debug!(
                             room_id = %room_id.as_str(),
@@ -168,7 +169,7 @@ impl RoomMessageHub {
             for subscriber in subscribers.iter() {
                 if subscriber.user_id == *user_id {
                     match subscriber.sender.send(event.clone()) {
-                        Ok(_) => {
+                        Ok(()) => {
                             sent_count += 1;
                             debug!(
                                 room_id = %room_id.as_str(),
@@ -202,24 +203,27 @@ impl RoomMessageHub {
     }
 
     /// Get the number of subscribers in a room
+    #[must_use] 
     pub fn subscriber_count(&self, room_id: &RoomId) -> usize {
         self.rooms
             .get(room_id)
-            .map(|subscribers| subscribers.len())
-            .unwrap_or(0)
+            .map_or(0, |subscribers| subscribers.len())
     }
 
     /// Get the number of active rooms
+    #[must_use] 
     pub fn room_count(&self) -> usize {
         self.rooms.len()
     }
 
     /// Get total number of active connections
+    #[must_use] 
     pub fn connection_count(&self) -> usize {
         self.connections.len()
     }
 
     /// Get all subscribers in a room (for debugging/monitoring)
+    #[must_use] 
     pub fn get_room_subscribers(&self, room_id: &RoomId) -> Vec<(UserId, ConnectionId)> {
         self.rooms
             .get(room_id)

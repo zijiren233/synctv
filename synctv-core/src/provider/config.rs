@@ -35,7 +35,7 @@ pub struct BilibiliSourceConfig {
 /// Alist Provider Configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlistSourceConfig {
-    /// File path (format: "{server_id}/{path}")
+    /// File path (format: "{`server_id}/{path`}")
     pub path: String,
 
     /// Folder password (optional)
@@ -91,6 +91,6 @@ pub struct RtmpSourceConfig {
     pub room_id: String,
 }
 
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }

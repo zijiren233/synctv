@@ -42,7 +42,7 @@ pub struct SegmentInfo {
     pub duration: i64,
     /// TS filename (nanoid, e.g., "a1b2c3d4e5f6")
     pub ts_name: String,
-    /// Storage key (e.g., "live/room_123/a1b2c3d4e5f6.ts")
+    /// Storage key (e.g., "`live/room_123/a1b2c3d4e5f6.ts`")
     pub storage_key: String,
     /// Whether this is a discontinuity point
     pub discontinuity: bool,
@@ -89,11 +89,11 @@ impl StreamProcessorState {
             .map(|s| (s.duration + 999) / 1000)
             .max()
             .unwrap_or(10);
-        m3u8_content.push_str(&format!("#EXT-X-TARGETDURATION:{}\n", max_duration_sec));
+        m3u8_content.push_str(&format!("#EXT-X-TARGETDURATION:{max_duration_sec}\n"));
 
         // Media sequence (first segment in playlist)
-        let first_seq = self.segments.front().map(|s| s.sequence).unwrap_or(0);
-        m3u8_content.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{}\n", first_seq));
+        let first_seq = self.segments.front().map_or(0, |s| s.sequence);
+        m3u8_content.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{first_seq}\n"));
 
         // Segments
         for segment in &self.segments {
@@ -102,11 +102,11 @@ impl StreamProcessorState {
             }
 
             let duration_sec = segment.duration as f64 / 1000.0;
-            m3u8_content.push_str(&format!("#EXTINF:{:.3},\n", duration_sec));
+            m3u8_content.push_str(&format!("#EXTINF:{duration_sec:.3},\n"));
 
             // Use closure to generate segment URL (allows custom auth, CDN URLs, etc)
             let segment_url = gen_ts_url(&segment.ts_name);
-            m3u8_content.push_str(&format!("{}\n", segment_url));
+            m3u8_content.push_str(&format!("{segment_url}\n"));
         }
 
         if self.is_ended {
@@ -119,9 +119,9 @@ impl StreamProcessorState {
 
 /// Custom HLS remuxer with storage abstraction
 pub struct CustomHlsRemuxer {
-    /// Event receiver from StreamHub
+    /// Event receiver from `StreamHub`
     client_event_consumer: BroadcastEventReceiver,
-    /// Event sender to StreamHub
+    /// Event sender to `StreamHub`
     event_producer: StreamHubEventSender,
     /// Segment manager with storage backend
     segment_manager: Arc<SegmentManager>,
@@ -130,7 +130,8 @@ pub struct CustomHlsRemuxer {
 }
 
 impl CustomHlsRemuxer {
-    pub fn new(
+    #[must_use] 
+    pub const fn new(
         consumer: BroadcastEventReceiver,
         event_producer: StreamHubEventSender,
         segment_manager: Arc<SegmentManager>,
@@ -430,7 +431,7 @@ impl StreamProcessor {
                 let video_data = self
                     .video_demuxer
                     .demux(timestamp, data)
-                    .map_err(|e| HlsRemuxerError::DemuxError(format!("Video demux error: {:?}", e)))?;
+                    .map_err(|e| HlsRemuxerError::DemuxError(format!("Video demux error: {e:?}")))?;
 
                 if video_data.is_none() {
                     return Ok(());
@@ -459,7 +460,7 @@ impl StreamProcessor {
                 let audio_data = self
                     .audio_demuxer
                     .demux(timestamp, data)
-                    .map_err(|e| HlsRemuxerError::DemuxError(format!("Audio demux error: {:?}", e)))?;
+                    .map_err(|e| HlsRemuxerError::DemuxError(format!("Audio demux error: {e:?}")))?;
 
                 if !audio_data.has_data {
                     return Ok(());
@@ -479,7 +480,7 @@ impl StreamProcessor {
         // Write to TS muxer
         self.ts_muxer
             .write(pid, pts * 90, dts * 90, flags, payload)
-            .map_err(|e| HlsRemuxerError::MuxError(format!("TS mux error: {:?}", e)))?;
+            .map_err(|e| HlsRemuxerError::MuxError(format!("TS mux error: {e:?}")))?;
 
         Ok(())
     }
@@ -585,7 +586,7 @@ pub enum HlsRemuxerError {
 
 impl From<streamhub::errors::StreamHubError> for HlsRemuxerError {
     fn from(_: streamhub::errors::StreamHubError) -> Self {
-        HlsRemuxerError::SubscribeError
+        Self::SubscribeError
     }
 }
 

@@ -36,7 +36,8 @@ pub trait AlistInterface: Send + Sync {
 pub struct AlistService;
 
 impl AlistService {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self
     }
 }

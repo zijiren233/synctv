@@ -134,9 +134,9 @@ impl Default for StreamingConfig {
     }
 }
 
-/// OAuth2 configuration
+/// `OAuth2` configuration
 ///
-/// Stores OAuth2 provider configurations in the main config file.
+/// Stores `OAuth2` provider configurations in the main config file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2Config {
     /// Provider configurations (e.g., github, google, logto1, logto2)
@@ -233,21 +233,25 @@ impl Config {
     }
 
     /// Get database URL
+    #[must_use] 
     pub fn database_url(&self) -> &str {
         &self.database.url
     }
 
     /// Get Redis URL
+    #[must_use] 
     pub fn redis_url(&self) -> &str {
         &self.redis.url
     }
 
     /// Get gRPC address
+    #[must_use] 
     pub fn grpc_address(&self) -> String {
         format!("{}:{}", self.server.host, self.server.grpc_port)
     }
 
     /// Get HTTP address
+    #[must_use] 
     pub fn http_address(&self) -> String {
         format!("{}:{}", self.server.host, self.server.http_port)
     }

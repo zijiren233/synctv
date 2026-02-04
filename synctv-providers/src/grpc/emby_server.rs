@@ -1,6 +1,6 @@
 //! Emby gRPC Server Implementation
 //!
-//! Thin wrapper around EmbyService that implements gRPC server trait.
+//! Thin wrapper around `EmbyService` that implements gRPC server trait.
 
 use super::emby::{
     emby_server::Emby, DeleteActiveEncodeingsReq, Empty, FsListReq, FsListResp, GetItemReq,
@@ -12,13 +12,14 @@ use tonic::{Request, Response, Status};
 
 /// Emby gRPC server
 ///
-/// Thin wrapper that delegates to EmbyService for actual implementation.
+/// Thin wrapper that delegates to `EmbyService` for actual implementation.
 pub struct EmbyService {
     service: EmbyServiceImpl,
 }
 
 impl EmbyService {
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {
             service: EmbyServiceImpl::new(),
         }

@@ -4,13 +4,12 @@
 //! All metrics are automatically exposed via the /metrics endpoint for Prometheus scraping.
 
 use prometheus::{CounterVec, HistogramVec, Registry, IntGauge, TextEncoder, Encoder, register_counter_vec_with_registry, register_histogram_vec_with_registry, register_int_gauge_with_registry};
-use once_cell::sync::Lazy;
 
 /// Global metrics registry
-pub static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
+pub static REGISTRY: std::sync::LazyLock<Registry> = std::sync::LazyLock::new(Registry::new);
 
 /// HTTP request duration histogram
-pub static HTTP_REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+pub static HTTP_REQUEST_DURATION: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
     register_histogram_vec_with_registry!(
         "http_request_duration_seconds",
         "HTTP request duration in seconds",
@@ -20,7 +19,7 @@ pub static HTTP_REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
 });
 
 /// HTTP request counter
-pub static HTTP_REQUESTS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+pub static HTTP_REQUESTS_TOTAL: std::sync::LazyLock<CounterVec> = std::sync::LazyLock::new(|| {
     register_counter_vec_with_registry!(
         "http_requests_total",
         "Total number of HTTP requests",
@@ -30,7 +29,7 @@ pub static HTTP_REQUESTS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
 });
 
 /// Active connections gauge
-pub static ACTIVE_CONNECTIONS: Lazy<IntGauge> = Lazy::new(|| {
+pub static ACTIVE_CONNECTIONS: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
     register_int_gauge_with_registry!(
         "active_connections",
         "Current number of active connections",
@@ -40,10 +39,10 @@ pub static ACTIVE_CONNECTIONS: Lazy<IntGauge> = Lazy::new(|| {
 
 /// Cache operations
 pub mod cache {
-    use super::*;
+    use super::{register_counter_vec_with_registry, CounterVec, REGISTRY};
 
     /// Cache hit counter
-    pub static CACHE_HITS: Lazy<CounterVec> = Lazy::new(|| {
+    pub static CACHE_HITS: std::sync::LazyLock<CounterVec> = std::sync::LazyLock::new(|| {
         register_counter_vec_with_registry!(
             "cache_hits_total",
             "Total number of cache hits",
@@ -53,7 +52,7 @@ pub mod cache {
     });
 
     /// Cache miss counter
-    pub static CACHE_MISSES: Lazy<CounterVec> = Lazy::new(|| {
+    pub static CACHE_MISSES: std::sync::LazyLock<CounterVec> = std::sync::LazyLock::new(|| {
         register_counter_vec_with_registry!(
             "cache_misses_total",
             "Total number of cache misses",
@@ -63,7 +62,7 @@ pub mod cache {
     });
 
     /// Cache evictions counter
-    pub static CACHE_EVICTIONS: Lazy<CounterVec> = Lazy::new(|| {
+    pub static CACHE_EVICTIONS: std::sync::LazyLock<CounterVec> = std::sync::LazyLock::new(|| {
         register_counter_vec_with_registry!(
             "cache_evictions_total",
             "Total number of cache evictions",
@@ -75,10 +74,10 @@ pub mod cache {
 
 /// Database operations
 pub mod database {
-    use super::*;
+    use super::{register_histogram_vec_with_registry, register_int_gauge_with_registry, register_counter_vec_with_registry, HistogramVec, REGISTRY, IntGauge, CounterVec};
 
     /// Query duration histogram
-    pub static DB_QUERY_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+    pub static DB_QUERY_DURATION: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
         register_histogram_vec_with_registry!(
             "db_query_duration_seconds",
             "Database query duration in seconds",
@@ -88,7 +87,7 @@ pub mod database {
     });
 
     /// Active connections gauge
-    pub static DB_CONNECTIONS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
+    pub static DB_CONNECTIONS_ACTIVE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
         register_int_gauge_with_registry!(
             "db_connections_active",
             "Current number of active database connections",
@@ -97,7 +96,7 @@ pub mod database {
     });
 
     /// Query error counter
-    pub static DB_QUERY_ERRORS: Lazy<CounterVec> = Lazy::new(|| {
+    pub static DB_QUERY_ERRORS: std::sync::LazyLock<CounterVec> = std::sync::LazyLock::new(|| {
         register_counter_vec_with_registry!(
             "db_query_errors_total",
             "Total number of database query errors",
@@ -109,10 +108,10 @@ pub mod database {
 
 /// gRPC operations
 pub mod grpc {
-    use super::*;
+    use super::{register_histogram_vec_with_registry, register_int_gauge_with_registry, HistogramVec, REGISTRY, IntGauge};
 
     /// RPC request duration histogram
-    pub static GRPC_REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+    pub static GRPC_REQUEST_DURATION: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
         register_histogram_vec_with_registry!(
             "grpc_request_duration_seconds",
             "gRPC request duration in seconds",
@@ -122,7 +121,7 @@ pub mod grpc {
     });
 
     /// Active RPC streams gauge
-    pub static GRPC_ACTIVE_STREAMS: Lazy<IntGauge> = Lazy::new(|| {
+    pub static GRPC_ACTIVE_STREAMS: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
         register_int_gauge_with_registry!(
             "grpc_active_streams",
             "Current number of active gRPC streams",
@@ -133,10 +132,10 @@ pub mod grpc {
 
 /// Stream operations
 pub mod stream {
-    use super::*;
+    use super::{register_histogram_vec_with_registry, register_int_gauge_with_registry, register_counter_vec_with_registry, HistogramVec, REGISTRY, IntGauge, CounterVec};
 
     /// Stream relay duration histogram
-    pub static STREAM_RELAY_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+    pub static STREAM_RELAY_DURATION: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
         register_histogram_vec_with_registry!(
             "stream_relay_duration_seconds",
             "Stream relay operation duration in seconds",
@@ -146,7 +145,7 @@ pub mod stream {
     });
 
     /// Active relay streams gauge
-    pub static ACTIVE_RELAY_STREAMS: Lazy<IntGauge> = Lazy::new(|| {
+    pub static ACTIVE_RELAY_STREAMS: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
         register_int_gauge_with_registry!(
             "active_relay_streams",
             "Current number of active relay streams",
@@ -155,7 +154,7 @@ pub mod stream {
     });
 
     /// Stream error counter
-    pub static STREAM_ERRORS: Lazy<CounterVec> = Lazy::new(|| {
+    pub static STREAM_ERRORS: std::sync::LazyLock<CounterVec> = std::sync::LazyLock::new(|| {
         register_counter_vec_with_registry!(
             "stream_errors_total",
             "Total number of stream errors",

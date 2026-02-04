@@ -6,9 +6,9 @@ use synctv_core::service::{ProviderInstanceManager, RoomService, UserService, Se
 
 // Use synctv_proto for all gRPC types to avoid duplication
 use crate::proto::admin_service_server::AdminService;
-use crate::proto::admin::*; // Import all message types
+use crate::proto::admin::{GetSettingsRequest, GetSettingsResponse, GetSettingsGroupRequest, GetSettingsGroupResponse, SetSettingsRequest, SetSettingsResponse, SendTestEmailRequest, SendTestEmailResponse, ListProviderInstancesRequest, ListProviderInstancesResponse, AddProviderInstanceRequest, AddProviderInstanceResponse, SetProviderInstanceRequest, SetProviderInstanceResponse, DeleteProviderInstanceRequest, DeleteProviderInstanceResponse, ReconnectProviderInstanceRequest, ReconnectProviderInstanceResponse, EnableProviderInstanceRequest, EnableProviderInstanceResponse, DisableProviderInstanceRequest, DisableProviderInstanceResponse, CreateUserRequest, CreateUserResponse, AdminUser, DeleteUserRequest, DeleteUserResponse, ListUsersRequest, ListUsersResponse, GetUserRequest, GetUserResponse, SetUserPasswordRequest, SetUserPasswordResponse, SetUserUsernameRequest, SetUserUsernameResponse, SetUserRoleRequest, SetUserRoleResponse, BanUserRequest, BanUserResponse, UnbanUserRequest, UnbanUserResponse, GetUserRoomsRequest, GetUserRoomsResponse, AdminRoom, ApproveUserRequest, ApproveUserResponse, ListRoomsRequest, ListRoomsResponse, GetRoomRequest, GetRoomResponse, SetRoomPasswordRequest, SetRoomPasswordResponse, DeleteRoomRequest, DeleteRoomResponse, BanRoomRequest, BanRoomResponse, UnbanRoomRequest, UnbanRoomResponse, ApproveRoomRequest, ApproveRoomResponse, GetRoomMembersRequest, GetRoomMembersResponse, AddAdminRequest, AddAdminResponse, RemoveAdminRequest, RemoveAdminResponse, ListAdminsRequest, ListAdminsResponse, GetSystemStatsRequest, GetSystemStatsResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse}; // Import all message types
 
-/// AdminService implementation
+/// `AdminService` implementation
 #[derive(Clone)]
 pub struct AdminServiceImpl {
     user_service: Arc<UserService>,
@@ -19,6 +19,7 @@ pub struct AdminServiceImpl {
 }
 
 impl AdminServiceImpl {
+    #[must_use] 
     pub fn new(
         user_service: UserService,
         room_service: RoomService,
@@ -35,7 +36,7 @@ impl AdminServiceImpl {
         }
     }
 
-    /// Convert ProviderInstance to proto message
+    /// Convert `ProviderInstance` to proto message
     fn instance_to_proto(
         &self,
         instance: &ProviderInstance,
@@ -64,7 +65,7 @@ impl AdminServiceImpl {
         }
     }
 
-    /// Convert SettingsGroup to proto message
+    /// Convert `SettingsGroup` to proto message
     fn settings_group_to_proto(
         &self,
         group: &CoreSettingsGroup,
@@ -138,7 +139,7 @@ impl AdminService for AdminServiceImpl {
             .settings_service
             .get_all()
             .await
-            .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get settings: {e}")))?;
 
         let proto_groups: Vec<_> = groups
             .into_iter()
@@ -160,7 +161,7 @@ impl AdminService for AdminServiceImpl {
             .settings_service
             .get(&req.group)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get settings group: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get settings group: {e}")))?;
 
         Ok(Response::new(GetSettingsGroupResponse {
             group: Some(self.settings_group_to_proto(&group)),
@@ -184,8 +185,7 @@ impl AdminService for AdminServiceImpl {
                 if !registry.storage.validate(&full_key, value) {
                     tracing::warn!("Invalid setting value: {} = {}", full_key, value);
                     return Err(Status::invalid_argument(format!(
-                        "Invalid value '{}' for setting '{}'",
-                        value, full_key
+                        "Invalid value '{value}' for setting '{full_key}'"
                     )));
                 }
             }
@@ -197,7 +197,7 @@ impl AdminService for AdminServiceImpl {
             self.settings_service
                 .update(&full_key, value.clone())
                 .await
-                .map_err(|e| Status::internal(format!("Failed to update setting '{}': {}", full_key, e)))?;
+                .map_err(|e| Status::internal(format!("Failed to update setting '{full_key}': {e}")))?;
         }
 
         tracing::info!("Updated {} settings in group '{}'", req.settings.len(), req.group);
@@ -244,16 +244,16 @@ impl AdminService for AdminServiceImpl {
             .provider_manager
             .get_all_instances()
             .await
-            .map_err(|e| Status::internal(format!("Failed to list provider instances: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to list provider instances: {e}")))?;
 
         // Filter by provider_type if specified
-        let filtered_instances = if !req.provider_type.is_empty() {
+        let filtered_instances = if req.provider_type.is_empty() {
+            instances
+        } else {
             instances
                 .into_iter()
                 .filter(|inst| inst.providers.contains(&req.provider_type))
                 .collect::<Vec<_>>()
-        } else {
-            instances
         };
 
         // Convert to proto format
@@ -294,7 +294,7 @@ impl AdminService for AdminServiceImpl {
             serde_json::json!({})
         } else {
             serde_json::from_slice(&req.config)
-                .map_err(|e| Status::invalid_argument(format!("Invalid config JSON: {}", e)))?
+                .map_err(|e| Status::invalid_argument(format!("Invalid config JSON: {e}")))?
         };
 
         // Create ProviderInstance from request
@@ -309,11 +309,11 @@ impl AdminService for AdminServiceImpl {
             jwt_secret: config
                 .get("jwt_secret")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             custom_ca: config
                 .get("custom_ca")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             timeout: if req.timeout.is_empty() {
                 "10s".to_string()
             } else {
@@ -331,7 +331,7 @@ impl AdminService for AdminServiceImpl {
         self.provider_manager
             .add(instance.clone())
             .await
-            .map_err(|e| Status::internal(format!("Failed to add provider instance: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to add provider instance: {e}")))?;
 
         tracing::info!("Added provider instance: {}", req.name);
 
@@ -352,7 +352,7 @@ impl AdminService for AdminServiceImpl {
             .provider_manager
             .get_all_instances()
             .await
-            .map_err(|e| Status::internal(format!("Failed to get provider instances: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get provider instances: {e}")))?;
 
         let existing = instances
             .iter()
@@ -367,7 +367,7 @@ impl AdminService for AdminServiceImpl {
         } else {
             Some(
                 serde_json::from_slice(&req.config)
-                    .map_err(|e| Status::invalid_argument(format!("Invalid config JSON: {}", e)))?,
+                    .map_err(|e| Status::invalid_argument(format!("Invalid config JSON: {e}")))?,
             )
         };
 
@@ -388,13 +388,13 @@ impl AdminService for AdminServiceImpl {
                 .as_ref()
                 .and_then(|c| c.get("jwt_secret"))
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .or_else(|| existing.jwt_secret.clone()),
             custom_ca: config
                 .as_ref()
                 .and_then(|c| c.get("custom_ca"))
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .or_else(|| existing.custom_ca.clone()),
             timeout: if req.timeout.is_empty() {
                 existing.timeout.clone()
@@ -417,7 +417,7 @@ impl AdminService for AdminServiceImpl {
         self.provider_manager
             .update(updated_instance.clone())
             .await
-            .map_err(|e| Status::internal(format!("Failed to update provider instance: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update provider instance: {e}")))?;
 
         tracing::info!("Updated provider instance: {}", req.name);
 
@@ -437,7 +437,7 @@ impl AdminService for AdminServiceImpl {
         self.provider_manager
             .delete(&req.name)
             .await
-            .map_err(|e| Status::internal(format!("Failed to delete provider instance: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to delete provider instance: {e}")))?;
 
         tracing::info!("Deleted provider instance: {}", req.name);
 
@@ -458,7 +458,7 @@ impl AdminService for AdminServiceImpl {
             .provider_manager
             .get_all_instances()
             .await
-            .map_err(|e| Status::internal(format!("Failed to get provider instances: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get provider instances: {e}")))?;
 
         let existing = instances
             .iter()
@@ -473,7 +473,7 @@ impl AdminService for AdminServiceImpl {
             .update(existing.clone())
             .await
             .map_err(|e| {
-                Status::internal(format!("Failed to reconnect provider instance: {}", e))
+                Status::internal(format!("Failed to reconnect provider instance: {e}"))
             })?;
 
         tracing::info!("Reconnected provider instance: {}", req.name);
@@ -494,14 +494,14 @@ impl AdminService for AdminServiceImpl {
         self.provider_manager
             .enable(&req.name)
             .await
-            .map_err(|e| Status::internal(format!("Failed to enable provider instance: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to enable provider instance: {e}")))?;
 
         // Get updated instance
         let instances = self
             .provider_manager
             .get_all_instances()
             .await
-            .map_err(|e| Status::internal(format!("Failed to get provider instances: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get provider instances: {e}")))?;
 
         let updated = instances
             .iter()
@@ -528,14 +528,14 @@ impl AdminService for AdminServiceImpl {
         self.provider_manager
             .disable(&req.name)
             .await
-            .map_err(|e| Status::internal(format!("Failed to disable provider instance: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to disable provider instance: {e}")))?;
 
         // Get updated instance
         let instances = self
             .provider_manager
             .get_all_instances()
             .await
-            .map_err(|e| Status::internal(format!("Failed to get provider instances: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get provider instances: {e}")))?;
 
         let updated = instances
             .iter()
@@ -578,7 +578,7 @@ impl AdminService for AdminServiceImpl {
                 req.password.clone(),
             )
             .await
-            .map_err(|e| Status::internal(format!("Failed to create user: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to create user: {e}")))?;
 
         // If role is specified, update role
         if !req.role.is_empty() && req.role != "user" {
@@ -593,7 +593,7 @@ impl AdminService for AdminServiceImpl {
                 .update_user(&updated_user)
                 .await
                 .map_err(|e| {
-                    Status::internal(format!("Failed to update user role: {}", e))
+                    Status::internal(format!("Failed to update user role: {e}"))
                 })?;
         }
 
@@ -602,10 +602,10 @@ impl AdminService for AdminServiceImpl {
             id: user.id.to_string(),
             username: user.username,
             email: user.email.unwrap_or_default(),
-            role: if !req.role.is_empty() {
-                req.role.clone()
-            } else {
+            role: if req.role.is_empty() {
                 user.role.to_string()
+            } else {
+                req.role.clone()
             },
             status: user.status.as_str().to_string(),
             created_at: user.created_at.timestamp(),
@@ -631,7 +631,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Check if user is already deleted
         if user.deleted_at.is_some() {
@@ -645,7 +645,7 @@ impl AdminService for AdminServiceImpl {
         self.user_service
             .update_user(&updated_user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to delete user: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to delete user: {e}")))?;
 
         tracing::info!("User {} deleted by admin", user_id.as_str());
 
@@ -681,7 +681,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .list_users(&query)
             .await
-            .map_err(|e| Status::internal(format!("Failed to list users: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to list users: {e}")))?;
 
         // Convert to AdminUser proto
         let admin_users = users
@@ -700,11 +700,10 @@ impl AdminService for AdminServiceImpl {
                 }
 
                 // Filter by role if specified
-                if !req.role.is_empty() {
-                    if u.role.as_str() != req.role {
+                if !req.role.is_empty()
+                    && u.role.as_str() != req.role {
                         return false;
                     }
-                }
 
                 true
             })
@@ -749,7 +748,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Convert to AdminUser proto
         let admin_user = AdminUser {
@@ -785,12 +784,12 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Hash new password
         let new_hash = synctv_core::service::auth::password::hash_password(&req.new_password)
             .await
-            .map_err(|e| Status::internal(format!("Failed to hash password: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to hash password: {e}")))?;
 
         // Update password
         user.password_hash = new_hash;
@@ -798,7 +797,7 @@ impl AdminService for AdminServiceImpl {
         self.user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update password: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update password: {e}")))?;
 
         tracing::info!("Password updated for user {} by admin", user_id.as_str());
 
@@ -819,7 +818,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Validate new username
         if req.new_username.is_empty() {
@@ -833,7 +832,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update username: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update username: {e}")))?;
 
         tracing::info!("Username updated for user {} by admin", user_id.as_str());
 
@@ -871,7 +870,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Update role
         user.role = match req.role.as_str() {
@@ -889,7 +888,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update role: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update role: {e}")))?;
 
         tracing::info!(
             "Role updated to {} for user {} by admin",
@@ -931,7 +930,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Check if already banned
         if user.deleted_at.is_some() {
@@ -945,7 +944,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to ban user: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to ban user: {e}")))?;
 
         tracing::info!("User {} banned by admin", user_id.as_str());
 
@@ -979,7 +978,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Check if already active
         if user.deleted_at.is_none() {
@@ -993,7 +992,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to unban user: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to unban user: {e}")))?;
 
         tracing::info!("User {} unbanned by admin", user_id.as_str());
 
@@ -1027,14 +1026,14 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .list_rooms_by_creator(&user_id, 1, 100) // Get first 100 created rooms
             .await
-            .map_err(|e| Status::internal(format!("Failed to get created rooms: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get created rooms: {e}")))?;
 
         // Get rooms where user is a member
         let (joined_room_ids, _) = self
             .room_service
             .list_joined_rooms(&user_id, 1, 100) // Get first 100 joined rooms
             .await
-            .map_err(|e| Status::internal(format!("Failed to get joined rooms: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get joined rooms: {e}")))?;
 
         // Convert created rooms to AdminRoom proto
         let mut admin_rooms: Vec<AdminRoom> = Vec::new();
@@ -1117,7 +1116,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Note: The current implementation doesn't have a "pending" status
         // This method could be used to approve users pending verification
@@ -1169,7 +1168,7 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .list_rooms_grpc(req, &user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to list rooms: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to list rooms: {e}")))?;
 
         // Return gRPC response directly (no conversion needed)
         Ok(Response::new(response))
@@ -1195,7 +1194,7 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .get_room_grpc(req, &user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get room: {e}")))?;
 
         // Return gRPC response directly (no conversion needed)
         Ok(Response::new(response))
@@ -1221,7 +1220,7 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .set_room_password(req, &user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to set room password: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to set room password: {e}")))?;
 
         // Return gRPC response directly (no conversion needed)
         Ok(Response::new(response))
@@ -1247,7 +1246,7 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .delete_room_grpc(req, &user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to delete room: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to delete room: {e}")))?;
 
         // Return gRPC response directly (no conversion needed)
         Ok(Response::new(response))
@@ -1266,7 +1265,7 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .get_room(&room_id)
             .await
-            .map_err(|e| Status::not_found(format!("Room not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("Room not found: {e}")))?;
 
         // Check if already banned
         if room.deleted_at.is_some() {
@@ -1280,7 +1279,7 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .admin_update_room(&room)
             .await
-            .map_err(|e| Status::internal(format!("Failed to ban room: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to ban room: {e}")))?;
 
         tracing::info!("Admin banned room {}", room_id.as_str());
 
@@ -1336,7 +1335,7 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .get_room(&room_id)
             .await
-            .map_err(|e| Status::not_found(format!("Room not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("Room not found: {e}")))?;
 
         // Check if not banned
         if room.deleted_at.is_none() {
@@ -1351,7 +1350,7 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .admin_update_room(&room_to_unban)
             .await
-            .map_err(|e| Status::internal(format!("Failed to unban room: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to unban room: {e}")))?;
 
         tracing::info!("Admin unbanned room {}", room_id.as_str());
 
@@ -1414,7 +1413,7 @@ impl AdminService for AdminServiceImpl {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to approve room {}: {}", room_id.as_str(), e);
-                Status::internal(format!("Failed to approve room: {}", e))
+                Status::internal(format!("Failed to approve room: {e}"))
             })?;
 
         tracing::info!("Admin approved room {}", room_id.as_str());
@@ -1756,7 +1755,7 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .get_room_members_grpc(req, &user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room members: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get room members: {e}")))?;
 
         // Return gRPC response directly (no conversion needed)
         Ok(Response::new(response))
@@ -1780,7 +1779,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Check if already admin
         if user.role.is_admin_or_above() {
@@ -1794,7 +1793,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to add admin: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to add admin: {e}")))?;
 
         tracing::info!("Root added admin role to user {}", user_id.as_str());
 
@@ -1832,7 +1831,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::not_found(format!("User not found: {}", e)))?;
+            .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
         // Check if admin
         if !user.role.is_admin_or_above() {
@@ -1853,7 +1852,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to remove admin: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to remove admin: {e}")))?;
 
         tracing::info!("Root removed admin role from user {}", user_id.as_str());
 
@@ -1879,7 +1878,7 @@ impl AdminService for AdminServiceImpl {
             .user_service
             .list_users(&query)
             .await
-            .map_err(|e| Status::internal(format!("Failed to list users: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to list users: {e}")))?;
 
         // Filter for admin and root users
         let admin_users: Vec<AdminUser> = users
@@ -2046,11 +2045,11 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .get_room_settings(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room settings: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get room settings: {e}")))?;
 
         // Serialize settings to JSON bytes
         let settings_json = serde_json::to_vec(&settings)
-            .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to serialize settings: {e}")))?;
 
         Ok(Response::new(GetRoomSettingsResponse {
             settings: settings_json,
@@ -2067,21 +2066,21 @@ impl AdminService for AdminServiceImpl {
 
         // Parse settings from JSON bytes
         let settings: synctv_core::models::RoomSettings = serde_json::from_slice(&req.settings)
-            .map_err(|e| Status::invalid_argument(format!("Invalid settings JSON: {}", e)))?;
+            .map_err(|e| Status::invalid_argument(format!("Invalid settings JSON: {e}")))?;
 
         // Set room settings
         let updated_settings = self
             .room_service
             .set_room_settings(&room_id, &settings)
             .await
-            .map_err(|e| Status::internal(format!("Failed to set room settings: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to set room settings: {e}")))?;
 
         // Get the room to return in response
         let room = self
             .room_service
             .get_room(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get room: {e}")))?;
 
         Ok(Response::new(SetRoomSettingsResponse {
             room: Some(crate::proto::admin::AdminRoom {
@@ -2108,14 +2107,14 @@ impl AdminService for AdminServiceImpl {
 
         // Parse the value as JSON
         let value: serde_json::Value = serde_json::from_slice(&req.value)
-            .map_err(|e| Status::invalid_argument(format!("Invalid JSON value: {}", e)))?;
+            .map_err(|e| Status::invalid_argument(format!("Invalid JSON value: {e}")))?;
 
         // Update single setting
         let settings_json = self
             .room_service
             .update_room_setting(&room_id, &req.key, &value)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update room setting: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to update room setting: {e}")))?;
 
         Ok(Response::new(UpdateRoomSettingResponse {
             settings: settings_json.into_bytes(),
@@ -2135,21 +2134,21 @@ impl AdminService for AdminServiceImpl {
             .room_service
             .reset_room_settings(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to reset room settings: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to reset room settings: {e}")))?;
 
         // Get the room to return in response
         let room = self
             .room_service
             .get_room(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get room: {e}")))?;
 
         // Get the updated settings
         let settings = self
             .room_service
             .get_room_settings(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room settings: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to get room settings: {e}")))?;
 
         Ok(Response::new(ResetRoomSettingsResponse {
             room: Some(crate::proto::admin::AdminRoom {

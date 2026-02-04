@@ -6,10 +6,10 @@
 //! Architecture:
 //! - Binary proto encoding/decoding
 //! - Shared business logic in impls layer
-//! - Transport-agnostic message handling via MessageSender and StreamMessage traits
+//! - Transport-agnostic message handling via `MessageSender` and `StreamMessage` traits
 //! - Cluster-aware broadcasting (local + Redis)
-//! - All logic encapsulated in StreamMessageHandler (rate limiting, filtering, permissions)
-//! - Complete IO abstraction via StreamMessage trait for both sending and receiving
+//! - All logic encapsulated in `StreamMessageHandler` (rate limiting, filtering, permissions)
+//! - Complete IO abstraction via `StreamMessage` trait for both sending and receiving
 
 use std::sync::Arc;
 use prost::Message;
@@ -58,14 +58,14 @@ pub trait StreamMessage: Send + Sync {
 /// Per-connection stream message handler with complete logic encapsulation
 ///
 /// Each connection gets its own handler instance with:
-/// - Connection state (room_id, user_id, username)
+/// - Connection state (`room_id`, `user_id`, username)
 /// - Message I/O channels
 /// - Rate limiting, content filtering, permission checking
 /// - Cluster broadcasting
 ///
 /// The handler runs its own message loop, external code only needs to:
 /// 1. Create the handler with proper I/O channels
-/// 2. Call start() to begin processing
+/// 2. Call `start()` to begin processing
 pub struct StreamMessageHandler {
     room_id: RoomId,
     user_id: UserId,
@@ -124,16 +124,16 @@ impl StreamMessageHandler {
     /// Run the complete message loop using unified IO abstraction
     ///
     /// This is the NEW recommended method that handles both sending and receiving
-    /// in a single unified loop using the StreamMessage trait.
+    /// in a single unified loop using the `StreamMessage` trait.
     ///
     /// This method:
     /// 1. Subscribes to cluster events and forwards them to the client
-    /// 2. Receives client messages via the StreamMessage trait
+    /// 2. Receives client messages via the `StreamMessage` trait
     /// 3. Handles rate limiting, content filtering, and permissions
     /// 4. Broadcasts events to the cluster
     /// 5. Handles cleanup on disconnect
     ///
-    /// The caller only needs to provide a StreamMessage implementation (WebSocket or gRPC).
+    /// The caller only needs to provide a `StreamMessage` implementation (WebSocket or gRPC).
     pub async fn run<S: StreamMessage>(&self, stream: &mut S) -> Result<(), String> {
         let room_id_str = self.room_id.as_str().to_string();
 
@@ -171,24 +171,21 @@ impl StreamMessageHandler {
 
                 // Cluster event (broadcast to client)
                 event = event_rx.recv() => {
-                    match event {
-                        Some(event) => {
-                            if let Some(msg) = cluster_event_to_server_message(&event, &room_id_str) {
-                                if let Err(e) = stream.send(msg) {
-                                    tracing::error!("Failed to send server message: {}", e);
-                                    break;
-                                }
+                    if let Some(event) = event {
+                        if let Some(msg) = cluster_event_to_server_message(&event, &room_id_str) {
+                            if let Err(e) = stream.send(msg) {
+                                tracing::error!("Failed to send server message: {}", e);
+                                break;
                             }
                         }
-                        None => {
-                            tracing::error!("Cluster event channel closed");
-                            break;
-                        }
+                    } else {
+                        tracing::error!("Cluster event channel closed");
+                        break;
                     }
                 }
 
                 // Heartbeat/health check every 30 seconds
-                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                () = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
                     if !stream.is_alive() {
                         tracing::info!("Connection no longer alive");
                         break;
@@ -251,9 +248,10 @@ impl StreamMessageHandler {
     /// This method:
     /// 1. Subscribes to cluster events and forwards them to the client
     /// 2. Spawns a task to handle incoming client messages
-    /// 3. Returns a sender that the caller should use to send ClientMessages to this handler
+    /// 3. Returns a sender that the caller should use to send `ClientMessages` to this handler
     ///
-    /// Returns a sender that the caller should use to send ClientMessages
+    /// Returns a sender that the caller should use to send `ClientMessages`
+    #[must_use] 
     pub fn start(
         &self,
     ) -> tokio::sync::mpsc::UnboundedSender<ClientMessage> {
@@ -388,7 +386,7 @@ impl StreamMessageHandler {
             user_id: self.user_id.clone(),
             username: self.username.clone(),
             message: content.to_string(),
-            position: position as f64,
+            position: f64::from(position),
             timestamp: chrono::Utc::now(),
         };
 
@@ -399,11 +397,13 @@ impl StreamMessageHandler {
     }
 
     /// Get room ID
-    pub fn get_room_id(&self) -> &RoomId {
+    #[must_use] 
+    pub const fn get_room_id(&self) -> &RoomId {
         &self.room_id
     }
 
     /// Get user ID
+    #[must_use] 
     pub fn get_user_id(&self) -> UserId {
         self.user_id.clone()
     }
@@ -415,7 +415,7 @@ fn cluster_event_to_server_message(
     room_id: &str,
 ) -> Option<ServerMessage> {
     use crate::proto::client::server_message::Message;
-    use crate::proto::client::*;
+    use crate::proto::client::{ServerMessage, ChatMessageReceive, DanmakuMessageReceive, PlaybackStateChanged, PlaybackState, UserJoinedRoom, RoomMember, UserLeftRoom, RoomSettingsChanged, ErrorMessage};
     use synctv_cluster::sync::ClusterEvent;
 
     match event {
@@ -556,25 +556,25 @@ fn cluster_event_to_server_message(
 pub struct ProtoCodec;
 
 impl ProtoCodec {
-    /// Encode ClientMessage to binary
+    /// Encode `ClientMessage` to binary
     pub fn encode_client_message(msg: &ClientMessage) -> Result<Vec<u8>, String> {
         Ok(msg.encode_to_vec())
     }
 
-    /// Decode ClientMessage from binary
+    /// Decode `ClientMessage` from binary
     pub fn decode_client_message(data: &[u8]) -> Result<ClientMessage, String> {
         ClientMessage::decode(data)
-            .map_err(|e| format!("Failed to decode message: {}", e))
+            .map_err(|e| format!("Failed to decode message: {e}"))
     }
 
-    /// Encode ServerMessage to binary
+    /// Encode `ServerMessage` to binary
     pub fn encode_server_message(msg: &ServerMessage) -> Result<Vec<u8>, String> {
         Ok(msg.encode_to_vec())
     }
 
-    /// Decode ServerMessage from binary
+    /// Decode `ServerMessage` from binary
     pub fn decode_server_message(data: &[u8]) -> Result<ServerMessage, String> {
         ServerMessage::decode(data)
-            .map_err(|e| format!("Failed to decode message: {}", e))
+            .map_err(|e| format!("Failed to decode message: {e}"))
     }
 }

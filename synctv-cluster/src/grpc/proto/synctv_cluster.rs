@@ -35,7 +35,7 @@ pub struct NodeMetrics {
     pub network_bandwidth_mbps: f64,
 }
 /// Node registration
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct RegisterNodeRequest {
     #[prost(string, tag = "1")]
     pub node_id: ::prost::alloc::string::String,
@@ -59,14 +59,14 @@ pub struct HeartbeatRequest {
     #[prost(message, optional, tag = "2")]
     pub metrics: ::core::option::Option<NodeMetrics>,
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, ::prost::Message)]
 pub struct HeartbeatResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
     #[prost(int64, tag = "2")]
     pub timestamp: i64,
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, ::prost::Message)]
 pub struct GetNodesRequest {
     /// Optional filter
     #[prost(enumeration = "NodeStatus", tag = "1")]
@@ -77,7 +77,7 @@ pub struct GetNodesResponse {
     #[prost(message, repeated, tag = "1")]
     pub nodes: ::prost::alloc::vec::Vec<NodeInfo>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct DeregisterNodeRequest {
     #[prost(string, tag = "1")]
     pub node_id: ::prost::alloc::string::String,
@@ -85,13 +85,13 @@ pub struct DeregisterNodeRequest {
     #[prost(string, tag = "2")]
     pub reason: ::prost::alloc::string::String,
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, ::prost::Message)]
 pub struct DeregisterNodeResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
 }
 /// State synchronization
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct SyncRoomStateRequest {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
@@ -134,7 +134,7 @@ pub struct BroadcastEventRequest {
     #[prost(message, optional, tag = "1")]
     pub event: ::core::option::Option<ClusterEvent>,
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, ::prost::Message)]
 pub struct BroadcastEventResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
@@ -188,7 +188,7 @@ pub struct PlaybackStateChangedEvent {
     #[prost(message, optional, tag = "2")]
     pub state: ::core::option::Option<PlaybackState>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct UserJoinedRoomEvent {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
@@ -199,14 +199,14 @@ pub struct UserJoinedRoomEvent {
     #[prost(int64, tag = "4")]
     pub permissions: i64,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct UserLeftRoomEvent {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub user_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct RoomCreatedEvent {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
@@ -215,12 +215,12 @@ pub struct RoomCreatedEvent {
     #[prost(string, tag = "3")]
     pub created_by: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct RoomDeletedEvent {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct RoomSettingsChangedEvent {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
@@ -228,7 +228,7 @@ pub struct RoomSettingsChangedEvent {
     #[prost(bytes = "vec", tag = "2")]
     pub settings: ::prost::alloc::vec::Vec<u8>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct ChatMessageEvent {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
@@ -241,7 +241,7 @@ pub struct ChatMessageEvent {
     #[prost(int64, tag = "5")]
     pub timestamp: i64,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct DanmakuMessageEvent {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
@@ -256,7 +256,7 @@ pub struct DanmakuMessageEvent {
     #[prost(int64, tag = "6")]
     pub timestamp: i64,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct CacheInvalidateEvent {
     /// Cache keys to invalidate
     #[prost(string, repeated, tag = "1")]
@@ -266,17 +266,17 @@ pub struct CacheInvalidateEvent {
     pub pattern: ::prost::alloc::string::String,
 }
 /// User connection tracking
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct GetUserOnlineStatusRequest {
     #[prost(string, repeated, tag = "1")]
     pub user_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct GetUserOnlineStatusResponse {
     #[prost(message, repeated, tag = "1")]
     pub statuses: ::prost::alloc::vec::Vec<UserOnlineStatus>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct UserOnlineStatus {
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
@@ -289,17 +289,17 @@ pub struct UserOnlineStatus {
     #[prost(string, tag = "4")]
     pub node_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct GetRoomConnectionsRequest {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct GetRoomConnectionsResponse {
     #[prost(message, repeated, tag = "1")]
     pub connections: ::prost::alloc::vec::Vec<RoomConnection>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, ::prost::Message)]
 pub struct RoomConnection {
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
@@ -319,11 +319,12 @@ pub enum NodeStatus {
     Offline = 3,
 }
 impl NodeStatus {
-    /// String value of the enum field names used in the ProtoBuf definition.
+    /// String value of the enum field names used in the `ProtoBuf` definition.
     ///
     /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
+    /// (if the `ProtoBuf` definition does not change) and safe for programmatic use.
+    #[must_use] 
+    pub const fn as_str_name(&self) -> &'static str {
         match self {
             Self::Unknown => "NODE_STATUS_UNKNOWN",
             Self::Active => "NODE_STATUS_ACTIVE",
@@ -331,7 +332,8 @@ impl NodeStatus {
             Self::Offline => "NODE_STATUS_OFFLINE",
         }
     }
-    /// Creates an enum from field names used in the ProtoBuf definition.
+    /// Creates an enum from field names used in the `ProtoBuf` definition.
+    #[must_use] 
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
             "NODE_STATUS_UNKNOWN" => Some(Self::Unknown),
@@ -659,7 +661,7 @@ pub mod cluster_service_server {
         clippy::let_unit_value,
     )]
     use tonic::codegen::*;
-    /// Generated trait containing gRPC methods that should be implemented for use with ClusterServiceServer.
+    /// Generated trait containing gRPC methods that should be implemented for use with `ClusterServiceServer`.
     #[async_trait]
     pub trait ClusterService: std::marker::Send + std::marker::Sync + 'static {
         /// Node registration and health
@@ -769,7 +771,7 @@ pub mod cluster_service_server {
         ///
         /// Default: `4MB`
         #[must_use]
-        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+        pub const fn max_decoding_message_size(mut self, limit: usize) -> Self {
             self.max_decoding_message_size = Some(limit);
             self
         }
@@ -777,7 +779,7 @@ pub mod cluster_service_server {
         ///
         /// Default: `usize::MAX`
         #[must_use]
-        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+        pub const fn max_encoding_message_size(mut self, limit: usize) -> Self {
             self.max_encoding_message_size = Some(limit);
             self
         }

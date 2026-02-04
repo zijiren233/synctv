@@ -14,7 +14,8 @@ pub struct SyncTvStreamHandler {
 }
 
 impl SyncTvStreamHandler {
-    pub fn new(room_id: String, gop_cache: Arc<GopCache>) -> Self {
+    #[must_use] 
+    pub const fn new(room_id: String, gop_cache: Arc<GopCache>) -> Self {
         Self { room_id, gop_cache }
     }
 
@@ -23,11 +24,11 @@ impl SyncTvStreamHandler {
             FrameData::Video { timestamp, data } => {
                 // Detect keyframe from video data
                 // For H.264: check if frame type is 1 (keyframe)
-                let is_keyframe = if !data.is_empty() {
+                let is_keyframe = if data.is_empty() {
+                    false
+                } else {
                     let frame_type = (data[0] >> 4) & 0x0F;
                     frame_type == 1
-                } else {
-                    false
                 };
                 (*timestamp, data.clone().freeze(), is_keyframe, crate::libraries::gop_cache::FrameType::Video)
             }
@@ -42,10 +43,10 @@ impl SyncTvStreamHandler {
         };
 
         let gop_frame = GopFrame {
+            data,
             timestamp,
             is_keyframe,
             frame_type,
-            data,
         };
 
         self.gop_cache.add_frame(&self.room_id, gop_frame);

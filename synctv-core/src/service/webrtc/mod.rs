@@ -83,7 +83,8 @@ pub enum SdpType {
 }
 
 impl SdpType {
-    pub fn as_str(&self) -> &str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &str {
         match self {
             Self::Offer => "offer",
             Self::Answer => "answer",

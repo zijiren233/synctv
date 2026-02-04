@@ -14,23 +14,25 @@ pub struct UserRepository {
 }
 
 impl UserRepository {
-    pub fn new(pool: PgPool) -> Self {
+    #[must_use] 
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
     /// Get the database pool
-    pub fn pool(&self) -> &PgPool {
+    #[must_use] 
+    pub const fn pool(&self) -> &PgPool {
         &self.pool
     }
 
     /// Create a new user
     pub async fn create(&self, user: &User) -> Result<User> {
         let row = sqlx::query(
-            r#"
+            r"
             INSERT INTO users (id, username, email, password_hash, signup_method, role, status, email_verified, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
-            "#,
+            ",
         )
         .bind(user.id.as_str())
         .bind(&user.username)
@@ -57,11 +59,11 @@ impl UserRepository {
     /// Get user by ID
     pub async fn get_by_id(&self, user_id: &UserId) -> Result<Option<User>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE id = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(user_id.as_str())
         .fetch_optional(&self.pool)
@@ -76,11 +78,11 @@ impl UserRepository {
     /// Get user by username
     pub async fn get_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE username = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -95,11 +97,11 @@ impl UserRepository {
     /// Get user by email
     pub async fn get_by_email(&self, email: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
             WHERE email = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -114,12 +116,12 @@ impl UserRepository {
     /// Update user
     pub async fn update(&self, user: &User) -> Result<User> {
         let row = sqlx::query(
-            r#"
+            r"
             UPDATE users
             SET username = $2, email = $3, password_hash = $4, role = $5, status = $6, updated_at = $7
             WHERE id = $1 AND deleted_at IS NULL
             RETURNING id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
-            "#,
+            ",
         )
         .bind(user.id.as_str())
         .bind(&user.username)
@@ -137,11 +139,11 @@ impl UserRepository {
     /// Soft delete user
     pub async fn delete(&self, user_id: &UserId) -> Result<bool> {
         let result = sqlx::query(
-            r#"
+            r"
             UPDATE users
             SET deleted_at = $2
             WHERE id = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(user_id.as_str())
         .bind(Utc::now())
@@ -154,12 +156,12 @@ impl UserRepository {
     /// Update user password
     pub async fn update_password(&self, user_id: &UserId, password_hash: &str) -> Result<User> {
         let row = sqlx::query(
-            r#"
+            r"
             UPDATE users
             SET password_hash = $2, updated_at = $3
             WHERE id = $1 AND deleted_at IS NULL
             RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at
-            "#,
+            ",
         )
         .bind(user_id.as_str())
         .bind(password_hash)
@@ -173,12 +175,12 @@ impl UserRepository {
     /// Update user email verification status
     pub async fn update_email_verified(&self, user_id: &UserId, email_verified: bool) -> Result<User> {
         let row = sqlx::query(
-            r#"
+            r"
             UPDATE users
             SET email_verified = $2, updated_at = $3
             WHERE id = $1 AND deleted_at IS NULL
             RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
-            "#,
+            ",
         )
         .bind(user_id.as_str())
         .bind(email_verified)
@@ -197,7 +199,7 @@ impl UserRepository {
         let (search_condition, search_param) = if let Some(search) = &query.search {
             (
                 "AND (username ILIKE $3 OR email ILIKE $3)",
-                Some(format!("%{}%", search)),
+                Some(format!("%{search}%")),
             )
         } else {
             ("", None)
@@ -205,12 +207,11 @@ impl UserRepository {
 
         // Get total count
         let count_query = format!(
-            r#"
+            r"
             SELECT COUNT(*) as count
             FROM users
-            WHERE deleted_at IS NULL {}
-            "#,
-            search_condition
+            WHERE deleted_at IS NULL {search_condition}
+            "
         );
 
         let count: i64 = if let Some(ref search) = search_param {
@@ -226,14 +227,13 @@ impl UserRepository {
 
         // Get users
         let list_query = format!(
-            r#"
+            r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
-            WHERE deleted_at IS NULL {}
+            WHERE deleted_at IS NULL {search_condition}
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
-            "#,
-            search_condition
+            "
         );
 
         let rows = if let Some(ref search) = search_param {
@@ -259,11 +259,11 @@ impl UserRepository {
     /// Check if username exists
     pub async fn username_exists(&self, username: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*) as count
             FROM users
             WHERE username = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(username)
         .fetch_one(&self.pool)
@@ -275,11 +275,11 @@ impl UserRepository {
     /// Check if email exists
     pub async fn email_exists(&self, email: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*) as count
             FROM users
             WHERE email = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(email)
         .fetch_one(&self.pool)
@@ -298,11 +298,11 @@ impl UserRepository {
 
         let role_str: String = row.try_get("role")?;
         let role = UserRole::from_str(&role_str)
-            .map_err(|_| Error::InvalidInput(format!("Invalid role: {}", role_str)))?;
+            .map_err(|_| Error::InvalidInput(format!("Invalid role: {role_str}")))?;
 
         let status_str: String = row.try_get("status")?;
         let status = UserStatus::from_str(&status_str)
-            .map_err(|_| Error::InvalidInput(format!("Invalid status: {}", status_str)))?;
+            .map_err(|_| Error::InvalidInput(format!("Invalid status: {status_str}")))?;
 
         Ok(User {
             id: UserId::from_string(row.try_get("id")?),
@@ -319,18 +319,18 @@ impl UserRepository {
         })
     }
 
-    /// Convert database row to User model (with email_verified explicitly included)
+    /// Convert database row to User model (with `email_verified` explicitly included)
     fn row_to_user_with_email_verified(&self, row: PgRow) -> Result<User> {
         let signup_method_str: Option<String> = row.try_get("signup_method")?;
         let signup_method = signup_method_str.map(|s| SignupMethod::from_str_name(&s));
 
         let role_str: String = row.try_get("role")?;
         let role = UserRole::from_str(&role_str)
-            .map_err(|_| Error::InvalidInput(format!("Invalid role: {}", role_str)))?;
+            .map_err(|_| Error::InvalidInput(format!("Invalid role: {role_str}")))?;
 
         let status_str: String = row.try_get("status")?;
         let status = UserStatus::from_str(&status_str)
-            .map_err(|_| Error::InvalidInput(format!("Invalid status: {}", status_str)))?;
+            .map_err(|_| Error::InvalidInput(format!("Invalid status: {status_str}")))?;
 
         Ok(User {
             id: UserId::from_string(row.try_get("id")?),

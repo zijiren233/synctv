@@ -1,6 +1,6 @@
 //! Alist HTTP Client
 //!
-//! Pure HTTP client for Alist API, no dependency on MediaProvider
+//! Pure HTTP client for Alist API, no dependency on `MediaProvider`
 
 use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT}};
 use serde_json::json;
@@ -44,12 +44,14 @@ impl AlistClient {
     }
 
     /// Get current host
+    #[must_use] 
     pub fn host(&self) -> &str {
         &self.host
     }
 
     /// Check if client has token
-    pub fn has_token(&self) -> bool {
+    #[must_use] 
+    pub const fn has_token(&self) -> bool {
         self.token.is_some()
     }
 
@@ -179,7 +181,7 @@ impl AlistClient {
     ///
     /// # Arguments
     /// * `path` - File path
-    /// * `method` - Method name (e.g., "video_preview")
+    /// * `method` - Method name (e.g., "`video_preview`")
     /// * `password` - Optional password for protected directories
     pub async fn fs_other(
         &self,

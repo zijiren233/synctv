@@ -4,7 +4,7 @@ use reqwest::{Client, header::{HeaderMap, HeaderValue, CONTENT_TYPE}};
 use serde_json::{json, Value};
 
 use super::error::EmbyError;
-use super::types::*;
+use super::types::{AuthResponse, Item, UserInfo, ItemsResponse, SystemInfo, FsListResponse, PathInfo, PlaybackInfoResponse, default_device_profile};
 
 const X_EMBY_TOKEN: &str = "X-Emby-Token";
 
@@ -164,11 +164,11 @@ impl EmbyClient {
             self.host, prefix, user_id);
 
         if let Some(pid) = parent_id {
-            url.push_str(&format!("&ParentId={}", pid));
+            url.push_str(&format!("&ParentId={pid}"));
         }
 
         if let Some(term) = search_term {
-            url.push_str(&format!("&SearchTerm={}&Recursive=true", term));
+            url.push_str(&format!("&SearchTerm={term}&Recursive=true"));
         } else {
             url.push_str("&Filters=IsNotFolder");
         }
@@ -243,11 +243,11 @@ impl EmbyClient {
         );
 
         if let Some(p) = path {
-            url.push_str(&format!("&ParentId={}", p));
+            url.push_str(&format!("&ParentId={p}"));
         }
 
         if let Some(term) = search_term {
-            url.push_str(&format!("&SearchTerm={}&Recursive=true", term));
+            url.push_str(&format!("&SearchTerm={term}&Recursive=true"));
         }
 
         let response = self
@@ -360,12 +360,14 @@ impl EmbyClient {
     }
 
     /// Get host URL
+    #[must_use] 
     pub fn host(&self) -> &str {
         &self.host
     }
 
     /// Check if client has credentials
-    pub fn has_credentials(&self) -> bool {
+    #[must_use] 
+    pub const fn has_credentials(&self) -> bool {
         self.token.is_some() && self.user_id.is_some()
     }
 }
