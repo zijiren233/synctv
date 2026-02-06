@@ -6,7 +6,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::http::{AppState, AppResult, AppError};
+use crate::http::{AppState, AppResult, AppError, middleware::AuthUser};
 use synctv_core::{
     models::{RoomId, RoomSettings, UserId},
 };
@@ -94,4 +94,114 @@ pub async fn get_joined_rooms(
     }
 
     Ok(Json(rooms))
+}
+
+// ------------------------------------------------------------------
+// Room Member Management (room-scoped, requires room-level permissions)
+// ------------------------------------------------------------------
+
+/// Kick a member from a room
+pub async fn kick_member(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((room_id, target_user_id)): Path<(String, String)>,
+) -> AppResult<Json<crate::proto::client::KickMemberResponse>> {
+    let resp = state
+        .client_api
+        .kick_member(
+            auth.user_id.as_str(),
+            &room_id,
+            crate::proto::client::KickMemberRequest {
+                user_id: target_user_id,
+            },
+        )
+        .await
+        .map_err(AppError::internal)?;
+    Ok(Json(resp))
+}
+
+/// Set member permissions / role
+#[derive(Debug, Deserialize)]
+pub struct SetMemberPermissionsRequest {
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub added_permissions: u64,
+    #[serde(default)]
+    pub removed_permissions: u64,
+    #[serde(default)]
+    pub admin_added_permissions: u64,
+    #[serde(default)]
+    pub admin_removed_permissions: u64,
+}
+
+pub async fn set_member_permissions(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((room_id, target_user_id)): Path<(String, String)>,
+    Json(req): Json<SetMemberPermissionsRequest>,
+) -> AppResult<Json<crate::proto::client::SetMemberPermissionResponse>> {
+    let resp = state
+        .client_api
+        .update_member_permission(
+            auth.user_id.as_str(),
+            &room_id,
+            crate::proto::client::SetMemberPermissionRequest {
+                user_id: target_user_id,
+                role: req.role,
+                added_permissions: req.added_permissions,
+                removed_permissions: req.removed_permissions,
+                admin_added_permissions: req.admin_added_permissions,
+                admin_removed_permissions: req.admin_removed_permissions,
+            },
+        )
+        .await
+        .map_err(AppError::internal)?;
+    Ok(Json(resp))
+}
+
+/// Ban a member from a room
+pub async fn ban_member(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((room_id, target_user_id)): Path<(String, String)>,
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<crate::proto::client::BanMemberResponse>> {
+    let reason = req.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    let resp = state
+        .client_api
+        .ban_member(
+            auth.user_id.as_str(),
+            &room_id,
+            crate::proto::client::BanMemberRequest {
+                user_id: target_user_id,
+                reason,
+            },
+        )
+        .await
+        .map_err(AppError::internal)?;
+
+    Ok(Json(resp))
+}
+
+/// Unban a member from a room
+pub async fn unban_member(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((room_id, target_user_id)): Path<(String, String)>,
+) -> AppResult<Json<crate::proto::client::UnbanMemberResponse>> {
+    let resp = state
+        .client_api
+        .unban_member(
+            auth.user_id.as_str(),
+            &room_id,
+            crate::proto::client::UnbanMemberRequest {
+                user_id: target_user_id,
+            },
+        )
+        .await
+        .map_err(AppError::internal)?;
+
+    Ok(Json(resp))
 }

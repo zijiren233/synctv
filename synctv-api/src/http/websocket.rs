@@ -147,7 +147,13 @@ async fn handle_socket(
     let rid = RoomId::from_string(room_id.clone());
 
     // Create rate limiter and content filter with default config
-    let rate_limiter = Arc::new(RateLimiter::new(None, "ws".to_string()).unwrap());
+    let rate_limiter = match RateLimiter::new(None, "ws".to_string()) {
+        Ok(rl) => Arc::new(rl),
+        Err(e) => {
+            error!("Failed to create RateLimiter: {}", e);
+            return;
+        }
+    };
     let rate_limit_config = Arc::new(RateLimitConfig::default());
     let content_filter = Arc::new(ContentFilter::new());
 

@@ -358,6 +358,20 @@ impl SfuManager {
         Ok(())
     }
 
+    /// Gracefully shut down the SFU manager, closing all rooms and peers.
+    pub async fn shutdown(&self) {
+        info!("SFU Manager shutting down, closing {} rooms", self.rooms.len());
+
+        // Collect room IDs and clear the rooms map
+        let room_ids: Vec<RoomId> = self.rooms.iter().map(|entry| entry.key().clone()).collect();
+        for room_id in &room_ids {
+            self.rooms.remove(room_id);
+            debug!(room_id = %room_id, "Closed room during shutdown");
+        }
+
+        info!("SFU Manager shutdown complete");
+    }
+
     /// Force a specific room into SFU or P2P mode (for testing/debugging)
     pub async fn set_room_mode(&self, room_id: &RoomId, mode: RoomMode) -> Result<()> {
         if let Some(room_entry) = self.rooms.get(room_id) {

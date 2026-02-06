@@ -15,10 +15,12 @@ struct PublishClaims {
     m: String,
     /// User ID
     u: String,
-    /// Expiration time
+    /// Expiration time (used by JWT validation)
+    #[allow(dead_code)]
     exp: i64,
-    /// Issued at
+    /// Issued at (used by JWT validation)
     #[serde(default)]
+    #[allow(dead_code)]
     iat: i64,
 }
 

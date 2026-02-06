@@ -6,6 +6,7 @@
 pub mod server;
 pub mod pull_manager;
 pub mod segment_manager;
+pub mod rtmp;
 
 pub use server::StreamingServer;
 pub use pull_manager::PullStreamManager;

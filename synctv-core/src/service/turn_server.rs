@@ -195,6 +195,12 @@ impl TurnServer {
         }
     }
 
+    /// Get the server configuration
+    #[must_use]
+    pub const fn config(&self) -> &TurnServerConfig {
+        &self.config
+    }
+
     /// Get the local bind address
     pub fn local_addr(&self) -> anyhow::Result<SocketAddr> {
         Ok(self.socket.local_addr()?)

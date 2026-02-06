@@ -40,6 +40,25 @@ async fn main() -> Result<()> {
     // 1. Load configuration
     let config = load_config()?;
 
+    // 1.5. Validate configuration (fail fast on misconfigurations)
+    if let Err(errors) = config.validate() {
+        for e in &errors {
+            eprintln!("Config validation error: {e}");
+        }
+        // JWT key warnings are non-fatal (keys may be generated later)
+        let fatal: Vec<_> = errors
+            .iter()
+            .filter(|e| !e.contains("JWT"))
+            .collect();
+        if !fatal.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Configuration validation failed with {} error(s)",
+                fatal.len()
+            ));
+        }
+        eprintln!("Continuing with JWT key warnings (keys may be generated at runtime)");
+    }
+
     // 2. Initialize logging
     logging::init_logging(&config.logging)?;
     info!("SyncTV server starting...");
@@ -161,9 +180,13 @@ async fn main() -> Result<()> {
                         let pull_manager = Arc::new(synctv_stream::streaming::PullStreamManager::new(
                             gop_cache.clone(),
                             publisher_registry.clone(),
-                            node_id,
+                            node_id.clone(),
                             stream_hub_event_sender.clone(),
                         ));
+
+                        // Clone resources for RTMP server before they are moved into LiveStreamingInfrastructure
+                        let rtmp_gop_cache = gop_cache.clone();
+                        let rtmp_event_sender = stream_hub_event_sender.clone();
 
                         // Create LiveStreamingInfrastructure (uses publisher_registry for Redis)
                         let live_infra = Arc::new(synctv_stream::api::LiveStreamingInfrastructure::new(
@@ -174,23 +197,31 @@ async fn main() -> Result<()> {
                         ));
 
                         // Create RTMP authentication callback
-                        let _rtmp_auth = Arc::new(rtmp::SyncTvRtmpAuth::new(
-                            synctv_services.room_service.clone(),
-                            synctv_services.publish_key_service.clone(),
-                        ));
+                        let rtmp_auth: Arc<dyn synctv_stream::protocols::rtmp::auth::RtmpAuthCallback> =
+                            Arc::new(rtmp::SyncTvRtmpAuth::new(
+                                synctv_services.room_service.clone(),
+                                synctv_services.publish_key_service.clone(),
+                                Some(synctv_services.settings_registry.clone()),
+                            ));
 
-                        // Create RTMP server configuration
+                        // Create and start RTMP server with auth integration
                         let rtmp_listen_addr = format!("{}:{}", config.server.host, config.streaming.rtmp_port);
-                        let rtmp_config = synctv_stream::xiu_integration::RtmpConfig {
-                            listen_addr: rtmp_listen_addr.parse().expect("Invalid RTMP address"),
-                            max_streams: 1000,
-                            chunk_size: 4096,
-                            gop_num: 2,
-                        };
-                        let _rtmp_server = synctv_stream::RtmpServer::new(rtmp_config);
+                        let mut rtmp_server = synctv_stream::protocols::RtmpStreamingServer::new(
+                            rtmp_listen_addr.clone(),
+                            rtmp_gop_cache,
+                            publisher_registry.clone(),
+                            node_id,
+                            rtmp_auth,
+                            rtmp_event_sender,
+                        );
 
-                        // TODO: Start RTMP server (需要实现 build() 和 run() 方法)
-                        info!("Streaming infrastructure initialized (RTMP server not started yet)");
+                        tokio::spawn(async move {
+                            if let Err(e) = rtmp_server.start().await {
+                                error!("RTMP server error: {}", e);
+                            }
+                        });
+
+                        info!("Streaming infrastructure initialized, RTMP server listening on rtmp://{}", rtmp_listen_addr);
 
                         let state = Some(server::StreamingState {
                             registry: stream_registry,
@@ -278,14 +309,29 @@ async fn main() -> Result<()> {
         }
         synctv_core::config::TurnMode::External => {
             info!("Using external TURN server (coturn)");
-            if let (Some(url), Some(_secret)) = (
+            if let (Some(url), Some(secret)) = (
                 &config.webrtc.external_turn_server_url,
                 &config.webrtc.external_turn_static_secret,
             ) {
-                info!("External TURN server configured: {}", url);
-                info!("Note: Ensure coturn is deployed and static-auth-secret matches");
+                // Validate external TURN configuration
+                let turn_config = synctv_core::service::TurnConfig {
+                    server_url: url.clone(),
+                    static_secret: secret.clone(),
+                    credential_ttl: std::time::Duration::from_secs(config.webrtc.turn_credential_ttl),
+                    use_tls: false,
+                };
+                let turn_service = synctv_core::service::TurnCredentialService::new(turn_config);
+                if let Err(e) = turn_service.validate_config() {
+                    error!("External TURN configuration is invalid: {}", e);
+                    error!("Please check webrtc.external_turn_server_url and webrtc.external_turn_static_secret");
+                } else {
+                    info!("External TURN server configured: {}", url);
+                    info!("TURN credential TTL: {} seconds", config.webrtc.turn_credential_ttl);
+                    info!("Note: Ensure coturn is deployed and static-auth-secret matches");
+                }
             } else {
                 warn!("External TURN mode selected but server URL or secret not configured");
+                warn!("Set webrtc.external_turn_server_url and webrtc.external_turn_static_secret in config");
             }
             None
         }
@@ -360,7 +406,7 @@ async fn main() -> Result<()> {
         sfu_manager,
     };
 
-    let server = SyncTvServer::new(config, services, streaming_state);
+    let server = SyncTvServer::new(config, services, streaming_state, pool);
 
     // 11. Start all servers
     server.start().await?;

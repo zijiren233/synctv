@@ -113,3 +113,122 @@ providers = ""
 # For example, if server.host = "0.0.0.0" (use actual host in production):
 #   http://localhost:8080/api/oauth2/github/callback
 #   http://localhost:8080/api/oauth2/logto1/callback
+
+# ============================================================================
+# WebRTC Configuration
+# ============================================================================
+#
+# WebRTC supports 4 operation modes:
+#   - signaling_only: Pure signaling relay (zero cost, ~70% success rate)
+#   - peer_to_peer:   P2P with STUN/TURN (recommended, ~99% success rate)
+#   - hybrid:         P2P for small rooms, SFU for large rooms (default)
+#   - sfu:            All rooms use SFU (enterprise grade)
+
+[webrtc]
+mode = "hybrid"
+
+# --- STUN Configuration ---
+enable_builtin_stun = true
+builtin_stun_port = 3478
+builtin_stun_host = "0.0.0.0"
+external_stun_servers = ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]
+
+# --- TURN Configuration ---
+# TURN mode: "builtin", "external", or "disabled"
+#   builtin:  Use SyncTV's built-in TURN server (simple deployment, <100 users)
+#   external: Use external coturn server (production, high scale)
+#   disabled: No TURN relay (STUN only, ~85-90% success rate)
+turn_mode = "builtin"
+
+# Built-in TURN server (for small deployments / development)
+enable_builtin_turn = false
+builtin_turn_port = 3478
+builtin_turn_min_port = 49152
+builtin_turn_max_port = 65535
+builtin_turn_max_allocations = 100
+
+# External TURN server (coturn) - recommended for production
+# Uncomment and configure when using turn_mode = "external"
+# external_turn_server_url = "turn:turn.example.com:3478"
+# external_turn_static_secret = "your-secret-here"  # Must match coturn's static-auth-secret
+turn_credential_ttl = 86400  # 24 hours (in seconds)
+
+# --- SFU Configuration (for hybrid/sfu modes) ---
+sfu_threshold = 5           # Switch to SFU when room has >= N participants
+enable_simulcast = true     # Multiple quality layers (High/Medium/Low)
+max_sfu_rooms = 0           # 0 = unlimited
+max_peers_per_sfu_room = 50
+
+# ============================================================================
+# Coturn Deployment Guide (for external TURN)
+# ============================================================================
+#
+# 1. Install coturn:
+#    Ubuntu/Debian: sudo apt-get install coturn
+#    Docker:        docker pull coturn/coturn
+#
+# 2. Generate a shared secret:
+#    openssl rand -hex 32
+#
+# 3. Configure coturn (/etc/turnserver.conf):
+#    listening-ip=0.0.0.0
+#    external-ip=YOUR_PUBLIC_IP
+#    listening-port=3478
+#    tls-listening-port=5349
+#    min-port=49152
+#    max-port=65535
+#    use-auth-secret
+#    static-auth-secret=YOUR_SECRET_HERE   # <-- Must match external_turn_static_secret above
+#    realm=turn.example.com
+#    no-multicast-peers
+#    no-loopback-peers
+#    total-quota=100
+#
+# 4. Start coturn:
+#    sudo systemctl enable coturn && sudo systemctl start coturn
+#
+# 5. Firewall rules:
+#    sudo ufw allow 3478/tcp
+#    sudo ufw allow 3478/udp
+#    sudo ufw allow 5349/tcp    # TLS
+#    sudo ufw allow 5349/udp    # DTLS
+#    sudo ufw allow 49152:65535/udp  # Relay ports
+#
+# 6. Configure SyncTV:
+#    turn_mode = "external"
+#    external_turn_server_url = "turn:turn.example.com:3478"
+#    external_turn_static_secret = "YOUR_SECRET_HERE"
+#
+# 7. Test with Trickle ICE:
+#    https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/
+#
+# ============================================================================
+# Deployment Examples
+# ============================================================================
+#
+# Example 1: Personal deployment (minimal cost)
+#   [webrtc]
+#   mode = "peer_to_peer"
+#   enable_builtin_stun = true
+#   turn_mode = "disabled"
+#   # Cost: ~$0/month, connection success: ~85%
+#
+# Example 2: Small service (recommended)
+#   [webrtc]
+#   mode = "hybrid"
+#   sfu_threshold = 8
+#   turn_mode = "external"
+#   external_turn_server_url = "turn:turn.example.com:3478"
+#   external_turn_static_secret = "your-secret"
+#   max_sfu_rooms = 5
+#   # Cost: low-medium, connection success: ~99%
+#
+# Example 3: Enterprise deployment (full features)
+#   [webrtc]
+#   mode = "sfu"
+#   turn_mode = "external"
+#   external_turn_server_url = "turn:turn.example.com:3478"
+#   external_turn_static_secret = "your-secret"
+#   enable_simulcast = true
+#   max_sfu_rooms = 100
+#   # Cost: scales with usage, connection success: ~99.9%

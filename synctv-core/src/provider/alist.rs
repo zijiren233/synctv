@@ -259,6 +259,8 @@ impl MediaProvider for AlistProvider {
             playback_infos,
             default_mode,
             metadata,
+            dash: None,
+            hevc_dash: None,
         })
     }
 

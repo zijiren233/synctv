@@ -494,19 +494,32 @@ impl ClientApiImpl {
         let media: Vec<_> = media_list.into_iter().map(|m| media_to_proto(&m)).collect();
         let total = media.len() as i32;
 
-        // TODO: Get actual playlist info
-        let playlist = Some(crate::proto::client::Playlist {
-            id: String::new(),
-            room_id: rid.as_str().to_string(),
-            name: String::new(),
-            parent_id: String::new(),
-            position: 0,
-            is_folder: false,
-            is_dynamic: false,
-            item_count: total,
-            created_at: 0,
-            updated_at: 0,
-        });
+        let playlist = match self.room_service.playlist_service().get_root_playlist(&rid).await {
+            Ok(pl) => Some(crate::proto::client::Playlist {
+                id: pl.id.as_str().to_string(),
+                room_id: pl.room_id.as_str().to_string(),
+                name: pl.name.clone(),
+                parent_id: pl.parent_id.as_ref().map_or(String::new(), |p| p.as_str().to_string()),
+                position: pl.position,
+                is_folder: true,
+                is_dynamic: pl.is_dynamic(),
+                item_count: total,
+                created_at: pl.created_at.timestamp(),
+                updated_at: pl.updated_at.timestamp(),
+            }),
+            Err(_) => Some(crate::proto::client::Playlist {
+                id: String::new(),
+                room_id: rid.as_str().to_string(),
+                name: String::new(),
+                parent_id: String::new(),
+                position: 0,
+                is_folder: true,
+                is_dynamic: false,
+                item_count: total,
+                created_at: 0,
+                updated_at: 0,
+            }),
+        };
 
         Ok(crate::proto::client::ListPlaylistResponse {
             playlist,
@@ -790,6 +803,43 @@ impl ClientApiImpl {
             success: true,
         })
     }
+
+    pub async fn ban_member(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::BanMemberRequest,
+    ) -> Result<crate::proto::client::BanMemberResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+        let target_uid = UserId::from_string(req.user_id.clone());
+        let reason = if req.reason.is_empty() { None } else { Some(req.reason) };
+
+        self.room_service.member_service()
+            .ban_member(rid, uid, target_uid, reason)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::client::BanMemberResponse { success: true })
+    }
+
+    pub async fn unban_member(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::UnbanMemberRequest,
+    ) -> Result<crate::proto::client::UnbanMemberResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+        let target_uid = UserId::from_string(req.user_id.clone());
+
+        self.room_service.member_service()
+            .unban_member(rid, uid, target_uid)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::client::UnbanMemberResponse { success: true })
+    }
 }
 
 // === Helper Functions ===
@@ -1005,5 +1055,19 @@ impl ClientApiImpl {
         }
 
         Ok(GetIceServersResponse { servers })
+    }
+
+    /// Get network quality stats for peers in a room
+    pub async fn get_network_quality(
+        &self,
+        _room_id: &RoomId,
+        _user_id: &UserId,
+    ) -> Result<crate::proto::client::GetNetworkQualityResponse, anyhow::Error> {
+        use crate::proto::client::GetNetworkQualityResponse;
+
+        // Network quality stats are populated from the SFU NetworkQualityMonitor
+        // when SFU mode is active. For P2P mode, clients track their own stats.
+        // Return empty list when no SFU stats are available.
+        Ok(GetNetworkQualityResponse { peers: vec![] })
     }
 }

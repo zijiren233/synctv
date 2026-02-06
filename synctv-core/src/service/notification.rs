@@ -519,12 +519,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(received_room_id, room_id);
-        match received_event {
-            RoomEvent::UserJoined { username, .. } => {
-                assert_eq!(username, "testuser");
-            }
-            _ => panic!("Unexpected event type"),
-        }
+        assert!(
+            matches!(&received_event, RoomEvent::UserJoined { username, .. } if username == "testuser"),
+            "Expected UserJoined event with username 'testuser', got {received_event:?}"
+        );
     }
 
     #[test]

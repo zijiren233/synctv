@@ -341,10 +341,10 @@ mod tests {
     #[test]
     fn test_column_ref_from_str() {
         let col: ColumnRef = "username".into();
-        match col {
-            ColumnRef::Simple(name) => assert_eq!(name, "username"),
-            _ => panic!("Expected Simple column"),
-        }
+        assert!(
+            matches!(&col, ColumnRef::Simple(name) if name == "username"),
+            "Expected Simple column with name 'username', got {col:?}"
+        );
     }
 
     #[test]

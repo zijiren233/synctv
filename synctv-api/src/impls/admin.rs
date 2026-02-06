@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 use std::str::FromStr;
-use synctv_core::models::{UserId, RoomId};
-use synctv_core::service::{RoomService, UserService, SettingsService, EmailService, ProviderInstanceManager};
+use synctv_core::models::{UserId, RoomId, UserRole, UserStatus};
+use synctv_core::service::{RoomService, UserService, SettingsService, EmailService, ProviderInstanceManager, SettingsRegistry};
 use synctv_cluster::sync::ConnectionManager;
 
 /// Admin API implementation
@@ -15,6 +15,7 @@ pub struct AdminApiImpl {
     pub room_service: Arc<RoomService>,
     pub user_service: Arc<UserService>,
     pub settings_service: Arc<SettingsService>,
+    pub settings_registry: Option<Arc<SettingsRegistry>>,
     pub email_service: Arc<EmailService>,
     pub connection_manager: Arc<ConnectionManager>,
     pub provider_instance_manager: Arc<ProviderInstanceManager>,
@@ -22,10 +23,11 @@ pub struct AdminApiImpl {
 
 impl AdminApiImpl {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         room_service: Arc<RoomService>,
         user_service: Arc<UserService>,
         settings_service: Arc<SettingsService>,
+        settings_registry: Option<Arc<SettingsRegistry>>,
         email_service: Arc<EmailService>,
         connection_manager: Arc<ConnectionManager>,
         provider_instance_manager: Arc<ProviderInstanceManager>,
@@ -34,6 +36,7 @@ impl AdminApiImpl {
             room_service,
             user_service,
             settings_service,
+            settings_registry,
             email_service,
             connection_manager,
             provider_instance_manager,
@@ -473,6 +476,417 @@ impl AdminApiImpl {
 
         Ok(crate::proto::admin::DisableProviderInstanceResponse {
             instance: Some(provider_instance_to_proto(instance)),
+        })
+    }
+
+    // === User Management (extended) ===
+
+    pub async fn create_user(
+        &self,
+        req: crate::proto::admin::CreateUserRequest,
+    ) -> Result<crate::proto::admin::CreateUserResponse, String> {
+        if req.username.is_empty() || req.password.is_empty() || req.email.is_empty() {
+            return Err("Username, password, and email are required".to_string());
+        }
+
+        let (user, _access, _refresh) = self.user_service
+            .register(req.username.clone(), Some(req.email.clone()), req.password.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Set role if specified
+        let user = if !req.role.is_empty() && req.role != "user" {
+            let new_role = UserRole::from_str(&req.role)?;
+            let updated = synctv_core::models::User { role: new_role, ..user };
+            self.user_service.update_user(&updated).await.map_err(|e| e.to_string())?;
+            updated
+        } else {
+            user
+        };
+
+        Ok(crate::proto::admin::CreateUserResponse {
+            user: Some(admin_user_to_proto(&user)),
+        })
+    }
+
+    pub async fn delete_user(
+        &self,
+        req: crate::proto::admin::DeleteUserRequest,
+    ) -> Result<crate::proto::admin::DeleteUserResponse, String> {
+        let uid = UserId::from_string(req.user_id);
+        let mut user = self.user_service.get_user(&uid).await.map_err(|e| e.to_string())?;
+
+        if user.deleted_at.is_some() {
+            return Err("User is already deleted".to_string());
+        }
+
+        user.deleted_at = Some(chrono::Utc::now());
+        self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::DeleteUserResponse { success: true })
+    }
+
+    pub async fn set_user_username(
+        &self,
+        req: crate::proto::admin::SetUserUsernameRequest,
+    ) -> Result<crate::proto::admin::SetUserUsernameResponse, String> {
+        let uid = UserId::from_string(req.user_id);
+
+        if req.new_username.is_empty() {
+            return Err("Username cannot be empty".to_string());
+        }
+
+        let mut user = self.user_service.get_user(&uid).await.map_err(|e| e.to_string())?;
+        user.username = req.new_username;
+        let updated = self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::SetUserUsernameResponse {
+            user: Some(admin_user_to_proto(&updated)),
+        })
+    }
+
+    pub async fn ban_user(
+        &self,
+        req: crate::proto::admin::BanUserRequest,
+    ) -> Result<crate::proto::admin::BanUserResponse, String> {
+        let uid = UserId::from_string(req.user_id);
+        let mut user = self.user_service.get_user(&uid).await.map_err(|e| e.to_string())?;
+
+        if user.status == UserStatus::Banned {
+            return Err("User is already banned".to_string());
+        }
+
+        user.status = UserStatus::Banned;
+        let updated = self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::BanUserResponse {
+            user: Some(admin_user_to_proto(&updated)),
+        })
+    }
+
+    pub async fn unban_user(
+        &self,
+        req: crate::proto::admin::UnbanUserRequest,
+    ) -> Result<crate::proto::admin::UnbanUserResponse, String> {
+        let uid = UserId::from_string(req.user_id);
+        let mut user = self.user_service.get_user(&uid).await.map_err(|e| e.to_string())?;
+
+        if user.status != UserStatus::Banned {
+            return Err("User is not banned".to_string());
+        }
+
+        user.status = UserStatus::Active;
+        let updated = self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::UnbanUserResponse {
+            user: Some(admin_user_to_proto(&updated)),
+        })
+    }
+
+    pub async fn approve_user(
+        &self,
+        req: crate::proto::admin::ApproveUserRequest,
+    ) -> Result<crate::proto::admin::ApproveUserResponse, String> {
+        let uid = UserId::from_string(req.user_id);
+        let mut user = self.user_service.get_user(&uid).await.map_err(|e| e.to_string())?;
+
+        if user.status != UserStatus::Pending {
+            return Err("User is not pending approval".to_string());
+        }
+
+        user.status = UserStatus::Active;
+        let updated = self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::ApproveUserResponse {
+            user: Some(admin_user_to_proto(&updated)),
+        })
+    }
+
+    pub async fn get_user_rooms(
+        &self,
+        req: crate::proto::admin::GetUserRoomsRequest,
+    ) -> Result<crate::proto::admin::GetUserRoomsResponse, String> {
+        let uid = UserId::from_string(req.user_id);
+
+        // Get rooms created by user
+        let (created_rooms, _) = self.room_service
+            .list_rooms_by_creator(&uid, 1, 100)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Get rooms where user is a member
+        let (joined_room_ids, _) = self.room_service
+            .list_joined_rooms(&uid, 1, 100)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let mut admin_rooms: Vec<crate::proto::admin::AdminRoom> = created_rooms
+            .iter()
+            .map(|r| admin_room_to_proto(r, None, self.connection_manager.room_connection_count(&r.id).try_into().ok()))
+            .collect();
+
+        // Add joined rooms not already in list
+        for room_id in joined_room_ids {
+            if admin_rooms.iter().any(|r| r.id == room_id.to_string()) {
+                continue;
+            }
+            if let Ok(room) = self.room_service.get_room(&room_id).await {
+                admin_rooms.push(admin_room_to_proto(
+                    &room, None,
+                    self.connection_manager.room_connection_count(&room.id).try_into().ok(),
+                ));
+            }
+        }
+
+        Ok(crate::proto::admin::GetUserRoomsResponse { rooms: admin_rooms })
+    }
+
+    // === Room Management (extended) ===
+
+    pub async fn ban_room(
+        &self,
+        req: crate::proto::admin::BanRoomRequest,
+    ) -> Result<crate::proto::admin::BanRoomResponse, String> {
+        let rid = RoomId::from_string(req.room_id);
+        let mut room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
+
+        if room.deleted_at.is_some() {
+            return Err("Room is already banned".to_string());
+        }
+
+        room.deleted_at = Some(chrono::Utc::now());
+        let updated = self.room_service.admin_update_room(&room).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::BanRoomResponse {
+            room: Some(admin_room_to_proto(
+                &updated, None,
+                self.connection_manager.room_connection_count(&rid).try_into().ok(),
+            )),
+        })
+    }
+
+    pub async fn unban_room(
+        &self,
+        req: crate::proto::admin::UnbanRoomRequest,
+    ) -> Result<crate::proto::admin::UnbanRoomResponse, String> {
+        let rid = RoomId::from_string(req.room_id);
+        let mut room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
+
+        if room.deleted_at.is_none() {
+            return Err("Room is not banned".to_string());
+        }
+
+        room.deleted_at = None;
+        let updated = self.room_service.admin_update_room(&room).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::UnbanRoomResponse {
+            room: Some(admin_room_to_proto(
+                &updated, None,
+                self.connection_manager.room_connection_count(&rid).try_into().ok(),
+            )),
+        })
+    }
+
+    pub async fn approve_room(
+        &self,
+        req: crate::proto::admin::ApproveRoomRequest,
+    ) -> Result<crate::proto::admin::ApproveRoomResponse, String> {
+        let rid = RoomId::from_string(req.room_id);
+        let room = self.room_service.approve_room(&rid).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::ApproveRoomResponse {
+            room: Some(admin_room_to_proto(
+                &room, None,
+                self.connection_manager.room_connection_count(&rid).try_into().ok(),
+            )),
+        })
+    }
+
+    pub async fn get_room_settings(
+        &self,
+        req: crate::proto::admin::GetRoomSettingsRequest,
+    ) -> Result<crate::proto::admin::GetRoomSettingsResponse, String> {
+        let rid = RoomId::from_string(req.room_id);
+        let settings = self.room_service.get_room_settings(&rid).await.map_err(|e| e.to_string())?;
+        let settings_json = serde_json::to_vec(&settings).map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::GetRoomSettingsResponse { settings: settings_json })
+    }
+
+    pub async fn set_room_settings(
+        &self,
+        req: crate::proto::admin::SetRoomSettingsRequest,
+    ) -> Result<crate::proto::admin::SetRoomSettingsResponse, String> {
+        let rid = RoomId::from_string(req.room_id);
+        let settings: synctv_core::models::RoomSettings = serde_json::from_slice(&req.settings)
+            .map_err(|e| format!("Invalid settings JSON: {e}"))?;
+
+        self.room_service.set_room_settings(&rid, &settings).await.map_err(|e| e.to_string())?;
+
+        let room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::SetRoomSettingsResponse {
+            room: Some(admin_room_to_proto(
+                &room, Some(&settings),
+                self.connection_manager.room_connection_count(&rid).try_into().ok(),
+            )),
+        })
+    }
+
+    pub async fn update_room_setting(
+        &self,
+        req: crate::proto::admin::UpdateRoomSettingRequest,
+    ) -> Result<crate::proto::admin::UpdateRoomSettingResponse, String> {
+        let rid = RoomId::from_string(req.room_id);
+        let value: serde_json::Value = serde_json::from_slice(&req.value)
+            .map_err(|e| format!("Invalid JSON value: {e}"))?;
+
+        let settings_json = self.room_service
+            .update_room_setting(&rid, &req.key, &value)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::UpdateRoomSettingResponse {
+            settings: settings_json.into_bytes(),
+        })
+    }
+
+    pub async fn reset_room_settings(
+        &self,
+        req: crate::proto::admin::ResetRoomSettingsRequest,
+    ) -> Result<crate::proto::admin::ResetRoomSettingsResponse, String> {
+        let rid = RoomId::from_string(req.room_id);
+        self.room_service.reset_room_settings(&rid).await.map_err(|e| e.to_string())?;
+
+        let room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
+        let settings = self.room_service.get_room_settings(&rid).await.unwrap_or_default();
+
+        Ok(crate::proto::admin::ResetRoomSettingsResponse {
+            room: Some(admin_room_to_proto(
+                &room, Some(&settings),
+                self.connection_manager.room_connection_count(&rid).try_into().ok(),
+            )),
+        })
+    }
+
+    // === Admin Management (root only) ===
+
+    pub async fn add_admin(
+        &self,
+        req: crate::proto::admin::AddAdminRequest,
+    ) -> Result<crate::proto::admin::AddAdminResponse, String> {
+        let uid = UserId::from_string(req.user_id);
+        let mut user = self.user_service.get_user(&uid).await.map_err(|e| e.to_string())?;
+
+        if user.role.is_admin_or_above() {
+            return Err("User is already an admin or root".to_string());
+        }
+
+        user.role = UserRole::Admin;
+        let updated = self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::AddAdminResponse {
+            user: Some(admin_user_to_proto(&updated)),
+        })
+    }
+
+    pub async fn remove_admin(
+        &self,
+        req: crate::proto::admin::RemoveAdminRequest,
+    ) -> Result<crate::proto::admin::RemoveAdminResponse, String> {
+        let uid = UserId::from_string(req.user_id);
+        let mut user = self.user_service.get_user(&uid).await.map_err(|e| e.to_string())?;
+
+        if matches!(user.role, UserRole::Root) {
+            return Err("Cannot remove admin role from root user".to_string());
+        }
+        if !user.role.is_admin_or_above() {
+            return Err("User is not an admin".to_string());
+        }
+
+        user.role = UserRole::User;
+        self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::admin::RemoveAdminResponse { success: true })
+    }
+
+    pub async fn list_admins(
+        &self,
+        _req: crate::proto::admin::ListAdminsRequest,
+    ) -> Result<crate::proto::admin::ListAdminsResponse, String> {
+        let query = synctv_core::models::UserListQuery {
+            page: 1,
+            page_size: 1000,
+            role: Some("admin".to_string()),
+            ..Default::default()
+        };
+
+        let (users, _) = self.user_service.list_users(&query).await.map_err(|e| e.to_string())?;
+
+        let admins: Vec<_> = users
+            .into_iter()
+            .filter(|u| u.role.is_admin_or_above())
+            .map(|u| admin_user_to_proto(&u))
+            .collect();
+
+        Ok(crate::proto::admin::ListAdminsResponse { admins })
+    }
+
+    // === System Statistics ===
+
+    pub async fn get_system_stats(
+        &self,
+        _req: crate::proto::admin::GetSystemStatsRequest,
+    ) -> Result<crate::proto::admin::GetSystemStatsResponse, String> {
+        let query_all = synctv_core::models::UserListQuery { page: 1, page_size: 1, ..Default::default() };
+        let (_, total_users) = self.user_service.list_users(&query_all).await.unwrap_or((vec![], 0));
+
+        let query_active = synctv_core::models::UserListQuery {
+            page: 1, page_size: 1,
+            status: Some("active".to_string()),
+            ..Default::default()
+        };
+        let (_, active_users) = self.user_service.list_users(&query_active).await.unwrap_or((vec![], 0));
+
+        let query_banned = synctv_core::models::UserListQuery {
+            page: 1, page_size: 1,
+            status: Some("banned".to_string()),
+            ..Default::default()
+        };
+        let (_, banned_users) = self.user_service.list_users(&query_banned).await.unwrap_or((vec![], 0));
+
+        let room_query_all = synctv_core::models::RoomListQuery { page: 1, page_size: 1, ..Default::default() };
+        let (_, total_rooms) = self.room_service.list_rooms(&room_query_all).await.unwrap_or((vec![], 0));
+
+        let room_query_active = synctv_core::models::RoomListQuery {
+            page: 1, page_size: 1,
+            status: Some(synctv_core::models::RoomStatus::Active),
+            ..Default::default()
+        };
+        let (_, active_rooms) = self.room_service.list_rooms(&room_query_active).await.unwrap_or((vec![], 0));
+
+        let room_query_banned = synctv_core::models::RoomListQuery {
+            page: 1, page_size: 1,
+            status: Some(synctv_core::models::RoomStatus::Banned),
+            ..Default::default()
+        };
+        let (_, banned_rooms) = self.room_service.list_rooms(&room_query_banned).await.unwrap_or((vec![], 0));
+
+        let provider_count = self.provider_instance_manager
+            .get_all_instances().await
+            .map(|i| i.len() as i32)
+            .unwrap_or(0);
+
+        Ok(crate::proto::admin::GetSystemStatsResponse {
+            total_users: total_users as i32,
+            active_users: active_users as i32,
+            banned_users: banned_users as i32,
+            total_rooms: total_rooms as i32,
+            active_rooms: active_rooms as i32,
+            banned_rooms: banned_rooms as i32,
+            total_media: 0,
+            provider_instances: provider_count,
+            additional_stats: vec![],
         })
     }
 }

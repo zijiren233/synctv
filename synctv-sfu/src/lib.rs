@@ -38,6 +38,7 @@
 
 mod config;
 mod manager;
+pub mod network_monitor;
 mod peer;
 mod room;
 mod track;
@@ -45,6 +46,7 @@ mod types;
 
 pub use config::SfuConfig;
 pub use manager::SfuManager;
+pub use network_monitor::{NetworkQualityMonitor, NetworkStats, QualityAction};
 pub use peer::{SfuPeer, PeerStats};
 pub use room::{SfuRoom, RoomMode, RoomStats};
 pub use track::{MediaTrack, QualityLayer, TrackKind};

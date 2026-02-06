@@ -105,6 +105,8 @@ impl MediaProvider for DirectUrlProvider {
             playback_infos,
             default_mode: "direct".to_string(),
             metadata,
+            dash: None,
+            hevc_dash: None,
         })
     }
 

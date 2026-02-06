@@ -38,7 +38,7 @@ pub use playlist::PlaylistService;
 pub use room_settings::{RoomSettingsService, CacheStats};
 pub use settings::{SettingsService, SettingsChangeListener};
 pub use settings_vars::{Setting, SettingsStorage};
-pub use global_settings::SettingsRegistry;
+pub use global_settings::{SettingsRegistry, PublicSettings};
 pub use user::UserService;
 pub use room::RoomService;
 pub use rate_limit::{RateLimiter, RateLimitConfig, RateLimitError};

@@ -14,7 +14,6 @@ use crate::error::{StreamError, StreamResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 use synctv_core::service::PublishKeyService;
-use synctv_core::models::{RoomId, MediaId};
 use tracing::{warn, info, debug};
 
 /// RTMP authentication callback implementation
@@ -33,37 +32,6 @@ impl RtmpAuthCallbackImpl {
         }
     }
 
-    /// Validate RTMP publish token and extract `media_id`
-    ///
-    /// Token format from synctv-go:
-    /// - JWT with "m" claim containing `movie_id` (`media_id`)
-    /// - Claims also include `room_id`, `user_id`, permissions
-    async fn validate_publish_token(&self, token: &str, room_id: &str, media_id: &str) -> Result<String, String> {
-        // Use PublishKeyService to validate the token
-        match self
-            .publish_key_service
-            .verify_publish_key_for_stream(
-                token,
-                &RoomId::from_string(room_id.to_string()),
-                &MediaId::from_string(media_id.to_string()),
-            )
-            .await
-        {
-            Ok(user_id) => {
-                info!(
-                    "RTMP publish token validated: room_id={}, media_id={}, user_id={}",
-                    room_id,
-                    media_id,
-                    user_id.as_str()
-                );
-                Ok(media_id.to_string())
-            }
-            Err(e) => {
-                warn!("RTMP publish token validation failed: {}", e);
-                Err(format!("Invalid token: {e}"))
-            }
-        }
-    }
 }
 
 #[async_trait]

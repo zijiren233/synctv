@@ -84,6 +84,8 @@ impl MediaProvider for RtmpProvider {
             playback_infos,
             default_mode: "hls".to_string(),
             metadata,
+            dash: None,
+            hevc_dash: None,
         })
     }
 

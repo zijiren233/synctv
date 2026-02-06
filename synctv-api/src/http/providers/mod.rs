@@ -7,4 +7,5 @@
 
 pub mod alist;
 pub mod bilibili;
+pub mod direct_url;
 pub mod emby;

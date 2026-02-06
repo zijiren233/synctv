@@ -2,6 +2,7 @@
 members = [
     "synctv-proto",
     "synctv-core",
+    "synctv-proxy",
     "synctv-api",
     "synctv-stream",
     "synctv-cluster",
@@ -125,6 +126,9 @@ hostname = "0.4"
 url = "2.5"
 regex = "1.10"
 
+# Monitoring
+prometheus = "0.13"
+
 # OpenAPI
 utoipa = { version = "4.2", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "7.1", features = ["axum"] }
@@ -148,4 +152,5 @@ synctv-proto = { path = "synctv-proto" }
 synctv-core = { path = "synctv-core" }
 synctv-cluster = { path = "synctv-cluster" }
 synctv-providers = { path = "synctv-providers" }
+synctv-proxy = { path = "synctv-proxy" }
 synctv-stream = { path = "synctv-stream" }

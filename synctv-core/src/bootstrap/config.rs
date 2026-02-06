@@ -28,7 +28,19 @@ pub fn load_config() -> Result<Config> {
         }
     });
 
-    info!("Configuration loaded successfully");
+    // Validate configuration (fail fast on misconfigurations)
+    if let Err(errors) = config.validate() {
+        for error in &errors {
+            tracing::error!("Config validation error: {}", error);
+        }
+        return Err(anyhow::anyhow!(
+            "Configuration validation failed with {} error(s): {}",
+            errors.len(),
+            errors.join("; ")
+        ));
+    }
+
+    info!("Configuration loaded and validated successfully");
     info!("gRPC address: {}", config.grpc_address());
     info!("HTTP address: {}", config.http_address());
 

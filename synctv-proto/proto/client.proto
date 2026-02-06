@@ -47,6 +47,8 @@ service RoomService {
     rpc GetRoomMembers(GetRoomMembersRequest) returns (GetRoomMembersResponse);
     rpc SetMemberPermission(SetMemberPermissionRequest) returns (SetMemberPermissionResponse);
     rpc KickMember(KickMemberRequest) returns (KickMemberResponse);
+    rpc BanMember(BanMemberRequest) returns (BanMemberResponse);
+    rpc UnbanMember(UnbanMemberRequest) returns (UnbanMemberResponse);
 
     // Real-time Messaging (room-scoped, use x-room-id)
     rpc MessageStream(stream ClientMessage) returns (stream ServerMessage);
@@ -54,6 +56,9 @@ service RoomService {
 
     // WebRTC ICE Servers Configuration
     rpc GetIceServers(GetIceServersRequest) returns (GetIceServersResponse);
+
+    // WebRTC Network Quality Monitoring
+    rpc GetNetworkQuality(GetNetworkQualityRequest) returns (GetNetworkQualityResponse);
 }
 
 // ==================== Media Service ====================
@@ -84,6 +89,9 @@ service MediaService {
 
     // Live Streaming (room-scoped, use x-room-id)
     rpc NewPublishKey(NewPublishKeyRequest) returns (NewPublishKeyResponse);
+
+    // Movie Info (room-scoped, use x-room-id)
+    rpc GetMovieInfo(GetMovieInfoRequest) returns (GetMovieInfoResponse);
 }
 
 // ==================== Public Service ====================
@@ -352,6 +360,23 @@ message KickMemberRequest {
 }
 
 message KickMemberResponse {
+    bool success = 1;
+}
+
+message BanMemberRequest {
+    string user_id = 1;   // Target user to ban
+    string reason = 2;    // Optional ban reason
+}
+
+message BanMemberResponse {
+    bool success = 1;
+}
+
+message UnbanMemberRequest {
+    string user_id = 1;  // Target user to unban
+}
+
+message UnbanMemberResponse {
     bool success = 1;
 }
 
@@ -727,6 +752,32 @@ message GetPublicSettingsResponse {
     bool allow_room_creation = 2;
     int64 max_rooms_per_user = 3;
     int64 max_members_per_room = 4;
+
+    // Room settings
+    bool disable_create_room = 5;
+    bool create_room_need_review = 6;
+    int64 room_ttl = 7;
+    bool room_must_need_pwd = 8;
+
+    // User settings
+    bool signup_need_review = 9;
+    bool enable_password_signup = 10;
+    bool enable_guest = 18;
+
+    // Proxy settings
+    bool movie_proxy = 11;
+    bool live_proxy = 12;
+
+    // RTMP settings
+    bool rtmp_player = 13;
+    bool ts_disguised_as_png = 14;
+    string custom_publish_host = 15;
+
+    // Email settings
+    bool email_whitelist_enabled = 16;
+
+    // Server settings
+    string p2p_zone = 17;
 }
 
 // ==================== Email Verification ====================
@@ -886,4 +937,66 @@ message GetIceServersRequest {
 
 message GetIceServersResponse {
     repeated IceServer servers = 1;
+}
+
+// ==================== Network Quality Monitoring ====================
+// Phase 5: Real-time network quality monitoring for WebRTC connections
+
+message GetNetworkQualityRequest {
+    // Empty - uses x-room-id from metadata
+}
+
+message GetNetworkQualityResponse {
+    // Quality stats for each peer in the room
+    repeated PeerNetworkQuality peers = 1;
+}
+
+message PeerNetworkQuality {
+    string peer_id = 1;
+    // Round-trip time in milliseconds
+    uint32 rtt_ms = 2;
+    // Packet loss rate (0.0 - 1.0)
+    float packet_loss_rate = 3;
+    // Jitter in milliseconds
+    uint32 jitter_ms = 4;
+    // Available bandwidth in kbps
+    uint32 available_bandwidth_kbps = 5;
+    // Quality score (0-5, where 5 is excellent)
+    uint32 quality_score = 6;
+    // Suggested quality action: "none", "reduce_quality", "reduce_framerate", "audio_only"
+    string quality_action = 7;
+}
+
+// ==================== Movie Info ====================
+
+message GetMovieInfoRequest {
+    string media_id = 1;
+}
+
+message GetMovieInfoResponse {
+    MovieInfo movie = 1;
+}
+
+message MovieInfo {
+    string type = 1;          // "mpd", "m3u8", "mp4", "flv"
+    string url = 2;           // Playback URL (proxy or direct)
+    map<string, string> headers = 3; // Required HTTP headers (direct mode)
+    repeated MovieSource more_sources = 4;
+    repeated MovieSubtitle subtitles = 5;
+    bool is_live = 6;
+    double duration = 7;
+}
+
+message MovieSource {
+    string name = 1;          // "HEVC", "4K"
+    string type = 2;          // "mpd", "m3u8"
+    string url = 3;
+    map<string, string> headers = 4;
+}
+
+message MovieSubtitle {
+    string name = 1;
+    string language = 2;
+    string url = 3;
+    string format = 4;        // "json", "srt", "vtt"
 }

@@ -134,6 +134,8 @@ mod tests {
                 playback_infos: HashMap::new(),
                 default_mode: "direct".to_string(),
                 metadata: HashMap::new(),
+                dash: None,
+                hevc_dash: None,
             })
         }
     }

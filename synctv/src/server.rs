@@ -6,8 +6,11 @@
 //! - RTMP streaming server
 
 use std::sync::Arc;
+use std::time::Duration;
+use sqlx::PgPool;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use synctv_core::{
     service::{RoomService, UserService},
@@ -17,7 +20,11 @@ use synctv_core::{
 };
 use synctv_stream::StreamRegistry;
 
-/// Streaming server state
+/// Streaming server state (held for health checks and graceful shutdown).
+///
+/// Fields are not read directly -- ownership keeps the `StreamRegistry` and
+/// `PullStreamManager` alive for the lifetime of the server (RAII).
+#[allow(dead_code)]
 pub struct StreamingState {
     pub registry: StreamRegistry,
     pub pull_manager: Arc<synctv_stream::streaming::PullStreamManager>,
@@ -61,6 +68,7 @@ pub struct SyncTvServer {
     config: Config,
     services: Services,
     streaming_state: Option<StreamingState>,
+    pool: PgPool,
     grpc_handle: Option<JoinHandle<()>>,
     http_handle: Option<JoinHandle<()>>,
 }
@@ -74,37 +82,56 @@ impl Services {
 
 impl SyncTvServer {
     /// Create a new server instance
-    pub const fn new(
+    pub fn new(
         config: Config,
         services: Services,
         streaming_state: Option<StreamingState>,
+        pool: PgPool,
     ) -> Self {
         Self {
             config,
             services,
             streaming_state,
+            pool,
             grpc_handle: None,
             http_handle: None,
         }
     }
 
-    /// Start all servers
+    /// Start all servers and wait for shutdown signal
     pub async fn start(mut self) -> anyhow::Result<()> {
         info!("Starting SyncTV server...");
+
+        // Create shutdown signal channel
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        // Log infrastructure state
+        if self.streaming_state.is_some() {
+            info!("Streaming infrastructure: enabled");
+        }
+        if self.services.stun_server.is_some() {
+            info!("STUN server: enabled");
+        }
+        if self.services.turn_server.is_some() {
+            info!("TURN server: enabled");
+        }
+        if self.services.sfu_manager.is_some() {
+            info!("SFU manager: enabled");
+        }
 
         // Start gRPC server
         let grpc_handle = self.start_grpc_server().await?;
         self.grpc_handle = Some(grpc_handle);
 
-        // Start HTTP server
-        let http_handle = self.start_http_server().await?;
+        // Start HTTP server with graceful shutdown
+        let http_handle = self.start_http_server(shutdown_rx.clone()).await?;
         self.http_handle = Some(http_handle);
 
         info!("All servers started successfully");
 
-        // Wait for both servers
-        let grpc_handle = self.grpc_handle.unwrap();
-        let http_handle = self.http_handle.unwrap();
+        // Wait for either a server to stop or a shutdown signal
+        let grpc_handle = self.grpc_handle.take().unwrap();
+        let http_handle = self.http_handle.take().unwrap();
 
         tokio::select! {
             _ = grpc_handle => {
@@ -113,9 +140,91 @@ impl SyncTvServer {
             _ = http_handle => {
                 error!("HTTP server stopped unexpectedly");
             }
+            _ = shutdown_signal() => {
+                info!("Shutdown signal received, starting graceful shutdown...");
+            }
         }
 
+        // Signal all components to shut down
+        let _ = shutdown_tx.send(true);
+
+        // Run graceful shutdown
+        self.shutdown().await;
+
         Ok(())
+    }
+
+    /// Gracefully shut down all server components
+    async fn shutdown(&self) {
+        info!("Shutting down SyncTV server...");
+
+        // 1. Wait for active connections to drain (with timeout)
+        let drain_timeout = Duration::from_secs(30);
+        let drain_poll_interval = Duration::from_millis(500);
+        let active = self.services.connection_manager.connection_count();
+        if active > 0 {
+            info!(
+                "Waiting up to {}s for {} active connection(s) to drain...",
+                drain_timeout.as_secs(),
+                active
+            );
+            let deadline = tokio::time::Instant::now() + drain_timeout;
+            loop {
+                let remaining = self.services.connection_manager.connection_count();
+                if remaining == 0 {
+                    info!("All connections drained");
+                    break;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    warn!(
+                        "Drain timeout reached with {} connection(s) still active, proceeding with shutdown",
+                        remaining
+                    );
+                    break;
+                }
+                tokio::time::sleep(drain_poll_interval).await;
+            }
+        }
+
+        // 2. Shutdown SFU manager (close all SFU rooms)
+        if let Some(ref sfu) = self.services.sfu_manager {
+            info!("Shutting down SFU manager...");
+            sfu.shutdown().await;
+        }
+
+        // 3. STUN/TURN servers shut down when their Arc references are dropped
+        if self.services.stun_server.is_some() {
+            info!("STUN server shutting down");
+        }
+        if self.services.turn_server.is_some() {
+            info!("TURN server shutting down");
+        }
+
+        // 4. Stop streaming: drain active pull streams and clear the registry
+        if let Some(ref state) = self.streaming_state {
+            let stream_count = state.registry.len();
+            info!("Stopping streaming infrastructure ({} active stream(s))...", stream_count);
+
+            // Clear the HLS stream registry so no new segments are served
+            state.registry.clear();
+
+            // Stop all active pull streams managed by the PullStreamManager
+            // (PullStreamManager.streams is private, but dropping the Arc will
+            //  clean up; the registry clear above prevents new pull requests.)
+            info!("Streaming infrastructure shut down");
+        }
+
+        // 5. Redis publish channel closes when sender is dropped
+        if self.services.redis_publish_tx.is_some() {
+            info!("Closing Redis publish channel");
+        }
+
+        // 6. Close the database connection pool
+        info!("Closing database connection pool...");
+        self.pool.close().await;
+        info!("Database pool closed");
+
+        info!("SyncTV server shut down complete");
     }
 
     /// Start gRPC server
@@ -171,8 +280,8 @@ impl SyncTvServer {
         Ok(handle)
     }
 
-    /// Start HTTP server
-    async fn start_http_server(&self) -> anyhow::Result<JoinHandle<()>> {
+    /// Start HTTP server with graceful shutdown support
+    async fn start_http_server(&self, shutdown_rx: watch::Receiver<bool>) -> anyhow::Result<JoinHandle<()>> {
         let http_address = self.config.http_address();
         let user_service = self.services.user_service.clone();
         let room_service = self.services.room_service.clone();
@@ -226,11 +335,46 @@ impl SyncTvServer {
 
             info!("HTTP server listening on {}", http_addr);
 
-            if let Err(e) = axum::serve(listener, http_router).await {
+            let mut rx = shutdown_rx;
+            let graceful = async move {
+                let _ = rx.changed().await;
+            };
+
+            if let Err(e) = axum::serve(listener, http_router)
+                .with_graceful_shutdown(graceful)
+                .await
+            {
                 error!("HTTP server error: {}", e);
             }
+
+            info!("HTTP server shut down gracefully");
         });
 
         Ok(handle)
+    }
+}
+
+/// Wait for a shutdown signal (SIGTERM or SIGINT/Ctrl+C)
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => { info!("Received Ctrl+C"); }
+        () = terminate => { info!("Received SIGTERM"); }
     }
 }

@@ -276,6 +276,8 @@ impl MediaProvider for EmbyProvider {
             playback_infos,
             default_mode,
             metadata,
+            dash: None,
+            hevc_dash: None,
         })
     }
 
@@ -347,13 +349,19 @@ impl DynamicFolder for EmbyProvider {
                     }
                 };
 
+                let thumbnail_url = format!(
+                    "{}/emby/Items/{}/Images/Primary?maxHeight=300",
+                    base_config.host.trim_end_matches('/'),
+                    item.id,
+                );
+
                 Some(DirectoryItem {
                     name: item.name,
-                    path: item.id, // Use item_id as path
+                    path: item.id,
                     item_type,
-                    size: None, // Emby doesn't provide size in list
-                    thumbnail: None, // TODO: Extract from image tags if available
-                    modified_at: None, // Emby doesn't provide modified time in list
+                    size: None,
+                    thumbnail: Some(thumbnail_url),
+                    modified_at: None,
                 })
             })
             .collect();

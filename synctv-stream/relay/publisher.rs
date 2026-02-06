@@ -25,6 +25,8 @@ pub struct Publisher {
     gop_cache: Arc<GopCache>,
     registry: Arc<dyn StreamRegistryTrait>,
     /// Event sender for `StreamHub` (for Publish/UnPublish events)
+    /// Will be used when full StreamHub integration is wired up
+    #[allow(dead_code)]
     stream_hub_sender: Option<StreamHubEventSender>,
     /// Channel for gRPC relay to Puller nodes
     relay_senders: Arc<tokio::sync::Mutex<HashMap<String, mpsc::UnboundedSender<Result<RtmpPacket, Status>>>>>,

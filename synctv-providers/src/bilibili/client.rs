@@ -4,8 +4,16 @@ use reqwest::Client;
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use super::error::BilibiliError;
 use super::types::{self as types, VideoInfo, Quality, PlayUrlInfo, DurlItem, AnimeInfo};
+
+// Pre-compiled regexes using std::sync::LazyLock (no external crate needed).
+// These patterns are compile-time constants; Regex::new cannot fail on them.
+static RE_BVID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"BV[a-zA-Z0-9]+").expect("invalid BVID regex"));
+static RE_EPID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"ep(\d+)").expect("invalid EPID regex"));
+static RE_SSID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"ss(\d+)").expect("invalid SSID regex"));
+static RE_LIVE_ROOM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/live/(\d+)").expect("invalid live room regex"));
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
 const REFERER: &str = "https://www.bilibili.com";
@@ -332,17 +340,15 @@ impl BilibiliClient {
     }
 
     /// Extract BVID from URL
-    #[must_use] 
+    #[must_use]
     pub fn extract_bvid(url: &str) -> Option<String> {
-        let re = Regex::new(r"BV[a-zA-Z0-9]+").unwrap();
-        re.find(url).map(|m| m.as_str().to_string())
+        RE_BVID.find(url).map(|m| m.as_str().to_string())
     }
 
     /// Extract EPID from URL
-    #[must_use] 
+    #[must_use]
     pub fn extract_epid(url: &str) -> Option<String> {
-        let re = Regex::new(r"ep(\d+)").unwrap();
-        re.captures(url).and_then(|cap| cap.get(1))
+        RE_EPID.captures(url).and_then(|cap| cap.get(1))
             .map(|m| format!("ep{}", m.as_str()))
     }
 
@@ -530,7 +536,7 @@ impl BilibiliClient {
 
         // Parse DASH data into structured format
         let dash_info = json.data.dash;
-        let (regular_dash, hevc_dash) = parse_dash_info(&dash_info)?;
+        let (regular_dash, hevc_dash) = parse_dash_info(&dash_info, &json.data.support_formats)?;
 
         Ok((regular_dash, hevc_dash))
     }
@@ -678,7 +684,7 @@ impl BilibiliClient {
 
         // Parse DASH data into structured format
         let dash_info = json.result.dash;
-        let (regular_dash, hevc_dash) = parse_dash_info(&dash_info)?;
+        let (regular_dash, hevc_dash) = parse_dash_info(&dash_info, &json.result.support_formats)?;
 
         Ok((regular_dash, hevc_dash))
     }
@@ -692,12 +698,12 @@ impl BilibiliClient {
 
         // Bangumi/Anime: ep id or ss id
         if url.contains("/bangumi/play/") {
-            if let Some(ep_match) = Regex::new(r"ep(\d+)").unwrap().captures(url) {
+            if let Some(ep_match) = RE_EPID.captures(url) {
                 if let Some(ep_id) = ep_match.get(1) {
                     return Ok(("bangumi".to_string(), format!("ep{}", ep_id.as_str())));
                 }
             }
-            if let Some(ss_match) = Regex::new(r"ss(\d+)").unwrap().captures(url) {
+            if let Some(ss_match) = RE_SSID.captures(url) {
                 if let Some(ss_id) = ss_match.get(1) {
                     return Ok(("bangumi".to_string(), format!("ss{}", ss_id.as_str())));
                 }
@@ -706,7 +712,7 @@ impl BilibiliClient {
 
         // Live: room id
         if url.contains("/live/") || url.contains("live.bilibili.com") {
-            if let Some(room_match) = Regex::new(r"/live/(\d+)").unwrap().captures(url) {
+            if let Some(room_match) = RE_LIVE_ROOM.captures(url) {
                 if let Some(room_id) = room_match.get(1) {
                     return Ok(("live".to_string(), room_id.as_str().to_string()));
                 }
@@ -900,11 +906,8 @@ pub struct DanmuHost {
     pub ws_port: u32,
 }
 
-impl Default for BilibiliClient {
-    fn default() -> Self {
-        Self::new().unwrap()
-    }
-}
+// Note: Default impl intentionally removed. BilibiliClient::new() returns
+// Result and callers should handle the error. Use BilibiliClient::new() directly.
 
 /// DASH stream data (structured for upper layer to generate MPD)
 #[derive(Debug, Clone)]
@@ -919,13 +922,16 @@ pub struct DashData {
 #[derive(Debug, Clone)]
 pub struct VideoStreamData {
     pub id: u64,
+    pub quality_name: String,
     pub base_url: String,
+    pub backup_urls: Vec<String>,
     pub mime_type: String,
     pub codecs: String,
     pub width: u64,
     pub height: u64,
     pub frame_rate: String,
     pub bandwidth: u64,
+    pub sar: String,
     pub start_with_sap: u64,
     pub segment_base: SegmentBaseData,
 }
@@ -935,9 +941,11 @@ pub struct VideoStreamData {
 pub struct AudioStreamData {
     pub id: u64,
     pub base_url: String,
+    pub backup_urls: Vec<String>,
     pub mime_type: String,
     pub codecs: String,
     pub bandwidth: u64,
+    pub audio_sampling_rate: u32,
     pub start_with_sap: u64,
     pub segment_base: SegmentBaseData,
 }
@@ -993,6 +1001,7 @@ impl From<&AudioStreamData> for crate::grpc::bilibili::AudioStream {
     }
 }
 
+
 impl From<&DashData> for crate::grpc::bilibili::DashInfo {
     fn from(data: &DashData) -> Self {
         Self {
@@ -1006,9 +1015,18 @@ impl From<&DashData> for crate::grpc::bilibili::DashInfo {
 
 /// Parse DASH info into structured format
 /// Returns (`regular_dash`, `hevc_dash`) where HEVC codecs are separated
-fn parse_dash_info(dash_info: &types::DashInfo) -> Result<(DashData, DashData), BilibiliError> {
+fn parse_dash_info(
+    dash_info: &types::DashInfo,
+    support_formats: &[types::SupportFormat],
+) -> Result<(DashData, DashData), BilibiliError> {
     let duration = dash_info.duration;
     let min_buffer_time = dash_info.min_buffer_time;
+
+    // Build quality ID → name mapping from support_formats
+    let quality_names: HashMap<u64, String> = support_formats
+        .iter()
+        .map(|f| (f.quality, f.new_description.clone()))
+        .collect();
 
     // Parse audio streams (shared by both regular and HEVC)
     let parsed_audios: Vec<AudioStreamData> = dash_info.audio
@@ -1016,9 +1034,11 @@ fn parse_dash_info(dash_info: &types::DashInfo) -> Result<(DashData, DashData), 
         .map(|audio| AudioStreamData {
             id: audio.id,
             base_url: audio.base_url.clone(),
+            backup_urls: audio.backup_url.clone(),
             mime_type: audio.mime_type.clone(),
             codecs: audio.codecs.clone(),
             bandwidth: audio.bandwidth,
+            audio_sampling_rate: audio.audio_sampling_rate,
             start_with_sap: audio.start_with_sap,
             segment_base: SegmentBaseData {
                 index_range: audio.segment_base.index_range.clone(),
@@ -1032,15 +1052,23 @@ fn parse_dash_info(dash_info: &types::DashInfo) -> Result<(DashData, DashData), 
     let mut hevc_videos = Vec::new();
 
     for video in &dash_info.video {
+        let quality_name = quality_names
+            .get(&video.id)
+            .cloned()
+            .unwrap_or_else(|| format!("{}P", video.height));
+
         let video_data = VideoStreamData {
             id: video.id,
+            quality_name,
             base_url: video.base_url.clone(),
+            backup_urls: video.backup_url.clone(),
             mime_type: video.mime_type.clone(),
             codecs: video.codecs.clone(),
             width: video.width,
             height: video.height,
             frame_rate: video.frame_rate.clone(),
             bandwidth: video.bandwidth,
+            sar: video.sar.clone(),
             start_with_sap: video.start_with_sap,
             segment_base: SegmentBaseData {
                 index_range: video.segment_base.index_range.clone(),

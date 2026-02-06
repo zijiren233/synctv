@@ -70,6 +70,7 @@ pub struct StreamMessageHandler {
     room_id: RoomId,
     user_id: UserId,
     username: String,
+    connection_id: String,
     room_service: Arc<RoomService>,
     cluster_manager: Arc<ClusterManager>,
     connection_manager: ConnectionManager,
@@ -85,6 +86,7 @@ impl Clone for StreamMessageHandler {
             room_id: self.room_id.clone(),
             user_id: self.user_id.clone(),
             username: self.username.clone(),
+            connection_id: self.connection_id.clone(),
             room_service: Arc::clone(&self.room_service),
             cluster_manager: Arc::clone(&self.cluster_manager),
             connection_manager: self.connection_manager.clone(),
@@ -111,10 +113,12 @@ impl StreamMessageHandler {
         content_filter: Arc<ContentFilter>,
         sender: Arc<dyn MessageSender>,
     ) -> Self {
+        let connection_id = format!("{}_{}", user_id.as_str(), nanoid::nanoid!(8));
         Self {
             room_id,
             user_id,
             username,
+            connection_id,
             room_service,
             cluster_manager,
             connection_manager,
@@ -140,6 +144,14 @@ impl StreamMessageHandler {
     /// The caller only needs to provide a `StreamMessage` implementation (WebSocket or gRPC).
     pub async fn run<S: StreamMessage>(&self, stream: &mut S) -> Result<(), String> {
         let room_id_str = self.room_id.as_str().to_string();
+
+        // Register connection with connection manager
+        if let Err(e) = self.connection_manager.register(
+            self.connection_id.clone(),
+            self.user_id.clone(),
+        ) {
+            tracing::warn!("Failed to register connection: {}", e);
+        }
 
         // Subscribe to cluster events
         let (mut event_rx, _connection_id) = self.cluster_manager.subscribe(
@@ -231,6 +243,9 @@ impl StreamMessageHandler {
 
     /// Cleanup on disconnect
     async fn cleanup(&self, room_id: &str) {
+        // Unregister from connection manager
+        self.connection_manager.unregister(&self.connection_id);
+
         // Notify cluster that user left
         let event = ClusterEvent::UserLeft {
             room_id: self.room_id.clone(),
@@ -241,9 +256,10 @@ impl StreamMessageHandler {
         let _ = self.cluster_manager.broadcast(event);
 
         tracing::info!(
-            "Cleanup complete for user {} in room {}",
+            "Cleanup complete for user {} in room {} (connection: {})",
             self.username,
-            room_id
+            room_id,
+            self.connection_id
         );
     }
 

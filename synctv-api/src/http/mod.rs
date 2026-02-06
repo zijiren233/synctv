@@ -1,16 +1,17 @@
 // Module: http
 // HTTP/JSON REST API for backward compatibility and easier integration
 
+pub mod admin;
 pub mod auth;
 pub mod email_verification;
 pub mod error;
 pub mod health;
 pub mod live;
 pub mod media;
-pub mod media_proxy;
 pub mod middleware;
 pub mod notifications;
 pub mod oauth2;
+pub mod openapi;
 pub mod public;
 pub mod publish_key;
 pub mod room;
@@ -25,10 +26,13 @@ pub mod provider_common;
 pub mod providers;
 
 use axum::{
+    middleware as axum_middleware,
     routing::{get, post},
     Router,
 };
 use std::sync::Arc;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 use synctv_cluster::sync::PublishRequest;
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::repository::{ProviderInstanceRepository, UserProviderCredentialRepository};
@@ -134,6 +138,7 @@ pub fn create_router(
             room_service.clone(),
             user_service.clone(),
             settings_svc.clone(),
+            settings_registry.clone(),
             email_svc.clone(),
             connection_manager.clone(),
             provider_instance_manager.clone(),
@@ -180,8 +185,6 @@ pub fn create_router(
         .merge(publish_key::create_publish_key_router())
         // Notification routes
         .merge(notifications::create_notification_router())
-        // Media proxy routes
-        .merge(media_proxy::create_media_proxy_router())
         // Authentication routes
         .route("/api/auth/register", post(auth::register))
         .route("/api/auth/login", post(auth::login))
@@ -305,13 +308,44 @@ pub fn create_router(
             "/api/rooms/:room_id/webrtc/ice-servers",
             get(webrtc::get_ice_servers),
         )
+        .route(
+            "/api/rooms/:room_id/webrtc/network-quality",
+            get(webrtc::get_network_quality),
+        )
+        // Admin routes (admin/root role required)
+        .nest("/api/admin", admin::create_admin_router())
+        // Room member management routes
+        .route(
+            "/api/rooms/:room_id/members/:user_id/kick",
+            post(room_extra::kick_member),
+        )
+        .route(
+            "/api/rooms/:room_id/members/:user_id/permissions",
+            post(room_extra::set_member_permissions),
+        )
+        .route(
+            "/api/rooms/:room_id/members/:user_id/ban",
+            post(room_extra::ban_member),
+        )
+        .route(
+            "/api/rooms/:room_id/members/:user_id/unban",
+            post(room_extra::unban_member),
+        )
+        // Common vendor routes (user-facing)
+        .nest("/api/vendor", provider_common::register_common_routes())
         // Provider-specific HTTP routes
         .nest("/api/providers/bilibili", providers::bilibili::bilibili_routes())
         .nest("/api/providers/alist", providers::alist::alist_routes())
-        .nest("/api/providers/emby", providers::emby::emby_routes());
+        .nest("/api/providers/emby", providers::emby::emby_routes())
+        .nest("/api/providers/direct_url", providers::direct_url::direct_url_routes())
+        // OpenAPI/Swagger documentation
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()));
 
     // Apply layers before state
     let router = router
+        .layer(axum_middleware::from_fn(
+            crate::observability::metrics_middleware::metrics_layer,
+        ))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

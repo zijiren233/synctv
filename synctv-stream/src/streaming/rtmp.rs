@@ -18,7 +18,7 @@
 // - Design doc: 17-数据流设计.md § 11.1
 
 use crate::{
-    cache::gop_cache::GopCache,
+    libraries::gop_cache::GopCache,
     relay::{registry_trait::StreamRegistryTrait, publisher_manager::PublisherManager},
     error::{StreamResult, StreamError},
 };
@@ -72,7 +72,7 @@ impl RtmpServer {
 
         // Start PublisherManager to listen for Publish/UnPublish events
         // The PublisherManager will create Publisher instances that cache frames in GOP cache
-        let gop_cache = Arc::clone(&self.gop_cache);
+        let _gop_cache = Arc::clone(&self.gop_cache);
         let registry = Arc::clone(&self.registry);
         let node_id = self.node_id.clone();
         let publisher_manager = Arc::new(PublisherManager::new(

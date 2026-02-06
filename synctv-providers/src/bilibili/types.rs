@@ -279,6 +279,13 @@ pub struct PgcUrlResult {
     pub durl: Vec<DurlInfo>,
 }
 
+/// Quality format descriptor from Bilibili API
+#[derive(Debug, Clone, Deserialize)]
+pub struct SupportFormat {
+    pub quality: u64,
+    pub new_description: String,
+}
+
 /// DASH format video response
 #[derive(Debug, Clone, Deserialize)]
 pub struct DashVideoResp {
@@ -291,6 +298,8 @@ pub struct DashVideoResp {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DashVideoData {
     pub dash: DashInfo,
+    #[serde(default)]
+    pub support_formats: Vec<SupportFormat>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -307,6 +316,8 @@ pub struct DashVideo {
     pub id: u64,
     #[serde(rename = "baseUrl")]
     pub base_url: String,
+    #[serde(default, rename = "backupUrl")]
+    pub backup_url: Vec<String>,
     #[serde(rename = "mimeType")]
     pub mime_type: String,
     pub codecs: String,
@@ -315,6 +326,8 @@ pub struct DashVideo {
     #[serde(rename = "frameRate")]
     pub frame_rate: String,
     pub bandwidth: u64,
+    #[serde(default)]
+    pub sar: String,
     #[serde(rename = "startWithSap")]
     pub start_with_sap: u64,
     #[serde(rename = "SegmentBase")]
@@ -326,10 +339,14 @@ pub struct DashAudio {
     pub id: u64,
     #[serde(rename = "baseUrl")]
     pub base_url: String,
+    #[serde(default, rename = "backupUrl")]
+    pub backup_url: Vec<String>,
     #[serde(rename = "mimeType")]
     pub mime_type: String,
     pub codecs: String,
     pub bandwidth: u64,
+    #[serde(default, rename = "audioSamplingRate")]
+    pub audio_sampling_rate: u32,
     #[serde(rename = "startWithSap")]
     pub start_with_sap: u64,
     #[serde(rename = "SegmentBase")]
@@ -355,6 +372,8 @@ pub struct DashPgcResp {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DashPgcResult {
     pub dash: DashInfo,
+    #[serde(default)]
+    pub support_formats: Vec<SupportFormat>,
 }
 
 /// Live page info response

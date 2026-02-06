@@ -2,6 +2,7 @@
 //!
 //! Provides HTTP/JSON API for WebRTC configuration and control:
 //! - `/api/rooms/{room_id}/webrtc/ice-servers` - Get ICE servers configuration (STUN/TURN)
+//! - `/api/rooms/{room_id}/webrtc/network-quality` - Get network quality stats
 //! - Includes TURN credential generation for authenticated users
 //! - Supports all WebRTC modes (`SignalingOnly`, `PeerToPeer`, Hybrid, SFU)
 
@@ -101,6 +102,69 @@ pub async fn get_ice_servers(
         .collect();
 
     Ok(Json(GetIceServersResponse { servers }))
+}
+
+/// Peer network quality information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerNetworkQualityInfo {
+    pub peer_id: String,
+    pub rtt_ms: u32,
+    pub packet_loss_rate: f32,
+    pub jitter_ms: u32,
+    pub available_bandwidth_kbps: u32,
+    pub quality_score: u32,
+    pub quality_action: String,
+}
+
+/// Response for network quality request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetNetworkQualityResponse {
+    pub peers: Vec<PeerNetworkQualityInfo>,
+}
+
+/// Get network quality stats for WebRTC peers in a room
+///
+/// Path: `GET /api/rooms/{room_id}/webrtc/network-quality`
+/// Auth: Required (JWT)
+/// Permissions: Room membership required
+pub async fn get_network_quality(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> AppResult<impl IntoResponse> {
+    let user_id = auth.user_id;
+    let room_id = RoomId::from_string(room_id);
+
+    // Check if user has access to the room (is a member)
+    state
+        .room_service
+        .check_membership(&room_id, &user_id)
+        .await
+        .map_err(|e| AppError::forbidden(e.to_string()))?;
+
+    // Use the unified API implementation
+    let response = state
+        .client_api
+        .get_network_quality(&room_id, &user_id)
+        .await
+        .map_err(|e| AppError::internal_server_error(e.to_string()))?;
+
+    // Convert proto response to HTTP response
+    let peers: Vec<PeerNetworkQualityInfo> = response
+        .peers
+        .into_iter()
+        .map(|p| PeerNetworkQualityInfo {
+            peer_id: p.peer_id,
+            rtt_ms: p.rtt_ms,
+            packet_loss_rate: p.packet_loss_rate,
+            jitter_ms: p.jitter_ms,
+            available_bandwidth_kbps: p.available_bandwidth_kbps,
+            quality_score: p.quality_score,
+            quality_action: p.quality_action,
+        })
+        .collect();
+
+    Ok(Json(GetNetworkQualityResponse { peers }))
 }
 
 #[cfg(test)]

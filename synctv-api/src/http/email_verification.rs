@@ -23,9 +23,6 @@ pub struct EmailVerificationRequest {
 #[derive(Debug, Serialize)]
 pub struct EmailVerificationResponse {
     pub message: String,
-    /// Token included for testing (in production, exclude this)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
 }
 
 /// Password reset request
@@ -81,7 +78,6 @@ pub async fn send_verification_email(
         None => {
             return Ok(Json(EmailVerificationResponse {
                 message: "If an account exists with this email, a verification code will be sent.".to_string(),
-                token: None,
             }));
         }
     };
@@ -96,16 +92,14 @@ pub async fn send_verification_email(
         .await
         .map_err(|e| AppError::internal_server_error(format!("Failed to send email: {e}")))?;
 
-    // Include token in development mode (remove in production)
-    let response_token = if cfg!(debug_assertions) {
-        Some(token)
-    } else {
-        None
-    };
+    // SECURITY: Never return the token in the response in production.
+    // In debug builds only, log it for local development/testing convenience.
+    #[cfg(debug_assertions)]
+    tracing::debug!("DEV ONLY - verification token for {}: {}", req.email, token);
+    let _ = token;
 
     Ok(Json(EmailVerificationResponse {
         message: "Verification code sent to your email".to_string(),
-        token: response_token,
     }))
 }
 
@@ -180,24 +174,28 @@ pub async fn request_password_reset(
         .await
         .map_err(|e| AppError::internal_server_error(format!("Database error: {e}")))?;
 
-    if user.is_none() {
+    let Some(user) = user else {
         // Don't reveal whether email exists
         return Ok(Json(PasswordResetResponse {
             message: "If an account exists with this email, a password reset code will be sent.".to_string(),
         }));
-    }
-
-    let user = user.unwrap();
+    };
 
     // Generate and send reset email
     let token_service = synctv_core::service::EmailTokenService::new(
         state.user_service.pool().clone()
     );
 
-    let _token = email_service
+    let token = email_service
         .send_password_reset_email(&req.email, &token_service, &user.id)
         .await
         .map_err(|e| AppError::internal_server_error(format!("Failed to send email: {e}")))?;
+
+    // SECURITY: Never return the reset token in the response in production.
+    // In debug builds only, log it for local development/testing convenience.
+    #[cfg(debug_assertions)]
+    tracing::debug!("DEV ONLY - password reset token for {}: {}", req.email, token);
+    let _ = token;
 
     info!("Password reset requested for user {}", user.id.as_str());
 

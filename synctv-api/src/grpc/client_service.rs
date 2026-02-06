@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
-use base64::Engine;
 
 use synctv_cluster::sync::{ClusterEvent, ClusterManager, ConnectionManager};
 use crate::impls::messaging::{StreamMessageHandler, MessageSender};
@@ -19,7 +18,8 @@ use synctv_core::service::{
 use crate::proto::client::{
     auth_service_server::AuthService, email_service_server::EmailService,
     media_service_server::MediaService, public_service_server::PublicService,
-    room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse, GetIceServersRequest, GetIceServersResponse, IceServer,
+    room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, BanMemberRequest, BanMemberResponse, UnbanMemberRequest, UnbanMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse, GetIceServersRequest, GetIceServersResponse, IceServer, GetNetworkQualityRequest, GetNetworkQualityResponse,
+    GetMovieInfoRequest, GetMovieInfoResponse,
 };
 
 /// Configuration for `ClientService`
@@ -133,6 +133,22 @@ impl ClientServiceImpl {
     fn get_room_id(&self, request: &Request<impl std::fmt::Debug>) -> Result<RoomId, Status> {
         let room_context = self.get_room_context(request)?;
         Ok(RoomId::from_string(room_context.room_id))
+    }
+
+    /// Convert a core Playlist model to the proto Playlist message
+    fn playlist_to_proto(&self, playlist: &synctv_core::models::Playlist, item_count: i32) -> Playlist {
+        Playlist {
+            id: playlist.id.as_str().to_string(),
+            room_id: playlist.room_id.as_str().to_string(),
+            name: playlist.name.clone(),
+            parent_id: playlist.parent_id.as_ref().map(|id| id.as_str().to_string()).unwrap_or_default(),
+            position: playlist.position,
+            is_folder: playlist.parent_id.is_none() || playlist.source_provider.is_some(),
+            is_dynamic: playlist.is_dynamic(),
+            item_count,
+            created_at: playlist.created_at.timestamp(),
+            updated_at: playlist.updated_at.timestamp(),
+        }
     }
 
     /// Handle incoming client message from bidirectional stream
@@ -1283,6 +1299,51 @@ impl RoomService for ClientServiceImpl {
         Ok(Response::new(KickMemberResponse { success: true }))
     }
 
+    async fn ban_member(
+        &self,
+        request: Request<BanMemberRequest>,
+    ) -> Result<Response<BanMemberResponse>, Status> {
+        let user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
+        let target_uid = UserId::from_string(req.user_id);
+        let reason = if req.reason.is_empty() { None } else { Some(req.reason) };
+
+        self.room_service
+            .member_service()
+            .ban_member(room_id, user_id, target_uid, reason)
+            .await
+            .map_err(|e| match e {
+                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
+                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                _ => Status::internal(format!("Failed to ban member: {e}")),
+            })?;
+
+        Ok(Response::new(BanMemberResponse { success: true }))
+    }
+
+    async fn unban_member(
+        &self,
+        request: Request<UnbanMemberRequest>,
+    ) -> Result<Response<UnbanMemberResponse>, Status> {
+        let user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
+        let target_uid = UserId::from_string(req.user_id);
+
+        self.room_service
+            .member_service()
+            .unban_member(room_id, user_id, target_uid)
+            .await
+            .map_err(|e| match e {
+                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
+                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                _ => Status::internal(format!("Failed to unban member: {e}")),
+            })?;
+
+        Ok(Response::new(UnbanMemberResponse { success: true }))
+    }
+
     async fn get_room_settings(
         &self,
         request: Request<GetRoomSettingsRequest>,
@@ -1666,6 +1727,24 @@ impl RoomService for ClientServiceImpl {
 
         Ok(Response::new(GetIceServersResponse { servers }))
     }
+
+    async fn get_network_quality(
+        &self,
+        request: Request<GetNetworkQualityRequest>,
+    ) -> Result<Response<GetNetworkQualityResponse>, Status> {
+        let _user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+
+        // Check if user has access to the room (is a member)
+        self.room_service
+            .check_membership(&room_id, &_user_id)
+            .await
+            .map_err(|e| Status::permission_denied(format!("Not a member of the room: {e}")))?;
+
+        // Return empty stats for now - in production this would be populated
+        // from the SFU NetworkQualityMonitor when SFU mode is active
+        Ok(Response::new(GetNetworkQualityResponse { peers: vec![] }))
+    }
 }
 
 /// gRPC message sender for `StreamMessageHandler`
@@ -1813,19 +1892,22 @@ impl MediaService for ClientServiceImpl {
 
         let total = proto_media.len() as i32;
 
-        // TODO: Get actual playlist info from service
-        let playlist = Some(Playlist {
-            id: String::new(),
-            room_id: room_id.as_str().to_string(),
-            name: String::new(),
-            parent_id: String::new(),
-            position: 0,
-            is_folder: false,
-            is_dynamic: false,
-            item_count: total,
-            created_at: 0,
-            updated_at: 0,
-        });
+        // Get actual playlist info from service
+        let playlist = match self.room_service.playlist_service().get_root_playlist(&room_id).await {
+            Ok(pl) => Some(self.playlist_to_proto(&pl, total)),
+            Err(_) => Some(Playlist {
+                id: String::new(),
+                room_id: room_id.as_str().to_string(),
+                name: String::new(),
+                parent_id: String::new(),
+                position: 0,
+                is_folder: false,
+                is_dynamic: false,
+                item_count: total,
+                created_at: 0,
+                updated_at: 0,
+            }),
+        };
 
         Ok(Response::new(ListPlaylistResponse {
             playlist,
@@ -2233,40 +2315,301 @@ impl MediaService for ClientServiceImpl {
         }))
     }
 
-    // Playlist Management (stub implementations - TODO: implement properly)
+    // Playlist Management
     async fn create_playlist(
         &self,
-        _request: Request<CreatePlaylistRequest>,
+        request: Request<CreatePlaylistRequest>,
     ) -> Result<Response<CreatePlaylistResponse>, Status> {
-        Err(Status::unimplemented("Playlist management not yet implemented"))
+        let user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
+
+        let parent_id = if req.parent_id.is_empty() {
+            None
+        } else {
+            Some(synctv_core::models::PlaylistId::from_string(req.parent_id))
+        };
+
+        let service_req = synctv_core::service::playlist::CreatePlaylistRequest {
+            room_id: room_id.clone(),
+            name: req.name,
+            parent_id,
+            position: None,
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+        };
+
+        let playlist = self
+            .room_service
+            .playlist_service()
+            .create_playlist(room_id, user_id, service_req)
+            .await
+            .map_err(|e| match e {
+                synctv_core::Error::Authorization(msg) | synctv_core::Error::PermissionDenied(msg) => {
+                    Status::permission_denied(msg)
+                }
+                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                synctv_core::Error::InvalidInput(msg) => Status::invalid_argument(msg),
+                _ => Status::internal("Failed to create playlist"),
+            })?;
+
+        let item_count = self
+            .room_service
+            .media_service()
+            .count_playlist_media(&playlist.id)
+            .await
+            .unwrap_or(0) as i32;
+
+        Ok(Response::new(CreatePlaylistResponse {
+            playlist: Some(self.playlist_to_proto(&playlist, item_count)),
+        }))
     }
 
     async fn set_playlist(
         &self,
-        _request: Request<SetPlaylistRequest>,
+        request: Request<SetPlaylistRequest>,
     ) -> Result<Response<SetPlaylistResponse>, Status> {
-        Err(Status::unimplemented("Playlist management not yet implemented"))
+        let user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
+
+        let playlist_id = synctv_core::models::PlaylistId::from_string(req.playlist_id);
+
+        let name = if req.name.is_empty() { None } else { Some(req.name) };
+        let position = if req.position == 0 { None } else { Some(req.position) };
+
+        let service_req = synctv_core::service::playlist::SetPlaylistRequest {
+            playlist_id,
+            name,
+            position,
+        };
+
+        let playlist = self
+            .room_service
+            .playlist_service()
+            .set_playlist(room_id, user_id, service_req)
+            .await
+            .map_err(|e| match e {
+                synctv_core::Error::Authorization(msg) | synctv_core::Error::PermissionDenied(msg) => {
+                    Status::permission_denied(msg)
+                }
+                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                synctv_core::Error::InvalidInput(msg) => Status::invalid_argument(msg),
+                _ => Status::internal("Failed to update playlist"),
+            })?;
+
+        let item_count = self
+            .room_service
+            .media_service()
+            .count_playlist_media(&playlist.id)
+            .await
+            .unwrap_or(0) as i32;
+
+        Ok(Response::new(SetPlaylistResponse {
+            playlist: Some(self.playlist_to_proto(&playlist, item_count)),
+        }))
     }
 
     async fn delete_playlist(
         &self,
-        _request: Request<DeletePlaylistRequest>,
+        request: Request<DeletePlaylistRequest>,
     ) -> Result<Response<DeletePlaylistResponse>, Status> {
-        Err(Status::unimplemented("Playlist management not yet implemented"))
+        let user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
+
+        let playlist_id = synctv_core::models::PlaylistId::from_string(req.playlist_id);
+
+        self.room_service
+            .playlist_service()
+            .delete_playlist(room_id, user_id, playlist_id)
+            .await
+            .map_err(|e| match e {
+                synctv_core::Error::Authorization(msg) | synctv_core::Error::PermissionDenied(msg) => {
+                    Status::permission_denied(msg)
+                }
+                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                synctv_core::Error::InvalidInput(msg) => Status::invalid_argument(msg),
+                _ => Status::internal("Failed to delete playlist"),
+            })?;
+
+        Ok(Response::new(DeletePlaylistResponse { success: true }))
     }
 
     async fn list_playlists(
         &self,
-        _request: Request<ListPlaylistsRequest>,
+        request: Request<ListPlaylistsRequest>,
     ) -> Result<Response<ListPlaylistsResponse>, Status> {
-        Err(Status::unimplemented("Playlist management not yet implemented"))
+        let _user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
+
+        let playlists = if req.parent_id.is_empty() {
+            // Get all playlists in room
+            self.room_service
+                .playlist_service()
+                .get_room_playlists(&room_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to list playlists: {}", e);
+                    Status::internal("Failed to list playlists")
+                })?
+        } else {
+            // Get children of specific playlist
+            let parent_id = synctv_core::models::PlaylistId::from_string(req.parent_id);
+            self.room_service
+                .playlist_service()
+                .get_children(&parent_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to list playlists: {}", e);
+                    Status::internal("Failed to list playlists")
+                })?
+        };
+
+        let mut proto_playlists = Vec::with_capacity(playlists.len());
+        for pl in &playlists {
+            let item_count = self
+                .room_service
+                .media_service()
+                .count_playlist_media(&pl.id)
+                .await
+                .unwrap_or(0) as i32;
+            proto_playlists.push(self.playlist_to_proto(pl, item_count));
+        }
+
+        Ok(Response::new(ListPlaylistsResponse {
+            playlists: proto_playlists,
+        }))
     }
 
     async fn set_playing(
         &self,
-        _request: Request<SetPlayingRequest>,
+        request: Request<SetPlayingRequest>,
     ) -> Result<Response<SetPlayingResponse>, Status> {
-        Err(Status::unimplemented("SetPlaying not yet implemented"))
+        let user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
+
+        let playlist_id = synctv_core::models::PlaylistId::from_string(req.playlist_id);
+
+        // Verify the playlist exists and belongs to this room
+        let playlist = self
+            .room_service
+            .playlist_service()
+            .get_playlist(&playlist_id)
+            .await
+            .map_err(|_| Status::internal("Failed to get playlist"))?
+            .ok_or_else(|| Status::not_found("Playlist not found"))?;
+
+        if playlist.room_id != room_id {
+            return Err(Status::permission_denied("Playlist does not belong to this room"));
+        }
+
+        // If a specific media_id is provided, switch to it
+        let playing_media = if !req.media_id.is_empty() {
+            let media_id = MediaId::from_string(req.media_id);
+            self.room_service
+                .set_playing_media(room_id, user_id, media_id.clone())
+                .await
+                .map_err(|e| match e {
+                    synctv_core::Error::Authorization(msg) | synctv_core::Error::PermissionDenied(msg) => {
+                        Status::permission_denied(msg)
+                    }
+                    synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                    _ => Status::internal("Failed to set playing media"),
+                })?;
+
+            // Get the media details
+            let media = self
+                .room_service
+                .media_service()
+                .get_media(&media_id)
+                .await
+                .map_err(|_| Status::internal("Failed to get media"))?;
+
+            media.map(|m| Media {
+                id: m.id.as_str().to_string(),
+                room_id: m.room_id.as_str().to_string(),
+                url: String::new(),
+                provider: m.source_provider.clone(),
+                title: m.name.clone(),
+                metadata: Vec::new(),
+                position: m.position,
+                added_at: m.added_at.timestamp(),
+                added_by: m.creator_id.as_str().to_string(),
+                provider_instance_name: m.provider_instance_name.unwrap_or_default(),
+                source_config: serde_json::to_vec(&m.source_config).unwrap_or_default(),
+            })
+        } else {
+            // No specific media, just get the first media in playlist
+            let (media_list, _total) = self
+                .room_service
+                .media_service()
+                .get_playlist_media_paginated(&playlist_id, 0, 1)
+                .await
+                .map_err(|_| Status::internal("Failed to get playlist media"))?;
+
+            if let Some(m) = media_list.first() {
+                let media_id = m.id.clone();
+                let _state = self
+                    .room_service
+                    .set_playing_media(room_id, user_id, media_id)
+                    .await
+                    .map_err(|e| match e {
+                        synctv_core::Error::Authorization(msg) | synctv_core::Error::PermissionDenied(msg) => {
+                            Status::permission_denied(msg)
+                        }
+                        synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                        _ => Status::internal("Failed to set playing media"),
+                    })?;
+
+                Some(Media {
+                    id: m.id.as_str().to_string(),
+                    room_id: m.room_id.as_str().to_string(),
+                    url: String::new(),
+                    provider: m.source_provider.clone(),
+                    title: m.name.clone(),
+                    metadata: Vec::new(),
+                    position: m.position,
+                    added_at: m.added_at.timestamp(),
+                    added_by: m.creator_id.as_str().to_string(),
+                    provider_instance_name: m.provider_instance_name.clone().unwrap_or_default(),
+                    source_config: serde_json::to_vec(&m.source_config).unwrap_or_default(),
+                })
+            } else {
+                None
+            }
+        };
+
+        let item_count = self
+            .room_service
+            .media_service()
+            .count_playlist_media(&playlist.id)
+            .await
+            .unwrap_or(0) as i32;
+
+        Ok(Response::new(SetPlayingResponse {
+            playlist: Some(self.playlist_to_proto(&playlist, item_count)),
+            playing_media,
+        }))
+    }
+
+    async fn get_movie_info(
+        &self,
+        request: Request<GetMovieInfoRequest>,
+    ) -> Result<Response<GetMovieInfoResponse>, Status> {
+        let _user_id = self.get_user_id(&request)?;
+        let _room_id = self.get_room_id(&request)?;
+        let _req = request.into_inner();
+
+        // TODO: Implement full GetMovieInfo logic
+        // 1. Get media from playlist by media_id
+        // 2. Determine provider and call generate_playback()
+        // 3. Check movie_proxy setting
+        // 4. Build MovieInfo with proxy or direct URLs
+        Err(Status::unimplemented("GetMovieInfo not yet implemented"))
     }
 }
 
@@ -2438,24 +2781,29 @@ impl PublicService for ClientServiceImpl {
         &self,
         _request: Request<GetPublicSettingsRequest>,
     ) -> Result<Response<GetPublicSettingsResponse>, Status> {
-        let settings_registry = self.settings_registry.as_ref()
+        let reg = self.settings_registry.as_ref()
             .ok_or_else(|| Status::unimplemented("Settings registry not configured"))?;
 
-        // Get values from settings registry (with fallback to defaults)
-        let signup_enabled = settings_registry.signup_enabled.get()
-            .unwrap_or(true);
-        let allow_room_creation = settings_registry.allow_room_creation.get()
-            .unwrap_or(true);
-        let max_rooms_per_user = settings_registry.max_rooms_per_user.get()
-            .unwrap_or(10);
-        let max_members_per_room = settings_registry.max_members_per_room.get()
-            .unwrap_or(100);
-
+        let s = reg.to_public_settings();
         Ok(Response::new(GetPublicSettingsResponse {
-            signup_enabled,
-            allow_room_creation,
-            max_rooms_per_user,
-            max_members_per_room,
+            signup_enabled: s.signup_enabled,
+            allow_room_creation: s.allow_room_creation,
+            max_rooms_per_user: s.max_rooms_per_user,
+            max_members_per_room: s.max_members_per_room,
+            disable_create_room: s.disable_create_room,
+            create_room_need_review: s.create_room_need_review,
+            room_ttl: s.room_ttl,
+            room_must_need_pwd: s.room_must_need_pwd,
+            signup_need_review: s.signup_need_review,
+            enable_password_signup: s.enable_password_signup,
+            enable_guest: s.enable_guest,
+            movie_proxy: s.movie_proxy,
+            live_proxy: s.live_proxy,
+            rtmp_player: s.rtmp_player,
+            ts_disguised_as_png: s.ts_disguised_as_png,
+            custom_publish_host: s.custom_publish_host,
+            email_whitelist_enabled: s.email_whitelist_enabled,
+            p2p_zone: s.p2p_zone,
         }))
     }
 }
@@ -2563,14 +2911,12 @@ impl EmailService for ClientServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Database error: {e}")))?;
 
-        if user.is_none() {
+        let Some(user) = user else {
             // Don't reveal whether email exists
             return Ok(Response::new(RequestPasswordResetResponse {
                 message: "If an account exists with this email, a password reset code will be sent.".to_string(),
             }));
-        }
-
-        let user = user.unwrap();
+        };
 
         // Generate and send reset email
         let _token = email_service

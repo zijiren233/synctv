@@ -40,6 +40,18 @@ impl RateLimiter {
         })
     }
 
+    /// Create a disabled `RateLimiter` (no Redis, allows all requests)
+    ///
+    /// This is a convenience constructor that never fails, useful as a fallback
+    /// when `RateLimiter::new` cannot be used with `?`.
+    #[must_use]
+    pub fn disabled(key_prefix: String) -> Self {
+        Self {
+            redis_client: None,
+            key_prefix,
+        }
+    }
+
     /// Check if a request is allowed under the rate limit
     ///
     /// Returns Ok(()) if allowed, or `RateLimitError` if rate limit exceeded

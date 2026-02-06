@@ -394,9 +394,95 @@ impl Config {
     }
 
     /// Get HTTP address
-    #[must_use] 
+    #[must_use]
     pub fn http_address(&self) -> String {
         format!("{}:{}", self.server.host, self.server.http_port)
+    }
+
+    /// Validate configuration at startup (fail fast on misconfigurations)
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // Validate port numbers are in valid range (1-65535)
+        let ports_to_check: &[(&str, u16)] = &[
+            ("server.http_port", self.server.http_port),
+            ("server.grpc_port", self.server.grpc_port),
+            ("streaming.rtmp_port", self.streaming.rtmp_port),
+            ("streaming.hls_port", self.streaming.hls_port),
+        ];
+        for (name, port) in ports_to_check {
+            if *port == 0 {
+                errors.push(format!("{name} must be between 1 and 65535, got 0"));
+            }
+        }
+
+        // Validate database pool settings
+        if self.database.min_connections > self.database.max_connections {
+            errors.push(format!(
+                "database.min_connections ({}) must not exceed database.max_connections ({})",
+                self.database.min_connections, self.database.max_connections
+            ));
+        }
+        if self.database.max_connections == 0 {
+            errors.push("database.max_connections must be greater than 0".to_string());
+        }
+        if self.database.url.is_empty() {
+            errors.push("database.url must not be empty".to_string());
+        }
+
+        // Validate JWT key files exist (only if paths are configured / non-empty)
+        if !self.jwt.private_key_path.is_empty()
+            && !Path::new(&self.jwt.private_key_path).exists()
+        {
+            errors.push(format!(
+                "JWT private key file not found: {}",
+                self.jwt.private_key_path
+            ));
+        }
+        if !self.jwt.public_key_path.is_empty()
+            && !Path::new(&self.jwt.public_key_path).exists()
+        {
+            errors.push(format!(
+                "JWT public key file not found: {}",
+                self.jwt.public_key_path
+            ));
+        }
+
+        // Validate port conflicts: RTMP != HTTP != gRPC (all three must differ)
+        if self.server.grpc_port == self.server.http_port {
+            errors.push(format!(
+                "server.grpc_port ({}) and server.http_port ({}) must be different",
+                self.server.grpc_port, self.server.http_port
+            ));
+        }
+        if self.streaming.rtmp_port == self.server.http_port {
+            errors.push(format!(
+                "streaming.rtmp_port ({}) and server.http_port ({}) must be different",
+                self.streaming.rtmp_port, self.server.http_port
+            ));
+        }
+        if self.streaming.rtmp_port == self.server.grpc_port {
+            errors.push(format!(
+                "streaming.rtmp_port ({}) and server.grpc_port ({}) must be different",
+                self.streaming.rtmp_port, self.server.grpc_port
+            ));
+        }
+
+        // Validate TURN port range
+        if self.webrtc.enable_builtin_turn
+            && self.webrtc.builtin_turn_min_port >= self.webrtc.builtin_turn_max_port
+        {
+            errors.push(format!(
+                "webrtc.builtin_turn_min_port ({}) must be less than builtin_turn_max_port ({})",
+                self.webrtc.builtin_turn_min_port, self.webrtc.builtin_turn_max_port
+            ));
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 

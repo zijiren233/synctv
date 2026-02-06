@@ -11,7 +11,7 @@ use synctv_stream::error::{StreamError, StreamResult};
 
 use synctv_core::{
     models::RoomStatus,
-    service::{PublishKeyService, RoomService},
+    service::{PublishKeyService, RoomService, SettingsRegistry},
 };
 
 /// RTMP authentication implementation for `SyncTV`
@@ -19,18 +19,24 @@ use synctv_core::{
 /// Validates RTMP publish/play requests against:
 /// - Room existence and status (not banned/pending)
 /// - JWT publish keys for publishers (validates `room_id` match)
-/// - Optional RTMP player settings for viewers
+/// - Global `rtmp_player` setting for viewers
 pub struct SyncTvRtmpAuth {
     room_service: Arc<RoomService>,
     publish_key_service: Arc<PublishKeyService>,
+    settings_registry: Option<Arc<SettingsRegistry>>,
 }
 
 impl SyncTvRtmpAuth {
     /// Create a new RTMP authentication callback
-    pub const fn new(room_service: Arc<RoomService>, publish_key_service: Arc<PublishKeyService>) -> Self {
+    pub fn new(
+        room_service: Arc<RoomService>,
+        publish_key_service: Arc<PublishKeyService>,
+        settings_registry: Option<Arc<SettingsRegistry>>,
+    ) -> Self {
         Self {
             room_service,
             publish_key_service,
+            settings_registry,
         }
     }
 }
@@ -119,15 +125,15 @@ impl SyncTvRtmpAuth {
         room_id: &str,
         channel_name: &str,
     ) -> StreamResult<Channel> {
-        // Room existence and status already validated in authenticate()
+        // Check global rtmp_player setting
+        if let Some(reg) = &self.settings_registry {
+            if !reg.rtmp_player.get().unwrap_or(false) {
+                return Err(StreamError::AuthenticationFailed(
+                    "RTMP player is disabled by administrator".to_string(),
+                ));
+            }
+        }
 
-        // TODO: Add RoomSettings check for RTMP player enablement
-        // Future implementation:
-        // - room_setting!(RtmpPlayerEnabled, bool, "rtmp_player_enabled", true);
-        // - Check settings_service.get_bool(room_id, "rtmp_player_enabled")
-        // - Reject if disabled
-
-        // For now, allow all players (secure enough since room is already validated)
         tracing::info!(
             "Player authenticated for room {}, channel {}",
             room_id,

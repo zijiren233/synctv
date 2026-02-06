@@ -6,7 +6,8 @@ use super::{
     provider_client::{
         create_remote_bilibili_client, load_local_bilibili_client, BilibiliClientArc,
     },
-    MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
+    DashAudioStream, DashManifestData, DashSegmentBase, DashVideoStream, MediaProvider,
+    PlaybackInfo, PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -265,253 +266,154 @@ impl MediaProvider for BilibiliProvider {
             } => {
                 let bvid = bvid.unwrap_or_default();
                 let aid = aid.unwrap_or(0);
-                // Get DASH video URL
+
                 let request = synctv_providers::grpc::bilibili::GetDashVideoUrlReq {
                     aid,
                     bvid: bvid.clone(),
                     cid,
                     cookies: cookies.clone(),
                 };
-
                 let dash_resp = client.get_dash_video_url(request).await?;
 
-                let mut playback_infos = HashMap::new();
                 let mut metadata = HashMap::new();
+                let mut subtitles = Vec::new();
 
-                // Add DASH playback info
-                if let Some(dash) = dash_resp.dash {
-                    let mut dash_urls = Vec::new();
-
-                    // Add video streams
-                    for video in &dash.video_streams {
-                        dash_urls.push(video.base_url.clone());
-                    }
-
-                    // Add audio streams
-                    for audio in &dash.audio_streams {
-                        dash_urls.push(audio.base_url.clone());
-                    }
-
-                    playback_infos.insert(
-                        "dash".to_string(),
-                        PlaybackInfo {
-                            urls: dash_urls,
-                            format: "dash".to_string(),
-                            headers: {
-                                let mut headers = HashMap::new();
-                                headers.insert(
-                                    "Referer".to_string(),
-                                    "https://www.bilibili.com".to_string(),
-                                );
-                                headers
-                            },
-                            subtitles: Vec::new(),
-                            expires_at: None,
-                        },
-                    );
-
-                    metadata.insert("duration".to_string(), json!(dash.duration));
-                    metadata.insert("min_buffer_time".to_string(), json!(dash.min_buffer_time));
-                }
-
-                // Add HEVC DASH if available
-                if let Some(hevc_dash) = dash_resp.hevc_dash {
-                    let mut hevc_urls = Vec::new();
-
-                    for video in &hevc_dash.video_streams {
-                        hevc_urls.push(video.base_url.clone());
-                    }
-
-                    for audio in &hevc_dash.audio_streams {
-                        hevc_urls.push(audio.base_url.clone());
-                    }
-
-                    if !hevc_urls.is_empty() {
-                        playback_infos.insert(
-                            "hevc_dash".to_string(),
-                            PlaybackInfo {
-                                urls: hevc_urls,
-                                format: "dash".to_string(),
-                                headers: {
-                                    let mut headers = HashMap::new();
-                                    headers.insert(
-                                        "Referer".to_string(),
-                                        "https://www.bilibili.com".to_string(),
-                                    );
-                                    headers
-                                },
-                                subtitles: Vec::new(),
-                                expires_at: None,
-                            },
-                        );
-                    }
-                }
-
-                // Get subtitles
+                // Fetch subtitles
                 let subtitle_request = synctv_providers::grpc::bilibili::GetSubtitlesReq {
                     aid,
                     bvid: bvid.clone(),
                     cid,
                     cookies,
                 };
-
                 if let Ok(subtitle_resp) = client.get_subtitles(subtitle_request).await {
-                    let subtitles: Vec<SubtitleTrack> = subtitle_resp
+                    subtitles = subtitle_resp
                         .subtitles
                         .into_iter()
                         .map(|(name, url)| SubtitleTrack {
                             language: name.clone(),
                             name,
                             url,
-                            format: "json".to_string(), // Bilibili uses JSON subtitle format
+                            format: "json".to_string(),
                         })
                         .collect();
-
-                    // Add subtitles to all playback modes
-                    for playback in playback_infos.values_mut() {
-                        playback.subtitles = subtitles.clone();
-                    }
                 }
+
+                // Convert proto DashInfo → DashManifestData
+                let dash = dash_resp.dash.map(|d| {
+                    metadata.insert("duration".to_string(), json!(d.duration));
+                    metadata.insert("min_buffer_time".to_string(), json!(d.min_buffer_time));
+                    proto_dash_to_manifest(&d)
+                });
+                let hevc_dash = dash_resp
+                    .hevc_dash
+                    .filter(|d| !d.video_streams.is_empty())
+                    .map(|d| proto_dash_to_manifest(&d));
 
                 metadata.insert("content_type".to_string(), json!("video"));
                 metadata.insert("bvid".to_string(), json!(bvid));
                 metadata.insert("aid".to_string(), json!(aid));
                 metadata.insert("cid".to_string(), json!(cid));
 
+                // Keep a "dash" PlaybackInfo with headers for proxy layer
+                let mut playback_infos = HashMap::new();
+                playback_infos.insert(
+                    "dash".to_string(),
+                    PlaybackInfo {
+                        urls: Vec::new(),
+                        format: "mpd".to_string(),
+                        headers: bilibili_headers(),
+                        subtitles,
+                        expires_at: None,
+                    },
+                );
+
                 Ok(PlaybackResult {
                     playback_infos,
                     default_mode: "dash".to_string(),
                     metadata,
+                    dash,
+                    hevc_dash,
                 })
             }
 
             BilibiliSourceConfig::Pgc {
                 epid, cid, cookies, ..
             } => {
-                // Get PGC DASH URL
                 let request = synctv_providers::grpc::bilibili::GetDashPgcurlReq {
                     epid,
                     cid,
                     cookies: cookies.clone(),
                 };
-
                 let dash_resp = client.get_dash_pgcurl(request).await?;
 
-                let mut playback_infos = HashMap::new();
                 let mut metadata = HashMap::new();
 
-                // Add DASH playback info
-                if let Some(dash) = dash_resp.dash {
-                    let mut dash_urls = Vec::new();
-
-                    for video in &dash.video_streams {
-                        dash_urls.push(video.base_url.clone());
-                    }
-
-                    for audio in &dash.audio_streams {
-                        dash_urls.push(audio.base_url.clone());
-                    }
-
-                    playback_infos.insert(
-                        "dash".to_string(),
-                        PlaybackInfo {
-                            urls: dash_urls,
-                            format: "dash".to_string(),
-                            headers: {
-                                let mut headers = HashMap::new();
-                                headers.insert(
-                                    "Referer".to_string(),
-                                    "https://www.bilibili.com".to_string(),
-                                );
-                                headers
-                            },
-                            subtitles: Vec::new(),
-                            expires_at: None,
-                        },
-                    );
-
-                    metadata.insert("duration".to_string(), json!(dash.duration));
-                }
-
-                // Add HEVC DASH if available
-                if let Some(hevc_dash) = dash_resp.hevc_dash {
-                    let mut hevc_urls = Vec::new();
-
-                    for video in &hevc_dash.video_streams {
-                        hevc_urls.push(video.base_url.clone());
-                    }
-
-                    for audio in &hevc_dash.audio_streams {
-                        hevc_urls.push(audio.base_url.clone());
-                    }
-
-                    if !hevc_urls.is_empty() {
-                        playback_infos.insert(
-                            "hevc_dash".to_string(),
-                            PlaybackInfo {
-                                urls: hevc_urls,
-                                format: "dash".to_string(),
-                                headers: {
-                                    let mut headers = HashMap::new();
-                                    headers.insert(
-                                        "Referer".to_string(),
-                                        "https://www.bilibili.com".to_string(),
-                                    );
-                                    headers
-                                },
-                                subtitles: Vec::new(),
-                                expires_at: None,
-                            },
-                        );
-                    }
-                }
+                let dash = dash_resp.dash.map(|d| {
+                    metadata.insert("duration".to_string(), json!(d.duration));
+                    proto_dash_to_manifest(&d)
+                });
+                let hevc_dash = dash_resp
+                    .hevc_dash
+                    .filter(|d| !d.video_streams.is_empty())
+                    .map(|d| proto_dash_to_manifest(&d));
 
                 metadata.insert("content_type".to_string(), json!("pgc"));
                 metadata.insert("epid".to_string(), json!(epid));
                 metadata.insert("cid".to_string(), json!(cid));
 
+                let mut playback_infos = HashMap::new();
+                playback_infos.insert(
+                    "dash".to_string(),
+                    PlaybackInfo {
+                        urls: Vec::new(),
+                        format: "mpd".to_string(),
+                        headers: bilibili_headers(),
+                        subtitles: Vec::new(),
+                        expires_at: None,
+                    },
+                );
+
                 Ok(PlaybackResult {
                     playback_infos,
                     default_mode: "dash".to_string(),
                     metadata,
+                    dash,
+                    hevc_dash,
                 })
             }
 
             BilibiliSourceConfig::Live {
                 room_id, cookies, ..
             } => {
-                // Get live streams
+                // Live streams use HLS — no DASH
                 let request = synctv_providers::grpc::bilibili::GetLiveStreamsReq {
                     cid: room_id,
-                    hls: true, // Request HLS streams
+                    hls: true,
                     cookies,
                 };
-
                 let live_resp = client.get_live_streams(request).await?;
 
                 let mut playback_infos = HashMap::new();
                 let mut metadata = HashMap::new();
 
-                // Group streams by quality
                 for stream in live_resp.live_streams {
                     let quality_name = if stream.desc.is_empty() {
                         format!("quality_{}", stream.quality)
                     } else {
                         stream.desc
                     };
-
                     playback_infos.insert(
-                        quality_name.clone(),
+                        quality_name,
                         PlaybackInfo {
                             urls: stream.urls,
                             format: "hls".to_string(),
                             headers: {
-                                let mut headers = HashMap::new();
-                                headers.insert(
+                                let mut h = HashMap::new();
+                                h.insert(
                                     "Referer".to_string(),
                                     "https://live.bilibili.com".to_string(),
                                 );
-                                headers
+                                h
                             },
                             subtitles: Vec::new(),
                             expires_at: None,
@@ -523,7 +425,6 @@ impl MediaProvider for BilibiliProvider {
                 metadata.insert("room_id".to_string(), json!(room_id));
                 metadata.insert("is_live".to_string(), json!(true));
 
-                // Default to highest quality
                 let default_mode = playback_infos
                     .keys()
                     .next()
@@ -534,6 +435,8 @@ impl MediaProvider for BilibiliProvider {
                     playback_infos,
                     default_mode,
                     metadata,
+                    dash: None,
+                    hevc_dash: None,
                 })
             }
         }
@@ -541,5 +444,86 @@ impl MediaProvider for BilibiliProvider {
 
     fn cache_key(&self, _ctx: &ProviderContext<'_>, source_config: &Value) -> String {
         format!("bilibili:{source_config}")
+    }
+}
+
+/// Standard Bilibili HTTP headers for proxy requests
+fn bilibili_headers() -> HashMap<String, String> {
+    let mut headers = HashMap::new();
+    headers.insert(
+        "Referer".to_string(),
+        "https://www.bilibili.com".to_string(),
+    );
+    headers.insert(
+        "User-Agent".to_string(),
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36".to_string(),
+    );
+    headers
+}
+
+/// Convert proto `DashInfo` → provider-agnostic `DashManifestData`
+fn proto_dash_to_manifest(
+    dash: &synctv_providers::grpc::bilibili::DashInfo,
+) -> DashManifestData {
+    let video_streams = dash
+        .video_streams
+        .iter()
+        .map(|v| {
+            let seg = v.segment_base.as_ref();
+            DashVideoStream {
+                id: format!("{}P", v.height),
+                base_url: v.base_url.clone(),
+                backup_urls: Vec::new(),
+                mime_type: v.mime_type.clone(),
+                codecs: v.codecs.clone(),
+                width: v.width,
+                height: v.height,
+                frame_rate: v.frame_rate.clone(),
+                bandwidth: v.bandwidth,
+                sar: "1:1".to_string(),
+                start_with_sap: v.start_with_sap,
+                segment_base: DashSegmentBase {
+                    initialization: seg
+                        .map(|s| s.initialization_range.clone())
+                        .unwrap_or_default(),
+                    index_range: seg
+                        .map(|s| s.index_range.clone())
+                        .unwrap_or_default(),
+                },
+            }
+        })
+        .collect();
+
+    let audio_streams = dash
+        .audio_streams
+        .iter()
+        .map(|a| {
+            let seg = a.segment_base.as_ref();
+            DashAudioStream {
+                id: format!("audio_{}", a.id),
+                base_url: a.base_url.clone(),
+                backup_urls: Vec::new(),
+                mime_type: a.mime_type.clone(),
+                codecs: a.codecs.clone(),
+                bandwidth: a.bandwidth,
+                audio_sampling_rate: 44100,
+                start_with_sap: a.start_with_sap,
+                segment_base: DashSegmentBase {
+                    initialization: seg
+                        .map(|s| s.initialization_range.clone())
+                        .unwrap_or_default(),
+                    index_range: seg
+                        .map(|s| s.index_range.clone())
+                        .unwrap_or_default(),
+                },
+            }
+        })
+        .collect();
+
+    DashManifestData {
+        duration: dash.duration,
+        min_buffer_time: dash.min_buffer_time,
+        video_streams,
+        audio_streams,
     }
 }
