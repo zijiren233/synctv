@@ -3,6 +3,7 @@
 //! Unified implementation for all client API operations.
 //! Used by both HTTP and gRPC handlers.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::str::FromStr;
 use synctv_core::models::{UserId, RoomId, ProviderType};
@@ -839,6 +840,187 @@ impl ClientApiImpl {
             .map_err(|e| e.to_string())?;
 
         Ok(crate::proto::client::UnbanMemberResponse { success: true })
+    }
+
+    // === Movie Info ===
+
+    /// Get movie info for a media item (resolves provider playback + proxy/direct decision)
+    pub async fn get_movie_info(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        media_id: &str,
+        bilibili_provider: &synctv_core::provider::BilibiliProvider,
+        alist_provider: &synctv_core::provider::AlistProvider,
+        emby_provider: &synctv_core::provider::EmbyProvider,
+        settings_registry: Option<&synctv_core::service::SettingsRegistry>,
+    ) -> Result<crate::proto::client::GetMovieInfoResponse, String> {
+        use synctv_core::provider::{MediaProvider, ProviderContext};
+
+        let rid = RoomId::from_string(room_id.to_string());
+        let mid = synctv_core::models::MediaId::from_string(media_id.to_string());
+
+        // 1. Get media from playlist
+        let playlist = self
+            .room_service
+            .get_playlist(&rid)
+            .await
+            .map_err(|e| format!("Failed to get playlist: {e}"))?;
+
+        let media = playlist
+            .iter()
+            .find(|m| m.id == mid)
+            .ok_or_else(|| "Media not found in playlist".to_string())?;
+
+        // 2. Determine provider
+        let provider: &dyn MediaProvider = match media.source_provider.as_str() {
+            "bilibili" => bilibili_provider as &dyn MediaProvider,
+            "alist" => alist_provider as &dyn MediaProvider,
+            "emby" => emby_provider as &dyn MediaProvider,
+            other => return Err(format!("Unknown provider: {other}")),
+        };
+
+        // 3. Call generate_playback
+        let ctx = ProviderContext::new("synctv")
+            .with_user_id(user_id)
+            .with_room_id(room_id);
+
+        let result = provider
+            .generate_playback(&ctx, &media.source_config)
+            .await
+            .map_err(|e| format!("generate_playback failed: {e}"))?;
+
+        // 4. Check movie_proxy setting
+        let movie_proxy = settings_registry
+            .map(|r| r.to_public_settings().movie_proxy)
+            .unwrap_or(true);
+
+        // 5. Build MovieInfo
+        let is_live = result
+            .metadata
+            .get("is_live")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let duration = result
+            .metadata
+            .get("duration")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let subtitles: Vec<crate::proto::client::MovieSubtitle> = result
+            .playback_infos
+            .values()
+            .flat_map(|pi| &pi.subtitles)
+            .map(|s| crate::proto::client::MovieSubtitle {
+                name: s.name.clone(),
+                language: s.language.clone(),
+                url: if movie_proxy {
+                    format!(
+                        "/api/providers/{}/proxy/{room_id}/{media_id}/subtitle/{}",
+                        media.source_provider,
+                        url::form_urlencoded::byte_serialize(s.name.as_bytes())
+                            .collect::<String>()
+                    )
+                } else {
+                    s.url.clone()
+                },
+                format: s.format.clone(),
+            })
+            .collect();
+
+        // For DASH providers (bilibili Video/Pgc): generate MPD URLs
+        if result.dash.is_some() {
+            let (url, media_type, headers) = if movie_proxy {
+                (
+                    format!(
+                        "/api/providers/{}/proxy/{room_id}/{media_id}/mpd",
+                        media.source_provider
+                    ),
+                    "mpd".to_string(),
+                    HashMap::new(),
+                )
+            } else {
+                // Direct mode: client gets CDN URLs in MPD
+                // For direct, we still serve an MPD but with CDN BaseURLs
+                (
+                    format!(
+                        "/api/providers/{}/proxy/{room_id}/{media_id}/mpd?direct=1",
+                        media.source_provider
+                    ),
+                    "mpd".to_string(),
+                    result
+                        .playback_infos
+                        .get("dash")
+                        .map(|pi| pi.headers.clone())
+                        .unwrap_or_default(),
+                )
+            };
+
+            let mut more_sources = Vec::new();
+            if result.hevc_dash.is_some() {
+                let hevc_url = if movie_proxy {
+                    format!(
+                        "/api/providers/{}/proxy/{room_id}/{media_id}/mpd?codec=hevc",
+                        media.source_provider
+                    )
+                } else {
+                    format!(
+                        "/api/providers/{}/proxy/{room_id}/{media_id}/mpd?codec=hevc&direct=1",
+                        media.source_provider
+                    )
+                };
+                more_sources.push(crate::proto::client::MovieSource {
+                    name: "HEVC".to_string(),
+                    r#type: "mpd".to_string(),
+                    url: hevc_url,
+                    headers: HashMap::new(),
+                });
+            }
+
+            return Ok(crate::proto::client::GetMovieInfoResponse {
+                movie: Some(crate::proto::client::MovieInfo {
+                    r#type: media_type,
+                    url,
+                    headers,
+                    more_sources,
+                    subtitles,
+                    is_live,
+                    duration,
+                }),
+            });
+        }
+
+        // For HLS/direct providers: use first URL from default playback mode
+        let default_info = result.playback_infos.get(&result.default_mode);
+        let (url, media_type, headers) = if let Some(info) = default_info {
+            let first_url = info.urls.first().cloned().unwrap_or_default();
+            if movie_proxy && !first_url.is_empty() {
+                (
+                    format!(
+                        "/api/providers/{}/proxy/{room_id}/{media_id}",
+                        media.source_provider
+                    ),
+                    info.format.clone(),
+                    HashMap::new(),
+                )
+            } else {
+                (first_url, info.format.clone(), info.headers.clone())
+            }
+        } else {
+            (String::new(), "unknown".to_string(), HashMap::new())
+        };
+
+        Ok(crate::proto::client::GetMovieInfoResponse {
+            movie: Some(crate::proto::client::MovieInfo {
+                r#type: media_type,
+                url,
+                headers,
+                more_sources: Vec::new(),
+                subtitles,
+                is_live,
+                duration,
+            }),
+        })
     }
 }
 

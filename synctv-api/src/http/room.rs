@@ -776,3 +776,26 @@ pub async fn clear_playlist(
         "message": "Playlist cleared successfully"
     })))
 }
+
+/// GET /api/rooms/:room_id/movie/:media_id - Get movie playback info
+pub async fn get_movie_info(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((room_id, media_id)): Path<(String, String)>,
+) -> AppResult<Json<crate::proto::client::GetMovieInfoResponse>> {
+    let resp = state
+        .client_api
+        .get_movie_info(
+            auth.user_id.as_str(),
+            &room_id,
+            &media_id,
+            &state.bilibili_provider,
+            &state.alist_provider,
+            &state.emby_provider,
+            state.settings_registry.as_deref(),
+        )
+        .await
+        .map_err(|e| super::AppError::internal_server_error(e))?;
+
+    Ok(Json(resp))
+}

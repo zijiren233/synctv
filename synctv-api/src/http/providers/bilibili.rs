@@ -14,12 +14,13 @@ use axum::{
     Json, Router,
 };
 use futures::stream::Stream;
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::http::{AppState, error::AppResult, middleware::AuthUser, provider_common::{InstanceQuery, error_response, parse_provider_error}};
 use crate::impls::BilibiliApiImpl;
 use synctv_core::models::{MediaId, RoomId};
-use synctv_core::provider::{MediaProvider, ProviderContext};
+use synctv_core::provider::{MediaProvider, PlaybackResult, ProviderContext};
 
 /// Build Bilibili HTTP routes
 pub fn bilibili_routes() -> Router<AppState> {
@@ -34,8 +35,16 @@ pub fn bilibili_routes() -> Router<AppState> {
         .route("/logout", post(logout))
         // Provider-specific proxy routes
         .route(
-            "/proxy/:room_id/:media_id",
+            "/proxy/:room_id/:media_id/mpd",
+            get(serve_mpd).options(synctv_proxy::proxy_options_preflight),
+        )
+        .route(
+            "/proxy/:room_id/:media_id/stream/:stream_id",
             get(proxy_stream).options(synctv_proxy::proxy_options_preflight),
+        )
+        .route(
+            "/proxy/:room_id/:media_id/subtitle/:name",
+            get(proxy_subtitle).options(synctv_proxy::proxy_options_preflight),
         )
         .route("/proxy/:room_id/:media_id/m3u8", get(proxy_m3u8))
         .route("/proxy/:room_id/:media_id/danmu", get(danmu_sse))
@@ -45,13 +54,27 @@ pub fn bilibili_routes() -> Router<AppState> {
 // Proxy handlers
 // ------------------------------------------------------------------
 
-/// Resolve playback URL from Bilibili provider for a media item.
-async fn resolve_bilibili_playback(
+/// Query params for MPD endpoint
+#[derive(Deserialize, Default)]
+struct MpdQuery {
+    /// If "hevc", serve the HEVC DASH variant
+    #[serde(default)]
+    codec: Option<String>,
+    /// If "1", generate MPD with direct CDN BaseURLs
+    #[serde(default)]
+    direct: Option<String>,
+    /// JWT token for stream proxy auth
+    #[serde(default)]
+    token: Option<String>,
+}
+
+/// Resolve full `PlaybackResult` from Bilibili provider for a media item.
+async fn resolve_bilibili_playback_result(
     auth: &AuthUser,
     room_id: &RoomId,
     media_id: &MediaId,
     state: &AppState,
-) -> Result<(String, HashMap<String, String>), crate::http::AppError> {
+) -> Result<PlaybackResult, crate::http::AppError> {
     let playlist = state
         .room_service
         .get_playlist(room_id)
@@ -67,43 +90,112 @@ async fn resolve_bilibili_playback(
         .with_user_id(auth.user_id.as_str())
         .with_room_id(room_id.as_str());
 
-    let playback_result = state
+    state
         .bilibili_provider
         .generate_playback(&ctx, &media.source_config)
         .await
-        .map_err(|e| anyhow::anyhow!("Bilibili generate_playback failed: {e}"))?;
-
-    let default_mode = &playback_result.default_mode;
-    let playback_info = playback_result
-        .playback_infos
-        .get(default_mode)
-        .ok_or_else(|| anyhow::anyhow!("Default playback mode not found"))?;
-
-    let url = playback_info
-        .urls
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("No URLs in playback info"))?;
-
-    Ok((url.clone(), playback_info.headers.clone()))
+        .map_err(|e| anyhow::anyhow!("Bilibili generate_playback failed: {e}").into())
 }
 
-/// GET /proxy/:room_id/:media_id - Proxy Bilibili video stream
-async fn proxy_stream(
+/// GET /proxy/:room_id/:media_id/mpd - Serve MPEG-DASH MPD manifest
+async fn serve_mpd(
     auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,
+    Query(query): Query<MpdQuery>,
+    State(state): State<AppState>,
+) -> AppResult<axum::response::Response> {
+    let room_id_parsed = RoomId::from_string(room_id.clone());
+    let media_id_parsed = MediaId::from_string(media_id.clone());
+
+    let result =
+        resolve_bilibili_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state)
+            .await?;
+
+    // Select AVC or HEVC variant
+    let is_hevc = query.codec.as_deref() == Some("hevc");
+    let dash_data = if is_hevc {
+        result
+            .hevc_dash
+            .as_ref()
+            .or(result.dash.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("No DASH data available"))?
+    } else {
+        result
+            .dash
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No DASH data available"))?
+    };
+
+    // Generate MPD XML
+    let is_direct = query.direct.as_deref() == Some("1");
+    let proxy_base = format!("/api/providers/bilibili/proxy/{room_id}/{media_id}");
+
+    let opts = if is_direct {
+        synctv_proxy::mpd::MpdOptions {
+            proxy_base_url: None,
+            token: None,
+        }
+    } else {
+        synctv_proxy::mpd::MpdOptions {
+            proxy_base_url: Some(&proxy_base),
+            token: query.token.as_deref(),
+        }
+    };
+
+    let mpd_xml = synctv_proxy::mpd::generate_mpd(dash_data, &opts);
+
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/dash+xml; charset=utf-8",
+        )],
+        mpd_xml,
+    )
+        .into_response())
+}
+
+/// GET /proxy/:room_id/:media_id/stream/:stream_id - Proxy a single DASH stream segment
+async fn proxy_stream(
+    auth: AuthUser,
+    Path((room_id, media_id, stream_id)): Path<(String, String, String)>,
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> AppResult<axum::response::Response> {
-    let room_id = RoomId::from_string(room_id);
-    let media_id = MediaId::from_string(media_id);
+    let room_id_parsed = RoomId::from_string(room_id);
+    let media_id_parsed = MediaId::from_string(media_id);
 
-    let (url, provider_headers) =
-        resolve_bilibili_playback(&auth, &room_id, &media_id, &state).await?;
+    let result =
+        resolve_bilibili_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state)
+            .await?;
 
-    tracing::info!("Proxying Bilibili media: {}", url);
+    let dash = result
+        .dash
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("No DASH data available"))?;
+
+    // Parse stream index: video[0..N], then audio[N..M]
+    let idx: usize = stream_id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid stream index"))?;
+
+    let video_count = dash.video_streams.len();
+    let cdn_url = if idx < video_count {
+        &dash.video_streams[idx].base_url
+    } else {
+        let audio_idx = idx - video_count;
+        dash.audio_streams
+            .get(audio_idx)
+            .map(|a| &a.base_url)
+            .ok_or_else(|| anyhow::anyhow!("Stream index {idx} out of range"))?
+    };
+
+    // Bilibili-specific headers
+    let provider_headers = bilibili_proxy_headers();
+
+    tracing::debug!("Proxying Bilibili DASH stream {idx}: {cdn_url}");
 
     let cfg = synctv_proxy::ProxyConfig {
-        url: &url,
+        url: cdn_url,
         provider_headers: &provider_headers,
         client_headers: &headers,
     };
@@ -113,7 +205,43 @@ async fn proxy_stream(
         .map_err(Into::into)
 }
 
-/// GET /proxy/:room_id/:media_id/m3u8 - Proxy Bilibili M3U8
+/// GET /proxy/:room_id/:media_id/subtitle/:name - Proxy subtitle
+async fn proxy_subtitle(
+    auth: AuthUser,
+    Path((room_id, media_id, name)): Path<(String, String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<axum::response::Response> {
+    let room_id_parsed = RoomId::from_string(room_id);
+    let media_id_parsed = MediaId::from_string(media_id);
+
+    let result =
+        resolve_bilibili_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state)
+            .await?;
+
+    // Find subtitle by name across all playback infos
+    let subtitle_url = result
+        .playback_infos
+        .values()
+        .flat_map(|pi| &pi.subtitles)
+        .find(|s| s.name == name)
+        .map(|s| s.url.clone())
+        .ok_or_else(|| anyhow::anyhow!("Subtitle '{name}' not found"))?;
+
+    let provider_headers = bilibili_proxy_headers();
+
+    let cfg = synctv_proxy::ProxyConfig {
+        url: &subtitle_url,
+        provider_headers: &provider_headers,
+        client_headers: &headers,
+    };
+
+    synctv_proxy::proxy_fetch_and_forward(cfg)
+        .await
+        .map_err(Into::into)
+}
+
+/// GET /proxy/:room_id/:media_id/m3u8 - Proxy Bilibili M3U8 (for live streams)
 async fn proxy_m3u8(
     auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,
@@ -122,12 +250,23 @@ async fn proxy_m3u8(
     let room_id_parsed = RoomId::from_string(room_id.clone());
     let media_id_parsed = MediaId::from_string(media_id.clone());
 
-    let (url, provider_headers) =
-        resolve_bilibili_playback(&auth, &room_id_parsed, &media_id_parsed, &state).await?;
+    let result =
+        resolve_bilibili_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state)
+            .await?;
+
+    let default_info = result
+        .playback_infos
+        .get(&result.default_mode)
+        .ok_or_else(|| anyhow::anyhow!("Default playback mode not found"))?;
+
+    let url = default_info
+        .urls
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("No URLs in playback info"))?;
 
     let proxy_base = format!("/api/providers/bilibili/proxy/{room_id}/{media_id}");
 
-    synctv_proxy::proxy_m3u8_and_rewrite(&url, &provider_headers, &proxy_base)
+    synctv_proxy::proxy_m3u8_and_rewrite(url, &default_info.headers, &proxy_base)
         .await
         .map_err(Into::into)
 }
@@ -141,6 +280,20 @@ async fn danmu_sse(
     // Stub: keep-alive stream. Actual Bilibili danmu fetching to be added.
     let stream = futures::stream::pending::<Result<Event, Infallible>>();
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Standard Bilibili proxy headers
+fn bilibili_proxy_headers() -> HashMap<String, String> {
+    let mut h = HashMap::new();
+    h.insert(
+        "Referer".to_string(),
+        "https://www.bilibili.com".to_string(),
+    );
+    h.insert(
+        "User-Agent".to_string(),
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36".to_string(),
+    );
+    h
 }
 
 // ------------------------------------------------------------------

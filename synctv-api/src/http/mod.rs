@@ -268,6 +268,11 @@ pub fn create_router(
             "/api/rooms/:room_id/media/clear",
             post(media::clear_playlist),
         )
+        // Movie info endpoint (resolves provider playback)
+        .route(
+            "/api/rooms/:room_id/movie/:media_id",
+            get(room::get_movie_info),
+        )
         // Dynamic playlist routes
         .route(
             "/api/rooms/:room_id/playlists/:playlist_id/items",
