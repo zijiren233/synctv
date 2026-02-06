@@ -795,7 +795,7 @@ pub async fn get_movie_info(
             state.settings_registry.as_deref(),
         )
         .await
-        .map_err(|e| super::AppError::internal_server_error(e))?;
+        .map_err(super::AppError::internal_server_error)?;
 
     Ok(Json(resp))
 }

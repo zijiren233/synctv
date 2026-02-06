@@ -845,6 +845,7 @@ impl ClientApiImpl {
     // === Movie Info ===
 
     /// Get movie info for a media item (resolves provider playback + proxy/direct decision)
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_movie_info(
         &self,
         user_id: &str,
