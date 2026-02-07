@@ -1,0 +1,143 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synctv
+  labels:
+    app: synctv
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: synctv
+  template:
+    metadata:
+      labels:
+        app: synctv
+    spec:
+      containers:
+      - name: synctv
+        image: synctv:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 50051
+          name: grpc
+          protocol: TCP
+
+        # Environment variables (configure via ConfigMap/Secret)
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: synctv-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: synctv-secrets
+              key: redis-url
+        - name: JWT_PRIVATE_KEY_PATH
+          value: "/etc/synctv/keys/jwt_private.pem"
+        - name: JWT_PUBLIC_KEY_PATH
+          value: "/etc/synctv/keys/jwt_public.pem"
+
+        # Liveness probe - determines if pod needs restart
+        # Checks if the application process is running
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+
+        # Readiness probe - determines if pod should receive traffic
+        # Checks if dependencies (DB, Redis) are healthy
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 2
+
+        # Startup probe - prevents other probes from running during startup
+        # Useful for applications with slow startup times
+        startupProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 30  # 30 * 5s = 150s max startup time
+
+        # Resource limits and requests
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+        # Volume mounts for JWT keys
+        volumeMounts:
+        - name: jwt-keys
+          mountPath: /etc/synctv/keys
+          readOnly: true
+
+      # Volumes
+      volumes:
+      - name: jwt-keys
+        secret:
+          secretName: synctv-jwt-keys
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: synctv
+  labels:
+    app: synctv
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 50051
+    targetPort: 50051
+    protocol: TCP
+    name: grpc
+  selector:
+    app: synctv
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: synctv-metrics
+  labels:
+    app: synctv
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: metrics
+  selector:
+    app: synctv
+  # This service is used by Prometheus for scraping metrics
+  # Add annotations for Prometheus discovery:
+  # prometheus.io/scrape: "true"
+  # prometheus.io/port: "8080"
+  # prometheus.io/path: "/metrics"
