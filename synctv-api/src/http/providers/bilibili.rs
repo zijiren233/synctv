@@ -272,14 +272,115 @@ async fn proxy_m3u8(
 }
 
 /// GET /proxy/:room_id/:media_id/danmu - Bilibili danmaku SSE
+///
+/// Returns danmaku server connection info as SSE events.
+/// The client uses this info to connect to Bilibili's WebSocket danmu servers directly.
+///
+/// Events emitted:
+/// - `danmu_info`: JSON with `token` and `host_list` for WebSocket connection
+/// - `error`: If the media is not a live stream or danmu info cannot be fetched
 async fn danmu_sse(
-    _auth: AuthUser,
-    Path((_room_id, _media_id)): Path<(String, String)>,
-    State(_state): State<AppState>,
+    auth: AuthUser,
+    Path((room_id, media_id)): Path<(String, String)>,
+    State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    // Stub: keep-alive stream. Actual Bilibili danmu fetching to be added.
-    let stream = futures::stream::pending::<Result<Event, Infallible>>();
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    let room_id_parsed = RoomId::from_string(room_id);
+    let media_id_parsed = MediaId::from_string(media_id);
+
+    // Resolve media from playlist to get source_config
+    let result = resolve_danmu_info(&auth, &room_id_parsed, &media_id_parsed, &state).await;
+
+    let stream = futures::stream::once(async move {
+        match result {
+            Ok(danmu_event) => Ok(danmu_event),
+            Err(e) => Ok(Event::default()
+                .event("error")
+                .data(json!({"error": e.to_string()}).to_string())),
+        }
+    });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("keep-alive"),
+    )
+}
+
+/// Resolve danmaku connection info from a media item's source config.
+///
+/// Only Bilibili live streams have danmaku support.
+/// Returns an SSE Event with danmu server connection details.
+async fn resolve_danmu_info(
+    _auth: &AuthUser,
+    room_id: &RoomId,
+    media_id: &MediaId,
+    state: &AppState,
+) -> Result<Event, anyhow::Error> {
+    let playlist = state
+        .room_service
+        .get_playlist(room_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get playlist: {e}"))?;
+
+    let media = playlist
+        .iter()
+        .find(|m| m.id == *media_id)
+        .ok_or_else(|| anyhow::anyhow!("Media not found in playlist"))?;
+
+    // Parse source_config to determine if this is a live stream
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    enum SourceType {
+        Live {
+            room_id: u64,
+            #[serde(default)]
+            cookies: HashMap<String, String>,
+            #[serde(default)]
+            provider_instance_name: Option<String>,
+        },
+        #[serde(other)]
+        Other,
+    }
+
+    let source: SourceType = serde_json::from_value(media.source_config.clone())
+        .map_err(|e| anyhow::anyhow!("Failed to parse source config: {e}"))?;
+
+    match source {
+        SourceType::Live {
+            room_id: bilibili_room_id,
+            cookies,
+            provider_instance_name,
+        } => {
+            let danmu_resp = state
+                .bilibili_provider
+                .get_live_danmu_info(
+                    bilibili_room_id,
+                    cookies,
+                    provider_instance_name.as_deref(),
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get danmu info: {e}"))?;
+
+            let event_data = json!({
+                "token": danmu_resp.token,
+                "host_list": danmu_resp.host_list.iter().map(|h| {
+                    json!({
+                        "host": h.host,
+                        "port": h.port,
+                        "wss_port": h.wss_port,
+                        "ws_port": h.ws_port,
+                    })
+                }).collect::<Vec<_>>(),
+            });
+
+            Ok(Event::default()
+                .event("danmu_info")
+                .data(event_data.to_string()))
+        }
+        SourceType::Other => Err(anyhow::anyhow!(
+            "Danmaku is only available for Bilibili live streams"
+        )),
+    }
 }
 
 /// Standard Bilibili proxy headers

@@ -1,47 +1,54 @@
 //! Service benchmarks for authentication operations
 //!
 //! Run with: cargo bench --bench auth_service
+//!
+//! Note: `JwtService::generate_keys()` is `#[cfg(test)]` only,
+//! so benchmarks use embedded pre-generated test RSA keys.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use synctv_core::service::auth::{JwtService, TokenType};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use synctv_core::models::UserId;
+use synctv_core::service::auth::{hash_password, verify_password, JwtService, TokenType};
+use synctv_core::models::UserRole;
 use std::time::Duration;
+
+/// Pre-generated RSA 2048-bit test key pair (PEM format, for benchmarks only).
+/// These keys are NOT secret — never use in production.
+const TEST_PRIVATE_KEY_PEM: &[u8] = include_bytes!("../scripts/test_private_key.pem");
+const TEST_PUBLIC_KEY_PEM: &[u8] = include_bytes!("../scripts/test_public_key.pem");
 
 /// Benchmark: JWT token generation
 fn bench_jwt_sign(c: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let jwt_service = JwtService::new(TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM)
+        .expect("Failed to create JwtService");
+    let user_id = UserId::from_string("bench_user_001".to_string());
 
-    rt.block_on(async {
-        // Note: JwtService::generate_keys is #[cfg(test)], so we need keys
-        // In production benchmarks, load actual keys from files
-        // For now, we'll create a placeholder benchmark
-
-        c.bench_function("jwt_sign_access_token", |b| {
-            b.to_async(&rt).iter(|| {
-                // TODO: Create actual JwtService with test keys
-                // let jwt_service = JwtService::new(&private_key, &public_key).unwrap();
-                // let user_id = UserId::new();
-                // async { jwt_service.sign_token(&user_id, 0, TokenType::Access) }
-                async { std::future::ready::<(), ()>(()).await }
-            })
-        });
+    c.bench_function("jwt_sign_access_token", |b| {
+        b.iter(|| {
+            let token = jwt_service
+                .sign_token(black_box(&user_id), UserRole::User, TokenType::Access)
+                .expect("sign failed");
+            black_box(token);
+        })
     });
 }
 
 /// Benchmark: JWT token verification
 fn bench_jwt_verify(c: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let jwt_service = JwtService::new(TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM)
+        .expect("Failed to create JwtService");
+    let user_id = UserId::from_string("bench_user_001".to_string());
 
-    rt.block_on(async {
-        c.bench_function("jwt_verify_access_token", |b| {
-            b.to_async(&rt).iter(|| {
-                // TODO: Create actual JwtService with test keys
-                // let jwt_service = JwtService::new(&private_key, &public_key).unwrap();
-                // let token = "valid.jwt.token";
-                // async { jwt_service.verify_access_token(token) }
-                async { std::future::ready::<(), ()>(()).await }
-            })
-        });
+    let token = jwt_service
+        .sign_token(&user_id, UserRole::User, TokenType::Access)
+        .expect("sign failed");
+
+    c.bench_function("jwt_verify_access_token", |b| {
+        b.iter(|| {
+            let claims = jwt_service
+                .verify_access_token(black_box(&token))
+                .expect("verify failed");
+            black_box(claims);
+        })
     });
 }
 
@@ -49,57 +56,77 @@ fn bench_jwt_verify(c: &mut Criterion) {
 fn bench_password_hash(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    rt.block_on(async {
-        c.bench_function("password_hash", |b| {
-            b.to_async(&rt).iter(|| {
-                async {
-                    // TODO: Use actual password hashing function
-                    // let password = "test_password_123";
-                    // hash_password(password).await
-                    std::future::ready::<(), ()>(()).await
-                }
-            })
-        });
+    let mut group = c.benchmark_group("password_hash");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(20));
+
+    group.bench_function("hash_password", |b| {
+        b.to_async(&rt).iter(|| async {
+            let hash = hash_password(black_box("bench_password_123!")).await
+                .expect("hash failed");
+            black_box(hash);
+        })
     });
+
+    group.finish();
 }
 
 /// Benchmark: Password verification
 fn bench_password_verify(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    rt.block_on(async {
-        c.bench_function("password_verify", |b| {
-            b.to_async(&rt).iter(|| {
-                async {
-                    // TODO: Use actual password verification function
-                    // let password = "test_password_123";
-                    // let hash = "$argon2id$v=19$m=4096,t=3,p=1...";
-                    // verify_password(password, hash).await
-                    std::future::ready::<(), ()>(()).await
-                }
-            })
-        });
+    // Pre-hash a password for verification benchmark
+    let hash = rt.block_on(async {
+        hash_password("bench_password_123!").await.expect("hash failed")
     });
+
+    let mut group = c.benchmark_group("password_verify");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(20));
+
+    group.bench_function("verify_password", |b| {
+        b.to_async(&rt).iter(|| {
+            let hash = hash.clone();
+            async move {
+                let result = verify_password(black_box("bench_password_123!"), black_box(&hash)).await
+                    .expect("verify failed");
+                black_box(result);
+            }
+        })
+    });
+
+    group.finish();
 }
 
 /// Benchmark: Concurrent token generation
 fn bench_concurrent_token_generation(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    rt.block_on(async {
-        let mut group = c.benchmark_group("concurrent_token_generation");
-        group.measurement_time(Duration::from_secs(5));
+    let jwt_service = JwtService::new(TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM)
+        .expect("Failed to create JwtService");
+    let jwt_service = std::sync::Arc::new(jwt_service);
 
-        for num_concurrent in [10, 50, 100].iter() {
-            group.bench_with_input(BenchmarkId::from_parameter(num_concurrent), num_concurrent, |b, &num_concurrent| {
+    let mut group = c.benchmark_group("concurrent_token_generation");
+    group.measurement_time(Duration::from_secs(5));
+
+    for num_concurrent in [10, 50, 100].iter() {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(num_concurrent),
+            num_concurrent,
+            |b, &num_concurrent| {
                 b.to_async(&rt).iter(|| {
-                    async {
+                    let jwt_service = jwt_service.clone();
+                    async move {
                         let mut tasks = Vec::new();
-                        for _ in 0..num_concurrent {
-                            tasks.push(tokio::spawn(async {
-                                // TODO: Create actual token generation
-                                // jwt_service.sign_token(&user_id, 0, TokenType::Access)
-                                std::future::ready::<(), ()>(()).await
+                        for i in 0..num_concurrent {
+                            let jwt_service = jwt_service.clone();
+                            tasks.push(tokio::spawn(async move {
+                                let user_id =
+                                    UserId::from_string(format!("bench_user_{i:03}"));
+                                let token = jwt_service
+                                    .sign_token(&user_id, UserRole::User, TokenType::Access)
+                                    .expect("sign failed");
+                                black_box(token);
                             }));
                         }
                         for task in tasks {
@@ -107,11 +134,11 @@ fn bench_concurrent_token_generation(c: &mut Criterion) {
                         }
                     }
                 })
-            });
-        }
+            },
+        );
+    }
 
-        group.finish();
-    });
+    group.finish();
 }
 
 criterion_group!(
