@@ -101,3 +101,9 @@ stun_codec = "0.3"
 mockall.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 rsa = "0.9"
+criterion.workspace = true
+rand.workspace = true
+
+[[bench]]
+name = "auth_service"
+harness = false
