@@ -75,6 +75,7 @@ pub mod cache {
 /// Database operations
 pub mod database {
     use super::{register_histogram_vec_with_registry, register_int_gauge_with_registry, register_counter_vec_with_registry, HistogramVec, REGISTRY, IntGauge, CounterVec};
+    use prometheus::{GaugeVec, register_gauge_vec_with_registry};
 
     /// Query duration histogram
     pub static DB_QUERY_DURATION: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
@@ -103,6 +104,63 @@ pub mod database {
             &["operation", "error_type"],
             REGISTRY.clone()
         ).expect("Failed to register DB_QUERY_ERRORS")
+    });
+
+    /// Pool utilization percentage (0.0 to 1.0)
+    pub static DB_POOL_UTILIZATION: std::sync::LazyLock<GaugeVec> = std::sync::LazyLock::new(|| {
+        register_gauge_vec_with_registry!(
+            "db_pool_utilization_ratio",
+            "Database connection pool utilization ratio (active/max)",
+            &["pool"],
+            REGISTRY.clone()
+        ).expect("Failed to register DB_POOL_UTILIZATION")
+    });
+
+    /// Connections waiting for a connection from the pool
+    pub static DB_CONNECTIONS_WAITING: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "db_connections_waiting",
+            "Number of connections waiting for a connection from the pool",
+            REGISTRY.clone()
+        ).expect("Failed to register DB_CONNECTIONS_WAITING")
+    });
+
+    /// Connection acquire duration histogram
+    pub static DB_CONNECTION_ACQUIRE_DURATION: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
+        register_histogram_vec_with_registry!(
+            "db_connection_acquire_duration_seconds",
+            "Time taken to acquire a connection from the pool",
+            &["pool"],
+            REGISTRY.clone()
+        ).expect("Failed to register DB_CONNECTION_ACQUIRE_DURATION")
+    });
+
+    /// Transaction rollback counter
+    pub static DB_TRANSACTION_ROLLBACKS: std::sync::LazyLock<CounterVec> = std::sync::LazyLock::new(|| {
+        register_counter_vec_with_registry!(
+            "db_transaction_rollbacks_total",
+            "Total number of database transaction rollbacks",
+            &["reason"],
+            REGISTRY.clone()
+        ).expect("Failed to register DB_TRANSACTION_ROLLBACKS")
+    });
+
+    /// Total connections in the pool (max pool size)
+    pub static DB_POOL_SIZE_MAX: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "db_pool_size_max",
+            "Maximum number of connections in the pool",
+            REGISTRY.clone()
+        ).expect("Failed to register DB_POOL_SIZE_MAX")
+    });
+
+    /// Idle connections in the pool
+    pub static DB_CONNECTIONS_IDLE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "db_connections_idle",
+            "Number of idle connections in the pool",
+            REGISTRY.clone()
+        ).expect("Failed to register DB_CONNECTIONS_IDLE")
     });
 }
 
