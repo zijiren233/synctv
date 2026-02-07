@@ -225,6 +225,24 @@ impl OAuth2Service {
             .await
     }
 
+    /// Unlink all bindings for a specific `OAuth2` provider from user
+    pub async fn unlink_provider_all(
+        &self,
+        user_id: &UserId,
+        provider: &OAuth2Provider,
+    ) -> Result<bool> {
+        let mappings = self.repository.find_by_user(user_id).await?;
+        let mut deleted = false;
+        for mapping in mappings {
+            if mapping.provider_enum().as_ref() == Some(provider) {
+                if self.repository.delete(user_id, provider, &mapping.provider_user_id).await? {
+                    deleted = true;
+                }
+            }
+        }
+        Ok(deleted)
+    }
+
     /// Clean up expired `OAuth2` states (maintenance task)
     pub async fn cleanup_expired_states(&self, max_age_seconds: i64) -> Result<()> {
         let mut states = self.states.write().await;
