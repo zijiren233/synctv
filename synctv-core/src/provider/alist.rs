@@ -11,7 +11,7 @@ use super::{
     MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
     DynamicFolder, DirectoryItem, ItemType, NextPlayItem,
 };
-use crate::service::ProviderInstanceManager;
+use crate::service::RemoteProviderManager;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -20,15 +20,15 @@ use std::sync::Arc;
 
 /// Alist `MediaProvider`
 ///
-/// Holds a reference to `ProviderInstanceManager` to select appropriate provider instance.
+/// Holds a reference to `RemoteProviderManager` to select appropriate provider instance.
 pub struct AlistProvider {
-    provider_instance_manager: Arc<ProviderInstanceManager>,
+    provider_instance_manager: Arc<RemoteProviderManager>,
 }
 
 impl AlistProvider {
-    /// Create a new `AlistProvider` with `ProviderInstanceManager`
+    /// Create a new `AlistProvider` with `RemoteProviderManager`
     #[must_use] 
-    pub const fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
+    pub const fn new(provider_instance_manager: Arc<RemoteProviderManager>) -> Self {
         Self {
             provider_instance_manager,
         }
@@ -127,7 +127,7 @@ impl TryFrom<&Value> for AlistSourceConfig {
     }
 }
 
-// Note: Default implementation removed as it requires ProviderInstanceManager
+// Note: Default implementation removed as it requires RemoteProviderManager
 
 #[async_trait]
 impl MediaProvider for AlistProvider {

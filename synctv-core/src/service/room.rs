@@ -95,7 +95,7 @@ impl RoomService {
         permission_service.set_room_settings_repo(room_settings_repo.clone());
 
         // Initialize provider instance manager and providers manager
-        let provider_instance_manager = Arc::new(crate::service::ProviderInstanceManager::new(provider_instance_repo));
+        let provider_instance_manager = Arc::new(crate::service::RemoteProviderManager::new(provider_instance_repo));
         let providers_manager = Arc::new(ProvidersManager::new(provider_instance_manager));
 
         // Initialize domain services

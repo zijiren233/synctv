@@ -173,7 +173,7 @@ pub struct DirectoryItem {
 /// Only `generate_playback()` is mandatory.
 ///
 /// Note: `MediaProvider` is a capability provider, not a concrete instance.
-/// It may use different `provider_instances` internally via `ProviderInstanceManager`.
+/// It may use different `provider_instances` internally via `RemoteProviderManager`.
 #[async_trait]
 pub trait MediaProvider: Send + Sync {
     // ========== Basic Information ==========

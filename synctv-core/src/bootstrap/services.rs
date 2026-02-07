@@ -9,7 +9,7 @@ use crate::{
     cache::UsernameCache,
     repository::{UserOAuthProviderRepository, ProviderInstanceRepository, UserProviderCredentialRepository, SettingsRepository, NotificationRepository},
     service::{
-        ContentFilter, JwtService, OAuth2Service, ProviderInstanceManager, RateLimitConfig,
+        ContentFilter, JwtService, OAuth2Service, RemoteProviderManager, RateLimitConfig,
         RateLimiter, TokenBlacklistService, UserService, RoomService, ProvidersManager,
         SettingsService, SettingsRegistry, EmailService, EmailTokenService, EmailConfig, PublishKeyService, UserNotificationService,
     },
@@ -34,7 +34,7 @@ pub struct Services {
     /// Content filter for chat and danmaku
     pub content_filter: ContentFilter,
     /// Provider instance manager
-    pub provider_instance_manager: Arc<ProviderInstanceManager>,
+    pub provider_instance_manager: Arc<RemoteProviderManager>,
     /// Provider instances repository
     pub provider_instance_repo: Arc<ProviderInstanceRepository>,
     /// User provider credential repository
@@ -124,16 +124,16 @@ pub async fn init_services(
         content_filter.max_chat_length, content_filter.max_danmaku_length
     );
 
-    // Initialize ProviderInstanceManager
-    info!("Initializing ProviderInstanceManager...");
-    let provider_instance_manager = Arc::new(ProviderInstanceManager::new(provider_instance_repo.clone()));
+    // Initialize RemoteProviderManager
+    info!("Initializing RemoteProviderManager...");
+    let provider_instance_manager = Arc::new(RemoteProviderManager::new(provider_instance_repo.clone()));
 
     // Load all enabled provider instances from database
     if let Err(e) = provider_instance_manager.init().await {
-        tracing::error!("Failed to initialize ProviderInstanceManager: {}", e);
+        tracing::error!("Failed to initialize RemoteProviderManager: {}", e);
         tracing::error!("Continuing without remote provider instances");
     } else {
-        info!("ProviderInstanceManager initialized successfully");
+        info!("RemoteProviderManager initialized successfully");
     }
 
     // Initialize ProvidersManager

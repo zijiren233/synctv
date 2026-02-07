@@ -14,7 +14,7 @@
 // Tier 3: synctv-core/service/providers_manager
 //   - ProvidersManager - manages all MediaProvider instances
 //   - Factory pattern for creating providers
-//   - Integration with ProviderInstanceManager
+//   - Integration with RemoteProviderManager
 
 // Core traits and types
 pub mod config;

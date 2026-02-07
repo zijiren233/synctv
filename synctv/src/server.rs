@@ -44,7 +44,7 @@ pub struct Services {
     pub content_filter: synctv_core::service::ContentFilter,
     pub connection_manager: synctv_cluster::sync::ConnectionManager,
     pub providers_manager: Arc<synctv_core::service::ProvidersManager>,
-    pub provider_instance_manager: Arc<synctv_core::service::ProviderInstanceManager>,
+    pub provider_instance_manager: Arc<synctv_core::service::RemoteProviderManager>,
     pub provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
     pub user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
     pub alist_provider: Arc<AlistProvider>,

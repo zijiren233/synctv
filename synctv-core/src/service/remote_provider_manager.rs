@@ -1,6 +1,6 @@
-// Provider Instance Manager
+// Remote Provider Manager
 //
-// Manages provider instances with automatic fallback to local implementation.
+// Manages remote provider instances (gRPC connections).
 // Supports both local (in-process) and remote (gRPC) provider instances.
 
 use crate::models::ProviderInstance;
@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 use tonic_health::pb::{health_client::HealthClient, HealthCheckRequest};
 
-/// Provider Instance Manager
+/// Remote Provider Manager
 ///
 /// Manages remote provider instances (gRPC connections).
 /// When no remote instance is found, providers fallback to singleton local clients.
@@ -21,7 +21,7 @@ use tonic_health::pb::{health_client::HealthClient, HealthCheckRequest};
 /// - `instances`: `HashMap` of remote gRPC channels (indexed by name)
 /// - `get(name)`: Returns Some(channel) if remote instance found, None otherwise
 #[derive(Debug)]
-pub struct ProviderInstanceManager {
+pub struct RemoteProviderManager {
     /// Remote instances (indexed by name → gRPC Channel)
     instances: Arc<RwLock<HashMap<String, Channel>>>,
 
@@ -29,9 +29,9 @@ pub struct ProviderInstanceManager {
     repository: Arc<ProviderInstanceRepository>,
 }
 
-impl ProviderInstanceManager {
-    /// Create a new `ProviderInstanceManager`
-    #[must_use] 
+impl RemoteProviderManager {
+    /// Create a new `RemoteProviderManager`
+    #[must_use]
     pub fn new(repository: Arc<ProviderInstanceRepository>) -> Self {
         Self {
             instances: Arc::new(RwLock::new(HashMap::new())),

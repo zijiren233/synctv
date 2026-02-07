@@ -7,7 +7,7 @@ use crate::provider::{
     AlistProvider, BilibiliProvider, DirectUrlProvider, EmbyProvider, MediaProvider,
     RtmpProvider,
 };
-use crate::service::ProviderInstanceManager;
+use crate::service::RemoteProviderManager;
 use crate::Config;
 use anyhow::Result;
 use serde_json::Value;
@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 
 /// Factory function type for creating `MediaProvider` instances
 pub type ProviderFactory =
-    Box<dyn Fn(&str, &Value, Arc<ProviderInstanceManager>) -> Result<Arc<dyn MediaProvider>> + Send + Sync>;
+    Box<dyn Fn(&str, &Value, Arc<RemoteProviderManager>) -> Result<Arc<dyn MediaProvider>> + Send + Sync>;
 
 /// Providers Manager
 ///
@@ -25,7 +25,7 @@ pub type ProviderFactory =
 /// Each provider type has exactly one instance.
 ///
 /// # Initialization Order
-/// 1. Create `ProvidersManager` with `ProviderInstanceManager`
+/// 1. Create `ProvidersManager` with `RemoteProviderManager`
 /// 2. Load provider configurations from Config
 /// 3. Create provider instances (singleton per type)
 /// 4. Pass to synctv-api layer for route registration
@@ -35,7 +35,7 @@ pub type ProviderFactory =
 /// ProvidersManager (synctv-core)
 ///   ├── Factories (registered for each provider type)
 ///   ├── Instances (singleton MediaProvider instances)
-///   └── ProviderInstanceManager (for local/remote dispatch)
+///   └── RemoteProviderManager (for local/remote dispatch)
 ///
 /// synctv-api layer
 ///   ├── Gets provider instances from ProvidersManager
@@ -50,13 +50,13 @@ pub struct ProvidersManager {
     instances: Arc<RwLock<HashMap<String, Arc<dyn MediaProvider>>>>,
 
     /// Provider instance manager (for local/remote dispatch)
-    instance_manager: Arc<ProviderInstanceManager>,
+    instance_manager: Arc<RemoteProviderManager>,
 }
 
 impl ProvidersManager {
     /// Create a new `ProvidersManager`
     #[must_use] 
-    pub fn new(instance_manager: Arc<ProviderInstanceManager>) -> Self {
+    pub fn new(instance_manager: Arc<RemoteProviderManager>) -> Self {
         let mut manager = Self {
             factories: HashMap::new(),
             instances: Arc::new(RwLock::new(HashMap::new())),
@@ -71,7 +71,7 @@ impl ProvidersManager {
 
     /// Get a reference to the provider instance manager
     #[must_use] 
-    pub const fn instance_manager(&self) -> &Arc<ProviderInstanceManager> {
+    pub const fn instance_manager(&self) -> &Arc<RemoteProviderManager> {
         &self.instance_manager
     }
 
@@ -305,7 +305,7 @@ mod tests {
     async fn test_providers_manager_creation() {
         let pool = PgPool::connect_lazy("postgresql://test").unwrap();
         let repo = Arc::new(ProviderInstanceRepository::new(pool));
-        let instance_manager = Arc::new(ProviderInstanceManager::new(repo));
+        let instance_manager = Arc::new(RemoteProviderManager::new(repo));
         let manager = ProvidersManager::new(instance_manager);
 
         // Check that built-in providers are registered
@@ -321,7 +321,7 @@ mod tests {
     async fn test_list_provider_types() {
         let pool = PgPool::connect_lazy("postgresql://test").unwrap();
         let repo = Arc::new(ProviderInstanceRepository::new(pool));
-        let instance_manager = Arc::new(ProviderInstanceManager::new(repo));
+        let instance_manager = Arc::new(RemoteProviderManager::new(repo));
         let manager = ProvidersManager::new(instance_manager);
 
         let types = manager.list_types();

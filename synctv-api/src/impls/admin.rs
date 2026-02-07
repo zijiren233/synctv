@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::str::FromStr;
 use synctv_core::models::{UserId, RoomId, UserRole, UserStatus};
-use synctv_core::service::{RoomService, UserService, SettingsService, EmailService, ProviderInstanceManager, SettingsRegistry};
+use synctv_core::service::{RoomService, UserService, SettingsService, EmailService, RemoteProviderManager, SettingsRegistry};
 use synctv_cluster::sync::ConnectionManager;
 
 /// Admin API implementation
@@ -18,7 +18,7 @@ pub struct AdminApiImpl {
     pub settings_registry: Option<Arc<SettingsRegistry>>,
     pub email_service: Arc<EmailService>,
     pub connection_manager: Arc<ConnectionManager>,
-    pub provider_instance_manager: Arc<ProviderInstanceManager>,
+    pub provider_instance_manager: Arc<RemoteProviderManager>,
 }
 
 impl AdminApiImpl {
@@ -30,7 +30,7 @@ impl AdminApiImpl {
         settings_registry: Option<Arc<SettingsRegistry>>,
         email_service: Arc<EmailService>,
         connection_manager: Arc<ConnectionManager>,
-        provider_instance_manager: Arc<ProviderInstanceManager>,
+        provider_instance_manager: Arc<RemoteProviderManager>,
     ) -> Self {
         Self {
             room_service,

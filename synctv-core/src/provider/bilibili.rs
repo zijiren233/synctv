@@ -15,13 +15,13 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::service::ProviderInstanceManager;
+use crate::service::RemoteProviderManager;
 
 /// Bilibili `MediaProvider`
 ///
-/// Holds a reference to `ProviderInstanceManager` to select appropriate provider instance.
+/// Holds a reference to `RemoteProviderManager` to select appropriate provider instance.
 pub struct BilibiliProvider {
-    provider_instance_manager: Arc<ProviderInstanceManager>,
+    provider_instance_manager: Arc<RemoteProviderManager>,
 }
 
 /// Bilibili video info
@@ -44,9 +44,9 @@ pub struct BilibiliPageInfo {
 }
 
 impl BilibiliProvider {
-    /// Create a new `BilibiliProvider` with `ProviderInstanceManager`
+    /// Create a new `BilibiliProvider` with `RemoteProviderManager`
     #[must_use] 
-    pub const fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
+    pub const fn new(provider_instance_manager: Arc<RemoteProviderManager>) -> Self {
         Self {
             provider_instance_manager,
         }
@@ -195,7 +195,7 @@ impl BilibiliProvider {
     }
 }
 
-// Note: Default implementation removed as it requires ProviderInstanceManager
+// Note: Default implementation removed as it requires RemoteProviderManager
 
 /// Bilibili source configuration structs
 #[derive(Debug, Deserialize, Serialize)]

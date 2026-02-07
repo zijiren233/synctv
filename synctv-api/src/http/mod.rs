@@ -36,7 +36,7 @@ use utoipa_swagger_ui::SwaggerUi;
 use synctv_cluster::sync::PublishRequest;
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::repository::{ProviderInstanceRepository, UserProviderCredentialRepository};
-use synctv_core::service::{ProviderInstanceManager, RoomService, UserService};
+use synctv_core::service::{RemoteProviderManager, RoomService, UserService};
 use synctv_stream::api::LiveStreamingInfrastructure;
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
@@ -50,7 +50,7 @@ pub struct RouterConfig {
     pub config: Arc<synctv_core::Config>,
     pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
-    pub provider_instance_manager: Arc<ProviderInstanceManager>,
+    pub provider_instance_manager: Arc<RemoteProviderManager>,
     pub provider_instance_repository: Arc<ProviderInstanceRepository>,
     pub user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
     pub alist_provider: Arc<AlistProvider>,
@@ -75,7 +75,7 @@ pub struct RouterConfig {
 pub struct AppState {
     pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
-    pub provider_instance_manager: Arc<ProviderInstanceManager>,
+    pub provider_instance_manager: Arc<RemoteProviderManager>,
     pub user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
     pub alist_provider: Arc<AlistProvider>,
     pub bilibili_provider: Arc<BilibiliProvider>,
@@ -103,7 +103,7 @@ pub fn create_router(
     config: Arc<synctv_core::Config>,
     user_service: Arc<UserService>,
     room_service: Arc<RoomService>,
-    provider_instance_manager: Arc<ProviderInstanceManager>,
+    provider_instance_manager: Arc<RemoteProviderManager>,
     _provider_instance_repository: Arc<ProviderInstanceRepository>,
     user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
     alist_provider: Arc<AlistProvider>,

@@ -7,7 +7,7 @@ use super::{
     DirectoryItem, DynamicFolder, ItemType, MediaProvider, NextPlayItem, PlaybackInfo,
     PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
 };
-use crate::service::ProviderInstanceManager;
+use crate::service::RemoteProviderManager;
 use async_trait::async_trait;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
@@ -17,15 +17,15 @@ use std::sync::Arc;
 
 /// Emby `MediaProvider`
 ///
-/// Holds a reference to `ProviderInstanceManager` to select appropriate provider instance.
+/// Holds a reference to `RemoteProviderManager` to select appropriate provider instance.
 pub struct EmbyProvider {
-    provider_instance_manager: Arc<ProviderInstanceManager>,
+    provider_instance_manager: Arc<RemoteProviderManager>,
 }
 
 impl EmbyProvider {
-    /// Create a new `EmbyProvider` with `ProviderInstanceManager`
+    /// Create a new `EmbyProvider` with `RemoteProviderManager`
     #[must_use] 
-    pub const fn new(provider_instance_manager: Arc<ProviderInstanceManager>) -> Self {
+    pub const fn new(provider_instance_manager: Arc<RemoteProviderManager>) -> Self {
         Self {
             provider_instance_manager,
         }
@@ -110,7 +110,7 @@ impl TryFrom<&Value> for EmbySourceConfig {
     }
 }
 
-// Note: Default implementation removed as it requires ProviderInstanceManager
+// Note: Default implementation removed as it requires RemoteProviderManager
 
 #[async_trait]
 impl MediaProvider for EmbyProvider {
