@@ -311,6 +311,284 @@ pub struct ErrorResponseSchema {
     pub status: u16,
 }
 
+// --- Admin schemas ---
+
+#[derive(ToSchema)]
+#[schema(example = json!({"active_users": 42, "total_rooms": 10, "total_users": 100, "uptime_seconds": 86400}))]
+pub struct AdminStatsSchema {
+    pub active_users: i64,
+    pub total_rooms: i64,
+    pub total_users: i64,
+    pub uptime_seconds: i64,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"settings": {"signup_enabled": true, "max_rooms_per_user": 5}}))]
+pub struct AdminSettingsSchema {
+    pub settings: serde_json::Value,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"settings": {"signup_enabled": false}}))]
+pub struct AdminUpdateSettingsRequestSchema {
+    pub settings: serde_json::Value,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"users": [], "total": 0}))]
+pub struct AdminUsersListSchema {
+    pub users: Vec<UserSchema>,
+    pub total: i64,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"username": "newuser", "password": "secret123", "email": "user@example.com"}))]
+pub struct AdminCreateUserRequestSchema {
+    pub username: String,
+    pub password: String,
+    pub email: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"role": "admin"}))]
+pub struct AdminSetRoleRequestSchema {
+    pub role: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"password": "newpassword123"}))]
+pub struct AdminSetPasswordRequestSchema {
+    pub password: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"username": "newname"}))]
+pub struct AdminSetUsernameRequestSchema {
+    pub username: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"rooms": [], "total": 0}))]
+pub struct AdminRoomsListSchema {
+    pub rooms: Vec<RoomSchema>,
+    pub total: i64,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"to": "user@example.com", "subject": "Test", "body": "Hello"}))]
+pub struct AdminTestEmailRequestSchema {
+    pub to: String,
+    pub subject: String,
+    pub body: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"name": "my-vendor", "type": "bilibili", "enabled": true, "config": {}}))]
+pub struct VendorSchema {
+    pub name: String,
+    #[schema(rename = "type")]
+    pub vendor_type: String,
+    pub enabled: bool,
+    pub config: serde_json::Value,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"vendors": []}))]
+pub struct VendorsListSchema {
+    pub vendors: Vec<VendorSchema>,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"name": "my-vendor", "type": "bilibili", "config": {}}))]
+pub struct CreateVendorRequestSchema {
+    pub name: String,
+    #[schema(rename = "type")]
+    pub vendor_type: String,
+    pub config: serde_json::Value,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"config": {}}))]
+pub struct UpdateVendorRequestSchema {
+    pub config: serde_json::Value,
+}
+
+// --- Email schemas ---
+
+#[derive(ToSchema)]
+#[schema(example = json!({"email": "user@example.com"}))]
+pub struct EmailSendVerifyRequestSchema {
+    pub email: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"email": "user@example.com", "code": "123456"}))]
+pub struct EmailConfirmVerifyRequestSchema {
+    pub email: String,
+    pub code: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"email": "user@example.com"}))]
+pub struct EmailPasswordResetRequestSchema {
+    pub email: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"email": "user@example.com", "code": "123456", "new_password": "newsecret"}))]
+pub struct EmailPasswordConfirmRequestSchema {
+    pub email: String,
+    pub code: String,
+    pub new_password: String,
+}
+
+// --- Room member management schemas ---
+
+#[derive(ToSchema)]
+#[schema(example = json!({"permissions": 7}))]
+pub struct SetMemberPermissionsRequestSchema {
+    pub permissions: i64,
+}
+
+// --- Notification schemas ---
+
+#[derive(ToSchema)]
+#[schema(example = json!({"id": "notif_abc", "type": "info", "title": "Welcome", "message": "Welcome to SyncTV", "read": false, "created_at": 1700000000}))]
+pub struct NotificationSchema {
+    pub id: String,
+    #[schema(rename = "type")]
+    pub notification_type: String,
+    pub title: String,
+    pub message: String,
+    pub read: bool,
+    pub created_at: i64,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"notifications": [], "total": 0}))]
+pub struct NotificationsListSchema {
+    pub notifications: Vec<NotificationSchema>,
+    pub total: i64,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"ids": ["notif_abc", "notif_def"]}))]
+pub struct MarkNotificationsReadRequestSchema {
+    pub ids: Vec<String>,
+}
+
+// --- OAuth2 schemas ---
+
+#[derive(ToSchema)]
+#[schema(example = json!({"authorize_url": "https://provider.com/authorize?..."}))]
+pub struct OAuth2AuthorizeResponseSchema {
+    pub authorize_url: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"user": null, "access_token": "eyJ...", "refresh_token": "eyJ..."}))]
+pub struct OAuth2CallbackResponseSchema {
+    pub user: Option<UserSchema>,
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"providers": ["google", "github"]}))]
+pub struct OAuth2ProvidersListSchema {
+    pub providers: Vec<String>,
+}
+
+// --- Provider schemas ---
+
+#[derive(ToSchema)]
+#[schema(example = json!({"url": "https://bilibili.com/video/BV..."}))]
+pub struct BilibiliParseRequestSchema {
+    pub url: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"title": "Video Title", "url": "https://cdn.bilibili.com/..."}))]
+pub struct BilibiliParseResponseSchema {
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"qr_url": "https://passport.bilibili.com/qrcode/...", "token": "abc123"}))]
+pub struct BilibiliQrResponseSchema {
+    pub qr_url: String,
+    pub token: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"token": "abc123"}))]
+pub struct BilibiliQrLoginRequestSchema {
+    pub token: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"server_url": "https://alist.example.com", "username": "admin", "password": "secret"}))]
+pub struct AlistLoginRequestSchema {
+    pub server_url: String,
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"token": "alist_token_abc123"}))]
+pub struct AlistLoginResponseSchema {
+    pub token: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"path": "/movies"}))]
+pub struct AlistListRequestSchema {
+    pub path: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"files": [{"name": "movie.mp4", "size": 1024000, "is_dir": false}]}))]
+pub struct AlistListResponseSchema {
+    pub files: Vec<serde_json::Value>,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"username": "user123", "logged_in": true}))]
+pub struct ProviderMeResponseSchema {
+    pub username: String,
+    pub logged_in: bool,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"server_url": "https://emby.example.com", "username": "admin", "password": "secret"}))]
+pub struct EmbyLoginRequestSchema {
+    pub server_url: String,
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"token": "emby_token_abc123"}))]
+pub struct EmbyLoginResponseSchema {
+    pub token: String,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"parent_id": "", "page": 1, "limit": 20}))]
+pub struct EmbyListRequestSchema {
+    pub parent_id: String,
+    pub page: i32,
+    pub limit: i32,
+}
+
+#[derive(ToSchema)]
+#[schema(example = json!({"items": [{"id": "1", "name": "Movie", "type": "Movie"}], "total": 1}))]
+pub struct EmbyListResponseSchema {
+    pub items: Vec<serde_json::Value>,
+    pub total: i64,
+}
+
 // ============== Security modifier ==============
 
 struct SecurityAddon;
@@ -367,6 +645,11 @@ impl Modify for SecurityAddon {
         path_delete_room,
         path_get_room_members,
         path_get_room_settings,
+        // Room member management
+        path_kick_member,
+        path_ban_member,
+        path_unban_member,
+        path_set_member_permissions,
         // Media
         path_add_media,
         path_remove_media,
@@ -385,6 +668,64 @@ impl Modify for SecurityAddon {
         path_get_ice_servers,
         // Public
         path_public_settings,
+        // Admin
+        path_admin_stats,
+        path_admin_get_settings,
+        path_admin_update_settings,
+        path_admin_get_settings_group,
+        path_admin_test_email,
+        path_admin_list_users,
+        path_admin_create_user,
+        path_admin_get_user,
+        path_admin_delete_user,
+        path_admin_set_user_role,
+        path_admin_set_user_password,
+        path_admin_set_user_username,
+        path_admin_ban_user,
+        path_admin_unban_user,
+        path_admin_approve_user,
+        path_admin_list_rooms,
+        path_admin_get_room,
+        path_admin_delete_room,
+        path_admin_ban_room,
+        path_admin_unban_room,
+        path_admin_approve_room,
+        path_admin_list_vendors,
+        path_admin_create_vendor,
+        path_admin_update_vendor,
+        path_admin_delete_vendor,
+        path_admin_reconnect_vendor,
+        path_admin_enable_vendor,
+        path_admin_disable_vendor,
+        // Email
+        path_email_verify_send,
+        path_email_verify_confirm,
+        path_email_password_reset,
+        path_email_password_confirm,
+        // Notifications
+        path_list_notifications,
+        path_get_notification,
+        path_mark_notifications_read,
+        path_mark_all_notifications_read,
+        path_delete_notification,
+        // OAuth2
+        path_oauth2_authorize,
+        path_oauth2_callback,
+        path_oauth2_providers,
+        // Live
+        path_live_flv,
+        path_live_hls,
+        // Providers
+        path_bilibili_parse,
+        path_bilibili_qr_get,
+        path_bilibili_qr_login,
+        path_bilibili_me,
+        path_alist_login,
+        path_alist_list,
+        path_alist_me,
+        path_emby_login,
+        path_emby_list,
+        path_emby_me,
     ),
     components(schemas(
         UserSchema,
@@ -428,6 +769,50 @@ impl Modify for SecurityAddon {
         ChatMessageSchema,
         PublicSettingsSchema,
         ErrorResponseSchema,
+        // Admin schemas
+        AdminStatsSchema,
+        AdminSettingsSchema,
+        AdminUpdateSettingsRequestSchema,
+        AdminUsersListSchema,
+        AdminCreateUserRequestSchema,
+        AdminSetRoleRequestSchema,
+        AdminSetPasswordRequestSchema,
+        AdminSetUsernameRequestSchema,
+        AdminRoomsListSchema,
+        AdminTestEmailRequestSchema,
+        VendorSchema,
+        VendorsListSchema,
+        CreateVendorRequestSchema,
+        UpdateVendorRequestSchema,
+        // Email schemas
+        EmailSendVerifyRequestSchema,
+        EmailConfirmVerifyRequestSchema,
+        EmailPasswordResetRequestSchema,
+        EmailPasswordConfirmRequestSchema,
+        // Room member management schemas
+        SetMemberPermissionsRequestSchema,
+        // Notification schemas
+        NotificationSchema,
+        NotificationsListSchema,
+        MarkNotificationsReadRequestSchema,
+        // OAuth2 schemas
+        OAuth2AuthorizeResponseSchema,
+        OAuth2CallbackResponseSchema,
+        OAuth2ProvidersListSchema,
+        // Provider schemas
+        BilibiliParseRequestSchema,
+        BilibiliParseResponseSchema,
+        BilibiliQrResponseSchema,
+        BilibiliQrLoginRequestSchema,
+        AlistLoginRequestSchema,
+        AlistLoginResponseSchema,
+        AlistListRequestSchema,
+        AlistListResponseSchema,
+        ProviderMeResponseSchema,
+        EmbyLoginRequestSchema,
+        EmbyLoginResponseSchema,
+        EmbyListRequestSchema,
+        EmbyListResponseSchema,
     )),
     modifiers(&SecurityAddon),
     tags(
@@ -440,6 +825,12 @@ impl Modify for SecurityAddon {
         (name = "chat", description = "Chat and danmaku messaging"),
         (name = "webrtc", description = "WebRTC configuration"),
         (name = "public", description = "Public endpoints (no auth required)"),
+        (name = "admin", description = "Admin endpoints for server management"),
+        (name = "email", description = "Email verification and password reset"),
+        (name = "notifications", description = "User notifications"),
+        (name = "oauth2", description = "OAuth2 authentication providers"),
+        (name = "live", description = "Live streaming endpoints"),
+        (name = "providers", description = "Third-party content provider integrations"),
     )
 )]
 pub struct ApiDoc;
@@ -853,3 +1244,747 @@ pub async fn path_get_ice_servers() {}
     )
 )]
 pub async fn path_public_settings() {}
+
+// --- Room member management paths ---
+
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/members/{user_id}/kick",
+    tag = "rooms",
+    security(("bearer_auth" = [])),
+    params(
+        ("room_id" = String, Path, description = "Room ID"),
+        ("user_id" = String, Path, description = "User ID"),
+    ),
+    responses(
+        (status = 200, description = "Member kicked"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+        (status = 404, description = "Member not found", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_kick_member() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/members/{user_id}/ban",
+    tag = "rooms",
+    security(("bearer_auth" = [])),
+    params(
+        ("room_id" = String, Path, description = "Room ID"),
+        ("user_id" = String, Path, description = "User ID"),
+    ),
+    responses(
+        (status = 200, description = "Member banned"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_ban_member() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/members/{user_id}/unban",
+    tag = "rooms",
+    security(("bearer_auth" = [])),
+    params(
+        ("room_id" = String, Path, description = "Room ID"),
+        ("user_id" = String, Path, description = "User ID"),
+    ),
+    responses(
+        (status = 200, description = "Member unbanned"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_unban_member() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/members/{user_id}/permissions",
+    tag = "rooms",
+    security(("bearer_auth" = [])),
+    params(
+        ("room_id" = String, Path, description = "Room ID"),
+        ("user_id" = String, Path, description = "User ID"),
+    ),
+    request_body = SetMemberPermissionsRequestSchema,
+    responses(
+        (status = 200, description = "Permissions updated"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_set_member_permissions() {}
+
+// --- Admin paths ---
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/stats",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Server statistics", body = AdminStatsSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_stats() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/settings",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "All admin settings", body = AdminSettingsSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_get_settings() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/settings",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    request_body = AdminUpdateSettingsRequestSchema,
+    responses(
+        (status = 200, description = "Settings updated"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_update_settings() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/settings/{group}",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("group" = String, Path, description = "Settings group name")),
+    responses(
+        (status = 200, description = "Settings for group", body = AdminSettingsSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_get_settings_group() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/email/test",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    request_body = AdminTestEmailRequestSchema,
+    responses(
+        (status = 200, description = "Test email sent"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_test_email() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/users",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "List of users", body = AdminUsersListSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_list_users() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/users",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    request_body = AdminCreateUserRequestSchema,
+    responses(
+        (status = 200, description = "User created", body = UserSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_create_user() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/users/{user_id}",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID")),
+    responses(
+        (status = 200, description = "User details", body = UserSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+        (status = 404, description = "User not found", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_get_user() {}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/users/{user_id}",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID")),
+    responses(
+        (status = 200, description = "User deleted"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_delete_user() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/users/{user_id}/role",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID")),
+    request_body = AdminSetRoleRequestSchema,
+    responses(
+        (status = 200, description = "User role updated"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_set_user_role() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/users/{user_id}/password",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID")),
+    request_body = AdminSetPasswordRequestSchema,
+    responses(
+        (status = 200, description = "User password updated"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_set_user_password() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/users/{user_id}/username",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID")),
+    request_body = AdminSetUsernameRequestSchema,
+    responses(
+        (status = 200, description = "Username updated"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_set_user_username() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/users/{user_id}/ban",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID")),
+    responses(
+        (status = 200, description = "User banned"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_ban_user() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/users/{user_id}/unban",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID")),
+    responses(
+        (status = 200, description = "User unbanned"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_unban_user() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/users/{user_id}/approve",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID")),
+    responses(
+        (status = 200, description = "User approved"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_approve_user() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/rooms",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "List of rooms", body = AdminRoomsListSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_list_rooms() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/rooms/{room_id}",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("room_id" = String, Path, description = "Room ID")),
+    responses(
+        (status = 200, description = "Room details", body = RoomSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+        (status = 404, description = "Room not found", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_get_room() {}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/rooms/{room_id}",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("room_id" = String, Path, description = "Room ID")),
+    responses(
+        (status = 200, description = "Room deleted"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_delete_room() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rooms/{room_id}/ban",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("room_id" = String, Path, description = "Room ID")),
+    responses(
+        (status = 200, description = "Room banned"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_ban_room() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rooms/{room_id}/unban",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("room_id" = String, Path, description = "Room ID")),
+    responses(
+        (status = 200, description = "Room unbanned"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_unban_room() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rooms/{room_id}/approve",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("room_id" = String, Path, description = "Room ID")),
+    responses(
+        (status = 200, description = "Room approved"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_approve_room() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/vendors",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "List of vendors", body = VendorsListSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_list_vendors() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/vendors",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    request_body = CreateVendorRequestSchema,
+    responses(
+        (status = 200, description = "Vendor created", body = VendorSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_create_vendor() {}
+
+#[utoipa::path(
+    put,
+    path = "/api/admin/vendors/{name}",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("name" = String, Path, description = "Vendor name")),
+    request_body = UpdateVendorRequestSchema,
+    responses(
+        (status = 200, description = "Vendor updated", body = VendorSchema),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_update_vendor() {}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/vendors/{name}",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("name" = String, Path, description = "Vendor name")),
+    responses(
+        (status = 200, description = "Vendor deleted"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_delete_vendor() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/vendors/{name}/reconnect",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("name" = String, Path, description = "Vendor name")),
+    responses(
+        (status = 200, description = "Vendor reconnected"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_reconnect_vendor() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/vendors/{name}/enable",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("name" = String, Path, description = "Vendor name")),
+    responses(
+        (status = 200, description = "Vendor enabled"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_enable_vendor() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/vendors/{name}/disable",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(("name" = String, Path, description = "Vendor name")),
+    responses(
+        (status = 200, description = "Vendor disabled"),
+        (status = 403, description = "Forbidden", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_admin_disable_vendor() {}
+
+// --- Email paths ---
+
+#[utoipa::path(
+    post,
+    path = "/api/email/verify/send",
+    tag = "email",
+    security(("bearer_auth" = [])),
+    request_body = EmailSendVerifyRequestSchema,
+    responses(
+        (status = 200, description = "Verification email sent"),
+        (status = 400, description = "Bad request", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_email_verify_send() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/email/verify/confirm",
+    tag = "email",
+    request_body = EmailConfirmVerifyRequestSchema,
+    responses(
+        (status = 200, description = "Email verified"),
+        (status = 400, description = "Invalid code", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_email_verify_confirm() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/email/password/reset",
+    tag = "email",
+    request_body = EmailPasswordResetRequestSchema,
+    responses(
+        (status = 200, description = "Password reset email sent"),
+        (status = 400, description = "Bad request", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_email_password_reset() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/email/password/confirm",
+    tag = "email",
+    request_body = EmailPasswordConfirmRequestSchema,
+    responses(
+        (status = 200, description = "Password reset confirmed"),
+        (status = 400, description = "Invalid code", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_email_password_confirm() {}
+
+// --- Notification paths ---
+
+#[utoipa::path(
+    get,
+    path = "/api/notifications",
+    tag = "notifications",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "List of notifications", body = NotificationsListSchema),
+        (status = 401, description = "Unauthorized", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_list_notifications() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/notifications/{id}",
+    tag = "notifications",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Notification ID")),
+    responses(
+        (status = 200, description = "Notification details", body = NotificationSchema),
+        (status = 404, description = "Not found", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_get_notification() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/notifications/read",
+    tag = "notifications",
+    security(("bearer_auth" = [])),
+    request_body = MarkNotificationsReadRequestSchema,
+    responses(
+        (status = 200, description = "Notifications marked as read"),
+    )
+)]
+pub async fn path_mark_notifications_read() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/notifications/read-all",
+    tag = "notifications",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "All notifications marked as read"),
+    )
+)]
+pub async fn path_mark_all_notifications_read() {}
+
+#[utoipa::path(
+    delete,
+    path = "/api/notifications/{id}",
+    tag = "notifications",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Notification ID")),
+    responses(
+        (status = 200, description = "Notification deleted"),
+        (status = 404, description = "Not found", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_delete_notification() {}
+
+// --- OAuth2 paths ---
+
+#[utoipa::path(
+    get,
+    path = "/api/oauth2/{provider}/authorize",
+    tag = "oauth2",
+    params(("provider" = String, Path, description = "OAuth2 provider name (e.g. google, github)")),
+    responses(
+        (status = 200, description = "Authorization URL", body = OAuth2AuthorizeResponseSchema),
+        (status = 400, description = "Unknown provider", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_oauth2_authorize() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/oauth2/{provider}/callback",
+    tag = "oauth2",
+    params(
+        ("provider" = String, Path, description = "OAuth2 provider name"),
+        ("code" = String, Query, description = "Authorization code"),
+        ("state" = String, Query, description = "CSRF state token"),
+    ),
+    responses(
+        (status = 200, description = "OAuth2 login successful", body = OAuth2CallbackResponseSchema),
+        (status = 400, description = "Invalid callback", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_oauth2_callback() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/oauth2/providers",
+    tag = "oauth2",
+    responses(
+        (status = 200, description = "Available OAuth2 providers", body = OAuth2ProvidersListSchema),
+    )
+)]
+pub async fn path_oauth2_providers() {}
+
+// --- Live streaming paths ---
+
+#[utoipa::path(
+    get,
+    path = "/api/room/movie/live/flv/{media_id}.flv",
+    tag = "live",
+    security(("bearer_auth" = [])),
+    params(("media_id" = String, Path, description = "Media ID")),
+    responses(
+        (status = 200, description = "FLV live stream", content_type = "video/x-flv"),
+        (status = 404, description = "Stream not found", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_live_flv() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/room/movie/live/hls/list/{media_id}.m3u8",
+    tag = "live",
+    security(("bearer_auth" = [])),
+    params(("media_id" = String, Path, description = "Media ID")),
+    responses(
+        (status = 200, description = "HLS playlist", content_type = "application/vnd.apple.mpegurl"),
+        (status = 404, description = "Stream not found", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_live_hls() {}
+
+// --- Provider paths ---
+
+#[utoipa::path(
+    post,
+    path = "/api/providers/bilibili/parse",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    request_body = BilibiliParseRequestSchema,
+    responses(
+        (status = 200, description = "Parsed Bilibili video", body = BilibiliParseResponseSchema),
+        (status = 400, description = "Invalid URL", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_bilibili_parse() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/providers/bilibili/login/qr",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "QR code for Bilibili login", body = BilibiliQrResponseSchema),
+    )
+)]
+pub async fn path_bilibili_qr_get() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/providers/bilibili/login/qr",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    request_body = BilibiliQrLoginRequestSchema,
+    responses(
+        (status = 200, description = "QR login result"),
+        (status = 400, description = "Login failed", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_bilibili_qr_login() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/providers/bilibili/me",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Current Bilibili user", body = ProviderMeResponseSchema),
+        (status = 401, description = "Not logged in", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_bilibili_me() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/providers/alist/login",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    request_body = AlistLoginRequestSchema,
+    responses(
+        (status = 200, description = "Alist login successful", body = AlistLoginResponseSchema),
+        (status = 401, description = "Invalid credentials", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_alist_login() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/providers/alist/list",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    request_body = AlistListRequestSchema,
+    responses(
+        (status = 200, description = "File listing", body = AlistListResponseSchema),
+        (status = 401, description = "Not logged in", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_alist_list() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/providers/alist/me",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Current Alist user", body = ProviderMeResponseSchema),
+        (status = 401, description = "Not logged in", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_alist_me() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/providers/emby/login",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    request_body = EmbyLoginRequestSchema,
+    responses(
+        (status = 200, description = "Emby login successful", body = EmbyLoginResponseSchema),
+        (status = 401, description = "Invalid credentials", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_emby_login() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/providers/emby/list",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    request_body = EmbyListRequestSchema,
+    responses(
+        (status = 200, description = "Media listing", body = EmbyListResponseSchema),
+        (status = 401, description = "Not logged in", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_emby_list() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/providers/emby/me",
+    tag = "providers",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Current Emby user", body = ProviderMeResponseSchema),
+        (status = 401, description = "Not logged in", body = ErrorResponseSchema),
+    )
+)]
+pub async fn path_emby_me() {}
