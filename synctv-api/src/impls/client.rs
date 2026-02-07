@@ -22,7 +22,7 @@ pub struct ClientApiImpl {
 
 impl ClientApiImpl {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         user_service: Arc<UserService>,
         room_service: Arc<RoomService>,
         connection_manager: Arc<ConnectionManager>,
@@ -1249,7 +1249,7 @@ impl ClientApiImpl {
         room_id: &RoomId,
         user_id: &UserId,
     ) -> Result<crate::proto::client::GetNetworkQualityResponse, anyhow::Error> {
-        use crate::proto::client::{GetNetworkQualityResponse, PeerNetworkQuality};
+        use crate::proto::client::GetNetworkQualityResponse;
 
         let sfu_manager = match &self.sfu_manager {
             Some(mgr) => mgr,
@@ -1269,25 +1269,31 @@ impl ClientApiImpl {
 
         let peers = stats
             .into_iter()
-            .map(|(peer_id, ns)| {
-                let quality_action = match ns.quality_action {
-                    synctv_sfu::QualityAction::None => "none",
-                    synctv_sfu::QualityAction::ReduceQuality => "reduce_quality",
-                    synctv_sfu::QualityAction::ReduceFramerate => "reduce_framerate",
-                    synctv_sfu::QualityAction::AudioOnly => "audio_only",
-                };
-                PeerNetworkQuality {
-                    peer_id,
-                    rtt_ms: ns.rtt_ms,
-                    packet_loss_rate: ns.packet_loss_rate,
-                    jitter_ms: ns.jitter_ms,
-                    available_bandwidth_kbps: ns.available_bandwidth_kbps,
-                    quality_score: u32::from(ns.quality_score),
-                    quality_action: quality_action.to_string(),
-                }
-            })
+            .map(|(peer_id, ns)| network_stats_to_proto(peer_id, ns))
             .collect();
 
         Ok(GetNetworkQualityResponse { peers })
+    }
+}
+
+/// Convert SFU `NetworkStats` to proto `PeerNetworkQuality`
+pub fn network_stats_to_proto(
+    peer_id: String,
+    ns: synctv_sfu::NetworkStats,
+) -> crate::proto::client::PeerNetworkQuality {
+    let quality_action = match ns.quality_action {
+        synctv_sfu::QualityAction::None => "none",
+        synctv_sfu::QualityAction::ReduceQuality => "reduce_quality",
+        synctv_sfu::QualityAction::ReduceFramerate => "reduce_framerate",
+        synctv_sfu::QualityAction::AudioOnly => "audio_only",
+    };
+    crate::proto::client::PeerNetworkQuality {
+        peer_id,
+        rtt_ms: ns.rtt_ms,
+        packet_loss_rate: ns.packet_loss_rate,
+        jitter_ms: ns.jitter_ms,
+        available_bandwidth_kbps: ns.available_bandwidth_kbps,
+        quality_score: u32::from(ns.quality_score),
+        quality_action: quality_action.to_string(),
     }
 }

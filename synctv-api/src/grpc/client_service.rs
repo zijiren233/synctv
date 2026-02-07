@@ -19,7 +19,7 @@ use crate::proto::client::{
     auth_service_server::AuthService, email_service_server::EmailService,
     media_service_server::MediaService, public_service_server::PublicService,
     room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, BanMemberRequest, BanMemberResponse, UnbanMemberRequest, UnbanMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse, GetIceServersRequest, GetIceServersResponse, IceServer, GetNetworkQualityRequest, GetNetworkQualityResponse,
-    GetMovieInfoRequest, GetMovieInfoResponse, PeerNetworkQuality,
+    GetMovieInfoRequest, GetMovieInfoResponse,
 };
 
 /// Configuration for `ClientService`
@@ -1773,23 +1773,7 @@ impl RoomService for ClientServiceImpl {
 
         let peers = stats
             .into_iter()
-            .map(|(peer_id, ns)| {
-                let quality_action = match ns.quality_action {
-                    synctv_sfu::QualityAction::None => "none",
-                    synctv_sfu::QualityAction::ReduceQuality => "reduce_quality",
-                    synctv_sfu::QualityAction::ReduceFramerate => "reduce_framerate",
-                    synctv_sfu::QualityAction::AudioOnly => "audio_only",
-                };
-                PeerNetworkQuality {
-                    peer_id,
-                    rtt_ms: ns.rtt_ms,
-                    packet_loss_rate: ns.packet_loss_rate,
-                    jitter_ms: ns.jitter_ms,
-                    available_bandwidth_kbps: ns.available_bandwidth_kbps,
-                    quality_score: u32::from(ns.quality_score),
-                    quality_action: quality_action.to_string(),
-                }
-            })
+            .map(|(peer_id, ns)| crate::impls::client::network_stats_to_proto(peer_id, ns))
             .collect();
 
         Ok(Response::new(GetNetworkQualityResponse { peers }))
