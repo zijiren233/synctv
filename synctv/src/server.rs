@@ -286,7 +286,6 @@ impl SyncTvServer {
         let user_service = self.services.user_service.clone();
         let room_service = self.services.room_service.clone();
         let provider_instance_manager = self.services.provider_instance_manager.clone();
-        let provider_instance_repository = self.services.provider_instance_repository.clone();
         let user_provider_credential_repository = self.services.user_provider_credential_repository.clone();
         let message_hub = self.services.message_hub();
         let cluster_manager = self.services.cluster_manager.clone();
