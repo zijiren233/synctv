@@ -311,6 +311,10 @@ pub async fn unbind_provider(
 ///
 /// Returns the configured OAuth2 provider instances that clients can use
 /// for login or account binding. No authentication required.
+///
+/// Response: JSON array of objects, each with:
+/// - `name`: Instance name (e.g., "github", "logto1") used in OAuth2 URLs
+/// - `type`: Provider type (e.g., "github", "google", "logto", "oidc")
 pub async fn list_providers(
     State(state): State<AppState>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
