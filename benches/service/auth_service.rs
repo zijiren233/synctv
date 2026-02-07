@@ -13,8 +13,8 @@ use std::time::Duration;
 
 /// Pre-generated RSA 2048-bit test key pair (PEM format, for benchmarks only).
 /// These keys are NOT secret — never use in production.
-const TEST_PRIVATE_KEY_PEM: &[u8] = include_bytes!("../scripts/test_private_key.pem");
-const TEST_PUBLIC_KEY_PEM: &[u8] = include_bytes!("../scripts/test_public_key.pem");
+const TEST_PRIVATE_KEY_PEM: &[u8] = include_bytes!("../../scripts/test_private_key.pem");
+const TEST_PUBLIC_KEY_PEM: &[u8] = include_bytes!("../../scripts/test_public_key.pem");
 
 /// Benchmark: JWT token generation
 fn bench_jwt_sign(c: &mut Criterion) {

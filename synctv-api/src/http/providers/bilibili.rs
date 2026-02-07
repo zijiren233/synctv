@@ -310,6 +310,8 @@ async fn danmu_sse(
 ///
 /// Only Bilibili live streams have danmaku support.
 /// Returns an SSE Event with danmu server connection details.
+///
+/// Note: `auth` is validated by the `AuthUser` extractor in the calling handler.
 async fn resolve_danmu_info(
     _auth: &AuthUser,
     room_id: &RoomId,
