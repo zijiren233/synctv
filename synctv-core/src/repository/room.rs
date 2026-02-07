@@ -370,7 +370,7 @@ impl RoomRepository {
         Ok(Room {
             id: RoomId::from_string(row.try_get("id")?),
             name: row.try_get("name")?,
-            description: row.try_get::<String, _>("description").unwrap_or_default(),
+            description: row.try_get("description")?,
             created_by: UserId::from_string(row.try_get("created_by")?),
             status: self.str_to_status(&status_str),
             created_at: row.try_get("created_at")?,
