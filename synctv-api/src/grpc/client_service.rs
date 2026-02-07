@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 
@@ -1472,8 +1472,9 @@ impl RoomService for ClientServiceImpl {
 
         let mut client_stream = request.into_inner();
 
-        // Create channel for outgoing messages
-        let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel::<ServerMessage>();
+        // Create channel for outgoing messages with bounded capacity to prevent memory exhaustion
+        // Buffer size of 1000 messages provides backpressure for slow clients
+        let (outgoing_tx, outgoing_rx) = mpsc::channel::<ServerMessage>(1000);
 
         // Create gRPC message sender
         let grpc_sender = Arc::new(GrpcMessageSender::new(outgoing_tx.clone()));
@@ -1507,7 +1508,7 @@ impl RoomService for ClientServiceImpl {
         // Spawn task to handle incoming client messages
         tokio::spawn(async move {
             while let Ok(Some(client_msg)) = client_stream.message().await {
-                if let Err(e) = client_msg_tx.send(client_msg) {
+                if let Err(e) = client_msg_tx.send(client_msg).await {
                     tracing::error!("Failed to send message to handler: {}", e);
                     break;
                 }
@@ -1536,7 +1537,7 @@ impl RoomService for ClientServiceImpl {
         });
 
         // Convert outgoing channel to stream, wrapping items in Ok()
-        let output_stream = UnboundedReceiverStream::new(outgoing_rx).map(Ok::<_, Status>);
+        let output_stream = ReceiverStream::new(outgoing_rx).map(Ok::<_, Status>);
 
         Ok(Response::new(
             Box::pin(output_stream) as Self::MessageStreamStream
@@ -1766,20 +1767,29 @@ impl RoomService for ClientServiceImpl {
 
 /// gRPC message sender for `StreamMessageHandler`
 struct GrpcMessageSender {
-    sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
+    sender: tokio::sync::mpsc::Sender<ServerMessage>,
 }
 
 impl GrpcMessageSender {
-    const fn new(sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>) -> Self {
+    const fn new(sender: tokio::sync::mpsc::Sender<ServerMessage>) -> Self {
         Self { sender }
     }
 }
 
 impl MessageSender for GrpcMessageSender {
     fn send(&self, message: ServerMessage) -> Result<(), String> {
+        // Use try_send to avoid blocking and provide backpressure
+        // If channel is full, drop the message (client is too slow)
         self.sender
-            .send(message)
-            .map_err(|e| format!("Failed to send message: {e}"))
+            .try_send(message)
+            .map_err(|e| match e {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                    "Channel full: client too slow to consume messages".to_string()
+                }
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    "Channel closed: client disconnected".to_string()
+                }
+            })
     }
 }
 

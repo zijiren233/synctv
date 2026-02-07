@@ -325,11 +325,21 @@ impl SyncTvServer {
         );
 
         let handle = tokio::spawn(async move {
-            let http_addr: std::net::SocketAddr = http_address.parse().expect("Invalid HTTP address");
+            let http_addr: std::net::SocketAddr = match http_address.parse() {
+                Ok(addr) => addr,
+                Err(e) => {
+                    error!("Invalid HTTP address '{}': {}", http_address, e);
+                    return;
+                }
+            };
 
-            let listener = tokio::net::TcpListener::bind(http_addr)
-                .await
-                .expect("Failed to bind HTTP address");
+            let listener = match tokio::net::TcpListener::bind(http_addr).await {
+                Ok(listener) => listener,
+                Err(e) => {
+                    error!("Failed to bind HTTP address {}: {}", http_addr, e);
+                    return;
+                }
+            };
 
             info!("HTTP server listening on {}", http_addr);
 
@@ -355,17 +365,27 @@ impl SyncTvServer {
 /// Wait for a shutdown signal (SIGTERM or SIGINT/Ctrl+C)
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => {
+                info!("Received Ctrl+C signal");
+            }
+            Err(e) => {
+                error!("Failed to install Ctrl+C handler: {}", e);
+            }
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("Failed to install SIGTERM handler")
-            .recv()
-            .await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+                info!("Received SIGTERM signal");
+            }
+            Err(e) => {
+                error!("Failed to install SIGTERM handler: {}", e);
+            }
+        }
     };
 
     #[cfg(not(unix))]
