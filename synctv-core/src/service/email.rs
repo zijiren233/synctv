@@ -114,36 +114,104 @@ impl EmailService {
         format!("{:06}", rng.gen_range(0..1_000_000))
     }
 
-    /// Validate email format
+    /// Validate email format (RFC 5322 compliant)
     fn validate_email(email: &str) -> Result<()> {
         let email = email.trim();
 
-        // Basic email validation
-        if email.is_empty() || email.len() > 255 {
-            return Err(Error::InvalidInput("Email length invalid".to_string()));
+        // Check length constraints
+        if email.is_empty() {
+            return Err(Error::InvalidInput("Email cannot be empty".to_string()));
+        }
+        if email.len() > 254 {
+            // RFC 5321 maximum email length
+            return Err(Error::InvalidInput("Email too long (max 254 characters)".to_string()));
         }
 
         // Check for @ symbol
         if !email.contains('@') {
-            return Err(Error::InvalidInput("Missing @ symbol".to_string()));
+            return Err(Error::InvalidInput("Email must contain @ symbol".to_string()));
         }
 
         // Split and check parts
         let parts: Vec<&str> = email.split('@').collect();
         if parts.len() != 2 {
-            return Err(Error::InvalidInput("Invalid format".to_string()));
+            return Err(Error::InvalidInput("Email must contain exactly one @ symbol".to_string()));
         }
 
         let local = parts[0];
         let domain = parts[1];
 
-        if local.is_empty() || domain.is_empty() {
-            return Err(Error::InvalidInput("Empty local or domain".to_string()));
+        // Validate local part (before @)
+        if local.is_empty() {
+            return Err(Error::InvalidInput("Email local part cannot be empty".to_string()));
+        }
+        if local.len() > 64 {
+            // RFC 5321 local part max length
+            return Err(Error::InvalidInput("Email local part too long (max 64 characters)".to_string()));
         }
 
-        // Check domain has at least one dot
+        // Check for invalid characters in local part
+        // Allow alphanumeric, dot, hyphen, underscore, plus
+        if !local.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_' || c == '+') {
+            return Err(Error::InvalidInput("Email local part contains invalid characters".to_string()));
+        }
+
+        // Local part cannot start or end with dot
+        if local.starts_with('.') || local.ends_with('.') {
+            return Err(Error::InvalidInput("Email local part cannot start or end with dot".to_string()));
+        }
+
+        // Cannot have consecutive dots
+        if local.contains("..") {
+            return Err(Error::InvalidInput("Email local part cannot contain consecutive dots".to_string()));
+        }
+
+        // Validate domain part (after @)
+        if domain.is_empty() {
+            return Err(Error::InvalidInput("Email domain cannot be empty".to_string()));
+        }
+        if domain.len() > 253 {
+            // RFC 1035 domain name max length
+            return Err(Error::InvalidInput("Email domain too long (max 253 characters)".to_string()));
+        }
+
+        // Domain must contain at least one dot
         if !domain.contains('.') {
-            return Err(Error::InvalidInput("Invalid domain".to_string()));
+            return Err(Error::InvalidInput("Email domain must contain at least one dot".to_string()));
+        }
+
+        // Domain cannot start or end with dot or hyphen
+        if domain.starts_with('.') || domain.ends_with('.') || domain.starts_with('-') || domain.ends_with('-') {
+            return Err(Error::InvalidInput("Email domain has invalid format".to_string()));
+        }
+
+        // Validate domain labels (parts separated by dots)
+        let domain_labels: Vec<&str> = domain.split('.').collect();
+        for label in &domain_labels {
+            if label.is_empty() {
+                return Err(Error::InvalidInput("Email domain cannot have empty labels".to_string()));
+            }
+            if label.len() > 63 {
+                // RFC 1035 label max length
+                return Err(Error::InvalidInput("Email domain label too long (max 63 characters)".to_string()));
+            }
+            // Labels can only contain alphanumeric and hyphens (but not start/end with hyphen)
+            if !label.chars().all(|c| c.is_alphanumeric() || c == '-') {
+                return Err(Error::InvalidInput("Email domain contains invalid characters".to_string()));
+            }
+            if label.starts_with('-') || label.ends_with('-') {
+                return Err(Error::InvalidInput("Email domain label cannot start or end with hyphen".to_string()));
+            }
+        }
+
+        // Check TLD is at least 2 characters and alphabetic
+        if let Some(tld) = domain_labels.last() {
+            if tld.len() < 2 {
+                return Err(Error::InvalidInput("Email domain TLD must be at least 2 characters".to_string()));
+            }
+            if !tld.chars().all(|c| c.is_alphabetic()) {
+                return Err(Error::InvalidInput("Email domain TLD must be alphabetic".to_string()));
+            }
         }
 
         Ok(())

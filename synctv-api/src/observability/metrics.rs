@@ -12,7 +12,9 @@ use prometheus::{
 /// Global metrics registry
 static REGISTRY: Lazy<Registry> = Lazy::new(|| {
     let registry = Registry::new();
-    register_metrics(&registry);
+    if let Err(e) = register_metrics_safe(&registry) {
+        tracing::error!("Failed to register metrics: {}. Metrics will be unavailable.", e);
+    }
     registry
 });
 
@@ -24,7 +26,15 @@ pub static HTTP_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
         Opts::new("http_requests_total", "Total number of HTTP requests"),
         &["method", "path", "status"],
     )
-    .expect("failed to create http_requests_total")
+    .unwrap_or_else(|e| {
+        tracing::error!("Failed to create http_requests_total metric: {}", e);
+        // Create a dummy metric that won't panic
+        IntCounterVec::new(
+            Opts::new("http_requests_total_fallback", "Fallback metric"),
+            &["method", "path", "status"],
+        )
+        .expect("fallback metric creation failed")
+    })
 });
 
 /// HTTP request duration in seconds, labeled by method and path.
@@ -37,7 +47,14 @@ pub static HTTP_REQUEST_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
         .buckets(vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
         &["method", "path"],
     )
-    .expect("failed to create http_request_duration_seconds")
+    .unwrap_or_else(|e| {
+        tracing::error!("Failed to create http_request_duration_seconds metric: {}", e);
+        HistogramVec::new(
+            HistogramOpts::new("http_request_duration_seconds_fallback", "Fallback metric"),
+            &["method", "path"],
+        )
+        .expect("fallback metric creation failed")
+    })
 });
 
 /// Number of in-flight HTTP requests.
@@ -46,7 +63,11 @@ pub static HTTP_REQUESTS_IN_FLIGHT: Lazy<IntGauge> = Lazy::new(|| {
         "http_requests_in_flight",
         "Number of HTTP requests currently being processed",
     )
-    .expect("failed to create http_requests_in_flight")
+    .unwrap_or_else(|e| {
+        tracing::error!("Failed to create http_requests_in_flight metric: {}", e);
+        IntGauge::new("http_requests_in_flight_fallback", "Fallback metric")
+            .expect("fallback metric creation failed")
+    })
 });
 
 // --- WebSocket Metrics ---
@@ -60,7 +81,14 @@ pub static WEBSOCKET_CONNECTIONS_ACTIVE: Lazy<IntGaugeVec> = Lazy::new(|| {
         ),
         &["room_id"],
     )
-    .expect("failed to create websocket_connections_active")
+    .unwrap_or_else(|e| {
+        tracing::error!("Failed to create websocket_connections_active metric: {}", e);
+        IntGaugeVec::new(
+            Opts::new("websocket_connections_active_fallback", "Fallback metric"),
+            &["room_id"],
+        )
+        .expect("fallback metric creation failed")
+    })
 });
 
 /// Total WebSocket connections opened.
@@ -72,7 +100,14 @@ pub static WEBSOCKET_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
         ),
         &["room_id"],
     )
-    .expect("failed to create websocket_connections_total")
+    .unwrap_or_else(|e| {
+        tracing::error!("Failed to create websocket_connections_total metric: {}", e);
+        IntCounterVec::new(
+            Opts::new("websocket_connections_total_fallback", "Fallback metric"),
+            &["room_id"],
+        )
+        .expect("fallback metric creation failed")
+    })
 });
 
 // --- Room Metrics ---
@@ -80,7 +115,11 @@ pub static WEBSOCKET_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 /// Number of active rooms.
 pub static ROOMS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
     IntGauge::new("rooms_active", "Number of currently active rooms")
-        .expect("failed to create rooms_active")
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to create rooms_active metric: {}", e);
+            IntGauge::new("rooms_active_fallback", "Fallback metric")
+                .expect("fallback metric creation failed")
+        })
 });
 
 // --- User Metrics ---
@@ -88,7 +127,11 @@ pub static ROOMS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
 /// Number of online users.
 pub static USERS_ONLINE: Lazy<IntGauge> = Lazy::new(|| {
     IntGauge::new("users_online", "Number of currently online users")
-        .expect("failed to create users_online")
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to create users_online metric: {}", e);
+            IntGauge::new("users_online_fallback", "Fallback metric")
+                .expect("fallback metric creation failed")
+        })
 });
 
 // --- Streaming Metrics ---
@@ -96,7 +139,11 @@ pub static USERS_ONLINE: Lazy<IntGauge> = Lazy::new(|| {
 /// Number of active live streams.
 pub static STREAMS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
     IntGauge::new("streams_active", "Number of active live streams")
-        .expect("failed to create streams_active")
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to create streams_active metric: {}", e);
+            IntGauge::new("streams_active_fallback", "Fallback metric")
+                .expect("fallback metric creation failed")
+        })
 });
 
 // --- WebRTC Metrics ---
@@ -107,38 +154,26 @@ pub static WEBRTC_PEERS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
         "webrtc_peers_active",
         "Number of active WebRTC peer connections",
     )
-    .expect("failed to create webrtc_peers_active")
+    .unwrap_or_else(|e| {
+        tracing::error!("Failed to create webrtc_peers_active metric: {}", e);
+        IntGauge::new("webrtc_peers_active_fallback", "Fallback metric")
+            .expect("fallback metric creation failed")
+    })
 });
 
 /// Register all metrics with the registry.
-fn register_metrics(registry: &Registry) {
-    registry
-        .register(Box::new(HTTP_REQUESTS_TOTAL.clone()))
-        .expect("failed to register http_requests_total");
-    registry
-        .register(Box::new(HTTP_REQUEST_DURATION_SECONDS.clone()))
-        .expect("failed to register http_request_duration_seconds");
-    registry
-        .register(Box::new(HTTP_REQUESTS_IN_FLIGHT.clone()))
-        .expect("failed to register http_requests_in_flight");
-    registry
-        .register(Box::new(WEBSOCKET_CONNECTIONS_ACTIVE.clone()))
-        .expect("failed to register websocket_connections_active");
-    registry
-        .register(Box::new(WEBSOCKET_CONNECTIONS_TOTAL.clone()))
-        .expect("failed to register websocket_connections_total");
-    registry
-        .register(Box::new(ROOMS_ACTIVE.clone()))
-        .expect("failed to register rooms_active");
-    registry
-        .register(Box::new(USERS_ONLINE.clone()))
-        .expect("failed to register users_online");
-    registry
-        .register(Box::new(STREAMS_ACTIVE.clone()))
-        .expect("failed to register streams_active");
-    registry
-        .register(Box::new(WEBRTC_PEERS_ACTIVE.clone()))
-        .expect("failed to register webrtc_peers_active");
+/// Register all metrics with the registry, with error handling
+fn register_metrics_safe(registry: &Registry) -> Result<(), Box<dyn std::error::Error>> {
+    registry.register(Box::new(HTTP_REQUESTS_TOTAL.clone()))?;
+    registry.register(Box::new(HTTP_REQUEST_DURATION_SECONDS.clone()))?;
+    registry.register(Box::new(HTTP_REQUESTS_IN_FLIGHT.clone()))?;
+    registry.register(Box::new(WEBSOCKET_CONNECTIONS_ACTIVE.clone()))?;
+    registry.register(Box::new(WEBSOCKET_CONNECTIONS_TOTAL.clone()))?;
+    registry.register(Box::new(ROOMS_ACTIVE.clone()))?;
+    registry.register(Box::new(USERS_ONLINE.clone()))?;
+    registry.register(Box::new(STREAMS_ACTIVE.clone()))?;
+    registry.register(Box::new(WEBRTC_PEERS_ACTIVE.clone()))?;
+    Ok(())
 }
 
 /// Gather all metrics and encode them in Prometheus text format.
@@ -146,8 +181,17 @@ pub fn gather_metrics() -> String {
     let encoder = TextEncoder::new();
     let metric_families = REGISTRY.gather();
     let mut buffer = Vec::new();
-    encoder.encode(&metric_families, &mut buffer).expect("failed to encode metrics");
-    String::from_utf8(buffer).expect("metrics are valid UTF-8")
+    match encoder.encode(&metric_families, &mut buffer) {
+        Ok(()) => {},
+        Err(e) => {
+            tracing::error!("Failed to encode metrics: {}", e);
+            return String::from("# Failed to encode metrics\n");
+        }
+    }
+    String::from_utf8(buffer).unwrap_or_else(|e| {
+        tracing::error!("Metrics buffer contains invalid UTF-8: {}", e);
+        String::from("# Invalid UTF-8 in metrics\n")
+    })
 }
 
 /// Normalize a request path for metric labels.

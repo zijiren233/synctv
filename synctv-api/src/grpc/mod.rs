@@ -32,7 +32,7 @@ use synctv_cluster::sync::{ClusterManager, ConnectionManager, PublishRequest};
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::service::auth::JwtService;
 use synctv_core::service::{
-    ContentFilter, EmailService, EmailTokenService, ProviderInstanceManager, ProvidersManager,
+    ContentFilter, EmailService, EmailTokenService, RemoteProviderManager, ProvidersManager,
     RateLimitConfig, RateLimiter, RoomService as CoreRoomService, SettingsRegistry,
     SettingsService, UserService as CoreUserService,
 };
@@ -52,7 +52,7 @@ pub struct GrpcServerConfig<'a> {
     pub content_filter: ContentFilter,
     pub connection_manager: ConnectionManager,
     pub providers_manager: Option<Arc<ProvidersManager>>,
-    pub provider_instance_manager: Arc<ProviderInstanceManager>,
+    pub provider_instance_manager: Arc<RemoteProviderManager>,
     pub provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
     pub user_provider_credential_repository: Arc<synctv_core::repository::UserProviderCredentialRepository>,
     pub settings_service: Arc<SettingsService>,
@@ -75,7 +75,7 @@ pub async fn serve(
     content_filter: ContentFilter,
     connection_manager: ConnectionManager,
     providers_manager: Option<Arc<ProvidersManager>>,
-    provider_instance_manager: Arc<ProviderInstanceManager>,
+    provider_instance_manager: Arc<RemoteProviderManager>,
     _provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
     user_provider_credential_repository: Arc<
         synctv_core::repository::UserProviderCredentialRepository,

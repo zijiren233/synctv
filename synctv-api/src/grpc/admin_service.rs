@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use synctv_core::models::{ProviderInstance, RoomId, UserId, SettingsGroup as CoreSettingsGroup};
-use synctv_core::service::{ProviderInstanceManager, RoomService, UserService, SettingsService, SettingsRegistry};
+use synctv_core::service::{RemoteProviderManager, RoomService, UserService, SettingsService, SettingsRegistry};
 
 // Use synctv_proto for all gRPC types to avoid duplication
 use crate::proto::admin_service_server::AdminService;
@@ -13,7 +13,7 @@ use crate::proto::admin::{GetSettingsRequest, GetSettingsResponse, GetSettingsGr
 pub struct AdminServiceImpl {
     user_service: Arc<UserService>,
     room_service: Arc<RoomService>,
-    provider_manager: Arc<ProviderInstanceManager>,
+    provider_manager: Arc<RemoteProviderManager>,
     settings_service: Arc<SettingsService>,
     settings_registry: Option<Arc<SettingsRegistry>>,
     email_service: Option<Arc<synctv_core::service::EmailService>>,
@@ -24,7 +24,7 @@ impl AdminServiceImpl {
     pub fn new(
         user_service: UserService,
         room_service: RoomService,
-        provider_manager: Arc<ProviderInstanceManager>,
+        provider_manager: Arc<RemoteProviderManager>,
         settings_service: Arc<SettingsService>,
         settings_registry: Option<Arc<SettingsRegistry>>,
         email_service: Option<Arc<synctv_core::service::EmailService>>,
@@ -338,7 +338,7 @@ impl AdminService for AdminServiceImpl {
             updated_at: chrono::Utc::now(),
         };
 
-        // Add via ProviderInstanceManager (creates gRPC connection + saves to DB)
+        // Add via RemoteProviderManager (creates gRPC connection + saves to DB)
         self.provider_manager
             .add(instance.clone())
             .await
@@ -424,7 +424,7 @@ impl AdminService for AdminServiceImpl {
             updated_at: chrono::Utc::now(),
         };
 
-        // Update via ProviderInstanceManager (recreates gRPC connection + updates DB)
+        // Update via RemoteProviderManager (recreates gRPC connection + updates DB)
         self.provider_manager
             .update(updated_instance.clone())
             .await
@@ -444,7 +444,7 @@ impl AdminService for AdminServiceImpl {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
-        // Delete via ProviderInstanceManager (removes from DB + closes gRPC connection)
+        // Delete via RemoteProviderManager (removes from DB + closes gRPC connection)
         self.provider_manager
             .delete(&req.name)
             .await
@@ -501,7 +501,7 @@ impl AdminService for AdminServiceImpl {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
-        // Enable via ProviderInstanceManager (updates DB + creates gRPC connection)
+        // Enable via RemoteProviderManager (updates DB + creates gRPC connection)
         self.provider_manager
             .enable(&req.name)
             .await
@@ -535,7 +535,7 @@ impl AdminService for AdminServiceImpl {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
-        // Disable via ProviderInstanceManager (updates DB + closes gRPC connection)
+        // Disable via RemoteProviderManager (updates DB + closes gRPC connection)
         self.provider_manager
             .disable(&req.name)
             .await

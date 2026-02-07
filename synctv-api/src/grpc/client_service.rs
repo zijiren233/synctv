@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 
@@ -1472,8 +1472,9 @@ impl RoomService for ClientServiceImpl {
 
         let mut client_stream = request.into_inner();
 
-        // Create channel for outgoing messages
-        let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel::<ServerMessage>();
+        // Create channel for outgoing messages with bounded capacity to prevent memory exhaustion
+        // Buffer size of 1000 messages provides backpressure for slow clients
+        let (outgoing_tx, outgoing_rx) = mpsc::channel::<ServerMessage>(1000);
 
         // Create gRPC message sender
         let grpc_sender = Arc::new(GrpcMessageSender::new(outgoing_tx.clone()));
@@ -1507,7 +1508,7 @@ impl RoomService for ClientServiceImpl {
         // Spawn task to handle incoming client messages
         tokio::spawn(async move {
             while let Ok(Some(client_msg)) = client_stream.message().await {
-                if let Err(e) = client_msg_tx.send(client_msg) {
+                if let Err(e) = client_msg_tx.send(client_msg).await {
                     tracing::error!("Failed to send message to handler: {}", e);
                     break;
                 }
@@ -1536,7 +1537,7 @@ impl RoomService for ClientServiceImpl {
         });
 
         // Convert outgoing channel to stream, wrapping items in Ok()
-        let output_stream = UnboundedReceiverStream::new(outgoing_rx).map(Ok::<_, Status>);
+        let output_stream = ReceiverStream::new(outgoing_rx).map(Ok::<_, Status>);
 
         Ok(Response::new(
             Box::pin(output_stream) as Self::MessageStreamStream
@@ -1746,28 +1747,49 @@ impl RoomService for ClientServiceImpl {
             .await
             .map_err(|e| Status::permission_denied(format!("Not a member of the room: {e}")))?;
 
-        // Return empty stats for now - in production this would be populated
-        // from the SFU NetworkQualityMonitor when SFU mode is active
+        // Network quality stats require SFU integration
+        // The NetworkQualityMonitor is fully implemented in synctv-sfu but not yet
+        // integrated with the API layer. To enable this feature:
+        // 1. Add SfuManager to the gRPC service dependencies
+        // 2. Call sfu_manager.get_room_network_quality(room_id)
+        // 3. Convert NetworkStats to proto::NetworkQualityPeer
+        //
+        // For now, return empty list to avoid breaking the API
+        tracing::debug!(
+            room_id = %room_id,
+            user_id = %_user_id,
+            "Network quality monitoring requested but SFU integration not enabled"
+        );
+
         Ok(Response::new(GetNetworkQualityResponse { peers: vec![] }))
     }
 }
 
 /// gRPC message sender for `StreamMessageHandler`
 struct GrpcMessageSender {
-    sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
+    sender: tokio::sync::mpsc::Sender<ServerMessage>,
 }
 
 impl GrpcMessageSender {
-    const fn new(sender: tokio::sync::mpsc::UnboundedSender<ServerMessage>) -> Self {
+    const fn new(sender: tokio::sync::mpsc::Sender<ServerMessage>) -> Self {
         Self { sender }
     }
 }
 
 impl MessageSender for GrpcMessageSender {
     fn send(&self, message: ServerMessage) -> Result<(), String> {
+        // Use try_send to avoid blocking and provide backpressure
+        // If channel is full, drop the message (client is too slow)
         self.sender
-            .send(message)
-            .map_err(|e| format!("Failed to send message: {e}"))
+            .try_send(message)
+            .map_err(|e| match e {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                    "Channel full: client too slow to consume messages".to_string()
+                }
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    "Channel closed: client disconnected".to_string()
+                }
+            })
     }
 }
 
@@ -3027,9 +3049,9 @@ impl EmailService for ClientServiceImpl {
         request: Request<SendVerificationEmailRequest>,
     ) -> Result<Response<SendVerificationEmailResponse>, Status> {
         let email_service = self.email_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email service is not configured on this server. Please contact the administrator or use alternative authentication methods."))?;
         let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
 
         let req = request.into_inner();
 
@@ -3067,7 +3089,7 @@ impl EmailService for ClientServiceImpl {
         request: Request<ConfirmEmailRequest>,
     ) -> Result<Response<ConfirmEmailResponse>, Status> {
         let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
 
         let req = request.into_inner();
 
@@ -3109,9 +3131,9 @@ impl EmailService for ClientServiceImpl {
         request: Request<RequestPasswordResetRequest>,
     ) -> Result<Response<RequestPasswordResetResponse>, Status> {
         let email_service = self.email_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email service is not configured on this server. Please contact the administrator to reset your password."))?;
         let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
 
         let req = request.into_inner();
 
@@ -3147,7 +3169,7 @@ impl EmailService for ClientServiceImpl {
         request: Request<ConfirmPasswordResetRequest>,
     ) -> Result<Response<ConfirmPasswordResetResponse>, Status> {
         let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
 
         let req = request.into_inner();
 

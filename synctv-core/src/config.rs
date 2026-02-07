@@ -16,6 +16,7 @@ pub struct Config {
     pub email: EmailConfig,
     pub media_providers: MediaProvidersConfig,
     pub webrtc: WebRTCConfig,
+    pub connection_limits: ConnectionLimitsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -486,6 +487,38 @@ impl Config {
     }
 }
 
+/// Connection limits configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ConnectionLimitsConfig {
+    /// Maximum concurrent connections per user
+    pub max_per_user: usize,
+
+    /// Maximum concurrent connections per room
+    pub max_per_room: usize,
+
+    /// Maximum total concurrent connections
+    pub max_total: usize,
+
+    /// Idle timeout in seconds (disconnect if no activity)
+    pub idle_timeout_seconds: u64,
+
+    /// Maximum connection duration in seconds
+    pub max_duration_seconds: u64,
+}
+
+impl Default for ConnectionLimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_per_user: 5,
+            max_per_room: 200,
+            max_total: 10000,
+            idle_timeout_seconds: 300, // 5 minutes
+            max_duration_seconds: 86400, // 24 hours
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,6 +536,7 @@ mod tests {
             email: EmailConfig::default(),
             media_providers: MediaProvidersConfig::default(),
             webrtc: WebRTCConfig::default(),
+            connection_limits: ConnectionLimitsConfig::default(),
         });
 
         assert!(!config.database_url().is_empty());
@@ -530,6 +564,7 @@ mod tests {
             email: EmailConfig::default(),
             media_providers: MediaProvidersConfig::default(),
             webrtc: WebRTCConfig::default(),
+            connection_limits: ConnectionLimitsConfig::default(),
         };
 
         assert_eq!(config.grpc_address(), "127.0.0.1:50051");

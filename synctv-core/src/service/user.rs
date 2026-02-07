@@ -400,9 +400,26 @@ impl UserService {
     }
 
     /// Get the username cache (for creating dependent services)
-    #[must_use] 
+    #[must_use]
     pub const fn username_cache(&self) -> &UsernameCache {
         &self.username_cache
+    }
+
+    /// Health check - verify database connectivity
+    ///
+    /// Executes a simple query to verify the database connection is working.
+    /// Used by readiness probes in Kubernetes deployments.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the database is accessible
+    /// - `Err` if the database connection fails
+    pub async fn health_check(&self) -> Result<()> {
+        // Execute a simple query to verify database connectivity
+        sqlx::query("SELECT 1")
+            .execute(self.pool())
+            .await?;
+
+        Ok(())
     }
 }
 

@@ -271,11 +271,12 @@ impl StreamMessageHandler {
     /// 3. Returns a sender that the caller should use to send `ClientMessages` to this handler
     ///
     /// Returns a sender that the caller should use to send `ClientMessages`
-    #[must_use] 
+    #[must_use]
     pub fn start(
         &self,
-    ) -> tokio::sync::mpsc::UnboundedSender<ClientMessage> {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
+    ) -> tokio::sync::mpsc::Sender<ClientMessage> {
+        // Use bounded channel to prevent memory exhaustion from fast clients
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<ClientMessage>(1000);
 
         // Subscribe to cluster events and forward to client
         let room_id = self.room_id.clone();

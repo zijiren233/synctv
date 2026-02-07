@@ -44,7 +44,7 @@ pub struct Services {
     pub content_filter: synctv_core::service::ContentFilter,
     pub connection_manager: synctv_cluster::sync::ConnectionManager,
     pub providers_manager: Arc<synctv_core::service::ProvidersManager>,
-    pub provider_instance_manager: Arc<synctv_core::service::ProviderInstanceManager>,
+    pub provider_instance_manager: Arc<synctv_core::service::RemoteProviderManager>,
     pub provider_instance_repository: Arc<synctv_core::repository::ProviderInstanceRepository>,
     pub user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
     pub alist_provider: Arc<AlistProvider>,
@@ -286,7 +286,6 @@ impl SyncTvServer {
         let user_service = self.services.user_service.clone();
         let room_service = self.services.room_service.clone();
         let provider_instance_manager = self.services.provider_instance_manager.clone();
-        let provider_instance_repository = self.services.provider_instance_repository.clone();
         let user_provider_credential_repository = self.services.user_provider_credential_repository.clone();
         let message_hub = self.services.message_hub();
         let cluster_manager = self.services.cluster_manager.clone();
@@ -307,7 +306,6 @@ impl SyncTvServer {
             user_service,
             room_service,
             provider_instance_manager,
-            provider_instance_repository,
             user_provider_credential_repository,
             self.services.alist_provider.clone(),
             self.services.bilibili_provider.clone(),
@@ -327,11 +325,21 @@ impl SyncTvServer {
         );
 
         let handle = tokio::spawn(async move {
-            let http_addr: std::net::SocketAddr = http_address.parse().expect("Invalid HTTP address");
+            let http_addr: std::net::SocketAddr = match http_address.parse() {
+                Ok(addr) => addr,
+                Err(e) => {
+                    error!("Invalid HTTP address '{}': {}", http_address, e);
+                    return;
+                }
+            };
 
-            let listener = tokio::net::TcpListener::bind(http_addr)
-                .await
-                .expect("Failed to bind HTTP address");
+            let listener = match tokio::net::TcpListener::bind(http_addr).await {
+                Ok(listener) => listener,
+                Err(e) => {
+                    error!("Failed to bind HTTP address {}: {}", http_addr, e);
+                    return;
+                }
+            };
 
             info!("HTTP server listening on {}", http_addr);
 
@@ -357,17 +365,27 @@ impl SyncTvServer {
 /// Wait for a shutdown signal (SIGTERM or SIGINT/Ctrl+C)
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => {
+                info!("Received Ctrl+C signal");
+            }
+            Err(e) => {
+                error!("Failed to install Ctrl+C handler: {}", e);
+            }
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("Failed to install SIGTERM handler")
-            .recv()
-            .await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+                info!("Received SIGTERM signal");
+            }
+            Err(e) => {
+                error!("Failed to install SIGTERM handler: {}", e);
+            }
+        }
     };
 
     #[cfg(not(unix))]

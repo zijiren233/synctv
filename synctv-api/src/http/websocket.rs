@@ -68,11 +68,11 @@ impl StreamMessage for WebSocketStream {
 
 /// WebSocket message sender implementation
 struct WebSocketMessageSender {
-    sender: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    sender: tokio::sync::mpsc::Sender<Vec<u8>>,
 }
 
 impl WebSocketMessageSender {
-    const fn new(sender: tokio::sync::mpsc::UnboundedSender<Vec<u8>>) -> Self {
+    const fn new(sender: tokio::sync::mpsc::Sender<Vec<u8>>) -> Self {
         Self { sender }
     }
 }
@@ -82,11 +82,18 @@ impl crate::impls::messaging::MessageSender for WebSocketMessageSender {
         // Encode to binary proto
         let bytes = ProtoCodec::encode_server_message(&message)?;
 
-        // Send via channel
+        // Use try_send to provide backpressure for slow clients
+        // If channel is full, drop the message (client is too slow)
         self.sender
-            .clone()
-            .send(bytes)
-            .map_err(|e| format!("Failed to send message: {e}"))
+            .try_send(bytes)
+            .map_err(|e| match e {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                    "Channel full: WebSocket client too slow to consume messages".to_string()
+                }
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    "Channel closed: WebSocket client disconnected".to_string()
+                }
+            })
     }
 }
 
@@ -157,8 +164,9 @@ async fn handle_socket(
     let rate_limit_config = Arc::new(RateLimitConfig::default());
     let content_filter = Arc::new(ContentFilter::new());
 
-    // Create channel for sending messages to WebSocket
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    // Create channel for sending messages to WebSocket with bounded capacity
+    // Buffer size of 1000 messages provides backpressure for slow clients
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1000);
     let is_alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
     // Create WebSocket sender - wrapped in Arc for sharing with handler

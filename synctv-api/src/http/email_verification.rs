@@ -87,16 +87,13 @@ pub async fn send_verification_email(
         state.user_service.pool().clone()
     );
 
-    let token = email_service
+    let _token = email_service
         .send_verification_email(&req.email, &token_service, &user.id)
         .await
         .map_err(|e| AppError::internal_server_error(format!("Failed to send email: {e}")))?;
 
-    // SECURITY: Never return the token in the response in production.
-    // In debug builds only, log it for local development/testing convenience.
-    #[cfg(debug_assertions)]
-    tracing::debug!("DEV ONLY - verification token for {}: {}", req.email, token);
-    let _ = token;
+    // SECURITY: Token is never logged or returned to prevent security leaks
+    // Token is only sent via email to the user
 
     Ok(Json(EmailVerificationResponse {
         message: "Verification code sent to your email".to_string(),
@@ -186,16 +183,13 @@ pub async fn request_password_reset(
         state.user_service.pool().clone()
     );
 
-    let token = email_service
+    let _token = email_service
         .send_password_reset_email(&req.email, &token_service, &user.id)
         .await
         .map_err(|e| AppError::internal_server_error(format!("Failed to send email: {e}")))?;
 
-    // SECURITY: Never return the reset token in the response in production.
-    // In debug builds only, log it for local development/testing convenience.
-    #[cfg(debug_assertions)]
-    tracing::debug!("DEV ONLY - password reset token for {}: {}", req.email, token);
-    let _ = token;
+    // SECURITY: Token is never logged or returned to prevent security leaks
+    // Token is only sent via email to the user
 
     info!("Password reset requested for user {}", user.id.as_str());
 

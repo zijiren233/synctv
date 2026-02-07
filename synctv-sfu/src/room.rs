@@ -8,6 +8,7 @@
 //! - Room statistics and monitoring
 
 use crate::config::SfuConfig;
+use crate::network_monitor::NetworkQualityMonitor;
 use crate::peer::SfuPeer;
 use crate::track::MediaTrack;
 use crate::types::{PeerId, RoomId, TrackId};
@@ -71,6 +72,9 @@ pub struct SfuRoom {
 
     /// Statistics
     pub stats: Arc<RwLock<RoomStats>>,
+
+    /// Network quality monitoring
+    network_monitor: Arc<NetworkQualityMonitor>,
 }
 
 impl SfuRoom {
@@ -87,6 +91,7 @@ impl SfuRoom {
             forwarding_tasks: DashMap::new(),
             config,
             stats: Arc::new(RwLock::new(RoomStats::default())),
+            network_monitor: Arc::new(NetworkQualityMonitor::new()),
         }
     }
 
@@ -123,6 +128,9 @@ impl SfuRoom {
     pub async fn remove_peer(&self, peer_id: &PeerId) -> Result<()> {
         // Remove peer
         self.peers.remove(peer_id);
+
+        // Remove from network quality monitor
+        self.network_monitor.remove_peer(peer_id);
 
         // Remove all tracks published by this peer
         let tracks_to_remove: Vec<TrackId> = self
@@ -531,12 +539,23 @@ impl SfuRoom {
     }
 
     /// Get list of all published track IDs
-    #[must_use] 
+    #[must_use]
     pub fn get_track_ids(&self) -> Vec<TrackId> {
         self.published_tracks
             .iter()
             .map(|entry| entry.key().clone())
             .collect()
+    }
+
+    /// Get network quality stats for all peers in the room
+    pub fn get_network_quality_stats(&self) -> Vec<(String, crate::network_monitor::NetworkStats)> {
+        self.network_monitor.get_all_stats()
+    }
+
+    /// Get network quality monitor (for advanced use)
+    #[must_use]
+    pub const fn network_monitor(&self) -> &Arc<NetworkQualityMonitor> {
+        &self.network_monitor
     }
 }
 

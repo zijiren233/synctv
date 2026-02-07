@@ -5,13 +5,19 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
     EnvFilter,
 };
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 use crate::config::LoggingConfig;
 
 /// Initialize structured logging based on configuration
 ///
 /// Supports both JSON (production) and pretty (development) formats
-/// with configurable log levels and optional file output.
+/// with configurable log levels and optional file output with rotation.
+///
+/// Log rotation configuration:
+/// - Rotation: Daily (at midnight local time)
+/// - Filename format: synctv-YYYY-MM-DD.log
+/// - No automatic file count limit (use external logrotate for cleanup)
 pub fn init_logging(config: &LoggingConfig) -> anyhow::Result<()> {
     let log_level = parse_log_level(&config.level)?;
 
@@ -34,12 +40,25 @@ pub fn init_logging(config: &LoggingConfig) -> anyhow::Result<()> {
             .with_file(true);
 
         if let Some(file_path) = &config.file_path {
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(file_path)?;
-            let file_layer = json_layer.with_writer(std::sync::Arc::new(file));
+            // Extract directory and create rolling file appender
+            let log_dir = std::path::Path::new(file_path)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+
+            let file_appender = RollingFileAppender::builder()
+                .rotation(Rotation::DAILY)
+                .filename_prefix("synctv")
+                .filename_suffix("log")
+                .build(log_dir)?;
+
+            let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+            let file_layer = json_layer.with_writer(non_blocking);
+
             registry.with(file_layer).init();
+
+            // Store guard to prevent it from being dropped
+            // In production, this should be stored in application state
+            std::mem::forget(_guard);
         } else {
             registry.with(json_layer).init();
         }
@@ -53,12 +72,25 @@ pub fn init_logging(config: &LoggingConfig) -> anyhow::Result<()> {
             .with_file(false);
 
         if let Some(file_path) = &config.file_path {
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(file_path)?;
-            let file_layer = pretty_layer.with_writer(std::sync::Arc::new(file));
+            // Extract directory and create rolling file appender
+            let log_dir = std::path::Path::new(file_path)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+
+            let file_appender = RollingFileAppender::builder()
+                .rotation(Rotation::DAILY)
+                .filename_prefix("synctv")
+                .filename_suffix("log")
+                .build(log_dir)?;
+
+            let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+            let file_layer = pretty_layer.with_writer(non_blocking);
+
             registry.with(file_layer).init();
+
+            // Store guard to prevent it from being dropped
+            // In production, this should be stored in application state
+            std::mem::forget(_guard);
         } else {
             registry.with(pretty_layer).init();
         }

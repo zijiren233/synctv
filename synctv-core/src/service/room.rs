@@ -95,7 +95,7 @@ impl RoomService {
         permission_service.set_room_settings_repo(room_settings_repo.clone());
 
         // Initialize provider instance manager and providers manager
-        let provider_instance_manager = Arc::new(crate::service::ProviderInstanceManager::new(provider_instance_repo));
+        let provider_instance_manager = Arc::new(crate::service::RemoteProviderManager::new(provider_instance_repo));
         let providers_manager = Arc::new(ProvidersManager::new(provider_instance_manager));
 
         // Initialize domain services
@@ -136,11 +136,20 @@ impl RoomService {
         password: Option<String>,
         settings: Option<RoomSettings>,
     ) -> Result<(Room, RoomMember)> {
+        tracing::info!(
+            user_id = %created_by,
+            room_name = %name,
+            has_password = password.is_some(),
+            "Creating new room"
+        );
+
         // Validate room name
         if name.is_empty() {
+            tracing::warn!(user_id = %created_by, "Attempted to create room with empty name");
             return Err(Error::InvalidInput("Room name cannot be empty".to_string()));
         }
         if name.len() > 255 {
+            tracing::warn!(user_id = %created_by, name_len = name.len(), "Attempted to create room with name too long");
             return Err(Error::InvalidInput("Room name too long".to_string()));
         }
 
@@ -151,6 +160,12 @@ impl RoomService {
         // Create room
         let room = Room::new(name, created_by.clone());
         let created_room = self.room_repo.create(&room).await?;
+
+        tracing::info!(
+            room_id = %created_room.id,
+            user_id = %created_by,
+            "Room created successfully"
+        );
 
         // Hash password if provided and store in room_settings
         let hashed_password = if let Some(pwd) = password {
@@ -163,6 +178,7 @@ impl RoomService {
         // Store password hash separately in a "password" key
         if let Some(pwd_hash) = &hashed_password {
             self.room_settings_repo.set(&created_room.id, "password", pwd_hash).await?;
+            tracing::debug!(room_id = %created_room.id, "Room password set");
         }
 
         self.room_settings_repo.set_settings(&created_room.id, &room_settings).await?;
@@ -170,12 +186,18 @@ impl RoomService {
         // Add creator as member with full permissions
         let created_member = self.member_service.add_member(
             created_room.id.clone(),
-            created_by,
+            created_by.clone(),
             RoomRole::Creator,
         ).await?;
 
         // Initialize playback state
         self.playback_repo.create_or_get(&created_room.id).await?;
+
+        tracing::info!(
+            room_id = %created_room.id,
+            user_id = %created_by,
+            "Room creation completed"
+        );
 
         Ok((created_room, created_member))
     }
@@ -187,15 +209,26 @@ impl RoomService {
         user_id: UserId,
         password: Option<String>,
     ) -> Result<(Room, RoomMember, Vec<crate::models::RoomMemberWithUser>)> {
+        tracing::info!(
+            room_id = %room_id,
+            user_id = %user_id,
+            has_password = password.is_some(),
+            "User attempting to join room"
+        );
+
         // Get room
         let room = self
             .room_repo
             .get_by_id(&room_id)
             .await?
-            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+            .ok_or_else(|| {
+                tracing::warn!(room_id = %room_id, user_id = %user_id, "Room not found");
+                Error::NotFound("Room not found".to_string())
+            })?;
 
         // Check if room is active
         if room.status != RoomStatus::Active {
+            tracing::warn!(room_id = %room_id, user_id = %user_id, status = ?room.status, "Attempted to join inactive room");
             return Err(Error::InvalidInput("Room is closed".to_string()));
         }
 
@@ -207,14 +240,20 @@ impl RoomService {
             let password_hash = self.room_settings_repo.get_password_hash(&room_id).await?;
 
             if let Some(hash) = password_hash {
-                let provided_password = password.ok_or_else(|| Error::Authorization("Password required".to_string()))?;
+                let provided_password = password.ok_or_else(|| {
+                    tracing::warn!(room_id = %room_id, user_id = %user_id, "Password required but not provided");
+                    Error::Authorization("Password required".to_string())
+                })?;
 
                 // Verify password using Argon2id
                 let is_valid = verify_password(&provided_password, &hash).await?;
                 if !is_valid {
+                    tracing::warn!(room_id = %room_id, user_id = %user_id, "Invalid password provided");
                     return Err(Error::Authorization("Invalid password".to_string()));
                 }
+                tracing::debug!(room_id = %room_id, user_id = %user_id, "Password verified successfully");
             } else {
+                tracing::error!(room_id = %room_id, "Password required but not set in database");
                 return Err(Error::Authorization("Password required but not set".to_string()));
             }
         }
@@ -229,22 +268,36 @@ impl RoomService {
         let username = self.user_service.get_username(&user_id).await?.unwrap_or_else(|| "Unknown".to_string());
         let _ = self.notification_service.notify_user_joined(&room_id, &user_id, &username).await;
 
+        tracing::info!(
+            room_id = %room_id,
+            user_id = %user_id,
+            username = %username,
+            member_count = members.len(),
+            "User joined room successfully"
+        );
+
         Ok((room, created_member, members))
     }
 
     /// Leave a room
     pub async fn leave_room(&self, room_id: RoomId, user_id: UserId) -> Result<()> {
+        tracing::info!(room_id = %room_id, user_id = %user_id, "User leaving room");
+
         self.member_service.remove_member(room_id.clone(), user_id.clone()).await?;
 
         // Notify room members with username
         let username = self.user_service.get_username(&user_id).await?.unwrap_or_else(|| "Unknown".to_string());
         let _ = self.notification_service.notify_user_left(&room_id, &user_id, &username).await;
 
+        tracing::info!(room_id = %room_id, user_id = %user_id, username = %username, "User left room");
+
         Ok(())
     }
 
     /// Delete a room (creator only)
     pub async fn delete_room(&self, room_id: RoomId, user_id: UserId) -> Result<()> {
+        tracing::info!(room_id = %room_id, user_id = %user_id, "Deleting room");
+
         // Check permission
         self.permission_service
             .check_permission(&room_id, &user_id, PermissionBits::DELETE_ROOM)
@@ -255,6 +308,8 @@ impl RoomService {
 
         // Delete room
         self.room_repo.delete(&room_id).await?;
+
+        tracing::info!(room_id = %room_id, user_id = %user_id, "Room deleted successfully");
 
         Ok(())
     }
