@@ -130,8 +130,10 @@ impl SyncTvServer {
         info!("All servers started successfully");
 
         // Wait for either a server to stop or a shutdown signal
-        let grpc_handle = self.grpc_handle.take().unwrap();
-        let http_handle = self.http_handle.take().unwrap();
+        let grpc_handle = self.grpc_handle.take()
+            .ok_or_else(|| anyhow::anyhow!("gRPC server handle missing after startup"))?;
+        let http_handle = self.http_handle.take()
+            .ok_or_else(|| anyhow::anyhow!("HTTP server handle missing after startup"))?;
 
         tokio::select! {
             _ = grpc_handle => {

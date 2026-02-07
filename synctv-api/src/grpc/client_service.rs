@@ -3030,7 +3030,7 @@ impl PublicService for ClientServiceImpl {
         _request: Request<GetPublicSettingsRequest>,
     ) -> Result<Response<GetPublicSettingsResponse>, Status> {
         let reg = self.settings_registry.as_ref()
-            .ok_or_else(|| Status::unimplemented("Settings registry not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Settings registry not configured"))?;
 
         let s = reg.to_public_settings();
         Ok(Response::new(GetPublicSettingsResponse {

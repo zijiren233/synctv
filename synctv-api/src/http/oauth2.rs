@@ -305,20 +305,32 @@ pub async fn unbind_provider(
     })))
 }
 
-/// Get list of `OAuth2` providers bound to user
+/// Get list of available `OAuth2` provider instances
 ///
 /// GET /api/oauth2/providers
+///
+/// Returns the configured OAuth2 provider instances that clients can use
+/// for login or account binding. No authentication required.
 pub async fn list_providers(
     State(state): State<AppState>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
-    // Check if OAuth2 service exists
-    let _oauth2_service = state.oauth2_service.as_ref().ok_or_else(|| {
+    let oauth2_service = state.oauth2_service.as_ref().ok_or_else(|| {
         super::AppError::bad_request("OAuth2 is not configured on this server")
     })?;
 
-    // This would require authentication
-    // For now, return empty list
-    Ok(Json(vec![]))
+    let instances = oauth2_service.list_available_instances().await;
+
+    let providers: Vec<serde_json::Value> = instances
+        .into_iter()
+        .map(|(name, provider_type)| {
+            serde_json::json!({
+                "name": name,
+                "type": provider_type.as_str(),
+            })
+        })
+        .collect();
+
+    Ok(Json(providers))
 }
 
 /// Generate JWT tokens for user
