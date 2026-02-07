@@ -13,6 +13,7 @@ pub mod metrics;
 pub mod telemetry;
 pub mod resilience;
 pub mod validation;
+pub mod secrets;
 
 #[cfg(test)]
 pub mod test_helpers;
