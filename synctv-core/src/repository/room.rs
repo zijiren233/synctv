@@ -90,28 +90,40 @@ impl RoomRepository {
     pub async fn list(&self, query: &RoomListQuery) -> Result<(Vec<Room>, i64)> {
         let offset = (query.page - 1) * query.page_size;
 
-        // Build filter conditions
-        let mut conditions = vec!["r.deleted_at IS NULL"];
-        let mut bind_values: Vec<&str> = vec![];
+        // Build WHERE conditions
+        let mut where_conditions = vec!["r.deleted_at IS NULL"];
 
-        let status_str;
-        if let Some(status) = &query.status {
-            status_str = self.status_to_str(status);
-            conditions.push("r.status = $");
-            bind_values.push(status_str);
+        let status_filter = match &query.status {
+            Some(RoomStatus::Pending) => "r.status = 'pending'",
+            Some(RoomStatus::Active) => "r.status = 'active'",
+            Some(RoomStatus::Banned) => "r.status = 'banned'",
+            None => "",
+        };
+        if !status_filter.is_empty() {
+            where_conditions.push(status_filter);
         }
 
-        if let Some(_search) = &query.search {
-            conditions.push("r.name ILIKE $");
+        let has_search = query.search.is_some();
+        if has_search {
+            where_conditions.push("r.name ILIKE $3");
         }
 
-        let where_clause = conditions.join(" AND ");
+        let where_clause = where_conditions.join(" AND ");
 
         // Get total count
         let count_query = format!("SELECT COUNT(*) as count FROM rooms r WHERE {where_clause}");
-        let count: i64 = sqlx::query_scalar(&count_query)
-            .fetch_one(&self.pool)
-            .await?;
+
+        let count: i64 = if let Some(ref search) = query.search {
+            let search_pattern = format!("%{search}%");
+            sqlx::query_scalar(&count_query)
+                .bind(&search_pattern)
+                .fetch_one(&self.pool)
+                .await?
+        } else {
+            sqlx::query_scalar(&count_query)
+                .fetch_one(&self.pool)
+                .await?
+        };
 
         // Get rooms
         let list_query = format!(
@@ -122,11 +134,21 @@ impl RoomRepository {
              LIMIT $1 OFFSET $2"
         );
 
-        let rows = sqlx::query(&list_query)
-            .bind(query.page_size)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = if let Some(ref search) = query.search {
+            let search_pattern = format!("%{search}%");
+            sqlx::query(&list_query)
+                .bind(query.page_size)
+                .bind(offset)
+                .bind(&search_pattern)
+                .fetch_all(&self.pool)
+                .await?
+        } else {
+            sqlx::query(&list_query)
+                .bind(query.page_size)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await?
+        };
 
         let rooms: Result<Vec<Room>> = rows.into_iter().map(|row| self.row_to_room(row)).collect();
 
@@ -267,7 +289,7 @@ impl RoomRepository {
 
         // Get rooms
         let rows = sqlx::query(
-            "SELECT id, name, created_by, status, settings, created_at, updated_at, deleted_at
+            "SELECT id, name, created_by, status, created_at, updated_at, deleted_at
              FROM rooms
              WHERE created_by = $1 AND deleted_at IS NULL
              ORDER BY created_at DESC

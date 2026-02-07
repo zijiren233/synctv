@@ -41,6 +41,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -159,6 +160,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -311,6 +313,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -341,6 +344,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -440,6 +444,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -472,6 +477,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
