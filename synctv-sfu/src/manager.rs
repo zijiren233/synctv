@@ -393,6 +393,19 @@ impl SfuManager {
             Err(anyhow!("Room not found"))
         }
     }
+
+    /// Get network quality stats for all peers in a room
+    pub fn get_room_network_quality(
+        &self,
+        room_id: &RoomId,
+    ) -> Result<Vec<(String, crate::network_monitor::NetworkStats)>> {
+        if let Some(room_entry) = self.rooms.get(room_id) {
+            let room = room_entry.value();
+            Ok(room.get_network_quality_stats())
+        } else {
+            Ok(Vec::new())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1746,8 +1746,20 @@ impl RoomService for ClientServiceImpl {
             .await
             .map_err(|e| Status::permission_denied(format!("Not a member of the room: {e}")))?;
 
-        // Return empty stats for now - in production this would be populated
-        // from the SFU NetworkQualityMonitor when SFU mode is active
+        // Network quality stats require SFU integration
+        // The NetworkQualityMonitor is fully implemented in synctv-sfu but not yet
+        // integrated with the API layer. To enable this feature:
+        // 1. Add SfuManager to the gRPC service dependencies
+        // 2. Call sfu_manager.get_room_network_quality(room_id)
+        // 3. Convert NetworkStats to proto::NetworkQualityPeer
+        //
+        // For now, return empty list to avoid breaking the API
+        tracing::debug!(
+            room_id = %room_id,
+            user_id = %_user_id,
+            "Network quality monitoring requested but SFU integration not enabled"
+        );
+
         Ok(Response::new(GetNetworkQualityResponse { peers: vec![] }))
     }
 }

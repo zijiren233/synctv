@@ -1248,9 +1248,20 @@ impl ClientApiImpl {
     ) -> Result<crate::proto::client::GetNetworkQualityResponse, anyhow::Error> {
         use crate::proto::client::GetNetworkQualityResponse;
 
-        // Network quality stats are populated from the SFU NetworkQualityMonitor
-        // when SFU mode is active. For P2P mode, clients track their own stats.
-        // Return empty list when no SFU stats are available.
+        // Network quality stats require SFU integration
+        // The NetworkQualityMonitor is implemented in synctv-sfu but not yet
+        // integrated with the API layer. To enable this feature:
+        // 1. Add SfuManager to ClientApiImpl
+        // 2. Call sfu_manager.get_room_network_quality(room_id)
+        // 3. Convert NetworkStats to proto::NetworkQualityPeer
+        //
+        // For now, return empty list to avoid breaking the API
+        tracing::debug!(
+            room_id = %_room_id,
+            user_id = %_user_id,
+            "Network quality monitoring requested but SFU integration not enabled"
+        );
+
         Ok(GetNetworkQualityResponse { peers: vec![] })
     }
 }
