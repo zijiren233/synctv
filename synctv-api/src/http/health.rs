@@ -78,35 +78,29 @@ pub async fn liveness_check() -> impl IntoResponse {
 /// - 503 Service Unavailable: One or more dependencies are unhealthy
 pub async fn readiness_check(State(state): State<AppState>) -> impl IntoResponse {
     let mut is_healthy = true;
-    let mut db_status = "unknown".to_string();
-    let mut redis_status = "unknown".to_string();
     let mut error_messages = Vec::new();
 
     // Check database connectivity
-    match check_database_health(&state).await {
-        Ok(()) => {
-            db_status = "healthy".to_string();
-        }
+    let db_status = match check_database_health(&state).await {
+        Ok(()) => "healthy".to_string(),
         Err(e) => {
-            db_status = "unhealthy".to_string();
             error_messages.push(format!("Database: {}", e));
             is_healthy = false;
             error!("Database health check failed: {}", e);
+            "unhealthy".to_string()
         }
-    }
+    };
 
     // Check Redis connectivity
-    match check_redis_health(&state).await {
-        Ok(()) => {
-            redis_status = "healthy".to_string();
-        }
+    let redis_status = match check_redis_health(&state).await {
+        Ok(()) => "healthy".to_string(),
         Err(e) => {
-            redis_status = "unhealthy".to_string();
             error_messages.push(format!("Redis: {}", e));
             is_healthy = false;
             error!("Redis health check failed: {}", e);
+            "unhealthy".to_string()
         }
-    }
+    };
 
     let status_code = if is_healthy {
         StatusCode::OK
