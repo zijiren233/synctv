@@ -3027,9 +3027,9 @@ impl EmailService for ClientServiceImpl {
         request: Request<SendVerificationEmailRequest>,
     ) -> Result<Response<SendVerificationEmailResponse>, Status> {
         let email_service = self.email_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email service is not configured on this server. Please contact the administrator or use alternative authentication methods."))?;
         let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
 
         let req = request.into_inner();
 
@@ -3067,7 +3067,7 @@ impl EmailService for ClientServiceImpl {
         request: Request<ConfirmEmailRequest>,
     ) -> Result<Response<ConfirmEmailResponse>, Status> {
         let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
 
         let req = request.into_inner();
 
@@ -3109,9 +3109,9 @@ impl EmailService for ClientServiceImpl {
         request: Request<RequestPasswordResetRequest>,
     ) -> Result<Response<RequestPasswordResetResponse>, Status> {
         let email_service = self.email_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email service is not configured on this server. Please contact the administrator to reset your password."))?;
         let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
 
         let req = request.into_inner();
 
@@ -3147,7 +3147,7 @@ impl EmailService for ClientServiceImpl {
         request: Request<ConfirmPasswordResetRequest>,
     ) -> Result<Response<ConfirmPasswordResetResponse>, Status> {
         let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::unimplemented("Email token service not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
 
         let req = request.into_inner();
 
