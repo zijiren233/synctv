@@ -307,7 +307,6 @@ impl SyncTvServer {
             user_service,
             room_service,
             provider_instance_manager,
-            provider_instance_repository,
             user_provider_credential_repository,
             self.services.alist_provider.clone(),
             self.services.bilibili_provider.clone(),
