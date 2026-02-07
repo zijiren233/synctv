@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use sqlx::PgPool;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     cache::UsernameCache,
@@ -306,6 +306,24 @@ async fn init_oauth2_service(
             }
         }
     }
+
+    // Spawn background task to clean up expired OAuth2 states
+    // This prevents memory leaks from expired authorization flows
+    let oauth2_service_clone = oauth2_service.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Run every hour
+        loop {
+            interval.tick().await;
+            match oauth2_service_clone.cleanup_expired_states(7200).await {
+                Ok(()) => {
+                    debug!("OAuth2 state cleanup completed successfully");
+                }
+                Err(e) => {
+                    error!("Failed to cleanup expired OAuth2 states: {}", e);
+                }
+            }
+        }
+    });
 
     Ok(Some(oauth2_service))
 }

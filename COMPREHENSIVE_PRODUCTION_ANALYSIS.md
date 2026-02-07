@@ -18,7 +18,7 @@ This comprehensive analysis expands upon the initial production readiness assess
 - **🟢 12 Medium Priority Concerns** for operational excellence
 - **✅ 15 Security Best Practices** already implemented correctly
 
-### Production Readiness Score: **9.0/10** *(Updated 2026-02-07)*
+### Production Readiness Score: **9.2/10** *(Updated 2026-02-07)*
 
 **Current Status**: **Production-ready with P1/P2 enhancements in progress**
 
@@ -993,6 +993,8 @@ pub struct OAuth2Service {
 
 **Location**: `synctv-core/src/service/oauth2.rs`
 
+**Status**: ✅ **FIXED** (2026-02-07)
+
 **Issue**: No expiration on OAuth2 state tokens
 ```rust
 state_store: RwLock<HashMap<String, PendingAuth>>,
@@ -1001,21 +1003,32 @@ state_store: RwLock<HashMap<String, PendingAuth>>,
 
 **Impact**: Memory leak over time
 
-**Fix**:
+**Fix Implemented**:
 ```rust
-struct PendingAuth {
-    created_at: Instant,
-    expires_at: Instant,
-    // ... other fields
-}
-
-// Periodic cleanup
-async fn cleanup_expired_states(&self) {
-    let mut state_store = self.state_store.write().await;
-    let now = Instant::now();
-    state_store.retain(|_, auth| auth.expires_at > now);
-}
+// synctv-core/src/bootstrap/services.rs:310-326
+// Spawn background task to clean up expired OAuth2 states
+let oauth2_service_clone = oauth2_service.clone();
+tokio::spawn(async move {
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Run every hour
+    loop {
+        interval.tick().await;
+        match oauth2_service_clone.cleanup_expired_states(7200).await {
+            Ok(()) => {
+                debug!("OAuth2 state cleanup completed successfully");
+            }
+            Err(e) => {
+                error!("Failed to cleanup expired OAuth2 states: {}", e);
+            }
+        }
+    }
+});
 ```
+
+**Details**:
+- Periodic cleanup runs every 3600 seconds (1 hour)
+- Removes states older than 7200 seconds (2 hours)
+- Uses non-blocking tokio::spawn background task
+- Logs success at debug level, errors at error level
 
 ---
 
@@ -1055,15 +1068,26 @@ async fn cleanup_expired_states(&self) {
 | Migration rollback support | High | 🔴 Pending | - |
 | Distributed tracing | High | 🔴 Pending | - |
 | Secrets management | High | 🔴 Pending | - |
-| Production Docker images | High | 🔴 Pending | - |
+| Production Docker images | High | ✅ **FIXED** | 2026-02-07 |
 | Kubernetes manifests | High | ✅ **DONE** | 2026-02-07 |
 | Git dependency security | High | ✅ **FIXED** | 2026-02-07 |
 | cargo-deny setup | High | ✅ **FIXED** | 2026-02-07 |
 
 **Total Effort**: ~6 weeks
-**Completed**: 3/9 (Kubernetes manifests, cargo-deny, Git deps secured)
+**Completed**: 4/9 (Kubernetes manifests, cargo-deny, Git deps secured, Production Docker)
 
 **Note on Constant-time comparison**: OAuth2 state uses HashMap lookup which is not vulnerable to timing attacks. Argon2 and JWT libraries already use constant-time comparisons.
+
+**Docker Infrastructure Completed (2026-02-07)**:
+- ✅ Multi-stage production Dockerfile with build optimization
+- ✅ Non-root container user (appuser uid 1000) for security
+- ✅ Binary stripping for reduced image size
+- ✅ Health check integration using `/health/live` endpoint
+- ✅ `.dockerignore` file for optimized build context
+- ✅ Complete docker-compose.yml with postgres, redis, and synctv services
+- ✅ Environment variable support with secure defaults
+- ✅ Volume mounts for JWT keys with read-only flag
+- ✅ Service health dependencies and restart policies
 
 ---
 
@@ -1076,10 +1100,10 @@ async fn cleanup_expired_states(&self) {
 | Log rotation | Medium | 🔴 Pending | - |
 | Multiple dependency versions | Medium | ✅ **MONITORED** | 2026-02-07 |
 | SBOM generation | Medium | ✅ **FIXED** | 2026-02-07 |
-| OAuth2 state cleanup | Medium | 🔴 Pending | - |
+| OAuth2 state cleanup | Medium | ✅ **FIXED** | 2026-02-07 |
 
 **Total Effort**: ~3 weeks
-**Completed**: 2/6 (SBOM generation script, dependency monitoring via cargo-deny)
+**Completed**: 3/6 (SBOM generation script, dependency monitoring via cargo-deny, OAuth2 state cleanup)
 
 ---
 

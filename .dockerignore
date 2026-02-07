@@ -1,0 +1,53 @@
+# Build artifacts
+target/
+**/target/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Test files
+tests/
+**/tests/
+benches/
+**/benches/
+
+# Development files
+.env
+.env.*
+*.local
+*.local.*
+
+# Logs
+*.log
+
+# Keys (should be mounted at runtime)
+keys/
+*.pem
+
+# SBOM outputs
+target/sbom/
+
+# macOS
+.DS_Store
+
+# Temporary files
+tmp/
+temp/
