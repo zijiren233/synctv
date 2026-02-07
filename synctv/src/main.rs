@@ -139,9 +139,23 @@ async fn main() -> Result<()> {
         }
     };
 
-    // 8. Initialize connection manager
-    let connection_manager = ConnectionManager::default();
-    info!("Connection manager initialized");
+    // 8. Initialize connection manager with configurable limits
+    use synctv_cluster::sync::ConnectionLimits;
+    use std::time::Duration;
+    let connection_limits = ConnectionLimits {
+        max_per_user: config.connection_limits.max_per_user,
+        max_per_room: config.connection_limits.max_per_room,
+        max_total: config.connection_limits.max_total,
+        idle_timeout: Duration::from_secs(config.connection_limits.idle_timeout_seconds),
+        max_duration: Duration::from_secs(config.connection_limits.max_duration_seconds),
+    };
+    let connection_manager = ConnectionManager::new(connection_limits);
+    info!(
+        max_per_user = config.connection_limits.max_per_user,
+        max_per_room = config.connection_limits.max_per_room,
+        max_total = config.connection_limits.max_total,
+        "Connection manager initialized with configurable limits"
+    );
 
     // Note: Redis Pub/Sub is now handled by ClusterManager
     // We get the publish_tx from cluster_manager for backward compatibility

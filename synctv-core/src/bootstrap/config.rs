@@ -25,6 +25,7 @@ pub fn load_config() -> Result<Config> {
             email: crate::config::EmailConfig::default(),
             media_providers: crate::config::MediaProvidersConfig::default(),
             webrtc: crate::config::WebRTCConfig::default(),
+            connection_limits: crate::config::ConnectionLimitsConfig::default(),
         }
     });
 
