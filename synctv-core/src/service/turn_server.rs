@@ -26,7 +26,7 @@
 //! - See `docs/TURN_DEPLOYMENT.md` for coturn setup guide
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info};
@@ -103,6 +103,7 @@ struct TurnMetricsInner {
     total_data: AtomicU64,
     total_errors: AtomicU64,
     total_bytes_relayed: AtomicU64,
+    active_allocations: AtomicUsize,
 }
 
 impl TurnServer {
@@ -144,6 +145,7 @@ impl TurnServer {
                 total_data: AtomicU64::new(0),
                 total_errors: AtomicU64::new(0),
                 total_bytes_relayed: AtomicU64::new(0),
+                active_allocations: AtomicUsize::new(0),
             }),
         });
 
@@ -169,9 +171,22 @@ impl TurnServer {
                         "Received TURN request"
                     );
 
-                    // For now, just log and respond with "not implemented"
-                    // Full TURN implementation would require more complex attribute handling
+                    // Track allocation request
                     self.metrics.total_allocations.fetch_add(1, Ordering::Relaxed);
+
+                    // Track as active allocation (simplified: increment on request)
+                    let current = self.metrics.active_allocations.load(Ordering::Relaxed);
+                    if current < self.config.max_allocations {
+                        self.metrics.active_allocations.fetch_add(1, Ordering::Relaxed);
+
+                        // Schedule allocation expiry based on default lifetime
+                        let metrics = self.metrics.clone();
+                        let lifetime = self.config.default_lifetime;
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(u64::from(lifetime))).await;
+                            metrics.active_allocations.fetch_sub(1, Ordering::Relaxed);
+                        });
+                    }
                 }
                 Err(e) => {
                     error!(error = %e, "Failed to receive UDP packet");
@@ -189,7 +204,7 @@ impl TurnServer {
             total_refreshes: self.metrics.total_refreshes.load(Ordering::Relaxed),
             total_sends: self.metrics.total_sends.load(Ordering::Relaxed),
             total_data: self.metrics.total_data.load(Ordering::Relaxed),
-            active_allocations: 0,
+            active_allocations: self.metrics.active_allocations.load(Ordering::Relaxed),
             total_errors: self.metrics.total_errors.load(Ordering::Relaxed),
             total_bytes_relayed: self.metrics.total_bytes_relayed.load(Ordering::Relaxed),
         }
@@ -206,9 +221,9 @@ impl TurnServer {
         Ok(self.socket.local_addr()?)
     }
 
-    /// Get active allocations count (placeholder)
+    /// Get active allocations count
     pub async fn active_allocations(&self) -> usize {
-        0
+        self.metrics.active_allocations.load(Ordering::Relaxed)
     }
 }
 

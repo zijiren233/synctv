@@ -16,6 +16,7 @@ pub struct AdminServiceImpl {
     provider_manager: Arc<ProviderInstanceManager>,
     settings_service: Arc<SettingsService>,
     settings_registry: Option<Arc<SettingsRegistry>>,
+    email_service: Option<Arc<synctv_core::service::EmailService>>,
 }
 
 impl AdminServiceImpl {
@@ -26,6 +27,7 @@ impl AdminServiceImpl {
         provider_manager: Arc<ProviderInstanceManager>,
         settings_service: Arc<SettingsService>,
         settings_registry: Option<Arc<SettingsRegistry>>,
+        email_service: Option<Arc<synctv_core::service::EmailService>>,
     ) -> Self {
         Self {
             user_service: Arc::new(user_service),
@@ -33,6 +35,7 @@ impl AdminServiceImpl {
             provider_manager,
             settings_service,
             settings_registry,
+            email_service,
         }
     }
 
@@ -213,19 +216,27 @@ impl AdminService for AdminServiceImpl {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
-        // Email sending would require an email service integration (e.g., SMTP, SendGrid)
-        // For now, just log the test email request
-        // In production, this would send an actual test email
+        let email_service = self
+            .email_service
+            .as_ref()
+            .ok_or_else(|| Status::unavailable("Email service not configured"))?;
 
-        tracing::info!(
-            "Test email requested to '{}' but email service is not implemented",
-            req.to
-        );
-
-        Ok(Response::new(SendTestEmailResponse {
-            success: false,
-            message: "Email service not implemented".to_string(),
-        }))
+        match email_service.send_test_email(&req.to).await {
+            Ok(()) => {
+                tracing::info!("Test email sent successfully to '{}'", req.to);
+                Ok(Response::new(SendTestEmailResponse {
+                    success: true,
+                    message: format!("Test email sent to {}", req.to),
+                }))
+            }
+            Err(e) => {
+                tracing::warn!("Failed to send test email to '{}': {}", req.to, e);
+                Ok(Response::new(SendTestEmailResponse {
+                    success: false,
+                    message: format!("Failed to send test email: {e}"),
+                }))
+            }
+        }
     }
 
     // =========================
