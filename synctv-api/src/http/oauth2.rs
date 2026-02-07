@@ -17,7 +17,7 @@ use synctv_core::models::{
 };
 use synctv_core::service::JwtService;
 
-use super::{AppResult, AppState};
+use super::{middleware::AuthUser, AppResult, AppState};
 
 /// `OAuth2` authorization request query params
 #[derive(Debug, Deserialize)]
@@ -268,19 +268,41 @@ pub async fn bind_provider(
 ///
 /// DELETE /api/oauth2/:instance/bind
 pub async fn unbind_provider(
+    auth: AuthUser,
     State(state): State<AppState>,
-    Path(_instance_name): Path<String>,
+    Path(instance_name): Path<String>,
 ) -> AppResult<Json<serde_json::Value>> {
-    // Check if OAuth2 service exists
-    let _oauth2_service = state.oauth2_service.as_ref().ok_or_else(|| {
+    let oauth2_service = state.oauth2_service.as_ref().ok_or_else(|| {
         super::AppError::bad_request("OAuth2 is not configured on this server")
     })?;
 
-    // This would require authentication to get the current user ID
-    // For now, return an error
-    Err(super::AppError::bad_request(
-        "Unbind requires authentication (not yet implemented)",
-    ))
+    // Parse provider from instance name
+    let provider = synctv_core::models::oauth2_client::OAuth2Provider::from_str_name(&instance_name)
+        .ok_or_else(|| super::AppError::bad_request(format!("Unknown OAuth2 provider: {instance_name}")))?;
+
+    // Unbind all bindings for this provider
+    let deleted = oauth2_service
+        .unlink_provider_all(&auth.user_id, &provider)
+        .await
+        .map_err(|e| {
+            error!("Failed to unbind OAuth2 provider: {}", e);
+            super::AppError::internal_server_error("Failed to unbind provider")
+        })?;
+
+    if !deleted {
+        return Err(super::AppError::bad_request("No binding found for this provider"));
+    }
+
+    info!(
+        "User {} unbound OAuth2 provider {}",
+        auth.user_id.as_str(),
+        instance_name,
+    );
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "provider": instance_name,
+    })))
 }
 
 /// Get list of `OAuth2` providers bound to user

@@ -175,6 +175,24 @@ impl BilibiliProvider {
         let client = self.get_client(instance_name).await;
         client.user_info(req).await.map_err(std::convert::Into::into)
     }
+
+    /// Get live danmu (弹幕) server info for WebSocket connection
+    pub async fn get_live_danmu_info(
+        &self,
+        room_id: u64,
+        cookies: HashMap<String, String>,
+        instance_name: Option<&str>,
+    ) -> Result<synctv_providers::grpc::bilibili::GetLiveDanmuInfoResp, ProviderError> {
+        let client = self.get_client(instance_name).await;
+        let req = synctv_providers::grpc::bilibili::GetLiveDanmuInfoReq {
+            cookies,
+            room_id,
+        };
+        client
+            .get_live_danmu_info(req)
+            .await
+            .map_err(std::convert::Into::into)
+    }
 }
 
 // Note: Default implementation removed as it requires ProviderInstanceManager

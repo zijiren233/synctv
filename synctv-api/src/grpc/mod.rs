@@ -112,6 +112,9 @@ pub async fn serve(
     // Clone connection_manager for later use
     let connection_manager_for_provider = connection_manager.clone();
 
+    let email_service_for_admin = email_service.clone();
+    let providers_manager_for_client = providers_manager.clone();
+
     let client_service = ClientServiceImpl::new(
         user_service_clone,
         room_service_clone,
@@ -123,6 +126,7 @@ pub async fn serve(
         email_service,
         email_token_service,
         settings_registry.clone(),
+        providers_manager_for_client,
         Arc::new(config.clone()),
     );
 
@@ -132,6 +136,7 @@ pub async fn serve(
         provider_instance_manager,
         settings_service.clone(),
         settings_registry,
+        email_service_for_admin,
     );
 
     // Create server builder

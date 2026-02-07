@@ -1,6 +1,6 @@
 # SyncTV Rust 重构 TODO 跟踪
 
-**最后更新**: 2026-02-06
+**最后更新**: 2026-02-07
 **当前状态**: 全部核心功能完成，生产可用
 **架构**: 9-crate workspace (synctv, synctv-api, synctv-core, synctv-proxy, synctv-stream, synctv-sfu, synctv-cluster, synctv-proto, synctv-providers)
 **编译状态**: zero warnings, zero errors
@@ -66,29 +66,45 @@
 
 ---
 
-## 🟡 待完成 - 可延后
+## ✅ 已完成 - Danmu SSE
 
-- [ ] **Danmu SSE实际实现** — `synctv-api/src/http/providers/bilibili.rs`
-  - 当前是keep-alive stub，需要接入Bilibili弹幕获取API
+- [x] **Danmu SSE实际实现** — `synctv-api/src/http/providers/bilibili.rs`
+  - 通过SSE返回弹幕服务器连接信息（token + host_list），客户端直连Bilibili弹幕WebSocket
+  - 支持直播弹幕（`BilibiliProvider::get_live_danmu_info`）
+  - 非直播内容返回错误事件
 
 ---
 
-## 🟢 P2 - 优化和完善（可延后）
+## ✅ P2 - 优化和完善（全部完成）
 
 ### 监控和文档
 - [x] Prometheus监控集成 — `/metrics`端点已实现
 - [x] Swagger UI — `/swagger-ui`已实现
-- [ ] 为所有HTTP端点添加完整的`#[utoipa::path]`注解
+- [x] 为所有HTTP端点添加完整的`#[utoipa::path]`注解
+  - 93个端点完整OpenAPI文档（health, auth, user, rooms, media, playback, chat, webrtc, public, admin, email, notifications, oauth2, live, providers）
+  - 60+个Schema类型定义（含示例）
 
-### 流媒体优化
-- [ ] GOP缓存验证和测试（RTMP推流 → HLS/FLV拉流首帧延迟）
-- [ ] OSS存储集成（S3/阿里云OSS）
+### 测试和性能
+- [x] Bench tests完善 — `synctv-core/benches/auth_service.rs`（JWT/密码/并发token生成，RSA密钥运行时生成）
 
-### 测试覆盖
-- [ ] Bench tests完善（当前是stub）
+### 流媒体
+- [x] GOP缓存 — `synctv-stream/libraries/gop_cache/mod.rs` 完整实现（含5个测试）
+- [x] OSS存储集成 — `synctv-stream/libraries/storage/oss.rs` + `StreamingServer::with_oss_config()` 完整实现（S3/阿里云/MinIO，含3个测试）
+
+### gRPC功能补全
+- [x] `GetMovieInfo` gRPC — 完整实现（ProvidersManager查找provider、DASH/HLS/直连URL支持、movie_proxy设置、字幕代理URL）
+- [x] `SendTestEmail` gRPC Admin — 委托到EmailService.send_test_email()（SMTP模板邮件发送）
+- [x] TURN `active_allocations` 追踪 — AtomicUsize计数器 + 定时过期
+
+---
+
+## 🟢 可延后优化
+
+### 测试覆盖（需要运行环境）
 - [ ] 单元测试扩展（PermissionService, RoomService等）
 - [ ] 集成测试扩展（完整用户流程、Provider集成）
 - [ ] 端到端WebRTC测试（需要客户端）
+- [ ] GOP缓存验证测试（RTMP推流 → HLS/FLV拉流首帧延迟，需要实际RTMP环境）
 
 ---
 
@@ -106,6 +122,7 @@
 
 **核心文件**:
 - Admin HTTP: `synctv-api/src/http/admin.rs`
+- Admin gRPC: `synctv-api/src/grpc/admin_service.rs`
 - Admin impls: `synctv-api/src/impls/admin.rs`
 - WebSocket: `synctv-api/src/http/websocket.rs`
 - RTMP: `synctv/src/rtmp/mod.rs`
@@ -115,3 +132,5 @@
 - SFU: `synctv-sfu/src/`
 - Media model: `synctv-core/src/models/media.rs`
 - Member management: `synctv-api/src/http/room_extra.rs`
+- OpenAPI docs: `synctv-api/src/http/openapi.rs`
+- Benchmarks: `synctv-core/benches/auth_service.rs`

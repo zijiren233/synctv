@@ -12,7 +12,7 @@
 
 use crate::{
     libraries::gop_cache::GopCache,
-    libraries::storage::{HlsStorage, StorageBackend, FileStorage, MemoryStorage},
+    libraries::storage::{HlsStorage, StorageBackend, FileStorage, MemoryStorage, OssStorage, OssConfig},
     relay::registry_trait::StreamRegistryTrait,
     streaming::{
         pull_manager::PullStreamManager,
@@ -33,6 +33,7 @@ pub struct StreamingServer {
     hls_address: String,
     hls_storage_path: String,
     storage_backend: StorageBackend,
+    oss_config: Option<OssConfig>,
 
     // Shared components
     gop_cache: Arc<GopCache>,
@@ -56,11 +57,19 @@ impl StreamingServer {
             hls_address,
             hls_storage_path,
             storage_backend,
+            oss_config: None,
             gop_cache,
             registry,
             node_id,
             segment_manager: None,
         }
+    }
+
+    /// Set OSS configuration for object storage backend
+    #[must_use]
+    pub fn with_oss_config(mut self, config: OssConfig) -> Self {
+        self.oss_config = Some(config);
+        self
     }
 
     pub async fn start(mut self) -> StreamResult<()> {
@@ -75,8 +84,23 @@ impl StreamingServer {
                 Arc::new(MemoryStorage::new())
             }
             StorageBackend::Oss => {
-                log::warn!("OSS storage not yet fully implemented, falling back to file storage");
-                Arc::new(FileStorage::new(&self.hls_storage_path))
+                if let Some(oss_config) = self.oss_config.take() {
+                    log::info!(
+                        "Using OSS storage backend: bucket={}, endpoint={}",
+                        oss_config.bucket,
+                        oss_config.endpoint
+                    );
+                    match OssStorage::new(oss_config) {
+                        Ok(oss) => Arc::new(oss),
+                        Err(e) => {
+                            log::error!("Failed to initialize OSS storage: {}, falling back to file storage", e);
+                            Arc::new(FileStorage::new(&self.hls_storage_path))
+                        }
+                    }
+                } else {
+                    log::warn!("OSS storage selected but no config provided, falling back to file storage");
+                    Arc::new(FileStorage::new(&self.hls_storage_path))
+                }
             }
         };
 

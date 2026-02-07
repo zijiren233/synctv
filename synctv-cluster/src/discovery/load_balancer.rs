@@ -15,7 +15,7 @@ pub enum LoadBalancingStrategy {
     Random,
     /// Round-robin
     RoundRobin,
-    /// Least connections (not yet implemented)
+    /// Least connections (select node with fewest active connections)
     LeastConnections,
 }
 
@@ -64,9 +64,16 @@ impl LoadBalancer {
                 nodes[index].node_id.clone()
             }
             LoadBalancingStrategy::LeastConnections => {
-                // Fall back to random for now
+                // Select node with fewest connections based on metadata
+                // Nodes report connection count in metadata["connections"]
                 nodes
-                    .choose(&mut rand::thread_rng())
+                    .iter()
+                    .min_by_key(|n| {
+                        n.metadata
+                            .get("connections")
+                            .and_then(|v| v.parse::<usize>().ok())
+                            .unwrap_or(0)
+                    })
                     .ok_or_else(|| Error::NotFound("No nodes available".to_string()))?
                     .node_id
                     .clone()

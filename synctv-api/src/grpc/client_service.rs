@@ -35,6 +35,7 @@ pub struct ClientServiceConfig {
     pub email_service: Option<Arc<synctv_core::service::EmailService>>,
     pub email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+    pub providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     pub config: Arc<synctv_core::Config>,
 }
 
@@ -51,6 +52,7 @@ pub struct ClientServiceImpl {
     email_service: Option<Arc<synctv_core::service::EmailService>>,
     email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
     settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+    providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     config: Arc<synctv_core::Config>,
 }
 
@@ -68,6 +70,7 @@ impl ClientServiceImpl {
         email_service: Option<Arc<synctv_core::service::EmailService>>,
         email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
         settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+        providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
         config: Arc<synctv_core::Config>,
     ) -> Self {
         Self {
@@ -81,6 +84,7 @@ impl ClientServiceImpl {
             email_service,
             email_token_service,
             settings_registry,
+            providers_manager,
             config,
         }
     }
@@ -99,6 +103,7 @@ impl ClientServiceImpl {
             email_service: config.email_service,
             email_token_service: config.email_token_service,
             settings_registry: config.settings_registry,
+            providers_manager: config.providers_manager,
             config: config.config,
         }
     }
@@ -2600,16 +2605,222 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<GetMovieInfoRequest>,
     ) -> Result<Response<GetMovieInfoResponse>, Status> {
-        let _user_id = self.get_user_id(&request)?;
-        let _room_id = self.get_room_id(&request)?;
-        let _req = request.into_inner();
+        let user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
 
-        // TODO: Implement full GetMovieInfo logic
-        // 1. Get media from playlist by media_id
-        // 2. Determine provider and call generate_playback()
-        // 3. Check movie_proxy setting
-        // 4. Build MovieInfo with proxy or direct URLs
-        Err(Status::unimplemented("GetMovieInfo not yet implemented"))
+        let media_id = MediaId::from_string(req.media_id);
+
+        // 1. Get media from playlist
+        let playlist = self
+            .room_service
+            .get_playlist(&room_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get playlist: {e}")))?;
+
+        let media = playlist
+            .iter()
+            .find(|m| m.id == media_id)
+            .ok_or_else(|| Status::not_found("Media not found in playlist"))?;
+
+        // 2. For direct URL media, return playback info directly from source_config
+        if media.is_direct() {
+            let playback = media
+                .get_playback_result()
+                .ok_or_else(|| Status::internal("Failed to parse direct media playback info"))?;
+            let default_info = playback.get_default_playback_info();
+            let (url, media_type) = if let Some(info) = default_info {
+                let first_url = info.urls.first().map(|u| u.url.clone()).unwrap_or_default();
+                let fmt = info
+                    .urls
+                    .first()
+                    .and_then(|u| u.metadata.as_ref())
+                    .and_then(|m| m.codec.clone())
+                    .unwrap_or_else(|| "mp4".to_string());
+                (first_url, fmt)
+            } else {
+                (String::new(), "unknown".to_string())
+            };
+
+            return Ok(Response::new(GetMovieInfoResponse {
+                movie: Some(crate::proto::client::MovieInfo {
+                    r#type: media_type,
+                    url,
+                    headers: HashMap::new(),
+                    more_sources: Vec::new(),
+                    subtitles: Vec::new(),
+                    is_live: false,
+                    duration: playback
+                        .metadata
+                        .get("duration")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0),
+                }),
+            }));
+        }
+
+        // 3. For provider-backed media, use ProvidersManager to generate playback
+        let providers_manager = self
+            .providers_manager
+            .as_ref()
+            .ok_or_else(|| Status::unavailable("Providers manager not configured"))?;
+
+        let instance_name = media
+            .provider_instance_name
+            .as_deref()
+            .unwrap_or(&media.source_provider);
+
+        let provider = providers_manager
+            .get(instance_name)
+            .await
+            .ok_or_else(|| {
+                Status::not_found(format!("Provider instance '{}' not found", instance_name))
+            })?;
+
+        let ctx = synctv_core::provider::ProviderContext::new("synctv")
+            .with_user_id(user_id.as_str())
+            .with_room_id(room_id.as_str());
+
+        let result = provider
+            .generate_playback(&ctx, &media.source_config)
+            .await
+            .map_err(|e| Status::internal(format!("generate_playback failed: {e}")))?;
+
+        // 4. Check movie_proxy setting
+        let movie_proxy = self
+            .settings_registry
+            .as_ref()
+            .map(|r| r.to_public_settings().movie_proxy)
+            .unwrap_or(true);
+
+        let room_id_str = room_id.as_str();
+        let media_id_str = media_id.as_str();
+
+        // 5. Build MovieInfo
+        let is_live = result
+            .metadata
+            .get("is_live")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let duration = result
+            .metadata
+            .get("duration")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        // Collect subtitles from all playback modes
+        let subtitles: Vec<crate::proto::client::MovieSubtitle> = result
+            .playback_infos
+            .values()
+            .flat_map(|pi| &pi.subtitles)
+            .map(|s| crate::proto::client::MovieSubtitle {
+                name: s.name.clone(),
+                language: s.language.clone(),
+                url: if movie_proxy {
+                    format!(
+                        "/api/providers/{}/proxy/{room_id_str}/{media_id_str}/subtitle/{}",
+                        media.source_provider,
+                        url::form_urlencoded::byte_serialize(s.name.as_bytes())
+                            .collect::<String>()
+                    )
+                } else {
+                    s.url.clone()
+                },
+                format: s.format.clone(),
+            })
+            .collect();
+
+        // For DASH providers (bilibili Video/Pgc): generate MPD URLs
+        if result.dash.is_some() {
+            let (url, media_type, headers) = if movie_proxy {
+                (
+                    format!(
+                        "/api/providers/{}/proxy/{room_id_str}/{media_id_str}/mpd",
+                        media.source_provider
+                    ),
+                    "mpd".to_string(),
+                    HashMap::new(),
+                )
+            } else {
+                (
+                    format!(
+                        "/api/providers/{}/proxy/{room_id_str}/{media_id_str}/mpd?direct=1",
+                        media.source_provider
+                    ),
+                    "mpd".to_string(),
+                    result
+                        .playback_infos
+                        .get("dash")
+                        .map(|pi| pi.headers.clone())
+                        .unwrap_or_default(),
+                )
+            };
+
+            let mut more_sources = Vec::new();
+            if result.hevc_dash.is_some() {
+                let hevc_url = if movie_proxy {
+                    format!(
+                        "/api/providers/{}/proxy/{room_id_str}/{media_id_str}/mpd?codec=hevc",
+                        media.source_provider
+                    )
+                } else {
+                    format!(
+                        "/api/providers/{}/proxy/{room_id_str}/{media_id_str}/mpd?codec=hevc&direct=1",
+                        media.source_provider
+                    )
+                };
+                more_sources.push(crate::proto::client::MovieSource {
+                    name: "HEVC".to_string(),
+                    r#type: "mpd".to_string(),
+                    url: hevc_url,
+                    headers: HashMap::new(),
+                });
+            }
+
+            return Ok(Response::new(GetMovieInfoResponse {
+                movie: Some(crate::proto::client::MovieInfo {
+                    r#type: media_type,
+                    url,
+                    headers,
+                    more_sources,
+                    subtitles,
+                    is_live,
+                    duration,
+                }),
+            }));
+        }
+
+        // For HLS/direct providers: use first URL from default playback mode
+        let default_info = result.playback_infos.get(&result.default_mode);
+        let (url, media_type, headers) = if let Some(info) = default_info {
+            let first_url = info.urls.first().cloned().unwrap_or_default();
+            if movie_proxy && !first_url.is_empty() {
+                (
+                    format!(
+                        "/api/providers/{}/proxy/{room_id_str}/{media_id_str}",
+                        media.source_provider
+                    ),
+                    info.format.clone(),
+                    HashMap::new(),
+                )
+            } else {
+                (first_url, info.format.clone(), info.headers.clone())
+            }
+        } else {
+            (String::new(), "unknown".to_string(), HashMap::new())
+        };
+
+        Ok(Response::new(GetMovieInfoResponse {
+            movie: Some(crate::proto::client::MovieInfo {
+                r#type: media_type,
+                url,
+                headers,
+                more_sources: Vec::new(),
+                subtitles,
+                is_live,
+                duration,
+            }),
+        }))
     }
 }
 
