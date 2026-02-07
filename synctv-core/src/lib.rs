@@ -14,8 +14,8 @@ pub mod telemetry;
 pub mod resilience;
 pub mod validation;
 
-// #[cfg(test)]
-// pub mod test_helpers; // Temporarily disabled due to model structure mismatches
+#[cfg(test)]
+pub mod test_helpers;
 
 pub use config::Config;
 pub use error::{Error, Result};
