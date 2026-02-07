@@ -247,7 +247,7 @@ impl ClientApiImpl {
 
         let password = if req.password.is_empty() { None } else { Some(req.password) };
 
-        let (room, _member) = self.room_service.create_room(req.name, uid, password, settings).await
+        let (room, _member) = self.room_service.create_room(req.name, req.description, uid, password, settings).await
             .map_err(|e| e.to_string())?;
 
         let member_count = self.connection_manager.room_connection_count(&room.id).try_into().ok();
@@ -1062,6 +1062,7 @@ fn room_to_proto_basic(
     crate::proto::client::Room {
         id: room.id.as_str().to_string(),
         name: room.name.clone(),
+        description: room.description.clone(),
         created_by: room.created_by.as_str().to_string(),
         status: room.status.as_str().to_string(),
         settings: serde_json::to_vec(&room_settings).unwrap_or_default(),

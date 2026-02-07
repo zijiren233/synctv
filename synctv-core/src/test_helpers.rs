@@ -93,8 +93,8 @@ impl Default for UserFixture {
 pub struct RoomFixture {
     id: RoomId,
     name: String,
-    owner_id: UserId,
-    is_public: bool,
+    description: String,
+    created_by: UserId,
 }
 
 impl RoomFixture {
@@ -102,8 +102,8 @@ impl RoomFixture {
         Self {
             id: random_room_id(),
             name: "Test Room".to_string(),
-            owner_id: random_user_id(),
-            is_public: true,
+            description: String::new(),
+            created_by: random_user_id(),
         }
     }
 
@@ -117,13 +117,13 @@ impl RoomFixture {
         self
     }
 
-    pub fn with_owner(mut self, owner_id: UserId) -> Self {
-        self.owner_id = owner_id;
+    pub fn with_description(mut self, description: &str) -> Self {
+        self.description = description.to_string();
         self
     }
 
-    pub fn with_public(mut self, is_public: bool) -> Self {
-        self.is_public = is_public;
+    pub fn with_owner(mut self, created_by: UserId) -> Self {
+        self.created_by = created_by;
         self
     }
 
@@ -131,10 +131,12 @@ impl RoomFixture {
         crate::models::Room {
             id: self.id,
             name: self.name,
-            owner_id: self.owner_id,
-            is_public: self.is_public,
+            description: self.description,
+            created_by: self.created_by,
+            status: crate::models::RoomStatus::Active,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            deleted_at: None,
         }
     }
 }
@@ -257,11 +259,13 @@ mod tests {
         let owner_id = test_user_id("owner1");
         let room = RoomFixture::new()
             .with_name("My Room")
+            .with_description("Test description")
             .with_owner(owner_id.clone())
             .build();
 
         assert_eq!(room.name, "My Room");
-        assert_eq!(room.owner_id, owner_id);
+        assert_eq!(room.description, "Test description");
+        assert_eq!(room.created_by, owner_id);
     }
 
     #[test]

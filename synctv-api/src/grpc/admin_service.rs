@@ -1060,6 +1060,7 @@ impl AdminService for AdminServiceImpl {
             admin_rooms.push(AdminRoom {
                 id: r.id.to_string(),
                 name: r.name,
+                description: r.description,
                 creator_id: r.created_by.to_string(),
                 creator_username: String::new(), // Can be fetched if needed
                 status: match r.status {
@@ -1094,6 +1095,7 @@ impl AdminService for AdminServiceImpl {
                 admin_rooms.push(AdminRoom {
                     id: room.id.to_string(),
                     name: room.name,
+                    description: room.description,
                     creator_id: room.created_by.to_string(),
                     creator_username: String::new(), // Can be fetched if needed
                     status: match room.status {
@@ -1319,6 +1321,7 @@ impl AdminService for AdminServiceImpl {
         let admin_room = AdminRoom {
             id: updated_room.id.to_string(),
             name: updated_room.name,
+            description: updated_room.description,
             creator_id: updated_room.created_by.to_string(),
             creator_username,
             status: "banned".to_string(),
@@ -1390,6 +1393,7 @@ impl AdminService for AdminServiceImpl {
         let admin_room = AdminRoom {
             id: updated_room.id.to_string(),
             name: updated_room.name,
+            description: updated_room.description,
             creator_id: updated_room.created_by.to_string(),
             creator_username,
             status: match updated_room.status {
@@ -1454,6 +1458,7 @@ impl AdminService for AdminServiceImpl {
         let admin_room = AdminRoom {
             id: room.id.to_string(),
             name: room.name,
+            description: room.description,
             creator_id: room.created_by.to_string(),
             creator_username,
             status: match room.status {
@@ -2097,6 +2102,7 @@ impl AdminService for AdminServiceImpl {
             room: Some(crate::proto::admin::AdminRoom {
                 id: room.id.as_str().to_string(),
                 name: room.name.clone(),
+                description: room.description.clone(),
                 creator_id: room.created_by.as_str().to_string(),
                 creator_username: String::new(),
                 status: room.status.as_str().to_string(),
@@ -2165,6 +2171,7 @@ impl AdminService for AdminServiceImpl {
             room: Some(crate::proto::admin::AdminRoom {
                 id: room.id.as_str().to_string(),
                 name: room.name.clone(),
+                description: room.description.clone(),
                 creator_id: room.created_by.as_str().to_string(),
                 creator_username: String::new(),
                 status: room.status.as_str().to_string(),

@@ -41,6 +41,9 @@ pub struct AdminRoom {
     pub created_at: i64,
     #[prost(int64, tag = "9")]
     pub updated_at: i64,
+    /// Room description
+    #[prost(string, tag = "10")]
+    pub description: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]

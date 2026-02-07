@@ -594,6 +594,7 @@ impl UserService for ClientServiceImpl {
             room_protos.push(Room {
                 id: rwc.room.id.to_string(),
                 name: rwc.room.name,
+                description: rwc.room.description,
                 created_by: rwc.room.created_by.to_string(),
                 status: match rwc.room.status {
                     RoomStatus::Pending => "pending".to_string(),
@@ -654,6 +655,7 @@ impl UserService for ClientServiceImpl {
             let room_proto = Room {
                 id: room.id.to_string(),
                 name: room.name,
+                description: room.description,
                 created_by: room.created_by.to_string(),
                 status: match room.status {
                     RoomStatus::Pending => "pending".to_string(),
@@ -716,7 +718,7 @@ impl RoomService for ClientServiceImpl {
         // Create room
         let (room, _member) = self
             .room_service
-            .create_room(req.name, user_id, password, settings)
+            .create_room(req.name, req.description, user_id, password, settings)
             .await
             .map_err(|e| match e {
                 synctv_core::Error::InvalidInput(msg) => Status::invalid_argument(msg),
@@ -733,6 +735,7 @@ impl RoomService for ClientServiceImpl {
         let proto_room = Some(Room {
             id: room.id.as_str().to_string(),
             name: room.name,
+            description: room.description,
             created_by: room.created_by.as_str().to_string(),
             status: room.status.as_str().to_string(),
             settings: serde_json::to_vec(&settings).unwrap_or_default(),
@@ -785,6 +788,7 @@ impl RoomService for ClientServiceImpl {
         let proto_room = Some(Room {
             id: room.id.as_str().to_string(),
             name: room.name,
+            description: room.description,
             created_by: room.created_by.as_str().to_string(),
             status: room.status.as_str().to_string(),
             settings: serde_json::to_vec(&settings).unwrap_or_default(),
@@ -856,6 +860,7 @@ impl RoomService for ClientServiceImpl {
         let proto_room = Some(Room {
             id: room.id.as_str().to_string(),
             name: room.name,
+            description: room.description,
             created_by: room.created_by.as_str().to_string(),
             status: room.status.as_str().to_string(),
             settings: serde_json::to_vec(&settings).unwrap_or_default(),
@@ -997,6 +1002,7 @@ impl RoomService for ClientServiceImpl {
             room: Some(Room {
                 id: updated_room.id.to_string(),
                 name: updated_room.name,
+                description: updated_room.description,
                 created_by: updated_room.created_by.to_string(),
                 status: match updated_room.status {
                     RoomStatus::Pending => "pending".to_string(),
@@ -2935,6 +2941,7 @@ impl PublicService for ClientServiceImpl {
             proto_rooms.push(Room {
                 id: room.id.to_string(),
                 name: room.name,
+                description: room.description,
                 created_by: room.created_by.to_string(),
                 status: match room.status {
                     RoomStatus::Pending => "pending".to_string(),
@@ -3003,6 +3010,7 @@ impl PublicService for ClientServiceImpl {
             let room_proto = Room {
                 id: room.id.to_string(),
                 name: room.name,
+                description: room.description,
                 created_by: room.created_by.to_string(),
                 status: match room.status {
                     RoomStatus::Pending => "pending".to_string(),

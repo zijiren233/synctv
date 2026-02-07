@@ -74,6 +74,11 @@ pub async fn create_room(
         return Err(super::AppError::bad_request("Room name cannot be empty"));
     }
 
+    let description = req.get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let password = req.get("password")
         .and_then(|v| v.as_str())
         .unwrap_or("")
@@ -104,6 +109,7 @@ pub async fn create_room(
         name,
         password,
         settings: settings_bytes,
+        description,
     };
 
     // Call impls layer

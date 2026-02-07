@@ -37,6 +37,9 @@ pub struct Room {
     pub created_at: i64,
     #[prost(int32, tag = "7")]
     pub member_count: i32,
+    /// Room description
+    #[prost(string, tag = "8")]
+    pub description: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -226,6 +229,9 @@ pub struct CreateRoomRequest {
     /// JSON settings
     #[prost(bytes = "vec", tag = "3")]
     pub settings: ::prost::alloc::vec::Vec<u8>,
+    /// Room description
+    #[prost(string, tag = "4")]
+    pub description: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]

@@ -20,10 +20,11 @@ pub struct UserSchema {
 }
 
 #[derive(ToSchema)]
-#[schema(example = json!({"id": "room_abc", "name": "Movie Night", "created_by": "user123", "status": "active", "member_count": 5, "created_at": 1700000000}))]
+#[schema(example = json!({"id": "room_abc", "name": "Movie Night", "description": "Watch movies together every Friday", "created_by": "user123", "status": "active", "member_count": 5, "created_at": 1700000000}))]
 pub struct RoomSchema {
     pub id: String,
     pub name: String,
+    pub description: String,
     pub created_by: String,
     pub status: String,
     pub member_count: i32,
@@ -112,9 +113,12 @@ pub struct RefreshTokenResponseSchema {
 // --- Room schemas ---
 
 #[derive(ToSchema)]
-#[schema(example = json!({"name": "Movie Night", "password": ""}))]
+#[schema(example = json!({"name": "Movie Night", "description": "Watch movies together", "password": ""}))]
 pub struct CreateRoomRequestSchema {
     pub name: String,
+    /// Room description (max 500 characters)
+    #[schema(default = "")]
+    pub description: String,
     #[schema(default = "")]
     pub password: String,
 }

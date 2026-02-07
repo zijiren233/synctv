@@ -135,6 +135,7 @@ message Room {
     bytes settings = 5; // JSON settings
     int64 created_at = 6;
     int32 member_count = 7;
+    string description = 8; // Room description
 }
 
 message Media {
@@ -239,6 +240,7 @@ message CreateRoomRequest {
     string name = 1;
     string password = 2; // Optional room password
     bytes settings = 3; // JSON settings
+    string description = 4; // Room description
 }
 
 message CreateRoomResponse {

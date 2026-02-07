@@ -20,12 +20,13 @@ impl RoomRepository {
     /// Create a new room
     pub async fn create(&self, room: &Room) -> Result<Room> {
         let row = sqlx::query(
-            "INSERT INTO rooms (id, name, created_by, status, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING id, name, created_by, status, created_at, updated_at, deleted_at"
+            "INSERT INTO rooms (id, name, description, created_by, status, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id, name, description, created_by, status, created_at, updated_at, deleted_at"
         )
         .bind(room.id.as_str())
         .bind(&room.name)
+        .bind(&room.description)
         .bind(room.created_by.as_str())
         .bind(self.status_to_str(&room.status))
         .bind(room.created_at)
@@ -39,7 +40,7 @@ impl RoomRepository {
     /// Get room by ID
     pub async fn get_by_id(&self, room_id: &RoomId) -> Result<Option<Room>> {
         let row = sqlx::query(
-            "SELECT id, name, created_by, status, created_at, updated_at, deleted_at
+            "SELECT id, name, description, created_by, status, created_at, updated_at, deleted_at
              FROM rooms
              WHERE id = $1 AND deleted_at IS NULL"
         )
@@ -57,12 +58,13 @@ impl RoomRepository {
     pub async fn update(&self, room: &Room) -> Result<Room> {
         let row = sqlx::query(
             "UPDATE rooms
-             SET name = $2, status = $3, updated_at = $4
+             SET name = $2, description = $3, status = $4, updated_at = $5
              WHERE id = $1 AND deleted_at IS NULL
-             RETURNING id, name, created_by, status, created_at, updated_at, deleted_at"
+             RETURNING id, name, description, created_by, status, created_at, updated_at, deleted_at"
         )
         .bind(room.id.as_str())
         .bind(&room.name)
+        .bind(&room.description)
         .bind(self.status_to_str(&room.status))
         .bind(chrono::Utc::now())
         .fetch_one(&self.pool)
@@ -105,7 +107,7 @@ impl RoomRepository {
 
         let has_search = query.search.is_some();
         if has_search {
-            where_conditions.push("r.name ILIKE $3");
+            where_conditions.push("(r.name ILIKE $3 OR r.description ILIKE $3)");
         }
 
         let where_clause = where_conditions.join(" AND ");
@@ -127,7 +129,7 @@ impl RoomRepository {
 
         // Get rooms
         let list_query = format!(
-            "SELECT r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
+            "SELECT r.id, r.name, r.description, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
              FROM rooms r
              WHERE {where_clause}
              ORDER BY r.created_at DESC
@@ -176,7 +178,7 @@ impl RoomRepository {
         // Search filter
         let has_search = query.search.is_some();
         if has_search {
-            where_conditions.push("r.name ILIKE $3");
+            where_conditions.push("(r.name ILIKE $3 OR r.description ILIKE $3)");
         }
 
         let where_clause = where_conditions.join(" AND ");
@@ -202,13 +204,13 @@ impl RoomRepository {
         let list_query = format!(
             r"
             SELECT
-                r.id, r.name, r.created_by, r.status,
+                r.id, r.name, r.description, r.created_by, r.status,
                 r.created_at, r.updated_at, r.deleted_at,
                 COALESCE(COUNT(rm.user_id) FILTER (WHERE rm.left_at IS NULL), 0)::int as member_count
             FROM rooms r
             LEFT JOIN room_members rm ON r.id = rm.room_id
             WHERE {where_clause}
-            GROUP BY r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
+            GROUP BY r.id, r.name, r.description, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
             ORDER BY r.created_at DESC
             LIMIT $1 OFFSET $2
             "
@@ -289,7 +291,7 @@ impl RoomRepository {
 
         // Get rooms
         let rows = sqlx::query(
-            "SELECT id, name, created_by, status, created_at, updated_at, deleted_at
+            "SELECT id, name, description, created_by, status, created_at, updated_at, deleted_at
              FROM rooms
              WHERE created_by = $1 AND deleted_at IS NULL
              ORDER BY created_at DESC
@@ -329,13 +331,13 @@ impl RoomRepository {
         let rows = sqlx::query(
             r"
             SELECT
-                r.id, r.name, r.created_by, r.status,
+                r.id, r.name, r.description, r.created_by, r.status,
                 r.created_at, r.updated_at, r.deleted_at,
                 COALESCE(COUNT(rm.user_id) FILTER (WHERE rm.left_at IS NULL), 0)::int as member_count
             FROM rooms r
             LEFT JOIN room_members rm ON r.id = rm.room_id
             WHERE r.created_by = $1 AND r.deleted_at IS NULL
-            GROUP BY r.id, r.name, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
+            GROUP BY r.id, r.name, r.description, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
             ORDER BY r.created_at DESC
             LIMIT $2 OFFSET $3
             "
@@ -368,6 +370,7 @@ impl RoomRepository {
         Ok(Room {
             id: RoomId::from_string(row.try_get("id")?),
             name: row.try_get("name")?,
+            description: row.try_get::<String, _>("description").unwrap_or_default(),
             created_by: UserId::from_string(row.try_get("created_by")?),
             status: self.str_to_status(&status_str),
             created_at: row.try_get("created_at")?,
@@ -385,10 +388,29 @@ impl RoomRepository {
             UPDATE rooms
             SET status = $1, updated_at = CURRENT_TIMESTAMP
             WHERE id = $2 AND deleted_at IS NULL
-            RETURNING id, name, created_by, status, created_at, updated_at, deleted_at
+            RETURNING id, name, description, created_by, status, created_at, updated_at, deleted_at
             ",
         )
         .bind(status_str)
+        .bind(room_id.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(Error::Database)?;
+
+        self.row_to_room(row)
+    }
+
+    /// Update room description
+    pub async fn update_description(&self, room_id: &RoomId, description: &str) -> Result<Room> {
+        let row = sqlx::query(
+            r"
+            UPDATE rooms
+            SET description = $1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2 AND deleted_at IS NULL
+            RETURNING id, name, description, created_by, status, created_at, updated_at, deleted_at
+            ",
+        )
+        .bind(description)
         .bind(room_id.as_str())
         .fetch_one(&self.pool)
         .await
