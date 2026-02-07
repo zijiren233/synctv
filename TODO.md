@@ -75,7 +75,7 @@
 
 ---
 
-## ✅ P2 - 优化和完善
+## ✅ P2 - 优化和完善（全部完成）
 
 ### 监控和文档
 - [x] Prometheus监控集成 — `/metrics`端点已实现
@@ -85,11 +85,16 @@
   - 60+个Schema类型定义（含示例）
 
 ### 测试和性能
-- [x] Bench tests完善 — auth_service（JWT/密码）和room_queries（ID操作/分页/搜索）基准测试已实现
+- [x] Bench tests完善 — `synctv-core/benches/auth_service.rs`（JWT/密码/并发token生成，RSA密钥运行时生成）
 
-### 流媒体（已实现，待验证）
+### 流媒体
 - [x] GOP缓存 — `synctv-stream/libraries/gop_cache/mod.rs` 完整实现（含5个测试）
-- [x] OSS存储集成 — `synctv-stream/libraries/storage/oss.rs` 完整实现（S3/阿里云/MinIO，含3个测试）
+- [x] OSS存储集成 — `synctv-stream/libraries/storage/oss.rs` + `StreamingServer::with_oss_config()` 完整实现（S3/阿里云/MinIO，含3个测试）
+
+### gRPC功能补全
+- [x] `GetMovieInfo` gRPC — 完整实现（ProvidersManager查找provider、DASH/HLS/直连URL支持、movie_proxy设置、字幕代理URL）
+- [x] `SendTestEmail` gRPC Admin — 委托到EmailService.send_test_email()（SMTP模板邮件发送）
+- [x] TURN `active_allocations` 追踪 — AtomicUsize计数器 + 定时过期
 
 ---
 
@@ -117,6 +122,7 @@
 
 **核心文件**:
 - Admin HTTP: `synctv-api/src/http/admin.rs`
+- Admin gRPC: `synctv-api/src/grpc/admin_service.rs`
 - Admin impls: `synctv-api/src/impls/admin.rs`
 - WebSocket: `synctv-api/src/http/websocket.rs`
 - RTMP: `synctv/src/rtmp/mod.rs`
@@ -127,4 +133,4 @@
 - Media model: `synctv-core/src/models/media.rs`
 - Member management: `synctv-api/src/http/room_extra.rs`
 - OpenAPI docs: `synctv-api/src/http/openapi.rs`
-- Benchmarks: `benches/service/auth_service.rs`, `benches/database/room_queries.rs`, `benches/cache/user_cache.rs`
+- Benchmarks: `synctv-core/benches/auth_service.rs`

@@ -174,11 +174,24 @@ impl TurnServer {
                     // Track allocation request
                     self.metrics.total_allocations.fetch_add(1, Ordering::Relaxed);
 
-                    // Track as active allocation (simplified: increment on request)
-                    let current = self.metrics.active_allocations.load(Ordering::Relaxed);
-                    if current < self.config.max_allocations {
-                        self.metrics.active_allocations.fetch_add(1, Ordering::Relaxed);
+                    // Atomically try to increment active allocations if below limit
+                    let mut current = self.metrics.active_allocations.load(Ordering::Relaxed);
+                    let allocated = loop {
+                        if current >= self.config.max_allocations {
+                            break false;
+                        }
+                        match self.metrics.active_allocations.compare_exchange_weak(
+                            current,
+                            current + 1,
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                        ) {
+                            Ok(_) => break true,
+                            Err(actual) => current = actual,
+                        }
+                    };
 
+                    if allocated {
                         // Schedule allocation expiry based on default lifetime
                         let metrics = self.metrics.clone();
                         let lifetime = self.config.default_lifetime;
