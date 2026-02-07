@@ -37,7 +37,7 @@ impl GitHubProvider {
             BasicClient::new(
                 ClientId::new(client_id),
                 Some(ClientSecret::new(client_secret)),
-                // These are well-known constant URLs, safe to unwrap
+                // Well-known constant URLs — expect is safe here
                 AuthUrl::new("https://github.com/login/oauth/authorize".to_string()).expect("valid GitHub auth URL"),
                 Some(TokenUrl::new("https://github.com/login/oauth/access_token".to_string()).expect("valid GitHub token URL")),
             )

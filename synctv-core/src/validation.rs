@@ -341,7 +341,7 @@ impl Validator {
         let mut errors = self.errors;
         match errors.len() {
             0 => Ok(()),
-            1 => Err(errors.swap_remove(0)),
+            1 => Err(errors.pop().expect("length checked")),
             _ => {
                 let messages: Vec<String> = errors.iter()
                     .map(std::string::ToString::to_string)
