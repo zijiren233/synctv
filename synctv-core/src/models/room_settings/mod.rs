@@ -63,7 +63,7 @@ pub struct RoomSettingsRegistry;
 impl RoomSettingsRegistry {
     /// Register a setting type (called automatically by ctor)
     pub fn register(key: &'static str, provider: Arc<dyn RoomSettingProvider>) {
-        let mut registry = REGISTRY.write().unwrap();
+        let mut registry = REGISTRY.write().unwrap_or_else(|e| e.into_inner());
         registry.insert(key.to_string(), provider);
     }
 
@@ -75,14 +75,18 @@ impl RoomSettingsRegistry {
 
     /// Get all registered setting keys
     pub fn all_keys() -> Vec<String> {
-        let registry = REGISTRY.read().unwrap();
-        registry.keys().cloned().collect()
+        match REGISTRY.read() {
+            Ok(registry) => registry.keys().cloned().collect(),
+            Err(e) => e.into_inner().keys().cloned().collect(),
+        }
     }
 
     /// Check if a setting exists
     pub fn has_key(key: &str) -> bool {
-        let registry = REGISTRY.read().unwrap();
-        registry.contains_key(key)
+        match REGISTRY.read() {
+            Ok(registry) => registry.contains_key(key),
+            Err(e) => e.into_inner().contains_key(key),
+        }
     }
 
     /// Validate a setting value by key (dynamic validation)

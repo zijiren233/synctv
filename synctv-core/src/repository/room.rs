@@ -164,8 +164,8 @@ impl RoomRepository {
             "SELECT COUNT(DISTINCT r.id) FROM rooms r WHERE {where_clause}"
         );
 
-        let count: i64 = if has_search {
-            let search_pattern = format!("%{}%", query.search.as_ref().unwrap());
+        let count: i64 = if let Some(ref search) = query.search {
+            let search_pattern = format!("%{search}%");
             sqlx::query_scalar(&count_query)
                 .bind(&search_pattern)
                 .fetch_one(&self.pool)
@@ -192,8 +192,8 @@ impl RoomRepository {
             "
         );
 
-        let rows = if has_search {
-            let search_pattern = format!("%{}%", query.search.as_ref().unwrap());
+        let rows = if let Some(ref search) = query.search {
+            let search_pattern = format!("%{search}%");
             sqlx::query(&list_query)
                 .bind(query.page_size)
                 .bind(offset)

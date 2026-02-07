@@ -50,7 +50,8 @@ impl BandwidthEstimator {
         self.recent_bytes.push_back((now, bytes));
 
         // Remove samples outside the window
-        let cutoff = now.checked_sub(std::time::Duration::from_secs(self.window_duration_secs)).unwrap();
+        let window = std::time::Duration::from_secs(self.window_duration_secs);
+        let cutoff = now.checked_sub(window).unwrap_or(now);
         while let Some(&(timestamp, _)) = self.recent_bytes.front() {
             if timestamp < cutoff {
                 self.recent_bytes.pop_front();

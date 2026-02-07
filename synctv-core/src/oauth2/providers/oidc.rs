@@ -36,33 +36,43 @@ pub struct OidcProvider {
 
 impl OidcProvider {
     /// Create a new OIDC provider with issuer (uses .well-known discovery)
-    #[must_use] 
+    ///
+    /// # Errors
+    /// Returns error if `redirect_url` or constructed issuer URLs are not valid URLs.
     pub fn create(
         client_id: String,
         client_secret: String,
         redirect_url: String,
         issuer: &str,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let issuer = issuer.trim_end_matches('/');
+        let auth_url = AuthUrl::new(format!("{issuer}/authorize"))
+            .map_err(|e| Error::InvalidInput(format!("Invalid OIDC auth URL: {e}")))?;
+        let token_url = TokenUrl::new(format!("{issuer}/token"))
+            .map_err(|e| Error::InvalidInput(format!("Invalid OIDC token URL: {e}")))?;
+        let redirect = RedirectUrl::new(redirect_url)
+            .map_err(|e| Error::InvalidInput(format!("Invalid OIDC redirect URL: {e}")))?;
         let client = Arc::new(
             BasicClient::new(
                 ClientId::new(client_id),
                 Some(ClientSecret::new(client_secret)),
-                AuthUrl::new(format!("{issuer}/authorize")).unwrap(),
-                Some(TokenUrl::new(format!("{issuer}/token")).unwrap()),
+                auth_url,
+                Some(token_url),
             )
-            .set_redirect_uri(RedirectUrl::new(redirect_url).unwrap()),
+            .set_redirect_uri(redirect),
         );
 
-        Self {
+        Ok(Self {
             client,
             userinfo_url: Some(format!("{issuer}/userinfo")),
             http_client: Arc::new(Client::new()),
-        }
+        })
     }
 
     /// Create a new OIDC provider with custom endpoints
-    #[must_use] 
+    ///
+    /// # Errors
+    /// Returns error if any of the provided URLs are not valid.
     pub fn create_with_endpoints(
         client_id: String,
         client_secret: String,
@@ -71,32 +81,32 @@ impl OidcProvider {
         auth_url: Option<String>,
         token_url: Option<String>,
         userinfo_url: Option<String>,
-    ) -> Self {
+    ) -> Result<Self, Error> {
+        let auth = AuthUrl::new(
+            auth_url.unwrap_or_else(|| format!("{}/authorize", issuer.trim_end_matches('/'))),
+        )
+        .map_err(|e| Error::InvalidInput(format!("Invalid OIDC auth URL: {e}")))?;
+        let token = TokenUrl::new(
+            token_url.unwrap_or_else(|| format!("{}/token", issuer.trim_end_matches('/'))),
+        )
+        .map_err(|e| Error::InvalidInput(format!("Invalid OIDC token URL: {e}")))?;
+        let redirect = RedirectUrl::new(redirect_url)
+            .map_err(|e| Error::InvalidInput(format!("Invalid OIDC redirect URL: {e}")))?;
         let client = Arc::new(
             BasicClient::new(
                 ClientId::new(client_id),
                 Some(ClientSecret::new(client_secret)),
-                AuthUrl::new(
-                    auth_url
-                        .unwrap_or_else(|| format!("{}/authorize", issuer.trim_end_matches('/'))),
-                )
-                .unwrap(),
-                Some(
-                    TokenUrl::new(
-                        token_url
-                            .unwrap_or_else(|| format!("{}/token", issuer.trim_end_matches('/'))),
-                    )
-                    .unwrap(),
-                ),
+                auth,
+                Some(token),
             )
-            .set_redirect_uri(RedirectUrl::new(redirect_url).unwrap()),
+            .set_redirect_uri(redirect),
         );
 
-        Self {
+        Ok(Self {
             client,
             userinfo_url,
             http_client: Arc::new(Client::new()),
-        }
+        })
     }
 }
 
@@ -179,14 +189,14 @@ pub fn oidc_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Err
             config.auth_url,
             config.token_url,
             config.userinfo_url,
-        )
+        )?
     } else {
         OidcProvider::create(
             config.client_id,
             config.client_secret,
             config.redirect_url,
             &config.issuer,
-        )
+        )?
     };
 
     Ok(Box::new(provider))

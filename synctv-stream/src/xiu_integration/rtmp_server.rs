@@ -23,7 +23,7 @@ pub struct RtmpConfig {
 impl Default for RtmpConfig {
     fn default() -> Self {
         Self {
-            listen_addr: "0.0.0.0:1935".parse().unwrap(),
+            listen_addr: "0.0.0.0:1935".parse().expect("valid default RTMP listen address"),
             max_streams: 50,
             chunk_size: 4096,
             gop_num: 2, // Cache last 2 GOPs
