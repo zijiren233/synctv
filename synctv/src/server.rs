@@ -248,6 +248,7 @@ impl SyncTvServer {
         let settings_registry = self.services.settings_registry.clone();
         let email_service = self.services.email_service.clone();
         let email_token_service = self.services.email_token_service.clone();
+        let sfu_manager = self.services.sfu_manager.clone();
 
         let handle = tokio::spawn(async move {
             info!("Starting gRPC server on {}...", config.grpc_address());
@@ -270,6 +271,7 @@ impl SyncTvServer {
                 Some(settings_registry),
                 email_service,
                 email_token_service,
+                sfu_manager,
             )
             .await
             {
@@ -300,6 +302,7 @@ impl SyncTvServer {
         let connection_manager = self.services.connection_manager.clone();
 
         let live_streaming_infrastructure = self.services.live_streaming_infrastructure.clone();
+        let sfu_manager = self.services.sfu_manager.clone();
 
         let http_router = synctv_api::http::create_router(
             Arc::new(self.config.clone()),
@@ -322,6 +325,7 @@ impl SyncTvServer {
             Some(publish_key_service),
             notification_service,
             live_streaming_infrastructure,
+            sfu_manager,
         );
 
         let handle = tokio::spawn(async move {

@@ -19,7 +19,7 @@ use crate::proto::client::{
     auth_service_server::AuthService, email_service_server::EmailService,
     media_service_server::MediaService, public_service_server::PublicService,
     room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, BanMemberRequest, BanMemberResponse, UnbanMemberRequest, UnbanMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse, GetIceServersRequest, GetIceServersResponse, IceServer, GetNetworkQualityRequest, GetNetworkQualityResponse,
-    GetMovieInfoRequest, GetMovieInfoResponse,
+    GetMovieInfoRequest, GetMovieInfoResponse, PeerNetworkQuality,
 };
 
 /// Configuration for `ClientService`
@@ -37,6 +37,7 @@ pub struct ClientServiceConfig {
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
     pub providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     pub config: Arc<synctv_core::Config>,
+    pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 }
 
 /// `ClientService` implementation
@@ -54,6 +55,7 @@ pub struct ClientServiceImpl {
     settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
     providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     config: Arc<synctv_core::Config>,
+    sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 }
 
 impl ClientServiceImpl {
@@ -72,6 +74,7 @@ impl ClientServiceImpl {
         settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
         providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
         config: Arc<synctv_core::Config>,
+        sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     ) -> Self {
         Self {
             user_service: Arc::new(user_service),
@@ -86,6 +89,7 @@ impl ClientServiceImpl {
             settings_registry,
             providers_manager,
             config,
+            sfu_manager,
         }
     }
 
@@ -105,6 +109,7 @@ impl ClientServiceImpl {
             settings_registry: config.settings_registry,
             providers_manager: config.providers_manager,
             config: config.config,
+            sfu_manager: config.sfu_manager,
         }
     }
 
@@ -1747,21 +1752,47 @@ impl RoomService for ClientServiceImpl {
             .await
             .map_err(|e| Status::permission_denied(format!("Not a member of the room: {e}")))?;
 
-        // Network quality stats require SFU integration
-        // The NetworkQualityMonitor is fully implemented in synctv-sfu but not yet
-        // integrated with the API layer. To enable this feature:
-        // 1. Add SfuManager to the gRPC service dependencies
-        // 2. Call sfu_manager.get_room_network_quality(room_id)
-        // 3. Convert NetworkStats to proto::NetworkQualityPeer
-        //
-        // For now, return empty list to avoid breaking the API
-        tracing::debug!(
-            room_id = %room_id,
-            user_id = %_user_id,
-            "Network quality monitoring requested but SFU integration not enabled"
-        );
+        // Get network quality stats from SFU manager if available
+        let sfu_manager = match &self.sfu_manager {
+            Some(mgr) => mgr,
+            None => {
+                tracing::debug!(
+                    room_id = %room_id,
+                    user_id = %_user_id,
+                    "Network quality requested but SFU manager not enabled"
+                );
+                return Ok(Response::new(GetNetworkQualityResponse { peers: vec![] }));
+            }
+        };
 
-        Ok(Response::new(GetNetworkQualityResponse { peers: vec![] }))
+        let stats = sfu_manager
+            .get_room_network_quality(
+                &synctv_sfu::RoomId::from(room_id.as_str()),
+            )
+            .map_err(|e| Status::internal(format!("Failed to get network quality: {e}")))?;
+
+        let peers = stats
+            .into_iter()
+            .map(|(peer_id, ns)| {
+                let quality_action = match ns.quality_action {
+                    synctv_sfu::QualityAction::None => "none",
+                    synctv_sfu::QualityAction::ReduceQuality => "reduce_quality",
+                    synctv_sfu::QualityAction::ReduceFramerate => "reduce_framerate",
+                    synctv_sfu::QualityAction::AudioOnly => "audio_only",
+                };
+                PeerNetworkQuality {
+                    peer_id,
+                    rtt_ms: ns.rtt_ms,
+                    packet_loss_rate: ns.packet_loss_rate,
+                    jitter_ms: ns.jitter_ms,
+                    available_bandwidth_kbps: ns.available_bandwidth_kbps,
+                    quality_score: u32::from(ns.quality_score),
+                    quality_action: quality_action.to_string(),
+                }
+            })
+            .collect();
+
+        Ok(Response::new(GetNetworkQualityResponse { peers }))
     }
 }
 

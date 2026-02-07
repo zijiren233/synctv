@@ -67,6 +67,7 @@ pub struct RouterConfig {
     pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
+    pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 }
 
 /// Shared application state
@@ -119,6 +120,7 @@ pub fn create_router(
     publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
+    sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 ) -> axum::Router {
     // Create the unified API implementation layer
     let client_api = Arc::new(crate::impls::ClientApiImpl::new(
@@ -126,6 +128,7 @@ pub fn create_router(
         room_service.clone(),
         connection_manager.clone(),
         config,
+        sfu_manager,
     ));
 
     // AdminApi requires SettingsService and EmailService
@@ -384,5 +387,6 @@ pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
         config.publish_key_service,
         config.notification_service,
         config.live_streaming_infrastructure,
+        config.sfu_manager,
     )
 }

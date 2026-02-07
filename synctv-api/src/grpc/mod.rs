@@ -59,6 +59,7 @@ pub struct GrpcServerConfig<'a> {
     pub settings_registry: Option<Arc<SettingsRegistry>>,
     pub email_service: Option<Arc<EmailService>>,
     pub email_token_service: Option<Arc<EmailTokenService>>,
+    pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 }
 
 /// Build and start the gRPC server
@@ -84,6 +85,7 @@ pub async fn serve(
     settings_registry: Option<Arc<SettingsRegistry>>,
     email_service: Option<Arc<EmailService>>,
     email_token_service: Option<Arc<EmailTokenService>>,
+    sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
 
@@ -128,6 +130,7 @@ pub async fn serve(
         settings_registry.clone(),
         providers_manager_for_client,
         Arc::new(config.clone()),
+        sfu_manager.clone(),
     );
 
     let admin_service = AdminServiceImpl::new(
@@ -230,6 +233,7 @@ pub async fn serve(
                 room_service_for_provider,
                 Arc::new(connection_manager_for_provider.clone()),
                 Arc::new(config.clone()),
+                sfu_manager,
             )),
             admin_api: None,
         });
@@ -280,6 +284,7 @@ pub async fn serve_from_config(config: GrpcServerConfig<'_>) -> anyhow::Result<(
         config.settings_registry,
         config.email_service,
         config.email_token_service,
+        config.sfu_manager,
     )
     .await
 }

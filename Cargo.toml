@@ -155,3 +155,4 @@ synctv-cluster = { path = "synctv-cluster" }
 synctv-providers = { path = "synctv-providers" }
 synctv-proxy = { path = "synctv-proxy" }
 synctv-stream = { path = "synctv-stream" }
+synctv-sfu = { path = "synctv-sfu" }

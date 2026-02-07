@@ -6127,6 +6127,7 @@ dependencies = [
  "synctv-proto",
  "synctv-providers",
  "synctv-proxy",
+ "synctv-sfu",
  "synctv-stream",
  "thiserror 1.0.69",
  "tokio",
