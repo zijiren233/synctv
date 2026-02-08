@@ -112,19 +112,18 @@ fn test_query_parsing() {
 
     #[derive(Deserialize)]
     struct LiveQuery {
-        #[serde(rename = "roomId")]
         room_id: Option<String>,
         token: Option<String>,
     }
 
     // Parse query with room_id and token
-    let query_str = "roomId=room123&token=abc123";
+    let query_str = "room_id=room123&token=abc123";
     let query: LiveQuery = serde_urlencoded::from_str(query_str).unwrap();
     assert_eq!(query.room_id.unwrap(), "room123");
     assert_eq!(query.token.unwrap(), "abc123");
 
     // Parse query with only room_id
-    let query_str = "roomId=room456";
+    let query_str = "room_id=room456";
     let query: LiveQuery = serde_urlencoded::from_str(query_str).unwrap();
     assert_eq!(query.room_id.unwrap(), "room456");
     assert!(query.token.is_none());

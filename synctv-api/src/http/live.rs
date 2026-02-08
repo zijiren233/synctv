@@ -31,7 +31,6 @@ use synctv_stream::api::{FlvStreamingApi, HlsStreamingApi};
 #[derive(Debug, Deserialize)]
 pub struct LiveQuery {
     /// Room ID (required for most endpoints)
-    #[serde(rename = "roomId")]
     room_id: Option<String>,
     /// Authentication token (deserialized from query params, used for future auth)
     #[allow(dead_code)]
