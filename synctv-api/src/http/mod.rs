@@ -254,6 +254,14 @@ pub fn create_router(
             post(room::push_media_batch),
         )
         .route(
+            "/api/rooms/:room_id/media/batch",
+            axum::routing::delete(room::remove_media_batch),
+        )
+        .route(
+            "/api/rooms/:room_id/media/reorder",
+            post(room::reorder_media_batch),
+        )
+        .route(
             "/api/rooms/:room_id/media/:media_id",
             axum::routing::delete(room::remove_media),
         )

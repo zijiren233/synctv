@@ -494,6 +494,48 @@ impl ClientApiImpl {
         })
     }
 
+    /// Bulk remove multiple media items
+    pub async fn remove_media_batch(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        media_ids: Vec<String>,
+    ) -> Result<usize, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+        let mids: Vec<synctv_core::models::MediaId> = media_ids
+            .into_iter()
+            .map(synctv_core::models::MediaId::from_string)
+            .collect();
+
+        self.room_service
+            .media_service()
+            .remove_media_batch(rid, uid, mids)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Bulk reorder multiple media items
+    pub async fn reorder_media_batch(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        updates: Vec<(String, i32)>,
+    ) -> Result<(), String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+        let updates_converted: Vec<(synctv_core::models::MediaId, i32)> = updates
+            .into_iter()
+            .map(|(id, pos)| (synctv_core::models::MediaId::from_string(id), pos))
+            .collect();
+
+        self.room_service
+            .media_service()
+            .reorder_media_batch(rid, uid, updates_converted)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     pub async fn get_playlist(
         &self,
         room_id: &str,

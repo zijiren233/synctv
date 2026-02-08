@@ -59,6 +59,7 @@ fn build_room_settings_bytes(
 // ==================== Room Management Endpoints ====================
 
 /// Create a new room
+#[tracing::instrument(name = "http_create_room", skip(state), fields(user_id = %auth.user_id))]
 pub async fn create_room(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -73,6 +74,8 @@ pub async fn create_room(
     if name.is_empty() {
         return Err(super::AppError::bad_request("Room name cannot be empty"));
     }
+
+    tracing::info!(user_id = %auth.user_id, room_name = %name, "Creating new room");
 
     let description = req.get("description")
         .and_then(|v| v.as_str())
@@ -106,7 +109,7 @@ pub async fn create_room(
 
     // Create proto request
     let proto_req = CreateRoomRequest {
-        name,
+        name: name.clone(),
         password,
         settings: settings_bytes,
         description,
@@ -117,8 +120,13 @@ pub async fn create_room(
         .client_api
         .create_room(&auth.user_id.to_string(), proto_req)
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(|e| {
+            tracing::error!(user_id = %auth.user_id, room_name = %name, error = %e, "Failed to create room");
+            super::AppError::internal_server_error(e)
+        })?;
 
+    let room_id = response.room.as_ref().map(|r| r.id.as_str()).unwrap_or("unknown");
+    tracing::info!(user_id = %auth.user_id, room_id = %room_id, "Room created successfully");
     Ok(Json(response))
 }
 
@@ -180,18 +188,25 @@ pub async fn leave_room(
 }
 
 /// Delete a room
+#[tracing::instrument(name = "http_delete_room", skip(state), fields(user_id = %auth.user_id, room_id = %room_id))]
 pub async fn delete_room(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<DeleteRoomResponse>> {
-    let proto_req = DeleteRoomRequest { room_id };
+    tracing::info!(user_id = %auth.user_id, room_id = %room_id, "Deleting room");
+
+    let proto_req = DeleteRoomRequest { room_id: room_id.clone() };
     let response = state
         .client_api
         .delete_room(&auth.user_id.to_string(), proto_req)
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(|e| {
+            tracing::error!(user_id = %auth.user_id, room_id = %room_id, error = %e, "Failed to delete room");
+            super::AppError::internal_server_error(e)
+        })?;
 
+    tracing::info!(user_id = %auth.user_id, room_id = %room_id, "Room deleted successfully");
     Ok(Json(response))
 }
 
@@ -257,6 +272,183 @@ pub async fn remove_media(
         .map_err(super::AppError::internal_server_error)?;
 
     Ok(Json(response))
+}
+
+/// Bulk remove media from playlist
+///
+/// Removes multiple media items in a single transaction
+#[utoipa::path(
+    delete,
+    path = "/api/rooms/{room_id}/media/batch",
+    tag = "Room Media",
+    params(
+        ("room_id" = String, Path, description = "Room ID")
+    ),
+    request_body(
+        content = inline(serde_json::Value),
+        description = "JSON object with media_ids array",
+        example = json!({"media_ids": ["abc123", "def456", "ghi789"]})
+    ),
+    responses(
+        (status = 200, description = "Media items removed successfully",
+         body = inline(serde_json::Value),
+         example = json!({"deleted_count": 3})),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden - insufficient permissions"),
+        (status = 404, description = "Room not found")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
+#[tracing::instrument(name = "http_remove_media_batch", skip(state, req), fields(user_id = %auth.user_id, room_id = %room_id))]
+pub async fn remove_media_batch(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<serde_json::Value>> {
+    let media_ids = req.get("media_ids")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| super::AppError::bad_request("Missing or invalid media_ids array"))?;
+
+    let media_ids_str: Vec<String> = media_ids
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+
+    if media_ids_str.is_empty() {
+        return Err(super::AppError::bad_request("media_ids array cannot be empty"));
+    }
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        room_id = %room_id,
+        count = media_ids_str.len(),
+        "Removing media batch"
+    );
+
+    let deleted_count = state
+        .client_api
+        .remove_media_batch(&auth.user_id.to_string(), &room_id, media_ids_str)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                user_id = %auth.user_id,
+                room_id = %room_id,
+                error = %e,
+                "Failed to remove media batch"
+            );
+            super::AppError::internal_server_error(e)
+        })?;
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        room_id = %room_id,
+        deleted_count,
+        "Media batch removed successfully"
+    );
+
+    Ok(Json(serde_json::json!({
+        "deleted_count": deleted_count
+    })))
+}
+
+/// Bulk reorder media items in playlist
+///
+/// Reorders multiple media items to new positions in a single transaction
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/media/reorder",
+    tag = "Room Media",
+    params(
+        ("room_id" = String, Path, description = "Room ID")
+    ),
+    request_body(
+        content = inline(serde_json::Value),
+        description = "JSON object with updates array containing {media_id, position} pairs",
+        example = json!({
+            "updates": [
+                {"media_id": "abc123", "position": 0},
+                {"media_id": "def456", "position": 1},
+                {"media_id": "ghi789", "position": 2}
+            ]
+        })
+    ),
+    responses(
+        (status = 200, description = "Media items reordered successfully",
+         body = inline(serde_json::Value),
+         example = json!({"success": true})),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden - insufficient permissions"),
+        (status = 404, description = "Room not found")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
+#[tracing::instrument(name = "http_reorder_media_batch", skip(state, req), fields(user_id = %auth.user_id, room_id = %room_id))]
+pub async fn reorder_media_batch(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<serde_json::Value>> {
+    let updates = req.get("updates")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| super::AppError::bad_request("Missing or invalid updates array"))?;
+
+    let mut updates_vec = Vec::new();
+    for update in updates {
+        let media_id = update.get("media_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| super::AppError::bad_request("Missing media_id in update"))?
+            .to_string();
+
+        let position = update.get("position")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| super::AppError::bad_request("Missing or invalid position in update"))?
+            as i32;
+
+        updates_vec.push((media_id, position));
+    }
+
+    if updates_vec.is_empty() {
+        return Err(super::AppError::bad_request("updates array cannot be empty"));
+    }
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        room_id = %room_id,
+        count = updates_vec.len(),
+        "Reordering media batch"
+    );
+
+    state
+        .client_api
+        .reorder_media_batch(&auth.user_id.to_string(), &room_id, updates_vec)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                user_id = %auth.user_id,
+                room_id = %room_id,
+                error = %e,
+                "Failed to reorder media batch"
+            );
+            super::AppError::internal_server_error(e)
+        })?;
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        room_id = %room_id,
+        "Media batch reordered successfully"
+    );
+
+    Ok(Json(serde_json::json!({
+        "success": true
+    })))
 }
 
 /// Get playlist
