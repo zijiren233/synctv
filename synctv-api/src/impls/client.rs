@@ -709,12 +709,12 @@ impl ClientApiImpl {
         })
     }
 
-    pub async fn change_speed(
+    pub async fn set_playback_speed(
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::ChangeSpeedRequest,
-    ) -> Result<crate::proto::client::ChangeSpeedResponse, String> {
+        req: crate::proto::client::SetPlaybackSpeedRequest,
+    ) -> Result<crate::proto::client::SetPlaybackSpeedResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
@@ -722,29 +722,40 @@ impl ClientApiImpl {
             .map_err(|e| e.to_string())?;
 
         let state = self.room_service.get_playback_state(&rid).await.ok();
-        Ok(crate::proto::client::ChangeSpeedResponse {
+        Ok(crate::proto::client::SetPlaybackSpeedResponse {
             playback_state: state.map(|s| playback_state_to_proto(&s)),
         })
     }
 
-    pub async fn switch_media(
+    // set_current_media - Set which media to play (previously set_playing)
+    pub async fn set_current_media(
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::SwitchMediaRequest,
-    ) -> Result<crate::proto::client::SwitchMediaResponse, String> {
+        req: crate::proto::client::SetCurrentMediaRequest,
+    ) -> Result<crate::proto::client::SetCurrentMediaResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
-        let media_id = synctv_core::models::MediaId::from_string(req.media_id);
 
-        self.room_service.playback_service().switch_media(rid.clone(), uid, media_id).await
-            .map_err(|e| e.to_string())?;
+        // If media_id is provided, switch to that media
+        if !req.media_id.is_empty() {
+            let media_id = synctv_core::models::MediaId::from_string(req.media_id);
+            self.room_service.playback_service().switch_media(rid.clone(), uid, media_id).await
+                .map_err(|e| e.to_string())?;
+        }
 
+        // Get the current state
         let state = self.room_service.get_playback_state(&rid).await.ok();
-        Ok(crate::proto::client::SwitchMediaResponse {
-            playback_state: state.map(|s| playback_state_to_proto(&s)),
+        let playlist = self.room_service.media_service().get_current_playlist(&rid).await.ok();
+        let playing_media = self.room_service.media_service().get_current_media(&rid).await.ok();
+
+        Ok(crate::proto::client::SetCurrentMediaResponse {
+            playlist: playlist.and_then(|p| Some(playlist_to_proto(p))),
+            playing_media: playing_media.and_then(|m| Some(media_to_proto(&m))),
         })
     }
+
+    // Note: switch_media removed - use set_current_media instead
 
     pub async fn get_playback_state(
         &self,
@@ -780,12 +791,12 @@ impl ClientApiImpl {
         })
     }
 
-    pub async fn update_member_permission(
+    pub async fn update_member_permissions(
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::SetMemberPermissionRequest,
-    ) -> Result<crate::proto::client::SetMemberPermissionResponse, String> {
+        req: crate::proto::client::UpdateMemberPermissionsRequest,
+    ) -> Result<crate::proto::client::UpdateMemberPermissionsResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
         let target_uid = UserId::from_string(req.user_id.clone());
@@ -834,7 +845,7 @@ impl ClientApiImpl {
             .find(|m| m.user_id == target_uid)
             .ok_or_else(|| "Member not found".to_string())?;
 
-        Ok(crate::proto::client::SetMemberPermissionResponse {
+        Ok(crate::proto::client::UpdateMemberPermissionsResponse {
             member: Some(room_member_to_proto(member)),
         })
     }

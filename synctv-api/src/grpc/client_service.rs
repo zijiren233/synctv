@@ -966,10 +966,10 @@ impl RoomService for ClientServiceImpl {
         Ok(Response::new(DeleteRoomResponse { success: true }))
     }
 
-    async fn set_room_settings(
+    async fn update_room_settings(
         &self,
-        request: Request<SetRoomSettingsRequest>,
-    ) -> Result<Response<SetRoomSettingsResponse>, Status> {
+        request: Request<UpdateRoomSettingsRequest>,
+    ) -> Result<Response<UpdateRoomSettingsResponse>, Status> {
         // Extract user_id from JWT token
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
@@ -1007,7 +1007,7 @@ impl RoomService for ClientServiceImpl {
             .await
             .unwrap_or_default();
 
-        Ok(Response::new(SetRoomSettingsResponse {
+        Ok(Response::new(UpdateRoomSettingsResponse {
             room: Some(Room {
                 id: updated_room.id.to_string(),
                 name: updated_room.name,
@@ -1071,10 +1071,10 @@ impl RoomService for ClientServiceImpl {
         }))
     }
 
-    async fn set_member_permission(
+    async fn update_member_permissions(
         &self,
-        request: Request<SetMemberPermissionRequest>,
-    ) -> Result<Response<SetMemberPermissionResponse>, Status> {
+        request: Request<UpdateMemberPermissionsRequest>,
+    ) -> Result<Response<UpdateMemberPermissionsResponse>, Status> {
         // Extract user_id from JWT token
         let user_id = self.get_user_id(&request)?;
         let room_id = self.get_room_id(&request)?;
@@ -1130,7 +1130,7 @@ impl RoomService for ClientServiceImpl {
             synctv_core::models::RoomRole::Guest => "guest",
         };
 
-        Ok(Response::new(SetMemberPermissionResponse {
+        Ok(Response::new(UpdateMemberPermissionsResponse {
             member: Some(RoomMember {
                 room_id: room_id.to_string(),
                 user_id: member.user_id.to_string(),
@@ -1235,29 +1235,6 @@ impl RoomService for ClientServiceImpl {
 
         Ok(Response::new(GetRoomSettingsResponse {
             settings: settings_json,
-        }))
-    }
-
-    async fn update_room_setting(
-        &self,
-        request: Request<UpdateRoomSettingRequest>,
-    ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
-        let room_id = self.get_room_id(&request)?;
-        let req = request.into_inner();
-
-        // Parse the value as JSON
-        let value: serde_json::Value = serde_json::from_slice(&req.value)
-            .map_err(|e| Status::invalid_argument(format!("Invalid JSON value: {e}")))?;
-
-        // Update single setting
-        let settings_json = self
-            .room_service
-            .update_room_setting(&room_id, &req.key, &value)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to update room setting: {e}")))?;
-
-        Ok(Response::new(UpdateRoomSettingResponse {
-            settings: settings_json.into_bytes(),
         }))
     }
 
@@ -2025,10 +2002,10 @@ impl MediaService for ClientServiceImpl {
         }))
     }
 
-    async fn change_speed(
+    async fn set_playback_speed(
         &self,
-        request: Request<ChangeSpeedRequest>,
-    ) -> Result<Response<ChangeSpeedResponse>, Status> {
+        request: Request<SetPlaybackSpeedRequest>,
+    ) -> Result<Response<SetPlaybackSpeedResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
@@ -2061,52 +2038,12 @@ impl MediaService for ClientServiceImpl {
             version: state.version,
         });
 
-        Ok(Response::new(ChangeSpeedResponse {
+        Ok(Response::new(SetPlaybackSpeedResponse {
             playback_state: proto_state,
         }))
     }
 
-    async fn switch_media(
-        &self,
-        request: Request<SwitchMediaRequest>,
-    ) -> Result<Response<SwitchMediaResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
-        let room_id = self.get_room_id(&request)?;
-        let req = request.into_inner();
-        let media_id = MediaId::from_string(req.media_id);
-
-        let state = self
-            .room_service
-            .update_playback(
-                room_id,
-                user_id,
-                |state| state.switch_media(media_id.clone()),
-                PermissionBits::SWITCH_MEDIA,
-            )
-            .await
-            .map_err(|e| match e {
-                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
-                _ => Status::internal("Failed to switch media"),
-            })?;
-
-        let proto_state = Some(PlaybackState {
-            room_id: state.room_id.as_str().to_string(),
-            playing_media_id: state
-                .playing_media_id
-                .as_ref()
-                .map(|id| id.as_str().to_string())
-                .unwrap_or_default(),
-            position: state.position,
-            speed: state.speed,
-            is_playing: state.is_playing,
-            updated_at: state.updated_at.timestamp(),
-            version: state.version,
-        });
-
-        Ok(Response::new(SwitchMediaResponse {
-            playback_state: proto_state,
-        }))
-    }
+    // switch_media removed from proto - merged into set_current_media
 
     async fn get_playback_state(
         &self,

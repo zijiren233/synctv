@@ -12,7 +12,7 @@ use synctv_core::models::{
 };
 
 use super::{middleware::AuthUser, AppResult, AppState};
-use crate::proto::client::{CreateRoomResponse, CreateRoomRequest, GetRoomResponse, JoinRoomResponse, JoinRoomRequest, LeaveRoomResponse, LeaveRoomRequest, DeleteRoomResponse, DeleteRoomRequest, AddMediaResponse, AddMediaRequest, RemoveMediaResponse, RemoveMediaRequest, ListPlaylistResponse, SwapMediaResponse, SwapMediaRequest, PlayResponse, PlayRequest, PauseResponse, SeekResponse, SeekRequest, ChangeSpeedResponse, ChangeSpeedRequest, SwitchMediaResponse, SwitchMediaRequest, GetPlaybackStateResponse, GetPlaybackStateRequest, GetRoomMembersResponse, CheckRoomResponse, ListRoomsResponse, ListRoomsRequest, SetRoomSettingsResponse, SetRoomSettingsRequest};
+use crate::proto::client::{CreateRoomResponse, CreateRoomRequest, GetRoomResponse, JoinRoomResponse, JoinRoomRequest, LeaveRoomResponse, LeaveRoomRequest, DeleteRoomResponse, DeleteRoomRequest, AddMediaResponse, AddMediaRequest, RemoveMediaResponse, RemoveMediaRequest, ListPlaylistResponse, SwapMediaResponse, SwapMediaRequest, PlayResponse, PlayRequest, PauseResponse, SeekResponse, SeekRequest, GetPlaybackStateResponse, GetPlaybackStateRequest, GetRoomMembersResponse, CheckRoomResponse, ListRoomsResponse, ListRoomsRequest, UpdateRoomSettingsResponse, UpdateRoomSettingsRequest};
 
 /// Room settings for HTTP requests
 #[derive(Debug, Clone, Default)]
@@ -552,49 +552,6 @@ pub async fn seek(
     Ok(Json(response))
 }
 
-/// Change playback speed
-pub async fn change_speed(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<ChangeSpeedResponse>> {
-    let speed = req.get("speed")
-        .and_then(serde_json::Value::as_f64)
-        .ok_or_else(|| super::AppError::bad_request("Missing or invalid speed field"))?;
-
-    let proto_req = ChangeSpeedRequest { speed };
-    let response = state
-        .client_api
-        .change_speed(&auth.user_id.to_string(), &room_id, proto_req)
-        .await
-        .map_err(super::AppError::internal_server_error)?;
-
-    Ok(Json(response))
-}
-
-/// Switch to a different media
-pub async fn switch_media(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<SwitchMediaResponse>> {
-    let media_id = req.get("media_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| super::AppError::bad_request("Missing media_id field"))?
-        .to_string();
-
-    let proto_req = SwitchMediaRequest { media_id };
-    let response = state
-        .client_api
-        .switch_media(&auth.user_id.to_string(), &room_id, proto_req)
-        .await
-        .map_err(super::AppError::internal_server_error)?;
-
-    Ok(Json(response))
-}
-
 /// Get playback state
 pub async fn get_playback_state(
     _auth: AuthUser,
@@ -709,13 +666,13 @@ pub async fn set_room_settings_admin(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<SetRoomSettingsResponse>> {
+) -> AppResult<Json<UpdateRoomSettingsResponse>> {
     // Build settings JSON from request fields
     let settings_json = req.clone();
     let settings_bytes = serde_json::to_vec(&settings_json)
         .map_err(|e| super::AppError::bad_request(format!("Invalid settings JSON: {e}")))?;
 
-    let proto_req = SetRoomSettingsRequest {
+    let proto_req = UpdateRoomSettingsRequest {
         room_id: room_id.clone(),
         settings: settings_bytes,
     };
@@ -1155,13 +1112,14 @@ pub async fn update_playback(
 
     // Handle speed change
     if let Some(speed) = req.get("speed").and_then(|v| v.as_f64()) {
-        let request = ChangeSpeedRequest {
+        use crate::proto::client::SetPlaybackSpeedRequest;
+        let request = SetPlaybackSpeedRequest {
             speed,
         };
 
         let _response = state
             .client_api
-            .change_speed(&auth.user_id.to_string(), &room_id, request)
+            .set_playback_speed(&auth.user_id.to_string(), &room_id, request)
             .await
             .map_err(super::AppError::internal_server_error)?;
 
@@ -1173,13 +1131,15 @@ pub async fn update_playback(
 
     // Handle media switch
     if let Some(media_id) = req.get("media_id").and_then(|v| v.as_str()) {
-        let request = SwitchMediaRequest {
+        use crate::proto::client::SetCurrentMediaRequest;
+        let request = SetCurrentMediaRequest {
+            playlist_id: String::new(), // Not used for direct media switch
             media_id: media_id.to_string(),
         };
 
         let _response = state
             .client_api
-            .switch_media(&auth.user_id.to_string(), &room_id, request)
+            .set_current_media(&auth.user_id.to_string(), &room_id, request)
             .await
             .map_err(super::AppError::internal_server_error)?;
 

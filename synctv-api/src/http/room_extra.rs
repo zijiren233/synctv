@@ -140,13 +140,13 @@ pub async fn set_member_permissions(
     State(state): State<AppState>,
     Path((room_id, target_user_id)): Path<(String, String)>,
     Json(req): Json<SetMemberPermissionsRequest>,
-) -> AppResult<Json<crate::proto::client::SetMemberPermissionResponse>> {
+) -> AppResult<Json<crate::proto::client::UpdateMemberPermissionsResponse>> {
     let resp = state
         .client_api
-        .update_member_permission(
+        .update_member_permissions(
             auth.user_id.as_str(),
             &room_id,
-            crate::proto::client::SetMemberPermissionRequest {
+            crate::proto::client::UpdateMemberPermissionsRequest {
                 user_id: target_user_id,
                 role: req.role,
                 added_permissions: req.added_permissions,
