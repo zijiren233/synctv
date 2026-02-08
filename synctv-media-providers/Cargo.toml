@@ -1,9 +1,13 @@
 [package]
-name = "synctv-providers"
+name = "synctv-media-providers"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+
+[[bin]]
+name = "media-provider-server"
+path = "src/bin/media-provider-server.rs"
 
 [dependencies]
 # Async

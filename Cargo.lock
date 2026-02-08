@@ -6125,8 +6125,8 @@ dependencies = [
  "sqlx",
  "synctv-cluster",
  "synctv-core",
+ "synctv-media-providers",
  "synctv-proto",
- "synctv-providers",
  "synctv-proxy",
  "synctv-sfu",
  "synctv-stream",
@@ -6226,8 +6226,8 @@ dependencies = [
  "sha1",
  "sqlx",
  "stun_codec",
+ "synctv-media-providers",
  "synctv-proto",
- "synctv-providers",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util 0.7.18",
@@ -6243,19 +6243,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "synctv-proto"
-version = "0.1.0"
-dependencies = [
- "prost",
- "prost-types",
- "serde",
- "serde_json",
- "tonic",
- "tonic-build",
-]
-
-[[package]]
-name = "synctv-providers"
+name = "synctv-media-providers"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6274,6 +6262,18 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "synctv-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-types",
+ "serde",
+ "serde_json",
+ "tonic",
+ "tonic-build",
 ]
 
 [[package]]

@@ -13,7 +13,7 @@ service AdminService {
     rpc SendTestEmail(SendTestEmailRequest) returns (SendTestEmailResponse);
 
     // =========================
-    // Provider Instance Management
+    // Media Provider Instance Management
     // =========================
     rpc ListProviderInstances(ListProviderInstancesRequest) returns (ListProviderInstancesResponse);
     rpc AddProviderInstance(AddProviderInstanceRequest) returns (AddProviderInstanceResponse);
@@ -100,7 +100,7 @@ message ProviderInstance {
     string timeout = 4; // Request timeout (e.g., "10s")
     bool tls = 5; // Enable TLS
     bool insecure_tls = 6; // Skip TLS certificate verification (UNSAFE, dev/test only)
-    repeated string providers = 7; // Supported provider types (e.g., ["bilibili", "alist", "emby"])
+    repeated string providers = 7; // Supported media provider types (e.g., ["bilibili", "alist", "emby"])
     bool enabled = 8; // Whether this instance is enabled
     string status = 9; // connected, disconnected, error
     int64 created_at = 10;
@@ -149,11 +149,11 @@ message SendTestEmailResponse {
 }
 
 // =========================
-// Provider Instance Management
+// Media Provider Instance Management
 // =========================
 
 message ListProviderInstancesRequest {
-    string provider_type = 1; // Optional filter by provider type
+    string provider_type = 1; // Optional filter by media provider type
 }
 
 message ListProviderInstancesResponse {
@@ -167,7 +167,7 @@ message AddProviderInstanceRequest {
     string timeout = 4; // Request timeout (e.g., "10s")
     bool tls = 5; // Enable TLS
     bool insecure_tls = 6; // Skip TLS certificate verification
-    repeated string providers = 7; // Supported provider types
+    repeated string providers = 7; // Supported media provider types
     bytes config = 8; // Additional JSON config (jwt_secret, custom_ca, etc.)
 }
 
@@ -182,7 +182,7 @@ message UpdateProviderInstanceRequest {
     string timeout = 4; // Optional new timeout
     bool tls = 5; // Optional new TLS setting
     bool insecure_tls = 6; // Optional new insecure_tls setting
-    repeated string providers = 7; // Optional new provider list
+    repeated string providers = 7; // Optional new media provider list
     bytes config = 8; // Optional additional config
 }
 
@@ -487,6 +487,6 @@ message GetSystemStatsResponse {
     int32 active_rooms = 5;
     int32 banned_rooms = 6;
     int32 total_media = 7;
-    int32 provider_instances = 8;
+    int32 provider_instances = 8; // Total media provider instances
     bytes additional_stats = 9; // JSON for extensibility
 }

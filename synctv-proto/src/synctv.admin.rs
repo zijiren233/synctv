@@ -66,7 +66,7 @@ pub struct ProviderInstance {
     /// Skip TLS certificate verification (UNSAFE, dev/test only)
     #[prost(bool, tag = "6")]
     pub insecure_tls: bool,
-    /// Supported provider types (e.g., \["bilibili", "alist", "emby"\])
+    /// Supported media provider types (e.g., \["bilibili", "alist", "emby"\])
     #[prost(string, repeated, tag = "7")]
     pub providers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Whether this instance is enabled
@@ -143,7 +143,7 @@ pub struct SendTestEmailResponse {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListProviderInstancesRequest {
-    /// Optional filter by provider type
+    /// Optional filter by media provider type
     #[prost(string, tag = "1")]
     pub provider_type: ::prost::alloc::string::String,
 }
@@ -174,7 +174,7 @@ pub struct AddProviderInstanceRequest {
     /// Skip TLS certificate verification
     #[prost(bool, tag = "6")]
     pub insecure_tls: bool,
-    /// Supported provider types
+    /// Supported media provider types
     #[prost(string, repeated, tag = "7")]
     pub providers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Additional JSON config (jwt_secret, custom_ca, etc.)
@@ -208,7 +208,7 @@ pub struct UpdateProviderInstanceRequest {
     /// Optional new insecure_tls setting
     #[prost(bool, tag = "6")]
     pub insecure_tls: bool,
-    /// Optional new provider list
+    /// Optional new media provider list
     #[prost(string, repeated, tag = "7")]
     pub providers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Optional additional config
@@ -674,6 +674,7 @@ pub struct GetSystemStatsResponse {
     pub banned_rooms: i32,
     #[prost(int32, tag = "7")]
     pub total_media: i32,
+    /// Total media provider instances
     #[prost(int32, tag = "8")]
     pub provider_instances: i32,
     /// JSON for extensibility
@@ -874,7 +875,7 @@ pub mod admin_service_client {
             self.inner.unary(req, path, codec).await
         }
         /// =========================
-        /// Provider Instance Management
+        /// Media Provider Instance Management
         /// =========================
         pub async fn list_provider_instances(
             &mut self,
@@ -1766,7 +1767,7 @@ pub mod admin_service_server {
             tonic::Status,
         >;
         /// =========================
-        /// Provider Instance Management
+        /// Media Provider Instance Management
         /// =========================
         async fn list_provider_instances(
             &self,

@@ -1,6 +1,6 @@
-# SyncTV Providers
+# SyncTV Media Providers
 
-Provider implementations for SyncTV, separated from core for independent deployment.
+Media provider implementations for SyncTV, separated from core for independent deployment.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ synctv/
 │       ├── config.rs     # Source config types
 │       └── error.rs      # ProviderError
 │
-├── synctv-providers/     # Provider implementations (THIS CRATE)
+├── synctv-media-providers/     # Media provider implementations (THIS CRATE)
 │   └── src/
 │       ├── bilibili/     # Bilibili implementation
 │       ├── alist/        # Alist implementation
@@ -22,7 +22,7 @@ synctv/
 │       ├── direct_url/   # DirectUrl implementation
 │       └── rtmp/         # RTMP implementation
 │
-└── synctv-provider-server/  # Standalone gRPC server (optional)
+└── synctv-media-provider-server/  # Standalone gRPC server (optional)
     └── src/main.rs
 ```
 
@@ -55,7 +55,7 @@ This separation provides several benefits:
 ### As Library
 
 ```rust
-use synctv_providers::{BilibiliProvider, DirectUrlProvider, RtmpProvider};
+use synctv_media_providers::{BilibiliProvider, DirectUrlProvider, RtmpProvider};
 use synctv_core::provider::{ProviderRegistry, ProviderContext};
 use serde_json::json;
 use std::sync::Arc;
@@ -96,10 +96,10 @@ let result = provider.generate_playback(&ctx, &source_config).await?;
 
 ```bash
 # Build provider server
-cargo build --release -p synctv-provider-server
+cargo build --release -p synctv-media-provider-server
 
 # Run with configuration
-./target/release/synctv-provider-server \
+./target/release/synctv-media-provider-server \
   --listen 0.0.0.0:50051 \
   --providers bilibili,alist,emby
 ```
@@ -139,7 +139,7 @@ cargo build --release -p synctv-provider-server
 │   SyncTV Server     │
 │  ┌───────────────┐  │
 │  │ synctv-core   │  │
-│  │ synctv-providers│ │
+│  │ synctv-media-providers│ │
 │  └───────────────┘  │
 └─────────────────────┘
 ```
@@ -230,16 +230,16 @@ Compared to `/Users/zjr/workspace/go/synctv/vendors`:
 
 ```bash
 # Build only providers
-cargo build -p synctv-providers
+cargo build -p synctv-media-providers
 
 # Build with features
-cargo build -p synctv-providers --features "bilibili,alist"
+cargo build -p synctv-media-providers --features "bilibili,alist"
 
 # Test providers
-cargo test -p synctv-providers
+cargo test -p synctv-media-providers
 
 # Build provider server
-cargo build -p synctv-provider-server --release
+cargo build -p synctv-media-provider-server --release
 ```
 
 ## Adding New Provider

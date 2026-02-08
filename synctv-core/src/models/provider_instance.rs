@@ -1,6 +1,6 @@
-// Provider Instance Models
+// Media Provider Instance Models
 //
-// Core data structures for provider instance management system.
+// Core data structures for media provider instance management system.
 // Supports both local (in-process) and remote (gRPC) provider instances.
 
 use chrono::{DateTime, Utc};
@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// Provider Instance Configuration
+/// Media Provider Instance Configuration
 ///
-/// Represents a gRPC provider instance that can be deployed in different regions
+/// Represents a gRPC media provider instance that can be deployed in different regions
 /// for cross-region video parsing and content delivery.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ProviderInstance {
@@ -38,7 +38,7 @@ pub struct ProviderInstance {
     /// Skip TLS certificate verification (UNSAFE, dev/test only)
     pub insecure_tls: bool,
 
-    /// Supported provider types (e.g., ["bilibili", "alist", "emby"])
+    /// Supported media provider types (e.g., ["bilibili", "alist", "emby"])
     pub providers: Vec<String>,
 
     /// Whether this instance is enabled
@@ -52,7 +52,7 @@ pub struct ProviderInstance {
 }
 
 impl ProviderInstance {
-    /// Check if this instance supports a specific provider type
+    /// Check if this instance supports a specific media provider type
     #[must_use] 
     pub fn supports_provider(&self, provider: &str) -> bool {
         self.providers.contains(&provider.to_string())
@@ -67,7 +67,7 @@ impl ProviderInstance {
     }
 }
 
-/// User Provider Credential
+/// User Media Provider Credential
 ///
 /// Stores user-specific credentials for media providers (Bilibili cookies, Alist passwords, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -78,7 +78,7 @@ pub struct UserProviderCredential {
     /// User ID (nanoid, foreign key to users table)
     pub user_id: String,
 
-    /// Provider type ("bilibili", "alist", "emby")
+    /// Media provider type ("bilibili", "alist", "emby")
     pub provider: String,
 
     /// Server identifier
@@ -86,7 +86,7 @@ pub struct UserProviderCredential {
     /// - Alist/Emby: MD5(host) (allows multiple servers per user)
     pub server_id: String,
 
-    /// Associated provider instance name (optional)
+    /// Associated media provider instance name (optional)
     pub provider_instance_name: Option<String>,
 
     /// Credential data in JSONB format (plaintext storage per design doc)
@@ -134,9 +134,9 @@ impl UserProviderCredential {
     }
 }
 
-/// Provider Credential Types
+/// Media Provider Credential Types
 ///
-/// Enum representing different credential formats for supported providers.
+/// Enum representing different credential formats for supported media providers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProviderCredential {
@@ -185,7 +185,7 @@ impl ProviderCredential {
         }
     }
 
-    /// Get the provider type name
+    /// Get the media provider type name
     #[must_use] 
     pub const fn provider_type(&self) -> &'static str {
         match self {
