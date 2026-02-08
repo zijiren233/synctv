@@ -27,7 +27,7 @@ impl ProviderInstanceRepository {
     /// Get all provider instances
     pub async fn get_all(&self) -> Result<Vec<ProviderInstance>> {
         sqlx::query_as::<_, ProviderInstance>(
-            "SELECT * FROM provider_instances ORDER BY created_at DESC"
+            "SELECT * FROM media_provider_instances ORDER BY created_at DESC"
         )
         .fetch_all(&self.pool)
         .await
@@ -36,7 +36,7 @@ impl ProviderInstanceRepository {
     /// Get all enabled provider instances
     pub async fn get_all_enabled(&self) -> Result<Vec<ProviderInstance>> {
         sqlx::query_as::<_, ProviderInstance>(
-            "SELECT * FROM provider_instances WHERE enabled = true ORDER BY created_at DESC"
+            "SELECT * FROM media_provider_instances WHERE enabled = true ORDER BY created_at DESC"
         )
         .fetch_all(&self.pool)
         .await
@@ -45,7 +45,7 @@ impl ProviderInstanceRepository {
     /// Get provider instance by name
     pub async fn get_by_name(&self, name: &str) -> Result<Option<ProviderInstance>> {
         sqlx::query_as::<_, ProviderInstance>(
-            "SELECT * FROM provider_instances WHERE name = $1"
+            "SELECT * FROM media_provider_instances WHERE name = $1"
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -55,7 +55,7 @@ impl ProviderInstanceRepository {
     /// Get instances that support a specific provider type
     pub async fn find_by_provider(&self, provider: &str) -> Result<Vec<ProviderInstance>> {
         sqlx::query_as::<_, ProviderInstance>(
-            "SELECT * FROM provider_instances WHERE $1 = ANY(providers) AND enabled = true"
+            "SELECT * FROM media_provider_instances WHERE $1 = ANY(providers) AND enabled = true"
         )
         .bind(provider)
         .fetch_all(&self.pool)
@@ -66,7 +66,7 @@ impl ProviderInstanceRepository {
     pub async fn create(&self, instance: &ProviderInstance) -> Result<()> {
         sqlx::query(
             r"
-            INSERT INTO provider_instances
+            INSERT INTO media_provider_instances
             (name, endpoint, comment, jwt_secret, custom_ca, timeout, tls, insecure_tls, providers, enabled)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "
@@ -91,7 +91,7 @@ impl ProviderInstanceRepository {
     pub async fn update(&self, instance: &ProviderInstance) -> Result<()> {
         sqlx::query(
             r"
-            UPDATE provider_instances
+            UPDATE media_provider_instances
             SET endpoint = $2, comment = $3, jwt_secret = $4, custom_ca = $5,
                 timeout = $6, tls = $7, insecure_tls = $8, providers = $9, enabled = $10,
                 updated_at = NOW()
@@ -116,7 +116,7 @@ impl ProviderInstanceRepository {
 
     /// Delete a provider instance
     pub async fn delete(&self, name: &str) -> Result<()> {
-        sqlx::query("DELETE FROM provider_instances WHERE name = $1")
+        sqlx::query("DELETE FROM media_provider_instances WHERE name = $1")
             .bind(name)
             .execute(&self.pool)
             .await?;
@@ -126,7 +126,7 @@ impl ProviderInstanceRepository {
 
     /// Enable a provider instance
     pub async fn enable(&self, name: &str) -> Result<()> {
-        sqlx::query("UPDATE provider_instances SET enabled = true, updated_at = NOW() WHERE name = $1")
+        sqlx::query("UPDATE media_provider_instances SET enabled = true, updated_at = NOW() WHERE name = $1")
             .bind(name)
             .execute(&self.pool)
             .await?;
@@ -136,7 +136,7 @@ impl ProviderInstanceRepository {
 
     /// Disable a provider instance
     pub async fn disable(&self, name: &str) -> Result<()> {
-        sqlx::query("UPDATE provider_instances SET enabled = false, updated_at = NOW() WHERE name = $1")
+        sqlx::query("UPDATE media_provider_instances SET enabled = false, updated_at = NOW() WHERE name = $1")
             .bind(name)
             .execute(&self.pool)
             .await?;
@@ -167,7 +167,7 @@ impl UserProviderCredentialRepository {
     /// Get all credentials for a user
     pub async fn get_by_user(&self, user_id: &str) -> Result<Vec<UserProviderCredential>> {
         sqlx::query_as::<_, UserProviderCredential>(
-            "SELECT * FROM user_provider_credentials WHERE user_id = $1 ORDER BY created_at DESC"
+            "SELECT * FROM user_media_provider_credentials WHERE user_id = $1 ORDER BY created_at DESC"
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -177,7 +177,7 @@ impl UserProviderCredentialRepository {
     /// Get credential by ID
     pub async fn get_by_id(&self, id: &str) -> Result<Option<UserProviderCredential>> {
         sqlx::query_as::<_, UserProviderCredential>(
-            "SELECT * FROM user_provider_credentials WHERE id = $1"
+            "SELECT * FROM user_media_provider_credentials WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -192,7 +192,7 @@ impl UserProviderCredentialRepository {
         server_id: &str,
     ) -> Result<Option<UserProviderCredential>> {
         sqlx::query_as::<_, UserProviderCredential>(
-            "SELECT * FROM user_provider_credentials WHERE user_id = $1 AND provider = $2 AND server_id = $3"
+            "SELECT * FROM user_media_provider_credentials WHERE user_id = $1 AND provider = $2 AND server_id = $3"
         )
         .bind(user_id)
         .bind(provider)
@@ -208,7 +208,7 @@ impl UserProviderCredentialRepository {
         provider: &str,
     ) -> Result<Vec<UserProviderCredential>> {
         sqlx::query_as::<_, UserProviderCredential>(
-            "SELECT * FROM user_provider_credentials WHERE user_id = $1 AND provider = $2"
+            "SELECT * FROM user_media_provider_credentials WHERE user_id = $1 AND provider = $2"
         )
         .bind(user_id)
         .bind(provider)
@@ -220,7 +220,7 @@ impl UserProviderCredentialRepository {
     pub async fn create(&self, credential: &UserProviderCredential) -> Result<()> {
         sqlx::query(
             r"
-            INSERT INTO user_provider_credentials
+            INSERT INTO user_media_provider_credentials
             (id, user_id, provider, server_id, provider_instance_name, credential_data, expires_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             "
@@ -242,7 +242,7 @@ impl UserProviderCredentialRepository {
     pub async fn update(&self, credential: &UserProviderCredential) -> Result<()> {
         sqlx::query(
             r"
-            UPDATE user_provider_credentials
+            UPDATE user_media_provider_credentials
             SET provider_instance_name = $2, credential_data = $3, expires_at = $4, updated_at = NOW()
             WHERE id = $1
             "
@@ -259,7 +259,7 @@ impl UserProviderCredentialRepository {
 
     /// Delete a user credential
     pub async fn delete(&self, id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM user_provider_credentials WHERE id = $1")
+        sqlx::query("DELETE FROM user_media_provider_credentials WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -269,7 +269,7 @@ impl UserProviderCredentialRepository {
 
     /// Delete all credentials for a user and provider
     pub async fn delete_by_user_and_provider(&self, user_id: &str, provider: &str) -> Result<()> {
-        sqlx::query("DELETE FROM user_provider_credentials WHERE user_id = $1 AND provider = $2")
+        sqlx::query("DELETE FROM user_media_provider_credentials WHERE user_id = $1 AND provider = $2")
             .bind(user_id)
             .bind(provider)
             .execute(&self.pool)
@@ -281,7 +281,7 @@ impl UserProviderCredentialRepository {
     /// Get all expired credentials (for cleanup jobs)
     pub async fn get_expired(&self) -> Result<Vec<UserProviderCredential>> {
         sqlx::query_as::<_, UserProviderCredential>(
-            "SELECT * FROM user_provider_credentials WHERE expires_at IS NOT NULL AND expires_at <= NOW()"
+            "SELECT * FROM user_media_provider_credentials WHERE expires_at IS NOT NULL AND expires_at <= NOW()"
         )
         .fetch_all(&self.pool)
         .await
@@ -290,7 +290,7 @@ impl UserProviderCredentialRepository {
     /// Delete all expired credentials
     pub async fn delete_expired(&self) -> Result<u64> {
         let result = sqlx::query(
-            "DELETE FROM user_provider_credentials WHERE expires_at IS NOT NULL AND expires_at <= NOW()"
+            "DELETE FROM user_media_provider_credentials WHERE expires_at IS NOT NULL AND expires_at <= NOW()"
         )
         .execute(&self.pool)
         .await?;
