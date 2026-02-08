@@ -308,8 +308,8 @@ pub fn create_router(
             "/api/rooms/:room_id/bans/:user_id",
             axum::routing::delete(room_extra::unban_member),
         )
-        // Common vendor routes (user-facing)
-        .nest("/api/vendor", provider_common::register_common_routes())
+        // Common provider routes (user-facing)
+        .nest("/api/provider", provider_common::register_common_routes())
         // Provider-specific HTTP routes
         .nest("/api/providers/bilibili", providers::bilibili::bilibili_routes())
         .nest("/api/providers/alist", providers::alist::alist_routes())

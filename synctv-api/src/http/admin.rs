@@ -157,12 +157,12 @@ pub fn create_admin_router() -> Router<AppState> {
         .route("/rooms/:room_id/approve", post(approve_room))
         .route("/rooms/:room_id/settings", get(get_room_settings).post(set_room_settings))
         .route("/rooms/:room_id/settings/reset", post(reset_room_settings))
-        // Provider instances (vendors)
-        .route("/vendors", get(list_vendors).post(add_vendor))
-        .route("/vendors/:name", put(set_vendor).delete(delete_vendor))
-        .route("/vendors/:name/reconnect", post(reconnect_vendor))
-        .route("/vendors/:name/enable", post(enable_vendor))
-        .route("/vendors/:name/disable", post(disable_vendor))
+        // Provider instances
+        .route("/providers", get(list_providers).post(add_provider))
+        .route("/providers/:name", put(update_provider).delete(delete_provider))
+        .route("/providers/:name/reconnect", post(reconnect_provider))
+        .route("/providers/:name/enable", post(enable_provider))
+        .route("/providers/:name/disable", post(disable_provider))
         // Admin management (root only)
         .route("/admins", get(list_admins))
         .route("/admins/:user_id", post(add_admin).delete(remove_admin))
@@ -614,10 +614,10 @@ async fn reset_room_settings(
 }
 
 // ------------------------------------------------------------------
-// Provider Instances (Vendors)
+// Provider Instances
 // ------------------------------------------------------------------
 
-async fn list_vendors(
+async fn list_providers(
     _auth: AuthAdmin,
     State(state): State<AppState>,
 ) -> AppResult<Json<admin::ListProviderInstancesResponse>> {
@@ -631,7 +631,7 @@ async fn list_vendors(
     Ok(Json(resp))
 }
 
-async fn add_vendor(
+async fn add_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Json(req): Json<admin::AddProviderInstanceRequest>,
@@ -644,7 +644,7 @@ async fn add_vendor(
     Ok(Json(resp))
 }
 
-async fn set_vendor(
+async fn update_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -659,7 +659,7 @@ async fn set_vendor(
     Ok(Json(resp))
 }
 
-async fn delete_vendor(
+async fn delete_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -672,7 +672,7 @@ async fn delete_vendor(
     Ok(Json(resp))
 }
 
-async fn reconnect_vendor(
+async fn reconnect_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -685,7 +685,7 @@ async fn reconnect_vendor(
     Ok(Json(resp))
 }
 
-async fn enable_vendor(
+async fn enable_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -698,7 +698,7 @@ async fn enable_vendor(
     Ok(Json(resp))
 }
 
-async fn disable_vendor(
+async fn disable_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,
