@@ -171,9 +171,16 @@ impl ClientApiImpl {
 
     pub async fn list_rooms(
         &self,
-        _req: crate::proto::client::ListRoomsRequest,
+        req: crate::proto::client::ListRoomsRequest,
     ) -> Result<crate::proto::client::ListRoomsResponse, String> {
-        let query = synctv_core::models::RoomListQuery::default();
+        let mut query = synctv_core::models::RoomListQuery {
+            page: req.page,
+            page_size: req.page_size,
+            ..Default::default()
+        };
+        if !req.search.is_empty() {
+            query.search = Some(req.search);
+        }
         let (rooms, total) = self.room_service.list_rooms(&query).await
             .map_err(|e| e.to_string())?;
 
@@ -1050,6 +1057,7 @@ fn user_to_proto(user: &synctv_core::models::User) -> crate::proto::client::User
         role: role_str.to_string(),
         status: status_str.to_string(),
         created_at: user.created_at.timestamp(),
+        email_verified: user.email_verified,
     }
 }
 
@@ -1068,6 +1076,7 @@ fn room_to_proto_basic(
         settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
         created_at: room.created_at.timestamp(),
         member_count: member_count.unwrap_or(0),
+        updated_at: room.updated_at.timestamp(),
     }
 }
 
