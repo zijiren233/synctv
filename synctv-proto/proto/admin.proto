@@ -9,7 +9,7 @@ service AdminService {
     // =========================
     rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse);
     rpc GetSettingsGroup(GetSettingsGroupRequest) returns (GetSettingsGroupResponse);
-    rpc SetSettings(SetSettingsRequest) returns (SetSettingsResponse);
+    rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse);
     rpc SendTestEmail(SendTestEmailRequest) returns (SendTestEmailResponse);
 
     // =========================
@@ -17,7 +17,7 @@ service AdminService {
     // =========================
     rpc ListProviderInstances(ListProviderInstancesRequest) returns (ListProviderInstancesResponse);
     rpc AddProviderInstance(AddProviderInstanceRequest) returns (AddProviderInstanceResponse);
-    rpc SetProviderInstance(SetProviderInstanceRequest) returns (SetProviderInstanceResponse);
+    rpc UpdateProviderInstance(UpdateProviderInstanceRequest) returns (UpdateProviderInstanceResponse);
     rpc DeleteProviderInstance(DeleteProviderInstanceRequest) returns (DeleteProviderInstanceResponse);
     rpc ReconnectProviderInstance(ReconnectProviderInstanceRequest) returns (ReconnectProviderInstanceResponse);
     rpc EnableProviderInstance(EnableProviderInstanceRequest) returns (EnableProviderInstanceResponse);
@@ -30,9 +30,9 @@ service AdminService {
     rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
     rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
     rpc GetUser(GetUserRequest) returns (GetUserResponse);
-    rpc SetUserPassword(SetUserPasswordRequest) returns (SetUserPasswordResponse);
-    rpc SetUserUsername(SetUserUsernameRequest) returns (SetUserUsernameResponse);
-    rpc SetUserRole(SetUserRoleRequest) returns (SetUserRoleResponse);
+    rpc UpdateUserPassword(UpdateUserPasswordRequest) returns (UpdateUserPasswordResponse);
+    rpc UpdateUserUsername(UpdateUserUsernameRequest) returns (UpdateUserUsernameResponse);
+    rpc UpdateUserRole(UpdateUserRoleRequest) returns (UpdateUserRoleResponse);
     rpc BanUser(BanUserRequest) returns (BanUserResponse);
     rpc UnbanUser(UnbanUserRequest) returns (UnbanUserResponse);
     rpc GetUserRooms(GetUserRoomsRequest) returns (GetUserRoomsResponse);
@@ -44,10 +44,9 @@ service AdminService {
     rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
     rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
     rpc GetRoomSettings(GetRoomSettingsRequest) returns (GetRoomSettingsResponse);
-    rpc SetRoomSettings(SetRoomSettingsRequest) returns (SetRoomSettingsResponse);
-    rpc UpdateRoomSetting(UpdateRoomSettingRequest) returns (UpdateRoomSettingResponse);
+    rpc UpdateRoomSettings(UpdateRoomSettingsRequest) returns (UpdateRoomSettingsResponse);
     rpc ResetRoomSettings(ResetRoomSettingsRequest) returns (ResetRoomSettingsResponse);
-    rpc SetRoomPassword(SetRoomPasswordRequest) returns (SetRoomPasswordResponse);
+    rpc UpdateRoomPassword(UpdateRoomPasswordRequest) returns (UpdateRoomPasswordResponse);
     rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
     rpc BanRoom(BanRoomRequest) returns (BanRoomResponse);
     rpc UnbanRoom(UnbanRoomRequest) returns (UnbanRoomResponse);
@@ -131,12 +130,12 @@ message GetSettingsGroupResponse {
     SettingsGroup group = 1;
 }
 
-message SetSettingsRequest {
+message UpdateSettingsRequest {
     string group = 1;
     map<string, string> settings = 2;
 }
 
-message SetSettingsResponse {
+message UpdateSettingsResponse {
     // Empty response - success is indicated by no error
 }
 
@@ -176,7 +175,7 @@ message AddProviderInstanceResponse {
     ProviderInstance instance = 1;
 }
 
-message SetProviderInstanceRequest {
+message UpdateProviderInstanceRequest {
     string name = 1; // Instance name (cannot be changed)
     string endpoint = 2; // Optional new endpoint
     string comment = 3; // Optional new description
@@ -187,7 +186,7 @@ message SetProviderInstanceRequest {
     bytes config = 8; // Optional additional config
 }
 
-message SetProviderInstanceResponse {
+message UpdateProviderInstanceResponse {
     ProviderInstance instance = 1;
 }
 
@@ -267,30 +266,30 @@ message GetUserResponse {
     AdminUser user = 1;
 }
 
-message SetUserPasswordRequest {
+message UpdateUserPasswordRequest {
     string user_id = 1;
     string new_password = 2;
 }
 
-message SetUserPasswordResponse {
+message UpdateUserPasswordResponse {
     bool success = 1;
 }
 
-message SetUserUsernameRequest {
+message UpdateUserUsernameRequest {
     string user_id = 1;
     string new_username = 2;
 }
 
-message SetUserUsernameResponse {
+message UpdateUserUsernameResponse {
     AdminUser user = 1;
 }
 
-message SetUserRoleRequest {
+message UpdateUserRoleRequest {
     string user_id = 1;
     string role = 2; // user, admin
 }
 
-message SetUserRoleResponse {
+message UpdateUserRoleResponse {
     AdminUser user = 1;
 }
 
@@ -360,23 +359,13 @@ message GetRoomSettingsResponse {
     bytes settings = 1; // JSON settings
 }
 
-message SetRoomSettingsRequest {
+message UpdateRoomSettingsRequest {
     string room_id = 1;
     bytes settings = 2; // JSON settings
 }
 
-message SetRoomSettingsResponse {
+message UpdateRoomSettingsResponse {
     AdminRoom room = 1;
-}
-
-message UpdateRoomSettingRequest {
-    string room_id = 1;
-    string key = 2; // Setting key
-    bytes value = 3; // Setting value (JSON encoded)
-}
-
-message UpdateRoomSettingResponse {
-    bytes settings = 1; // Updated full settings
 }
 
 message ResetRoomSettingsRequest {
@@ -387,12 +376,12 @@ message ResetRoomSettingsResponse {
     AdminRoom room = 1;
 }
 
-message SetRoomPasswordRequest {
+message UpdateRoomPasswordRequest {
     string room_id = 1;
     string new_password = 2; // Empty to remove password
 }
 
-message SetRoomPasswordResponse {
+message UpdateRoomPasswordResponse {
     bool success = 1;
 }
 
