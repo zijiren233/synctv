@@ -11,6 +11,14 @@ import (
 )
 
 func Init(e *gin.Engine) {
+	// Health check endpoints (no /api prefix for Kubernetes probes)
+	e.GET("/health", Health)
+	e.GET("/healthz", Health) // Alternative path for compatibility
+	e.GET("/ready", Ready)
+	e.GET("/readiness", Ready) // Alternative path for compatibility
+	e.GET("/live", Live)
+	e.GET("/liveness", Live) // Alternative path for compatibility
+
 	api := e.Group("/api")
 
 	needAuthUserAPI := api.Group("", middlewares.AuthUserMiddleware)
