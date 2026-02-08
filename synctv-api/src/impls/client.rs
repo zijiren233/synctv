@@ -18,6 +18,7 @@ pub struct ClientApiImpl {
     pub connection_manager: Arc<ConnectionManager>,
     pub config: Arc<synctv_core::Config>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+    pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
 }
 
 impl ClientApiImpl {
@@ -28,6 +29,7 @@ impl ClientApiImpl {
         connection_manager: Arc<ConnectionManager>,
         config: Arc<synctv_core::Config>,
         sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+        publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     ) -> Self {
         Self {
             user_service,
@@ -35,6 +37,7 @@ impl ClientApiImpl {
             connection_manager,
             config,
             sfu_manager,
+            publish_key_service,
         }
     }
 
@@ -774,6 +777,66 @@ impl ClientApiImpl {
 
         Ok(crate::proto::client::GetPlaybackStateResponse {
             playback_state: Some(playback_state_to_proto(&state)),
+        })
+    }
+
+    // === Live Streaming Operations ===
+
+    pub async fn create_publish_key(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::CreatePublishKeyRequest,
+    ) -> Result<crate::proto::client::CreatePublishKeyResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        // Validate media ID
+        if req.id.is_empty() {
+            return Err("Media ID is required".to_string());
+        }
+        let media_id = synctv_core::models::MediaId::from_string(req.id.clone());
+
+        // Check room exists
+        let _room = self.room_service.get_room(&rid).await
+            .map_err(|e| match e {
+                synctv_core::Error::NotFound(msg) => format!("Room not found: {msg}"),
+                _ => format!("Failed to get room: {e}"),
+            })?;
+
+        // Check permission to start live stream
+        self.room_service
+            .check_permission(&rid, &uid, synctv_core::models::PermissionBits::START_LIVE)
+            .await
+            .map_err(|e| format!("Permission denied: {e}"))?;
+
+        // Get publish key service
+        let publish_key_service = self.publish_key_service.as_ref()
+            .ok_or_else(|| "Publish key service not configured".to_string())?;
+
+        // Generate publish key
+        let publish_key = publish_key_service
+            .generate_publish_key(rid.clone(), media_id.clone(), uid.clone())
+            .await
+            .map_err(|e| format!("Failed to generate publish key: {e}"))?;
+
+        // Construct RTMP URL and stream key
+        let rtmp_url = "rtmp://localhost:1935/live".to_string();
+        let stream_key = format!("{}/{}", rid.as_str(), media_id.as_str());
+
+        tracing::info!(
+            room_id = %rid.as_str(),
+            media_id = %media_id.as_str(),
+            user_id = %uid.as_str(),
+            expires_at = publish_key.expires_at,
+            "Generated publish key for live streaming"
+        );
+
+        Ok(crate::proto::client::CreatePublishKeyResponse {
+            publish_key: publish_key.token,
+            rtmp_url,
+            stream_key,
+            expires_at: publish_key.expires_at,
         })
     }
 

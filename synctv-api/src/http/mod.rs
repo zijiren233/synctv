@@ -129,6 +129,7 @@ pub fn create_router(
         connection_manager.clone(),
         config,
         sfu_manager,
+        publish_key_service.clone(),
     ));
 
     // AdminApi requires SettingsService and EmailService
