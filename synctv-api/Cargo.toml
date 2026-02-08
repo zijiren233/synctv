@@ -85,3 +85,4 @@ once_cell.workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true
+serde_urlencoded = "0.7"

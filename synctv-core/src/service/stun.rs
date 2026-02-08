@@ -238,6 +238,7 @@ impl StunServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stun_codec::TransactionId;
 
     #[tokio::test]
     async fn test_stun_server_start() {
@@ -299,7 +300,9 @@ mod tests {
 
         // Decode response
         let mut decoder = MessageDecoder::<Attribute>::new();
-        let response = decoder.decode_from_bytes(&buf[..len]).unwrap();
+        let response = decoder.decode_from_bytes(&buf[..len])
+            .expect("Failed to decode STUN response")
+            .expect("Broken STUN response");
 
         // Verify response
         assert_eq!(response.class(), MessageClass::SuccessResponse);
@@ -307,7 +310,7 @@ mod tests {
         assert_eq!(response.transaction_id(), transaction_id);
 
         // Verify XOR-MAPPED-ADDRESS is present
-        let has_xor_mapped = response.attributes().iter().any(|attr| {
+        let has_xor_mapped = response.attributes().any(|attr| {
             matches!(attr, Attribute::XorMappedAddress(_))
         });
         assert!(has_xor_mapped, "Response should contain XOR-MAPPED-ADDRESS");
@@ -340,7 +343,6 @@ mod tests {
         // Verify XOR-MAPPED-ADDRESS attribute
         let xor_mapped = response
             .attributes()
-            .iter()
             .find_map(|attr| {
                 if let Attribute::XorMappedAddress(addr) = attr {
                     Some(addr)
@@ -355,7 +357,6 @@ mod tests {
         // Verify SOFTWARE attribute
         let has_software = response
             .attributes()
-            .iter()
             .any(|attr| matches!(attr, Attribute::Software(_)));
         assert!(has_software, "Response should contain SOFTWARE attribute");
     }

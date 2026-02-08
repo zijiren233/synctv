@@ -152,7 +152,6 @@ pub struct ChatMessageFixture {
     id: String,
     room_id: RoomId,
     user_id: UserId,
-    username: String,
     content: String,
 }
 
@@ -162,7 +161,6 @@ impl ChatMessageFixture {
             id: nanoid::nanoid!(12),
             room_id: random_room_id(),
             user_id: random_user_id(),
-            username: "test_user".to_string(),
             content: "Test message".to_string(),
         }
     }
@@ -192,7 +190,6 @@ impl ChatMessageFixture {
             id: self.id,
             room_id: self.room_id,
             user_id: self.user_id,
-            username: self.username,
             content: self.content,
             created_at: Utc::now(),
         }
@@ -224,7 +221,7 @@ where
 ///
 /// Useful for testing concurrent operations.
 pub async fn assert_concurrent_completion<F1, F2>(
-    max_delta_ms: u64,
+    _max_delta_ms: u64,
     future1: F1,
     future2: F2,
 ) -> (F1::Output, F2::Output)

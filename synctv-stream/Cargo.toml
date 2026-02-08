@@ -76,3 +76,4 @@ tonic-build = "0.12"
 [dev-dependencies]
 wiremock.workspace = true
 tempfile = "3.8"
+serde_urlencoded = "0.7"

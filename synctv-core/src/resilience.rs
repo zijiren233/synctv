@@ -295,6 +295,10 @@ pub mod circuit_breaker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+    use timeout::TimeoutConfig;
+    use retry::RetryConfig;
+    use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
 
     #[test]
     fn test_timeout_config() {

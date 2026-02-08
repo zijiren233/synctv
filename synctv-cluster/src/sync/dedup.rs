@@ -199,6 +199,8 @@ mod tests {
             username: "test".to_string(),
             message: "Hello".to_string(),
             timestamp: Utc::now(),
+            position: None,
+            color: None,
         };
 
         let key = DedupKey::from_event(&event);
