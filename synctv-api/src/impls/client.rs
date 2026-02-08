@@ -744,10 +744,19 @@ impl ClientApiImpl {
                 .map_err(|e| e.to_string())?;
         }
 
-        // Return minimal response - playlist and playing_media would require additional service methods
+        // Get the current root playlist and its item count
+        let playlist = self.room_service.playlist_service().get_root_playlist(&rid).await
+            .map_err(|e| e.to_string())?;
+        let item_count = self.room_service.media_service().count_playlist_media(&playlist.id).await
+            .map_err(|e| e.to_string())? as i32;
+
+        // Get the currently playing media
+        let playing_media = self.room_service.get_playing_media(&rid).await
+            .map_err(|e| e.to_string())?;
+
         Ok(crate::proto::client::SetCurrentMediaResponse {
-            playlist: None,  // TODO: implement when playlist getter is available
-            playing_media: None,  // TODO: implement when current media getter is available
+            playlist: Some(playlist_to_proto(&playlist, item_count)),
+            playing_media: playing_media.map(|m| media_to_proto(&m)),
         })
     }
 
@@ -1158,6 +1167,21 @@ pub fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::clien
         added_by: media.creator_id.as_str().to_string(),
         provider_instance_name: media.provider_instance_name.clone().unwrap_or_default(),
         source_config: serde_json::to_vec(&media.source_config).unwrap_or_default(),
+    }
+}
+
+fn playlist_to_proto(playlist: &synctv_core::models::Playlist, item_count: i32) -> crate::proto::client::Playlist {
+    crate::proto::client::Playlist {
+        id: playlist.id.as_str().to_string(),
+        room_id: playlist.room_id.as_str().to_string(),
+        name: playlist.name.clone(),
+        parent_id: playlist.parent_id.as_ref().map(|id| id.as_str().to_string()).unwrap_or_default(),
+        position: playlist.position,
+        is_folder: playlist.parent_id.is_none() || playlist.source_provider.is_some(),
+        is_dynamic: playlist.is_dynamic(),
+        item_count,
+        created_at: playlist.created_at.timestamp(),
+        updated_at: playlist.updated_at.timestamp(),
     }
 }
 
