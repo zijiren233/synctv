@@ -210,45 +210,32 @@ pub fn create_router(
         )
         .route("/api/oauth2/providers", get(oauth2::list_providers))
         // User management routes
-        .route("/api/user/me", get(user::get_me))
-        .route("/api/user/logout", post(user::logout))
-        .route("/api/user/username", post(user::update_username))
-        .route("/api/user/password", post(user::update_password))
+        .route("/api/user", get(user::get_me))
+        .route("/api/user", axum::routing::patch(user::update_user))
+        .route("/api/auth/session", axum::routing::delete(user::logout))
         .route("/api/user/rooms", get(user::get_joined_rooms))
-        .route("/api/user/rooms/joined", get(user::get_joined_rooms))
         .route(
             "/api/user/rooms/:room_id",
             axum::routing::delete(user::delete_my_room),
         )
-        .route("/api/user/rooms/:room_id/exit", post(user::exit_room))
-        // Room discovery routes (public)
-        .route("/api/room/check/:room_id", get(room::check_room))
-        .route("/api/room/list", get(room::list_rooms))
-        .route("/api/room/hot", get(room::hot_rooms))
+        // Room discovery routes (public) - use query params for filtering/sorting
+        .route("/api/rooms", get(room::list_or_get_rooms))
         // Room management routes
         .route("/api/rooms", post(room::create_room))
-        .route("/api/rooms/:room_id", get(room::get_room))
-        .route("/api/rooms/:room_id/join", post(room::join_room))
-        .route("/api/rooms/:room_id/leave", post(room::leave_room))
+        .route("/api/rooms/:room_id", axum::routing::delete(room::delete_room))
+        // Room membership as a resource
+        .route("/api/rooms/:room_id/members/@me", axum::routing::put(room::join_room))
+        .route("/api/rooms/:room_id/members/@me", axum::routing::delete(room::leave_room))
         .route("/api/rooms/:room_id/settings", get(room::get_room_settings))
+        .route("/api/rooms/:room_id/settings", axum::routing::patch(room::update_room_settings))
+        .route("/api/rooms/:room_id/password", axum::routing::patch(room::set_room_password))
+        .route("/api/rooms/:room_id/password/verify", post(room::check_password))
         .route("/api/rooms/:room_id/members", get(room::get_room_members))
-        .route("/api/rooms/:room_id/pwd/check", post(room::check_password))
-        .route(
-            "/api/rooms/:room_id",
-            axum::routing::delete(room::delete_room),
-        )
-        // Room admin routes
-        .route(
-            "/api/rooms/:room_id/admin/settings",
-            post(room::set_room_settings_admin),
-        )
-        .route(
-            "/api/rooms/:room_id/admin/password",
-            post(room::set_room_password),
-        )
         // Media/playlist routes
         .route("/api/rooms/:room_id/media", post(room::add_media))
         .route("/api/rooms/:room_id/media", get(room::get_playlist))
+        .route("/api/rooms/:room_id/media", axum::routing::delete(media::clear_playlist))
+        .route("/api/rooms/:room_id/media", axum::routing::patch(room::update_media_batch))
         .route(
             "/api/rooms/:room_id/media/batch",
             post(room::push_media_batch),
@@ -258,24 +245,12 @@ pub fn create_router(
             axum::routing::delete(room::remove_media_batch),
         )
         .route(
-            "/api/rooms/:room_id/media/reorder",
-            post(room::reorder_media_batch),
-        )
-        .route(
             "/api/rooms/:room_id/media/:media_id",
             axum::routing::delete(room::remove_media),
         )
         .route(
-            "/api/rooms/:room_id/media/:media_id/edit",
-            post(room::edit_media),
-        )
-        .route(
-            "/api/rooms/:room_id/media/swap",
-            post(room::swap_media_items),
-        )
-        .route(
-            "/api/rooms/:room_id/media/clear",
-            post(media::clear_playlist),
+            "/api/rooms/:room_id/media/:media_id",
+            axum::routing::patch(room::edit_media),
         )
         // Movie info endpoint (resolves provider playback)
         .route(
@@ -287,22 +262,9 @@ pub fn create_router(
             "/api/rooms/:room_id/playlists/:playlist_id/items",
             get(media::list_playlist_items),
         )
-        // Playback control routes
-        .route("/api/rooms/:room_id/playback/play", post(room::play))
-        .route("/api/rooms/:room_id/playback/pause", post(room::pause))
-        .route("/api/rooms/:room_id/playback/seek", post(room::seek))
-        .route(
-            "/api/rooms/:room_id/playback/speed",
-            post(room::change_speed),
-        )
-        .route(
-            "/api/rooms/:room_id/playback/switch",
-            post(room::switch_media),
-        )
-        .route(
-            "/api/rooms/:room_id/playback",
-            get(room::get_playback_state),
-        )
+        // Playback control - unified resource endpoint
+        .route("/api/rooms/:room_id/playback", get(room::get_playback_state))
+        .route("/api/rooms/:room_id/playback", axum::routing::patch(room::update_playback))
         // Live streaming routes (if infrastructure is configured)
         // Matches synctv-go path patterns: /api/room/movie/live/...
         .merge(
@@ -328,22 +290,22 @@ pub fn create_router(
         )
         // Admin routes (admin/root role required)
         .nest("/api/admin", admin::create_admin_router())
-        // Room member management routes
+        // Room member management - RESTful resources
         .route(
-            "/api/rooms/:room_id/members/:user_id/kick",
-            post(room_extra::kick_member),
+            "/api/rooms/:room_id/members/:user_id",
+            axum::routing::delete(room_extra::kick_member),
         )
         .route(
-            "/api/rooms/:room_id/members/:user_id/permissions",
-            post(room_extra::set_member_permissions),
+            "/api/rooms/:room_id/members/:user_id",
+            axum::routing::patch(room_extra::set_member_permissions),
         )
         .route(
-            "/api/rooms/:room_id/members/:user_id/ban",
+            "/api/rooms/:room_id/bans",
             post(room_extra::ban_member),
         )
         .route(
-            "/api/rooms/:room_id/members/:user_id/unban",
-            post(room_extra::unban_member),
+            "/api/rooms/:room_id/bans/:user_id",
+            axum::routing::delete(room_extra::unban_member),
         )
         // Common vendor routes (user-facing)
         .nest("/api/vendor", provider_common::register_common_routes())
