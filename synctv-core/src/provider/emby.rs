@@ -56,10 +56,10 @@ impl EmbyProvider {
         host: String,
         api_key: String,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::emby::MeResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::emby::MeResp, ProviderError> {
         let client = self.get_client(instance_name).await;
 
-        let me_req = synctv_providers::grpc::emby::MeReq {
+        let me_req = synctv_media_providers::grpc::emby::MeReq {
             host,
             token: api_key,
             user_id: String::new(), // Empty = get current user
@@ -71,9 +71,9 @@ impl EmbyProvider {
     /// List Emby library items
     pub async fn fs_list(
         &self,
-        req: synctv_providers::grpc::emby::FsListReq,
+        req: synctv_media_providers::grpc::emby::FsListReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::emby::FsListResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::emby::FsListResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.fs_list(req).await.map_err(std::convert::Into::into)
     }
@@ -81,9 +81,9 @@ impl EmbyProvider {
     /// Get Emby user info
     pub async fn me(
         &self,
-        req: synctv_providers::grpc::emby::MeReq,
+        req: synctv_media_providers::grpc::emby::MeReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::emby::MeResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::emby::MeResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.me(req).await.map_err(std::convert::Into::into)
     }
@@ -132,7 +132,7 @@ impl MediaProvider for EmbyProvider {
             .await;
 
         // Get item details first
-        let item_request = synctv_providers::grpc::emby::GetItemReq {
+        let item_request = synctv_media_providers::grpc::emby::GetItemReq {
             host: config.host.clone(),
             token: config.token.clone(),
             item_id: config.item_id.clone(),
@@ -151,7 +151,7 @@ impl MediaProvider for EmbyProvider {
         }
 
         // Get playback info
-        let playback_request = synctv_providers::grpc::emby::PlaybackInfoReq {
+        let playback_request = synctv_media_providers::grpc::emby::PlaybackInfoReq {
             host: config.host.clone(),
             token: config.token.clone(),
             user_id: config.user_id.clone(),
@@ -321,7 +321,7 @@ impl DynamicFolder for EmbyProvider {
             .get_client(base_config.provider_instance_name.as_deref())
             .await;
 
-        let list_req = synctv_providers::grpc::emby::FsListReq {
+        let list_req = synctv_media_providers::grpc::emby::FsListReq {
             host: base_config.host.clone(),
             token: base_config.token.clone(),
             path: target_path.to_string(),

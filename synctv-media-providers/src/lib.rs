@@ -5,7 +5,7 @@
 // or as provider_instances in the SyncTV system.
 //
 // Architecture:
-// - synctv-providers: Pure HTTP clients + gRPC servers (Alist, Bilibili, Emby)
+// - synctv-media-providers: Pure HTTP clients + gRPC servers (Alist, Bilibili, Emby)
 // - synctv-core/provider: MediaProvider trait implementations (adapters calling these clients)
 // - synctv-core/service: ProvidersManager for managing provider instances
 

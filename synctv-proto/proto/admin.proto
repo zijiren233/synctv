@@ -9,15 +9,15 @@ service AdminService {
     // =========================
     rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse);
     rpc GetSettingsGroup(GetSettingsGroupRequest) returns (GetSettingsGroupResponse);
-    rpc SetSettings(SetSettingsRequest) returns (SetSettingsResponse);
+    rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse);
     rpc SendTestEmail(SendTestEmailRequest) returns (SendTestEmailResponse);
 
     // =========================
-    // Provider Instance Management
+    // Media Provider Instance Management
     // =========================
     rpc ListProviderInstances(ListProviderInstancesRequest) returns (ListProviderInstancesResponse);
     rpc AddProviderInstance(AddProviderInstanceRequest) returns (AddProviderInstanceResponse);
-    rpc SetProviderInstance(SetProviderInstanceRequest) returns (SetProviderInstanceResponse);
+    rpc UpdateProviderInstance(UpdateProviderInstanceRequest) returns (UpdateProviderInstanceResponse);
     rpc DeleteProviderInstance(DeleteProviderInstanceRequest) returns (DeleteProviderInstanceResponse);
     rpc ReconnectProviderInstance(ReconnectProviderInstanceRequest) returns (ReconnectProviderInstanceResponse);
     rpc EnableProviderInstance(EnableProviderInstanceRequest) returns (EnableProviderInstanceResponse);
@@ -30,9 +30,9 @@ service AdminService {
     rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
     rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
     rpc GetUser(GetUserRequest) returns (GetUserResponse);
-    rpc SetUserPassword(SetUserPasswordRequest) returns (SetUserPasswordResponse);
-    rpc SetUserUsername(SetUserUsernameRequest) returns (SetUserUsernameResponse);
-    rpc SetUserRole(SetUserRoleRequest) returns (SetUserRoleResponse);
+    rpc UpdateUserPassword(UpdateUserPasswordRequest) returns (UpdateUserPasswordResponse);
+    rpc UpdateUserUsername(UpdateUserUsernameRequest) returns (UpdateUserUsernameResponse);
+    rpc UpdateUserRole(UpdateUserRoleRequest) returns (UpdateUserRoleResponse);
     rpc BanUser(BanUserRequest) returns (BanUserResponse);
     rpc UnbanUser(UnbanUserRequest) returns (UnbanUserResponse);
     rpc GetUserRooms(GetUserRoomsRequest) returns (GetUserRoomsResponse);
@@ -44,10 +44,9 @@ service AdminService {
     rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
     rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
     rpc GetRoomSettings(GetRoomSettingsRequest) returns (GetRoomSettingsResponse);
-    rpc SetRoomSettings(SetRoomSettingsRequest) returns (SetRoomSettingsResponse);
-    rpc UpdateRoomSetting(UpdateRoomSettingRequest) returns (UpdateRoomSettingResponse);
+    rpc UpdateRoomSettings(UpdateRoomSettingsRequest) returns (UpdateRoomSettingsResponse);
     rpc ResetRoomSettings(ResetRoomSettingsRequest) returns (ResetRoomSettingsResponse);
-    rpc SetRoomPassword(SetRoomPasswordRequest) returns (SetRoomPasswordResponse);
+    rpc UpdateRoomPassword(UpdateRoomPasswordRequest) returns (UpdateRoomPasswordResponse);
     rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
     rpc BanRoom(BanRoomRequest) returns (BanRoomResponse);
     rpc UnbanRoom(UnbanRoomRequest) returns (UnbanRoomResponse);
@@ -101,7 +100,7 @@ message ProviderInstance {
     string timeout = 4; // Request timeout (e.g., "10s")
     bool tls = 5; // Enable TLS
     bool insecure_tls = 6; // Skip TLS certificate verification (UNSAFE, dev/test only)
-    repeated string providers = 7; // Supported provider types (e.g., ["bilibili", "alist", "emby"])
+    repeated string providers = 7; // Supported media provider types (e.g., ["bilibili", "alist", "emby"])
     bool enabled = 8; // Whether this instance is enabled
     string status = 9; // connected, disconnected, error
     int64 created_at = 10;
@@ -131,12 +130,12 @@ message GetSettingsGroupResponse {
     SettingsGroup group = 1;
 }
 
-message SetSettingsRequest {
+message UpdateSettingsRequest {
     string group = 1;
     map<string, string> settings = 2;
 }
 
-message SetSettingsResponse {
+message UpdateSettingsResponse {
     // Empty response - success is indicated by no error
 }
 
@@ -150,11 +149,11 @@ message SendTestEmailResponse {
 }
 
 // =========================
-// Provider Instance Management
+// Media Provider Instance Management
 // =========================
 
 message ListProviderInstancesRequest {
-    string provider_type = 1; // Optional filter by provider type
+    string provider_type = 1; // Optional filter by media provider type
 }
 
 message ListProviderInstancesResponse {
@@ -168,7 +167,7 @@ message AddProviderInstanceRequest {
     string timeout = 4; // Request timeout (e.g., "10s")
     bool tls = 5; // Enable TLS
     bool insecure_tls = 6; // Skip TLS certificate verification
-    repeated string providers = 7; // Supported provider types
+    repeated string providers = 7; // Supported media provider types
     bytes config = 8; // Additional JSON config (jwt_secret, custom_ca, etc.)
 }
 
@@ -176,18 +175,18 @@ message AddProviderInstanceResponse {
     ProviderInstance instance = 1;
 }
 
-message SetProviderInstanceRequest {
+message UpdateProviderInstanceRequest {
     string name = 1; // Instance name (cannot be changed)
     string endpoint = 2; // Optional new endpoint
     string comment = 3; // Optional new description
     string timeout = 4; // Optional new timeout
     bool tls = 5; // Optional new TLS setting
     bool insecure_tls = 6; // Optional new insecure_tls setting
-    repeated string providers = 7; // Optional new provider list
+    repeated string providers = 7; // Optional new media provider list
     bytes config = 8; // Optional additional config
 }
 
-message SetProviderInstanceResponse {
+message UpdateProviderInstanceResponse {
     ProviderInstance instance = 1;
 }
 
@@ -267,30 +266,30 @@ message GetUserResponse {
     AdminUser user = 1;
 }
 
-message SetUserPasswordRequest {
+message UpdateUserPasswordRequest {
     string user_id = 1;
     string new_password = 2;
 }
 
-message SetUserPasswordResponse {
+message UpdateUserPasswordResponse {
     bool success = 1;
 }
 
-message SetUserUsernameRequest {
+message UpdateUserUsernameRequest {
     string user_id = 1;
     string new_username = 2;
 }
 
-message SetUserUsernameResponse {
+message UpdateUserUsernameResponse {
     AdminUser user = 1;
 }
 
-message SetUserRoleRequest {
+message UpdateUserRoleRequest {
     string user_id = 1;
     string role = 2; // user, admin
 }
 
-message SetUserRoleResponse {
+message UpdateUserRoleResponse {
     AdminUser user = 1;
 }
 
@@ -360,23 +359,13 @@ message GetRoomSettingsResponse {
     bytes settings = 1; // JSON settings
 }
 
-message SetRoomSettingsRequest {
+message UpdateRoomSettingsRequest {
     string room_id = 1;
     bytes settings = 2; // JSON settings
 }
 
-message SetRoomSettingsResponse {
+message UpdateRoomSettingsResponse {
     AdminRoom room = 1;
-}
-
-message UpdateRoomSettingRequest {
-    string room_id = 1;
-    string key = 2; // Setting key
-    bytes value = 3; // Setting value (JSON encoded)
-}
-
-message UpdateRoomSettingResponse {
-    bytes settings = 1; // Updated full settings
 }
 
 message ResetRoomSettingsRequest {
@@ -387,12 +376,12 @@ message ResetRoomSettingsResponse {
     AdminRoom room = 1;
 }
 
-message SetRoomPasswordRequest {
+message UpdateRoomPasswordRequest {
     string room_id = 1;
     string new_password = 2; // Empty to remove password
 }
 
-message SetRoomPasswordResponse {
+message UpdateRoomPasswordResponse {
     bool success = 1;
 }
 
@@ -498,6 +487,6 @@ message GetSystemStatsResponse {
     int32 active_rooms = 5;
     int32 banned_rooms = 6;
     int32 total_media = 7;
-    int32 provider_instances = 8;
+    int32 provider_instances = 8; // Total media provider instances
     bytes additional_stats = 9; // JSON for extensibility
 }

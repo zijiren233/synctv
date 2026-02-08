@@ -256,6 +256,31 @@ impl MediaRepository {
         Ok(result.rows_affected() as usize)
     }
 
+    /// Bulk delete media items by IDs
+    pub async fn delete_batch(&self, media_ids: &[MediaId]) -> Result<usize> {
+        if media_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let id_strs: Vec<&str> = media_ids.iter().map(|id| id.as_str()).collect();
+        let now = chrono::Utc::now();
+
+        // Build query with ANY array parameter
+        let result = sqlx::query(
+            r"
+            UPDATE media
+             SET deleted_at = $2
+             WHERE id = ANY($1) AND deleted_at IS NULL
+            "
+        )
+        .bind(&id_strs)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() as usize)
+    }
+
     /// Swap positions of two media
     pub async fn swap_positions(&self, media_id1: &MediaId, media_id2: &MediaId) -> Result<()> {
         // Get current positions
@@ -283,6 +308,28 @@ impl MediaRepository {
             .bind(pos1)
             .execute(&mut *tx)
             .await?;
+
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    /// Bulk reorder media items with new positions
+    /// Takes a list of (media_id, new_position) tuples and updates them in a transaction
+    pub async fn reorder_batch(&self, updates: &[(MediaId, i32)]) -> Result<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        for (media_id, new_position) in updates {
+            sqlx::query("UPDATE media SET position = $2 WHERE id = $1 AND deleted_at IS NULL")
+                .bind(media_id.as_str())
+                .bind(new_position)
+                .execute(&mut *tx)
+                .await?;
+        }
 
         tx.commit().await?;
 

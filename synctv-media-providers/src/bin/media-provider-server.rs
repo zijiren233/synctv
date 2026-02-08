@@ -3,7 +3,7 @@
 //! Standalone gRPC server that exposes provider services (Alist, Bilibili, Emby).
 //! Can be deployed as a remote provider instance.
 
-use synctv_providers::grpc::{
+use synctv_media_providers::grpc::{
     alist::alist_server::AlistServer,
     alist_server::AlistService as AlistGrpcService,
     bilibili::bilibili_server::BilibiliServer,

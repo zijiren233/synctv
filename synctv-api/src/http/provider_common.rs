@@ -15,11 +15,11 @@ use super::middleware::AuthUser;
 ///
 /// Routes:
 /// - GET /instances - List all available provider instances
-/// - GET /backends/:vendor - List available backends for a vendor type
+/// - GET /backends/:provider_type - List available backends for a provider type
 pub fn register_common_routes() -> Router<AppState> {
     Router::new()
         .route("/instances", get(list_instances))
-        .route("/backends/:vendor", get(list_backends))
+        .route("/backends/:provider_type", get(list_backends))
 }
 
 /// List all available provider instances
@@ -31,16 +31,16 @@ async fn list_instances(State(state): State<AppState>) -> impl IntoResponse {
     }))
 }
 
-/// List available backends for a given vendor type (bilibili/alist/emby)
+/// List available backends for a given provider type (bilibili/alist/emby)
 async fn list_backends(
     _auth: AuthUser,
     State(state): State<AppState>,
-    Path(vendor): Path<String>,
+    Path(provider_type): Path<String>,
 ) -> impl IntoResponse {
     let instances = match state.provider_instance_manager.get_all_instances().await {
         Ok(all) => all
             .into_iter()
-            .filter(|i| i.enabled && i.providers.iter().any(|p| p == &vendor))
+            .filter(|i| i.enabled && i.providers.iter().any(|p| p == &provider_type))
             .map(|i| i.name)
             .collect::<Vec<_>>(),
         Err(_) => vec![],

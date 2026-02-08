@@ -390,33 +390,33 @@ pub struct AdminTestEmailRequestSchema {
 }
 
 #[derive(ToSchema)]
-#[schema(example = json!({"name": "my-vendor", "type": "bilibili", "enabled": true, "config": {}}))]
-pub struct VendorSchema {
+#[schema(example = json!({"name": "my-provider", "type": "bilibili", "enabled": true, "config": {}}))]
+pub struct ProviderSchema {
     pub name: String,
     #[schema(rename = "type")]
-    pub vendor_type: String,
+    pub provider_type: String,
     pub enabled: bool,
     pub config: serde_json::Value,
 }
 
 #[derive(ToSchema)]
-#[schema(example = json!({"vendors": []}))]
-pub struct VendorsListSchema {
-    pub vendors: Vec<VendorSchema>,
+#[schema(example = json!({"providers": []}))]
+pub struct ProvidersListSchema {
+    pub providers: Vec<ProviderSchema>,
 }
 
 #[derive(ToSchema)]
-#[schema(example = json!({"name": "my-vendor", "type": "bilibili", "config": {}}))]
-pub struct CreateVendorRequestSchema {
+#[schema(example = json!({"name": "my-provider", "type": "bilibili", "config": {}}))]
+pub struct CreateProviderRequestSchema {
     pub name: String,
     #[schema(rename = "type")]
-    pub vendor_type: String,
+    pub provider_type: String,
     pub config: serde_json::Value,
 }
 
 #[derive(ToSchema)]
 #[schema(example = json!({"config": {}}))]
-pub struct UpdateVendorRequestSchema {
+pub struct UpdateProviderRequestSchema {
     pub config: serde_json::Value,
 }
 
@@ -697,13 +697,13 @@ impl Modify for SecurityAddon {
         path_admin_ban_room,
         path_admin_unban_room,
         path_admin_approve_room,
-        path_admin_list_vendors,
-        path_admin_create_vendor,
-        path_admin_update_vendor,
-        path_admin_delete_vendor,
-        path_admin_reconnect_vendor,
-        path_admin_enable_vendor,
-        path_admin_disable_vendor,
+        path_admin_list_providers,
+        path_admin_create_provider,
+        path_admin_update_provider,
+        path_admin_delete_provider,
+        path_admin_reconnect_provider,
+        path_admin_enable_provider,
+        path_admin_disable_provider,
         // Email
         path_email_verify_send,
         path_email_verify_confirm,
@@ -787,10 +787,10 @@ impl Modify for SecurityAddon {
         AdminSetUsernameRequestSchema,
         AdminRoomsListSchema,
         AdminTestEmailRequestSchema,
-        VendorSchema,
-        VendorsListSchema,
-        CreateVendorRequestSchema,
-        UpdateVendorRequestSchema,
+        ProviderSchema,
+        ProvidersListSchema,
+        CreateProviderRequestSchema,
+        UpdateProviderRequestSchema,
         // Email schemas
         EmailSendVerifyRequestSchema,
         EmailConfirmVerifyRequestSchema,
@@ -1598,94 +1598,94 @@ pub async fn path_admin_approve_room() {}
 
 #[utoipa::path(
     get,
-    path = "/api/admin/vendors",
+    path = "/api/admin/providers",
     tag = "admin",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "List of vendors", body = VendorsListSchema),
+        (status = 200, description = "List of providers", body = ProvidersListSchema),
         (status = 403, description = "Forbidden", body = ErrorResponseSchema),
     )
 )]
-pub async fn path_admin_list_vendors() {}
+pub async fn path_admin_list_providers() {}
 
 #[utoipa::path(
     post,
-    path = "/api/admin/vendors",
+    path = "/api/admin/providers",
     tag = "admin",
     security(("bearer_auth" = [])),
-    request_body = CreateVendorRequestSchema,
+    request_body = CreateProviderRequestSchema,
     responses(
-        (status = 200, description = "Vendor created", body = VendorSchema),
+        (status = 200, description = "Provider created", body = ProviderSchema),
         (status = 403, description = "Forbidden", body = ErrorResponseSchema),
     )
 )]
-pub async fn path_admin_create_vendor() {}
+pub async fn path_admin_create_provider() {}
 
 #[utoipa::path(
     put,
-    path = "/api/admin/vendors/{name}",
+    path = "/api/admin/providers/{name}",
     tag = "admin",
     security(("bearer_auth" = [])),
-    params(("name" = String, Path, description = "Vendor name")),
-    request_body = UpdateVendorRequestSchema,
+    params(("name" = String, Path, description = "Provider instance name")),
+    request_body = UpdateProviderRequestSchema,
     responses(
-        (status = 200, description = "Vendor updated", body = VendorSchema),
+        (status = 200, description = "Provider updated", body = ProviderSchema),
         (status = 403, description = "Forbidden", body = ErrorResponseSchema),
     )
 )]
-pub async fn path_admin_update_vendor() {}
+pub async fn path_admin_update_provider() {}
 
 #[utoipa::path(
     delete,
-    path = "/api/admin/vendors/{name}",
+    path = "/api/admin/providers/{name}",
     tag = "admin",
     security(("bearer_auth" = [])),
-    params(("name" = String, Path, description = "Vendor name")),
+    params(("name" = String, Path, description = "Provider instance name")),
     responses(
-        (status = 200, description = "Vendor deleted"),
+        (status = 200, description = "Provider deleted"),
         (status = 403, description = "Forbidden", body = ErrorResponseSchema),
     )
 )]
-pub async fn path_admin_delete_vendor() {}
+pub async fn path_admin_delete_provider() {}
 
 #[utoipa::path(
     post,
-    path = "/api/admin/vendors/{name}/reconnect",
+    path = "/api/admin/providers/{name}/reconnect",
     tag = "admin",
     security(("bearer_auth" = [])),
-    params(("name" = String, Path, description = "Vendor name")),
+    params(("name" = String, Path, description = "Provider instance name")),
     responses(
-        (status = 200, description = "Vendor reconnected"),
+        (status = 200, description = "Provider reconnected"),
         (status = 403, description = "Forbidden", body = ErrorResponseSchema),
     )
 )]
-pub async fn path_admin_reconnect_vendor() {}
+pub async fn path_admin_reconnect_provider() {}
 
 #[utoipa::path(
     post,
-    path = "/api/admin/vendors/{name}/enable",
+    path = "/api/admin/providers/{name}/enable",
     tag = "admin",
     security(("bearer_auth" = [])),
-    params(("name" = String, Path, description = "Vendor name")),
+    params(("name" = String, Path, description = "Provider instance name")),
     responses(
-        (status = 200, description = "Vendor enabled"),
+        (status = 200, description = "Provider enabled"),
         (status = 403, description = "Forbidden", body = ErrorResponseSchema),
     )
 )]
-pub async fn path_admin_enable_vendor() {}
+pub async fn path_admin_enable_provider() {}
 
 #[utoipa::path(
     post,
-    path = "/api/admin/vendors/{name}/disable",
+    path = "/api/admin/providers/{name}/disable",
     tag = "admin",
     security(("bearer_auth" = [])),
-    params(("name" = String, Path, description = "Vendor name")),
+    params(("name" = String, Path, description = "Provider instance name")),
     responses(
-        (status = 200, description = "Vendor disabled"),
+        (status = 200, description = "Provider disabled"),
         (status = 403, description = "Forbidden", body = ErrorResponseSchema),
     )
 )]
-pub async fn path_admin_disable_vendor() {}
+pub async fn path_admin_disable_provider() {}
 
 // --- Email paths ---
 

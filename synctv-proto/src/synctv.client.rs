@@ -323,16 +323,16 @@ pub struct DeleteRoomResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetRoomSettingsRequest {
+pub struct UpdateRoomSettingsRequest {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
-    /// JSON settings
+    /// JSON settings (partial or complete update)
     #[prost(bytes = "vec", tag = "2")]
     pub settings: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetRoomSettingsResponse {
+pub struct UpdateRoomSettingsResponse {
     #[prost(message, optional, tag = "1")]
     pub room: ::core::option::Option<Room>,
 }
@@ -347,26 +347,6 @@ pub struct GetRoomSettingsRequest {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetRoomSettingsResponse {
     /// JSON settings
-    #[prost(bytes = "vec", tag = "1")]
-    pub settings: ::prost::alloc::vec::Vec<u8>,
-}
-/// Update single room setting
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateRoomSettingRequest {
-    #[prost(string, tag = "1")]
-    pub room_id: ::prost::alloc::string::String,
-    /// Setting key (e.g., "chat_enabled")
-    #[prost(string, tag = "2")]
-    pub key: ::prost::alloc::string::String,
-    /// Setting value (JSON encoded)
-    #[prost(bytes = "vec", tag = "3")]
-    pub value: ::prost::alloc::vec::Vec<u8>,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateRoomSettingResponse {
-    /// Updated full settings
     #[prost(bytes = "vec", tag = "1")]
     pub settings: ::prost::alloc::vec::Vec<u8>,
 }
@@ -397,7 +377,7 @@ pub struct GetRoomMembersResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetMemberPermissionRequest {
+pub struct UpdateMemberPermissionsRequest {
     /// Target user
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
@@ -419,7 +399,7 @@ pub struct SetMemberPermissionRequest {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetMemberPermissionResponse {
+pub struct UpdateMemberPermissionsResponse {
     #[prost(message, optional, tag = "1")]
     pub member: ::core::option::Option<RoomMember>,
 }
@@ -485,7 +465,7 @@ pub struct CreatePlaylistResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetPlaylistRequest {
+pub struct UpdatePlaylistRequest {
     #[prost(string, tag = "1")]
     pub playlist_id: ::prost::alloc::string::String,
     /// Optional new name
@@ -497,7 +477,7 @@ pub struct SetPlaylistRequest {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetPlaylistResponse {
+pub struct UpdatePlaylistResponse {
     #[prost(message, optional, tag = "1")]
     pub playlist: ::core::option::Option<Playlist>,
 }
@@ -528,7 +508,7 @@ pub struct ListPlaylistsResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetPlayingRequest {
+pub struct SetCurrentMediaRequest {
     /// Playlist to play from
     #[prost(string, tag = "1")]
     pub playlist_id: ::prost::alloc::string::String,
@@ -538,7 +518,7 @@ pub struct SetPlayingRequest {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetPlayingResponse {
+pub struct SetCurrentMediaResponse {
     #[prost(message, optional, tag = "1")]
     pub playlist: ::core::option::Option<Playlist>,
     /// The media that is now playing
@@ -712,26 +692,14 @@ pub struct SeekResponse {
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct ChangeSpeedRequest {
+pub struct SetPlaybackSpeedRequest {
     /// 0.5, 1.0, 1.5, 2.0, etc.
     #[prost(double, tag = "1")]
     pub speed: f64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ChangeSpeedResponse {
-    #[prost(message, optional, tag = "1")]
-    pub playback_state: ::core::option::Option<PlaybackState>,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SwitchMediaRequest {
-    #[prost(string, tag = "1")]
-    pub media_id: ::prost::alloc::string::String,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SwitchMediaResponse {
+pub struct SetPlaybackSpeedResponse {
     #[prost(message, optional, tag = "1")]
     pub playback_state: ::core::option::Option<PlaybackState>,
 }
@@ -1056,19 +1024,19 @@ pub struct RoomWithStats {
     #[prost(int32, tag = "3")]
     pub total_members: i32,
 }
-/// NewPublishKey - Generate RTMP publish key for live streaming
+/// CreatePublishKey - Generate RTMP publish key for live streaming
 /// Note: room_id should be extracted from metadata/context by interceptor
 /// Note: user_id should be extracted from JWT Authorization header
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct NewPublishKeyRequest {
+pub struct CreatePublishKeyRequest {
     /// Media ID to publish (matches Go's IDReq pattern)
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct NewPublishKeyResponse {
+pub struct CreatePublishKeyResponse {
     /// JWT token for RTMP authentication
     #[prost(string, tag = "1")]
     pub publish_key: ::prost::alloc::string::String,
@@ -2182,11 +2150,11 @@ pub mod room_service_client {
                 .insert(GrpcMethod::new("synctv.client.RoomService", "GetRoomSettings"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn set_room_settings(
+        pub async fn update_room_settings(
             &mut self,
-            request: impl tonic::IntoRequest<super::SetRoomSettingsRequest>,
+            request: impl tonic::IntoRequest<super::UpdateRoomSettingsRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::SetRoomSettingsResponse>,
+            tonic::Response<super::UpdateRoomSettingsResponse>,
             tonic::Status,
         > {
             self.inner
@@ -2199,36 +2167,12 @@ pub mod room_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.client.RoomService/SetRoomSettings",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("synctv.client.RoomService", "SetRoomSettings"));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn update_room_setting(
-            &mut self,
-            request: impl tonic::IntoRequest<super::UpdateRoomSettingRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::UpdateRoomSettingResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/synctv.client.RoomService/UpdateRoomSetting",
+                "/synctv.client.RoomService/UpdateRoomSettings",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new("synctv.client.RoomService", "UpdateRoomSetting"),
+                    GrpcMethod::new("synctv.client.RoomService", "UpdateRoomSettings"),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -2283,11 +2227,11 @@ pub mod room_service_client {
                 .insert(GrpcMethod::new("synctv.client.RoomService", "GetRoomMembers"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn set_member_permission(
+        pub async fn update_member_permissions(
             &mut self,
-            request: impl tonic::IntoRequest<super::SetMemberPermissionRequest>,
+            request: impl tonic::IntoRequest<super::UpdateMemberPermissionsRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::SetMemberPermissionResponse>,
+            tonic::Response<super::UpdateMemberPermissionsResponse>,
             tonic::Status,
         > {
             self.inner
@@ -2300,12 +2244,15 @@ pub mod room_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.client.RoomService/SetMemberPermission",
+                "/synctv.client.RoomService/UpdateMemberPermissions",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new("synctv.client.RoomService", "SetMemberPermission"),
+                    GrpcMethod::new(
+                        "synctv.client.RoomService",
+                        "UpdateMemberPermissions",
+                    ),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -2603,11 +2550,11 @@ pub mod media_service_client {
                 .insert(GrpcMethod::new("synctv.client.MediaService", "CreatePlaylist"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn set_playlist(
+        pub async fn update_playlist(
             &mut self,
-            request: impl tonic::IntoRequest<super::SetPlaylistRequest>,
+            request: impl tonic::IntoRequest<super::UpdatePlaylistRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::SetPlaylistResponse>,
+            tonic::Response<super::UpdatePlaylistResponse>,
             tonic::Status,
         > {
             self.inner
@@ -2620,11 +2567,11 @@ pub mod media_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.client.MediaService/SetPlaylist",
+                "/synctv.client.MediaService/UpdatePlaylist",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("synctv.client.MediaService", "SetPlaylist"));
+                .insert(GrpcMethod::new("synctv.client.MediaService", "UpdatePlaylist"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn delete_playlist(
@@ -2675,11 +2622,11 @@ pub mod media_service_client {
                 .insert(GrpcMethod::new("synctv.client.MediaService", "ListPlaylists"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn set_playing(
+        pub async fn set_current_media(
             &mut self,
-            request: impl tonic::IntoRequest<super::SetPlayingRequest>,
+            request: impl tonic::IntoRequest<super::SetCurrentMediaRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::SetPlayingResponse>,
+            tonic::Response<super::SetCurrentMediaResponse>,
             tonic::Status,
         > {
             self.inner
@@ -2692,11 +2639,13 @@ pub mod media_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.client.MediaService/SetPlaying",
+                "/synctv.client.MediaService/SetCurrentMedia",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("synctv.client.MediaService", "SetPlaying"));
+                .insert(
+                    GrpcMethod::new("synctv.client.MediaService", "SetCurrentMedia"),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Media Management (room-scoped operations, use x-room-id)
@@ -2886,11 +2835,11 @@ pub mod media_service_client {
                 .insert(GrpcMethod::new("synctv.client.MediaService", "Seek"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn change_speed(
+        pub async fn set_playback_speed(
             &mut self,
-            request: impl tonic::IntoRequest<super::ChangeSpeedRequest>,
+            request: impl tonic::IntoRequest<super::SetPlaybackSpeedRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::ChangeSpeedResponse>,
+            tonic::Response<super::SetPlaybackSpeedResponse>,
             tonic::Status,
         > {
             self.inner
@@ -2903,35 +2852,13 @@ pub mod media_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.client.MediaService/ChangeSpeed",
+                "/synctv.client.MediaService/SetPlaybackSpeed",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("synctv.client.MediaService", "ChangeSpeed"));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn switch_media(
-            &mut self,
-            request: impl tonic::IntoRequest<super::SwitchMediaRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::SwitchMediaResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/synctv.client.MediaService/SwitchMedia",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("synctv.client.MediaService", "SwitchMedia"));
+                .insert(
+                    GrpcMethod::new("synctv.client.MediaService", "SetPlaybackSpeed"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_playback_state(
@@ -2961,11 +2888,11 @@ pub mod media_service_client {
             self.inner.unary(req, path, codec).await
         }
         /// Live Streaming (room-scoped, use x-room-id)
-        pub async fn new_publish_key(
+        pub async fn create_publish_key(
             &mut self,
-            request: impl tonic::IntoRequest<super::NewPublishKeyRequest>,
+            request: impl tonic::IntoRequest<super::CreatePublishKeyRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::NewPublishKeyResponse>,
+            tonic::Response<super::CreatePublishKeyResponse>,
             tonic::Status,
         > {
             self.inner
@@ -2978,11 +2905,13 @@ pub mod media_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/synctv.client.MediaService/NewPublishKey",
+                "/synctv.client.MediaService/CreatePublishKey",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("synctv.client.MediaService", "NewPublishKey"));
+                .insert(
+                    GrpcMethod::new("synctv.client.MediaService", "CreatePublishKey"),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Movie Info (room-scoped, use x-room-id)
@@ -4189,18 +4118,11 @@ pub mod room_service_server {
             tonic::Response<super::GetRoomSettingsResponse>,
             tonic::Status,
         >;
-        async fn set_room_settings(
+        async fn update_room_settings(
             &self,
-            request: tonic::Request<super::SetRoomSettingsRequest>,
+            request: tonic::Request<super::UpdateRoomSettingsRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::SetRoomSettingsResponse>,
-            tonic::Status,
-        >;
-        async fn update_room_setting(
-            &self,
-            request: tonic::Request<super::UpdateRoomSettingRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::UpdateRoomSettingResponse>,
+            tonic::Response<super::UpdateRoomSettingsResponse>,
             tonic::Status,
         >;
         async fn reset_room_settings(
@@ -4218,11 +4140,11 @@ pub mod room_service_server {
             tonic::Response<super::GetRoomMembersResponse>,
             tonic::Status,
         >;
-        async fn set_member_permission(
+        async fn update_member_permissions(
             &self,
-            request: tonic::Request<super::SetMemberPermissionRequest>,
+            request: tonic::Request<super::UpdateMemberPermissionsRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::SetMemberPermissionResponse>,
+            tonic::Response<super::UpdateMemberPermissionsResponse>,
             tonic::Status,
         >;
         async fn kick_member(
@@ -4633,70 +4555,25 @@ pub mod room_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.client.RoomService/SetRoomSettings" => {
+                "/synctv.client.RoomService/UpdateRoomSettings" => {
                     #[allow(non_camel_case_types)]
-                    struct SetRoomSettingsSvc<T: RoomService>(pub Arc<T>);
+                    struct UpdateRoomSettingsSvc<T: RoomService>(pub Arc<T>);
                     impl<
                         T: RoomService,
-                    > tonic::server::UnaryService<super::SetRoomSettingsRequest>
-                    for SetRoomSettingsSvc<T> {
-                        type Response = super::SetRoomSettingsResponse;
+                    > tonic::server::UnaryService<super::UpdateRoomSettingsRequest>
+                    for UpdateRoomSettingsSvc<T> {
+                        type Response = super::UpdateRoomSettingsResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::SetRoomSettingsRequest>,
+                            request: tonic::Request<super::UpdateRoomSettingsRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as RoomService>::set_room_settings(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = SetRoomSettingsSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/synctv.client.RoomService/UpdateRoomSetting" => {
-                    #[allow(non_camel_case_types)]
-                    struct UpdateRoomSettingSvc<T: RoomService>(pub Arc<T>);
-                    impl<
-                        T: RoomService,
-                    > tonic::server::UnaryService<super::UpdateRoomSettingRequest>
-                    for UpdateRoomSettingSvc<T> {
-                        type Response = super::UpdateRoomSettingResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::UpdateRoomSettingRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as RoomService>::update_room_setting(&inner, request)
+                                <T as RoomService>::update_room_settings(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -4708,7 +4585,7 @@ pub mod room_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = UpdateRoomSettingSvc(inner);
+                        let method = UpdateRoomSettingsSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -4815,25 +4692,30 @@ pub mod room_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.client.RoomService/SetMemberPermission" => {
+                "/synctv.client.RoomService/UpdateMemberPermissions" => {
                     #[allow(non_camel_case_types)]
-                    struct SetMemberPermissionSvc<T: RoomService>(pub Arc<T>);
+                    struct UpdateMemberPermissionsSvc<T: RoomService>(pub Arc<T>);
                     impl<
                         T: RoomService,
-                    > tonic::server::UnaryService<super::SetMemberPermissionRequest>
-                    for SetMemberPermissionSvc<T> {
-                        type Response = super::SetMemberPermissionResponse;
+                    > tonic::server::UnaryService<super::UpdateMemberPermissionsRequest>
+                    for UpdateMemberPermissionsSvc<T> {
+                        type Response = super::UpdateMemberPermissionsResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::SetMemberPermissionRequest>,
+                            request: tonic::Request<
+                                super::UpdateMemberPermissionsRequest,
+                            >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as RoomService>::set_member_permission(&inner, request)
+                                <T as RoomService>::update_member_permissions(
+                                        &inner,
+                                        request,
+                                    )
                                     .await
                             };
                             Box::pin(fut)
@@ -4845,7 +4727,7 @@ pub mod room_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = SetMemberPermissionSvc(inner);
+                        let method = UpdateMemberPermissionsSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -5239,11 +5121,11 @@ pub mod media_service_server {
             tonic::Response<super::CreatePlaylistResponse>,
             tonic::Status,
         >;
-        async fn set_playlist(
+        async fn update_playlist(
             &self,
-            request: tonic::Request<super::SetPlaylistRequest>,
+            request: tonic::Request<super::UpdatePlaylistRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::SetPlaylistResponse>,
+            tonic::Response<super::UpdatePlaylistResponse>,
             tonic::Status,
         >;
         async fn delete_playlist(
@@ -5260,11 +5142,11 @@ pub mod media_service_server {
             tonic::Response<super::ListPlaylistsResponse>,
             tonic::Status,
         >;
-        async fn set_playing(
+        async fn set_current_media(
             &self,
-            request: tonic::Request<super::SetPlayingRequest>,
+            request: tonic::Request<super::SetCurrentMediaRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::SetPlayingResponse>,
+            tonic::Response<super::SetCurrentMediaResponse>,
             tonic::Status,
         >;
         /// Media Management (room-scoped operations, use x-room-id)
@@ -5316,18 +5198,11 @@ pub mod media_service_server {
             &self,
             request: tonic::Request<super::SeekRequest>,
         ) -> std::result::Result<tonic::Response<super::SeekResponse>, tonic::Status>;
-        async fn change_speed(
+        async fn set_playback_speed(
             &self,
-            request: tonic::Request<super::ChangeSpeedRequest>,
+            request: tonic::Request<super::SetPlaybackSpeedRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::ChangeSpeedResponse>,
-            tonic::Status,
-        >;
-        async fn switch_media(
-            &self,
-            request: tonic::Request<super::SwitchMediaRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::SwitchMediaResponse>,
+            tonic::Response<super::SetPlaybackSpeedResponse>,
             tonic::Status,
         >;
         async fn get_playback_state(
@@ -5338,11 +5213,11 @@ pub mod media_service_server {
             tonic::Status,
         >;
         /// Live Streaming (room-scoped, use x-room-id)
-        async fn new_publish_key(
+        async fn create_publish_key(
             &self,
-            request: tonic::Request<super::NewPublishKeyRequest>,
+            request: tonic::Request<super::CreatePublishKeyRequest>,
         ) -> std::result::Result<
-            tonic::Response<super::NewPublishKeyResponse>,
+            tonic::Response<super::CreatePublishKeyResponse>,
             tonic::Status,
         >;
         /// Movie Info (room-scoped, use x-room-id)
@@ -5478,25 +5353,25 @@ pub mod media_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.client.MediaService/SetPlaylist" => {
+                "/synctv.client.MediaService/UpdatePlaylist" => {
                     #[allow(non_camel_case_types)]
-                    struct SetPlaylistSvc<T: MediaService>(pub Arc<T>);
+                    struct UpdatePlaylistSvc<T: MediaService>(pub Arc<T>);
                     impl<
                         T: MediaService,
-                    > tonic::server::UnaryService<super::SetPlaylistRequest>
-                    for SetPlaylistSvc<T> {
-                        type Response = super::SetPlaylistResponse;
+                    > tonic::server::UnaryService<super::UpdatePlaylistRequest>
+                    for UpdatePlaylistSvc<T> {
+                        type Response = super::UpdatePlaylistResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::SetPlaylistRequest>,
+                            request: tonic::Request<super::UpdatePlaylistRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as MediaService>::set_playlist(&inner, request).await
+                                <T as MediaService>::update_playlist(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -5507,7 +5382,7 @@ pub mod media_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = SetPlaylistSvc(inner);
+                        let method = UpdatePlaylistSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -5613,25 +5488,26 @@ pub mod media_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.client.MediaService/SetPlaying" => {
+                "/synctv.client.MediaService/SetCurrentMedia" => {
                     #[allow(non_camel_case_types)]
-                    struct SetPlayingSvc<T: MediaService>(pub Arc<T>);
+                    struct SetCurrentMediaSvc<T: MediaService>(pub Arc<T>);
                     impl<
                         T: MediaService,
-                    > tonic::server::UnaryService<super::SetPlayingRequest>
-                    for SetPlayingSvc<T> {
-                        type Response = super::SetPlayingResponse;
+                    > tonic::server::UnaryService<super::SetCurrentMediaRequest>
+                    for SetCurrentMediaSvc<T> {
+                        type Response = super::SetCurrentMediaResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::SetPlayingRequest>,
+                            request: tonic::Request<super::SetCurrentMediaRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as MediaService>::set_playing(&inner, request).await
+                                <T as MediaService>::set_current_media(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -5642,7 +5518,7 @@ pub mod media_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = SetPlayingSvc(inner);
+                        let method = SetCurrentMediaSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -6014,25 +5890,26 @@ pub mod media_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.client.MediaService/ChangeSpeed" => {
+                "/synctv.client.MediaService/SetPlaybackSpeed" => {
                     #[allow(non_camel_case_types)]
-                    struct ChangeSpeedSvc<T: MediaService>(pub Arc<T>);
+                    struct SetPlaybackSpeedSvc<T: MediaService>(pub Arc<T>);
                     impl<
                         T: MediaService,
-                    > tonic::server::UnaryService<super::ChangeSpeedRequest>
-                    for ChangeSpeedSvc<T> {
-                        type Response = super::ChangeSpeedResponse;
+                    > tonic::server::UnaryService<super::SetPlaybackSpeedRequest>
+                    for SetPlaybackSpeedSvc<T> {
+                        type Response = super::SetPlaybackSpeedResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::ChangeSpeedRequest>,
+                            request: tonic::Request<super::SetPlaybackSpeedRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as MediaService>::change_speed(&inner, request).await
+                                <T as MediaService>::set_playback_speed(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -6043,52 +5920,7 @@ pub mod media_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = ChangeSpeedSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/synctv.client.MediaService/SwitchMedia" => {
-                    #[allow(non_camel_case_types)]
-                    struct SwitchMediaSvc<T: MediaService>(pub Arc<T>);
-                    impl<
-                        T: MediaService,
-                    > tonic::server::UnaryService<super::SwitchMediaRequest>
-                    for SwitchMediaSvc<T> {
-                        type Response = super::SwitchMediaResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::SwitchMediaRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as MediaService>::switch_media(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = SwitchMediaSvc(inner);
+                        let method = SetPlaybackSpeedSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -6150,25 +5982,26 @@ pub mod media_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/synctv.client.MediaService/NewPublishKey" => {
+                "/synctv.client.MediaService/CreatePublishKey" => {
                     #[allow(non_camel_case_types)]
-                    struct NewPublishKeySvc<T: MediaService>(pub Arc<T>);
+                    struct CreatePublishKeySvc<T: MediaService>(pub Arc<T>);
                     impl<
                         T: MediaService,
-                    > tonic::server::UnaryService<super::NewPublishKeyRequest>
-                    for NewPublishKeySvc<T> {
-                        type Response = super::NewPublishKeyResponse;
+                    > tonic::server::UnaryService<super::CreatePublishKeyRequest>
+                    for CreatePublishKeySvc<T> {
+                        type Response = super::CreatePublishKeyResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::NewPublishKeyRequest>,
+                            request: tonic::Request<super::CreatePublishKeyRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as MediaService>::new_publish_key(&inner, request).await
+                                <T as MediaService>::create_publish_key(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -6179,7 +6012,7 @@ pub mod media_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = NewPublishKeySvc(inner);
+                        let method = CreatePublishKeySvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

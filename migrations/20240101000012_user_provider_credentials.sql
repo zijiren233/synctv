@@ -46,9 +46,9 @@ CREATE TRIGGER update_user_credentials_updated_at
 
 -- Comments
 COMMENT ON TABLE user_provider_credentials IS 'User credentials for media providers';
-COMMENT ON COLUMN user_provider_credentials.provider IS 'Provider type (bilibili, alist, emby)';
+COMMENT ON COLUMN user_provider_credentials.provider IS 'Media provider type (bilibili, alist, emby)';
 COMMENT ON COLUMN user_provider_credentials.server_id IS 'Server identifier (required): Bilibili uses "bilibili" (one per user), Alist/Emby use MD5(host)';
-COMMENT ON COLUMN user_provider_credentials.provider_instance_name IS 'Associated provider instance name (optional, for specifying parsing instance)';
+COMMENT ON COLUMN user_provider_credentials.provider_instance_name IS 'Associated media provider instance name (optional, for specifying parsing instance)';
 COMMENT ON COLUMN user_provider_credentials.credential_data IS 'Credential data (JSONB, plaintext storage)';
 COMMENT ON COLUMN user_provider_credentials.expires_at IS 'Credential expiration time (optional, for tokens/cookies with TTL)';
 COMMENT ON CONSTRAINT valid_server_id ON user_provider_credentials IS 'server_id must not be empty or whitespace';

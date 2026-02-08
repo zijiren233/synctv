@@ -39,13 +39,12 @@ service RoomService {
 
     // Room Settings Management
     rpc GetRoomSettings(GetRoomSettingsRequest) returns (GetRoomSettingsResponse);
-    rpc SetRoomSettings(SetRoomSettingsRequest) returns (SetRoomSettingsResponse);
-    rpc UpdateRoomSetting(UpdateRoomSettingRequest) returns (UpdateRoomSettingResponse);
+    rpc UpdateRoomSettings(UpdateRoomSettingsRequest) returns (UpdateRoomSettingsResponse);
     rpc ResetRoomSettings(ResetRoomSettingsRequest) returns (ResetRoomSettingsResponse);
 
     // Member Management (room-scoped operations, use x-room-id)
     rpc GetRoomMembers(GetRoomMembersRequest) returns (GetRoomMembersResponse);
-    rpc SetMemberPermission(SetMemberPermissionRequest) returns (SetMemberPermissionResponse);
+    rpc UpdateMemberPermissions(UpdateMemberPermissionsRequest) returns (UpdateMemberPermissionsResponse);
     rpc KickMember(KickMemberRequest) returns (KickMemberResponse);
     rpc BanMember(BanMemberRequest) returns (BanMemberResponse);
     rpc UnbanMember(UnbanMemberRequest) returns (UnbanMemberResponse);
@@ -67,10 +66,10 @@ service RoomService {
 service MediaService {
     // Playlist Management (room-scoped operations, use x-room-id)
     rpc CreatePlaylist(CreatePlaylistRequest) returns (CreatePlaylistResponse);
-    rpc SetPlaylist(SetPlaylistRequest) returns (SetPlaylistResponse);
+    rpc UpdatePlaylist(UpdatePlaylistRequest) returns (UpdatePlaylistResponse);
     rpc DeletePlaylist(DeletePlaylistRequest) returns (DeletePlaylistResponse);
     rpc ListPlaylists(ListPlaylistsRequest) returns (ListPlaylistsResponse);
-    rpc SetPlaying(SetPlayingRequest) returns (SetPlayingResponse);
+    rpc SetCurrentMedia(SetCurrentMediaRequest) returns (SetCurrentMediaResponse);
 
     // Media Management (room-scoped operations, use x-room-id)
     rpc AddMedia(AddMediaRequest) returns (AddMediaResponse);
@@ -83,12 +82,11 @@ service MediaService {
     rpc Play(PlayRequest) returns (PlayResponse);
     rpc Pause(PauseRequest) returns (PauseResponse);
     rpc Seek(SeekRequest) returns (SeekResponse);
-    rpc ChangeSpeed(ChangeSpeedRequest) returns (ChangeSpeedResponse);
-    rpc SwitchMedia(SwitchMediaRequest) returns (SwitchMediaResponse);
+    rpc SetPlaybackSpeed(SetPlaybackSpeedRequest) returns (SetPlaybackSpeedResponse);
     rpc GetPlaybackState(GetPlaybackStateRequest) returns (GetPlaybackStateResponse);
 
     // Live Streaming (room-scoped, use x-room-id)
-    rpc NewPublishKey(NewPublishKeyRequest) returns (NewPublishKeyResponse);
+    rpc CreatePublishKey(CreatePublishKeyRequest) returns (CreatePublishKeyResponse);
 
     // Movie Info (room-scoped, use x-room-id)
     rpc GetMovieInfo(GetMovieInfoRequest) returns (GetMovieInfoResponse);
@@ -296,12 +294,12 @@ message DeleteRoomResponse {
     bool success = 1;
 }
 
-message SetRoomSettingsRequest {
+message UpdateRoomSettingsRequest {
     string room_id = 1;
-    bytes settings = 2; // JSON settings
+    bytes settings = 2; // JSON settings (partial or complete update)
 }
 
-message SetRoomSettingsResponse {
+message UpdateRoomSettingsResponse {
     Room room = 1;
 }
 
@@ -312,17 +310,6 @@ message GetRoomSettingsRequest {
 
 message GetRoomSettingsResponse {
     bytes settings = 1; // JSON settings
-}
-
-// Update single room setting
-message UpdateRoomSettingRequest {
-    string room_id = 1;
-    string key = 2; // Setting key (e.g., "chat_enabled")
-    bytes value = 3; // Setting value (JSON encoded)
-}
-
-message UpdateRoomSettingResponse {
-    bytes settings = 1; // Updated full settings
 }
 
 // Reset room settings to default
@@ -342,7 +329,7 @@ message GetRoomMembersResponse {
     repeated RoomMember members = 1;
 }
 
-message SetMemberPermissionRequest {
+message UpdateMemberPermissionsRequest {
     string user_id = 1;           // Target user
     string role = 2;              // New role (optional): creator, admin, member, guest
 
@@ -356,7 +343,7 @@ message SetMemberPermissionRequest {
     uint64 admin_removed_permissions = 6;
 }
 
-message SetMemberPermissionResponse {
+message UpdateMemberPermissionsResponse {
     RoomMember member = 1;
 }
 
@@ -398,13 +385,13 @@ message CreatePlaylistResponse {
     Playlist playlist = 1;
 }
 
-message SetPlaylistRequest {
+message UpdatePlaylistRequest {
     string playlist_id = 1;
     string name = 2; // Optional new name
     int32 position = 3; // Optional new position
 }
 
-message SetPlaylistResponse {
+message UpdatePlaylistResponse {
     Playlist playlist = 1;
 }
 
@@ -424,12 +411,12 @@ message ListPlaylistsResponse {
     repeated Playlist playlists = 1;
 }
 
-message SetPlayingRequest {
+message SetCurrentMediaRequest {
     string playlist_id = 1; // Playlist to play from
     string media_id = 2; // Optional specific media to play (if not specified, starts from first or current position)
 }
 
-message SetPlayingResponse {
+message SetCurrentMediaResponse {
     Playlist playlist = 1;
     Media playing_media = 2; // The media that is now playing
 }
@@ -533,19 +520,11 @@ message SeekResponse {
     PlaybackState playback_state = 1;
 }
 
-message ChangeSpeedRequest {
+message SetPlaybackSpeedRequest {
     double speed = 1; // 0.5, 1.0, 1.5, 2.0, etc.
 }
 
-message ChangeSpeedResponse {
-    PlaybackState playback_state = 1;
-}
-
-message SwitchMediaRequest {
-    string media_id = 1;
-}
-
-message SwitchMediaResponse {
+message SetPlaybackSpeedResponse {
     PlaybackState playback_state = 1;
 }
 
@@ -734,14 +713,14 @@ message RoomWithStats {
 
 // ==================== Live Streaming ====================
 
-// NewPublishKey - Generate RTMP publish key for live streaming
+// CreatePublishKey - Generate RTMP publish key for live streaming
 // Note: room_id should be extracted from metadata/context by interceptor
 // Note: user_id should be extracted from JWT Authorization header
-message NewPublishKeyRequest {
+message CreatePublishKeyRequest {
     string id = 1;  // Media ID to publish (matches Go's IDReq pattern)
 }
 
-message NewPublishKeyResponse {
+message CreatePublishKeyResponse {
     string publish_key = 1;  // JWT token for RTMP authentication
     string rtmp_url = 2;     // Full RTMP URL (rtmp://host:port/live)
     string stream_key = 3;   // Stream key (room_id/media_id)

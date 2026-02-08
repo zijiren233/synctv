@@ -1,12 +1,12 @@
 //! Provider Client - Unified client interface
 //!
-//! Uses trait from synctv-providers directly, with thin wrappers for gRPC clients.
+//! Uses trait from synctv-media-providers directly, with thin wrappers for gRPC clients.
 //!
 //! Architecture:
 //! ```ignore
 //! AlistProvider
 //!     ↓
-//! Arc<dyn AlistInterface>  (from synctv-providers)
+//! Arc<dyn AlistInterface>  (from synctv-media-providers)
 //!     ↓
 //! ┌─────────────────┬──────────────────────┐
 //! │                 │                      │
@@ -17,8 +17,8 @@
 use super::ProviderError;
 use async_trait::async_trait;
 use std::sync::Arc;
-use synctv_providers::alist::{AlistError, AlistInterface};
-use synctv_providers::grpc::alist::{FsGetResp, FsListResp, FsOtherResp};
+use synctv_media_providers::alist::{AlistError, AlistInterface};
+use synctv_media_providers::grpc::alist::{FsGetResp, FsListResp, FsOtherResp};
 
 // ============================================================================
 // Alist Client
@@ -29,7 +29,7 @@ pub type AlistClientArc = Arc<dyn AlistInterface>;
 
 /// Singleton local Alist client
 static LOCAL_ALIST_CLIENT: std::sync::LazyLock<AlistClientArc> = std::sync::LazyLock::new(|| {
-    Arc::new(synctv_providers::alist::AlistService::new())
+    Arc::new(synctv_media_providers::alist::AlistService::new())
 });
 
 /// Load local Alist client (singleton)
@@ -59,8 +59,8 @@ impl GrpcAlistClient {
 
 #[async_trait]
 impl AlistInterface for GrpcAlistClient {
-    async fn fs_get(&self, request: synctv_providers::grpc::alist::FsGetReq) -> Result<FsGetResp, AlistError> {
-        use synctv_providers::grpc::alist::alist_client::AlistClient;
+    async fn fs_get(&self, request: synctv_media_providers::grpc::alist::FsGetReq) -> Result<FsGetResp, AlistError> {
+        use synctv_media_providers::grpc::alist::alist_client::AlistClient;
 
         let mut client = AlistClient::new(self.channel.clone());
 
@@ -72,8 +72,8 @@ impl AlistInterface for GrpcAlistClient {
         Ok(response.into_inner())
     }
 
-    async fn fs_list(&self, request: synctv_providers::grpc::alist::FsListReq) -> Result<FsListResp, AlistError> {
-        use synctv_providers::grpc::alist::alist_client::AlistClient;
+    async fn fs_list(&self, request: synctv_media_providers::grpc::alist::FsListReq) -> Result<FsListResp, AlistError> {
+        use synctv_media_providers::grpc::alist::alist_client::AlistClient;
 
         let mut client = AlistClient::new(self.channel.clone());
 
@@ -85,8 +85,8 @@ impl AlistInterface for GrpcAlistClient {
         Ok(response.into_inner())
     }
 
-    async fn fs_other(&self, request: synctv_providers::grpc::alist::FsOtherReq) -> Result<FsOtherResp, AlistError> {
-        use synctv_providers::grpc::alist::alist_client::AlistClient;
+    async fn fs_other(&self, request: synctv_media_providers::grpc::alist::FsOtherReq) -> Result<FsOtherResp, AlistError> {
+        use synctv_media_providers::grpc::alist::alist_client::AlistClient;
 
         let mut client = AlistClient::new(self.channel.clone());
 
@@ -98,8 +98,8 @@ impl AlistInterface for GrpcAlistClient {
         Ok(response.into_inner())
     }
 
-    async fn fs_search(&self, request: synctv_providers::grpc::alist::FsSearchReq) -> Result<synctv_providers::grpc::alist::FsSearchResp, AlistError> {
-        use synctv_providers::grpc::alist::alist_client::AlistClient;
+    async fn fs_search(&self, request: synctv_media_providers::grpc::alist::FsSearchReq) -> Result<synctv_media_providers::grpc::alist::FsSearchResp, AlistError> {
+        use synctv_media_providers::grpc::alist::alist_client::AlistClient;
 
         let mut client = AlistClient::new(self.channel.clone());
 
@@ -111,8 +111,8 @@ impl AlistInterface for GrpcAlistClient {
         Ok(response.into_inner())
     }
 
-    async fn me(&self, request: synctv_providers::grpc::alist::MeReq) -> Result<synctv_providers::grpc::alist::MeResp, AlistError> {
-        use synctv_providers::grpc::alist::alist_client::AlistClient;
+    async fn me(&self, request: synctv_media_providers::grpc::alist::MeReq) -> Result<synctv_media_providers::grpc::alist::MeResp, AlistError> {
+        use synctv_media_providers::grpc::alist::alist_client::AlistClient;
 
         let mut client = AlistClient::new(self.channel.clone());
 
@@ -124,8 +124,8 @@ impl AlistInterface for GrpcAlistClient {
         Ok(response.into_inner())
     }
 
-    async fn login(&self, request: synctv_providers::grpc::alist::LoginReq) -> Result<String, AlistError> {
-        use synctv_providers::grpc::alist::alist_client::AlistClient;
+    async fn login(&self, request: synctv_media_providers::grpc::alist::LoginReq) -> Result<String, AlistError> {
+        use synctv_media_providers::grpc::alist::alist_client::AlistClient;
 
         let mut client = AlistClient::new(self.channel.clone());
 
@@ -211,7 +211,7 @@ impl AlistClientExt for Arc<dyn AlistInterface> {
         path: &str,
         password: Option<&str>,
     ) -> Result<Option<AlistVideoPreview>, ProviderError> {
-        let request = synctv_providers::grpc::alist::FsOtherReq {
+        let request = synctv_media_providers::grpc::alist::FsOtherReq {
             host: host.to_string(),
             token: token.to_string(),
             path: path.to_string(),
@@ -268,14 +268,14 @@ impl From<AlistError> for ProviderError {
 // Bilibili Client
 // ============================================================================
 
-use synctv_providers::bilibili::{BilibiliError, BilibiliInterface};
+use synctv_media_providers::bilibili::{BilibiliError, BilibiliInterface};
 
 /// Type alias for Bilibili client
 pub type BilibiliClientArc = Arc<dyn BilibiliInterface>;
 
 /// Singleton local Bilibili client
 static LOCAL_BILIBILI_CLIENT: std::sync::LazyLock<BilibiliClientArc> = std::sync::LazyLock::new(|| {
-    Arc::new(synctv_providers::bilibili::BilibiliService::new())
+    Arc::new(synctv_media_providers::bilibili::BilibiliService::new())
 });
 
 /// Load local Bilibili client (singleton)
@@ -303,170 +303,170 @@ impl GrpcBilibiliClient {
 
 #[async_trait]
 impl BilibiliInterface for GrpcBilibiliClient {
-    async fn new_qr_code(&self, request: synctv_providers::grpc::bilibili::Empty)
-        -> Result<synctv_providers::grpc::bilibili::NewQrCodeResp, BilibiliError>
+    async fn new_qr_code(&self, request: synctv_media_providers::grpc::bilibili::Empty)
+        -> Result<synctv_media_providers::grpc::bilibili::NewQrCodeResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.new_qr_code(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn login_with_qr_code(&self, request: synctv_providers::grpc::bilibili::LoginWithQrCodeReq)
-        -> Result<synctv_providers::grpc::bilibili::LoginWithQrCodeResp, BilibiliError>
+    async fn login_with_qr_code(&self, request: synctv_media_providers::grpc::bilibili::LoginWithQrCodeReq)
+        -> Result<synctv_media_providers::grpc::bilibili::LoginWithQrCodeResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.login_with_qr_code(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn new_captcha(&self, request: synctv_providers::grpc::bilibili::Empty)
-        -> Result<synctv_providers::grpc::bilibili::NewCaptchaResp, BilibiliError>
+    async fn new_captcha(&self, request: synctv_media_providers::grpc::bilibili::Empty)
+        -> Result<synctv_media_providers::grpc::bilibili::NewCaptchaResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.new_captcha(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn new_sms(&self, request: synctv_providers::grpc::bilibili::NewSmsReq)
-        -> Result<synctv_providers::grpc::bilibili::NewSmsResp, BilibiliError>
+    async fn new_sms(&self, request: synctv_media_providers::grpc::bilibili::NewSmsReq)
+        -> Result<synctv_media_providers::grpc::bilibili::NewSmsResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.new_sms(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn login_with_sms(&self, request: synctv_providers::grpc::bilibili::LoginWithSmsReq)
-        -> Result<synctv_providers::grpc::bilibili::LoginWithSmsResp, BilibiliError>
+    async fn login_with_sms(&self, request: synctv_media_providers::grpc::bilibili::LoginWithSmsReq)
+        -> Result<synctv_media_providers::grpc::bilibili::LoginWithSmsResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.login_with_sms(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn parse_video_page(&self, request: synctv_providers::grpc::bilibili::ParseVideoPageReq)
-        -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, BilibiliError>
+    async fn parse_video_page(&self, request: synctv_media_providers::grpc::bilibili::ParseVideoPageReq)
+        -> Result<synctv_media_providers::grpc::bilibili::VideoPageInfo, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.parse_video_page(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_video_url(&self, request: synctv_providers::grpc::bilibili::GetVideoUrlReq)
-        -> Result<synctv_providers::grpc::bilibili::VideoUrl, BilibiliError>
+    async fn get_video_url(&self, request: synctv_media_providers::grpc::bilibili::GetVideoUrlReq)
+        -> Result<synctv_media_providers::grpc::bilibili::VideoUrl, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.get_video_url(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_dash_video_url(&self, request: synctv_providers::grpc::bilibili::GetDashVideoUrlReq)
-        -> Result<synctv_providers::grpc::bilibili::GetDashVideoUrlResp, BilibiliError>
+    async fn get_dash_video_url(&self, request: synctv_media_providers::grpc::bilibili::GetDashVideoUrlReq)
+        -> Result<synctv_media_providers::grpc::bilibili::GetDashVideoUrlResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.get_dash_video_url(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_subtitles(&self, request: synctv_providers::grpc::bilibili::GetSubtitlesReq)
-        -> Result<synctv_providers::grpc::bilibili::GetSubtitlesResp, BilibiliError>
+    async fn get_subtitles(&self, request: synctv_media_providers::grpc::bilibili::GetSubtitlesReq)
+        -> Result<synctv_media_providers::grpc::bilibili::GetSubtitlesResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.get_subtitles(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn parse_pgc_page(&self, request: synctv_providers::grpc::bilibili::ParsePgcPageReq)
-        -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, BilibiliError>
+    async fn parse_pgc_page(&self, request: synctv_media_providers::grpc::bilibili::ParsePgcPageReq)
+        -> Result<synctv_media_providers::grpc::bilibili::VideoPageInfo, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.parse_pgc_page(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_pgcurl(&self, request: synctv_providers::grpc::bilibili::GetPgcurlReq)
-        -> Result<synctv_providers::grpc::bilibili::VideoUrl, BilibiliError>
+    async fn get_pgcurl(&self, request: synctv_media_providers::grpc::bilibili::GetPgcurlReq)
+        -> Result<synctv_media_providers::grpc::bilibili::VideoUrl, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.get_pgcurl(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_dash_pgcurl(&self, request: synctv_providers::grpc::bilibili::GetDashPgcurlReq)
-        -> Result<synctv_providers::grpc::bilibili::GetDashPgcurlResp, BilibiliError>
+    async fn get_dash_pgcurl(&self, request: synctv_media_providers::grpc::bilibili::GetDashPgcurlReq)
+        -> Result<synctv_media_providers::grpc::bilibili::GetDashPgcurlResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.get_dash_pgcurl(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn user_info(&self, request: synctv_providers::grpc::bilibili::UserInfoReq)
-        -> Result<synctv_providers::grpc::bilibili::UserInfoResp, BilibiliError>
+    async fn user_info(&self, request: synctv_media_providers::grpc::bilibili::UserInfoReq)
+        -> Result<synctv_media_providers::grpc::bilibili::UserInfoResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.user_info(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn r#match(&self, request: synctv_providers::grpc::bilibili::MatchReq)
-        -> Result<synctv_providers::grpc::bilibili::MatchResp, BilibiliError>
+    async fn r#match(&self, request: synctv_media_providers::grpc::bilibili::MatchReq)
+        -> Result<synctv_media_providers::grpc::bilibili::MatchResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.r#match(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_live_streams(&self, request: synctv_providers::grpc::bilibili::GetLiveStreamsReq)
-        -> Result<synctv_providers::grpc::bilibili::GetLiveStreamsResp, BilibiliError>
+    async fn get_live_streams(&self, request: synctv_media_providers::grpc::bilibili::GetLiveStreamsReq)
+        -> Result<synctv_media_providers::grpc::bilibili::GetLiveStreamsResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.get_live_streams(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn parse_live_page(&self, request: synctv_providers::grpc::bilibili::ParseLivePageReq)
-        -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, BilibiliError>
+    async fn parse_live_page(&self, request: synctv_media_providers::grpc::bilibili::ParseLivePageReq)
+        -> Result<synctv_media_providers::grpc::bilibili::VideoPageInfo, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.parse_live_page(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_live_danmu_info(&self, request: synctv_providers::grpc::bilibili::GetLiveDanmuInfoReq)
-        -> Result<synctv_providers::grpc::bilibili::GetLiveDanmuInfoResp, BilibiliError>
+    async fn get_live_danmu_info(&self, request: synctv_media_providers::grpc::bilibili::GetLiveDanmuInfoReq)
+        -> Result<synctv_media_providers::grpc::bilibili::GetLiveDanmuInfoResp, BilibiliError>
     {
-        use synctv_providers::grpc::bilibili::bilibili_client::BilibiliClient;
+        use synctv_media_providers::grpc::bilibili::bilibili_client::BilibiliClient;
         let mut client = BilibiliClient::new(self.channel.clone());
         let response = client.get_live_danmu_info(tonic::Request::new(request)).await
             .map_err(|e| BilibiliError::Network(format!("gRPC error: {e}")))?;
@@ -491,14 +491,14 @@ impl From<BilibiliError> for ProviderError {
 // Emby Client
 // ============================================================================
 
-use synctv_providers::emby::{EmbyError, EmbyInterface};
+use synctv_media_providers::emby::{EmbyError, EmbyInterface};
 
 /// Type alias for Emby client
 pub type EmbyClientArc = Arc<dyn EmbyInterface>;
 
 /// Singleton local Emby client
 static LOCAL_EMBY_CLIENT: std::sync::LazyLock<EmbyClientArc> = std::sync::LazyLock::new(|| {
-    Arc::new(synctv_providers::emby::EmbyService::new())
+    Arc::new(synctv_media_providers::emby::EmbyService::new())
 });
 
 /// Load local Emby client (singleton)
@@ -526,90 +526,90 @@ impl GrpcEmbyClient {
 
 #[async_trait]
 impl EmbyInterface for GrpcEmbyClient {
-    async fn login(&self, request: synctv_providers::grpc::emby::LoginReq)
-        -> Result<synctv_providers::grpc::emby::LoginResp, EmbyError>
+    async fn login(&self, request: synctv_media_providers::grpc::emby::LoginReq)
+        -> Result<synctv_media_providers::grpc::emby::LoginResp, EmbyError>
     {
-        use synctv_providers::grpc::emby::emby_client::EmbyClient;
+        use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
         let response = client.login(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn me(&self, request: synctv_providers::grpc::emby::MeReq)
-        -> Result<synctv_providers::grpc::emby::MeResp, EmbyError>
+    async fn me(&self, request: synctv_media_providers::grpc::emby::MeReq)
+        -> Result<synctv_media_providers::grpc::emby::MeResp, EmbyError>
     {
-        use synctv_providers::grpc::emby::emby_client::EmbyClient;
+        use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
         let response = client.me(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_items(&self, request: synctv_providers::grpc::emby::GetItemsReq)
-        -> Result<synctv_providers::grpc::emby::GetItemsResp, EmbyError>
+    async fn get_items(&self, request: synctv_media_providers::grpc::emby::GetItemsReq)
+        -> Result<synctv_media_providers::grpc::emby::GetItemsResp, EmbyError>
     {
-        use synctv_providers::grpc::emby::emby_client::EmbyClient;
+        use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
         let response = client.get_items(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_item(&self, request: synctv_providers::grpc::emby::GetItemReq)
-        -> Result<synctv_providers::grpc::emby::Item, EmbyError>
+    async fn get_item(&self, request: synctv_media_providers::grpc::emby::GetItemReq)
+        -> Result<synctv_media_providers::grpc::emby::Item, EmbyError>
     {
-        use synctv_providers::grpc::emby::emby_client::EmbyClient;
+        use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
         let response = client.get_item(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn fs_list(&self, request: synctv_providers::grpc::emby::FsListReq)
-        -> Result<synctv_providers::grpc::emby::FsListResp, EmbyError>
+    async fn fs_list(&self, request: synctv_media_providers::grpc::emby::FsListReq)
+        -> Result<synctv_media_providers::grpc::emby::FsListResp, EmbyError>
     {
-        use synctv_providers::grpc::emby::emby_client::EmbyClient;
+        use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
         let response = client.fs_list(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn get_system_info(&self, request: synctv_providers::grpc::emby::SystemInfoReq)
-        -> Result<synctv_providers::grpc::emby::SystemInfoResp, EmbyError>
+    async fn get_system_info(&self, request: synctv_media_providers::grpc::emby::SystemInfoReq)
+        -> Result<synctv_media_providers::grpc::emby::SystemInfoResp, EmbyError>
     {
-        use synctv_providers::grpc::emby::emby_client::EmbyClient;
+        use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
         let response = client.get_system_info(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn logout(&self, request: synctv_providers::grpc::emby::LogoutReq)
-        -> Result<synctv_providers::grpc::emby::Empty, EmbyError>
+    async fn logout(&self, request: synctv_media_providers::grpc::emby::LogoutReq)
+        -> Result<synctv_media_providers::grpc::emby::Empty, EmbyError>
     {
-        use synctv_providers::grpc::emby::emby_client::EmbyClient;
+        use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
         let response = client.logout(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn playback_info(&self, request: synctv_providers::grpc::emby::PlaybackInfoReq)
-        -> Result<synctv_providers::grpc::emby::PlaybackInfoResp, EmbyError>
+    async fn playback_info(&self, request: synctv_media_providers::grpc::emby::PlaybackInfoReq)
+        -> Result<synctv_media_providers::grpc::emby::PlaybackInfoResp, EmbyError>
     {
-        use synctv_providers::grpc::emby::emby_client::EmbyClient;
+        use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
         let response = client.playback_info(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }
 
-    async fn delete_active_encodeings(&self, request: synctv_providers::grpc::emby::DeleteActiveEncodeingsReq)
-        -> Result<synctv_providers::grpc::emby::Empty, EmbyError>
+    async fn delete_active_encodeings(&self, request: synctv_media_providers::grpc::emby::DeleteActiveEncodeingsReq)
+        -> Result<synctv_media_providers::grpc::emby::Empty, EmbyError>
     {
-        use synctv_providers::grpc::emby::emby_client::EmbyClient;
+        use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
         let response = client.delete_active_encodeings(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;

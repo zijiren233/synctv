@@ -30,7 +30,7 @@ impl AlistApiImpl {
             (req.hashed_password, true)
         };
 
-        let login_req = synctv_providers::grpc::alist::LoginReq {
+        let login_req = synctv_media_providers::grpc::alist::LoginReq {
             host: req.host,
             username: req.username,
             password,
@@ -47,7 +47,7 @@ impl AlistApiImpl {
 
     /// List Alist directory
     pub async fn list(&self, req: ListRequest, instance_name: Option<&str>) -> Result<ListResponse, String> {
-        let list_req = synctv_providers::grpc::alist::FsListReq {
+        let list_req = synctv_media_providers::grpc::alist::FsListReq {
             host: req.host,
             token: req.token,
             path: req.path,
@@ -80,7 +80,7 @@ impl AlistApiImpl {
 
     /// Get Alist user info
     pub async fn get_me(&self, req: GetMeRequest, instance_name: Option<&str>) -> Result<GetMeResponse, String> {
-        let me_req = synctv_providers::grpc::alist::MeReq {
+        let me_req = synctv_media_providers::grpc::alist::MeReq {
             host: req.host,
             token: req.token,
         };

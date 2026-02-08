@@ -18,7 +18,7 @@ use synctv_core::service::{
 use crate::proto::client::{
     auth_service_server::AuthService, email_service_server::EmailService,
     media_service_server::MediaService, public_service_server::PublicService,
-    room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, SetMemberPermissionRequest, SetMemberPermissionResponse, KickMemberRequest, KickMemberResponse, BanMemberRequest, BanMemberResponse, UnbanMemberRequest, UnbanMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, ChangeSpeedRequest, ChangeSpeedResponse, SwitchMediaRequest, SwitchMediaResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, NewPublishKeyRequest, NewPublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, SetPlaylistRequest, SetPlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetPlayingRequest, SetPlayingResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse, GetIceServersRequest, GetIceServersResponse, IceServer, GetNetworkQualityRequest, GetNetworkQualityResponse,
+    room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, UpdateRoomSettingsRequest, UpdateRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, UpdateMemberPermissionsRequest, UpdateMemberPermissionsResponse, KickMemberRequest, KickMemberResponse, BanMemberRequest, BanMemberResponse, UnbanMemberRequest, UnbanMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, SetPlaybackSpeedRequest, SetPlaybackSpeedResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, CreatePublishKeyRequest, CreatePublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, UpdatePlaylistRequest, UpdatePlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetCurrentMediaRequest, SetCurrentMediaResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse, GetIceServersRequest, GetIceServersResponse, IceServer, GetNetworkQualityRequest, GetNetworkQualityResponse,
     GetMovieInfoRequest, GetMovieInfoResponse,
 };
 
@@ -966,10 +966,10 @@ impl RoomService for ClientServiceImpl {
         Ok(Response::new(DeleteRoomResponse { success: true }))
     }
 
-    async fn set_room_settings(
+    async fn update_room_settings(
         &self,
-        request: Request<SetRoomSettingsRequest>,
-    ) -> Result<Response<SetRoomSettingsResponse>, Status> {
+        request: Request<UpdateRoomSettingsRequest>,
+    ) -> Result<Response<UpdateRoomSettingsResponse>, Status> {
         // Extract user_id from JWT token
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
@@ -1007,7 +1007,7 @@ impl RoomService for ClientServiceImpl {
             .await
             .unwrap_or_default();
 
-        Ok(Response::new(SetRoomSettingsResponse {
+        Ok(Response::new(UpdateRoomSettingsResponse {
             room: Some(Room {
                 id: updated_room.id.to_string(),
                 name: updated_room.name,
@@ -1071,10 +1071,10 @@ impl RoomService for ClientServiceImpl {
         }))
     }
 
-    async fn set_member_permission(
+    async fn update_member_permissions(
         &self,
-        request: Request<SetMemberPermissionRequest>,
-    ) -> Result<Response<SetMemberPermissionResponse>, Status> {
+        request: Request<UpdateMemberPermissionsRequest>,
+    ) -> Result<Response<UpdateMemberPermissionsResponse>, Status> {
         // Extract user_id from JWT token
         let user_id = self.get_user_id(&request)?;
         let room_id = self.get_room_id(&request)?;
@@ -1130,7 +1130,7 @@ impl RoomService for ClientServiceImpl {
             synctv_core::models::RoomRole::Guest => "guest",
         };
 
-        Ok(Response::new(SetMemberPermissionResponse {
+        Ok(Response::new(UpdateMemberPermissionsResponse {
             member: Some(RoomMember {
                 room_id: room_id.to_string(),
                 user_id: member.user_id.to_string(),
@@ -1235,29 +1235,6 @@ impl RoomService for ClientServiceImpl {
 
         Ok(Response::new(GetRoomSettingsResponse {
             settings: settings_json,
-        }))
-    }
-
-    async fn update_room_setting(
-        &self,
-        request: Request<UpdateRoomSettingRequest>,
-    ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
-        let room_id = self.get_room_id(&request)?;
-        let req = request.into_inner();
-
-        // Parse the value as JSON
-        let value: serde_json::Value = serde_json::from_slice(&req.value)
-            .map_err(|e| Status::invalid_argument(format!("Invalid JSON value: {e}")))?;
-
-        // Update single setting
-        let settings_json = self
-            .room_service
-            .update_room_setting(&room_id, &req.key, &value)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to update room setting: {e}")))?;
-
-        Ok(Response::new(UpdateRoomSettingResponse {
-            settings: settings_json.into_bytes(),
         }))
     }
 
@@ -2025,10 +2002,10 @@ impl MediaService for ClientServiceImpl {
         }))
     }
 
-    async fn change_speed(
+    async fn set_playback_speed(
         &self,
-        request: Request<ChangeSpeedRequest>,
-    ) -> Result<Response<ChangeSpeedResponse>, Status> {
+        request: Request<SetPlaybackSpeedRequest>,
+    ) -> Result<Response<SetPlaybackSpeedResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
@@ -2061,52 +2038,12 @@ impl MediaService for ClientServiceImpl {
             version: state.version,
         });
 
-        Ok(Response::new(ChangeSpeedResponse {
+        Ok(Response::new(SetPlaybackSpeedResponse {
             playback_state: proto_state,
         }))
     }
 
-    async fn switch_media(
-        &self,
-        request: Request<SwitchMediaRequest>,
-    ) -> Result<Response<SwitchMediaResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
-        let room_id = self.get_room_id(&request)?;
-        let req = request.into_inner();
-        let media_id = MediaId::from_string(req.media_id);
-
-        let state = self
-            .room_service
-            .update_playback(
-                room_id,
-                user_id,
-                |state| state.switch_media(media_id.clone()),
-                PermissionBits::SWITCH_MEDIA,
-            )
-            .await
-            .map_err(|e| match e {
-                synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
-                _ => Status::internal("Failed to switch media"),
-            })?;
-
-        let proto_state = Some(PlaybackState {
-            room_id: state.room_id.as_str().to_string(),
-            playing_media_id: state
-                .playing_media_id
-                .as_ref()
-                .map(|id| id.as_str().to_string())
-                .unwrap_or_default(),
-            position: state.position,
-            speed: state.speed,
-            is_playing: state.is_playing,
-            updated_at: state.updated_at.timestamp(),
-            version: state.version,
-        });
-
-        Ok(Response::new(SwitchMediaResponse {
-            playback_state: proto_state,
-        }))
-    }
+    // switch_media removed from proto - merged into set_current_media
 
     async fn get_playback_state(
         &self,
@@ -2139,10 +2076,10 @@ impl MediaService for ClientServiceImpl {
         }))
     }
 
-    async fn new_publish_key(
+    async fn create_publish_key(
         &self,
-        request: Request<NewPublishKeyRequest>,
-    ) -> Result<Response<NewPublishKeyResponse>, Status> {
+        request: Request<CreatePublishKeyRequest>,
+    ) -> Result<Response<CreatePublishKeyResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
@@ -2211,7 +2148,7 @@ impl MediaService for ClientServiceImpl {
             "Generated publish key for live streaming"
         );
 
-        Ok(Response::new(NewPublishKeyResponse {
+        Ok(Response::new(CreatePublishKeyResponse {
             publish_key,
             rtmp_url,
             stream_key,
@@ -2270,10 +2207,10 @@ impl MediaService for ClientServiceImpl {
         }))
     }
 
-    async fn set_playlist(
+    async fn update_playlist(
         &self,
-        request: Request<SetPlaylistRequest>,
-    ) -> Result<Response<SetPlaylistResponse>, Status> {
+        request: Request<UpdatePlaylistRequest>,
+    ) -> Result<Response<UpdatePlaylistResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
@@ -2310,7 +2247,7 @@ impl MediaService for ClientServiceImpl {
             .await
             .unwrap_or(0) as i32;
 
-        Ok(Response::new(SetPlaylistResponse {
+        Ok(Response::new(UpdatePlaylistResponse {
             playlist: Some(self.playlist_to_proto(&playlist, item_count)),
         }))
     }
@@ -2388,10 +2325,10 @@ impl MediaService for ClientServiceImpl {
         }))
     }
 
-    async fn set_playing(
+    async fn set_current_media(
         &self,
-        request: Request<SetPlayingRequest>,
-    ) -> Result<Response<SetPlayingResponse>, Status> {
+        request: Request<SetCurrentMediaRequest>,
+    ) -> Result<Response<SetCurrentMediaResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
@@ -2494,7 +2431,7 @@ impl MediaService for ClientServiceImpl {
             .await
             .unwrap_or(0) as i32;
 
-        Ok(Response::new(SetPlayingResponse {
+        Ok(Response::new(SetCurrentMediaResponse {
             playlist: Some(self.playlist_to_proto(&playlist, item_count)),
             playing_media,
         }))

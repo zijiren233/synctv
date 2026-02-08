@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use synctv_providers::alist::AlistClient;
+//! use synctv_media_providers::alist::AlistClient;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut client = AlistClient::new("https://alist.example.com")?;

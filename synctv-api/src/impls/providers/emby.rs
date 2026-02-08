@@ -43,7 +43,7 @@ impl EmbyApiImpl {
 
     /// List Emby library items
     pub async fn list(&self, req: ListRequest, instance_name: Option<&str>) -> Result<ListResponse, String> {
-        let list_req = synctv_providers::grpc::emby::FsListReq {
+        let list_req = synctv_media_providers::grpc::emby::FsListReq {
             host: req.host,
             token: req.token,
             path: req.path,
@@ -77,7 +77,7 @@ impl EmbyApiImpl {
 
     /// Get Emby user info
     pub async fn get_me(&self, req: GetMeRequest, instance_name: Option<&str>) -> Result<GetMeResponse, String> {
-        let me_req = synctv_providers::grpc::emby::MeReq {
+        let me_req = synctv_media_providers::grpc::emby::MeReq {
             host: req.host,
             token: req.token,
             user_id: String::new(), // Empty = get current user

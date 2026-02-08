@@ -32,7 +32,7 @@ pub use synctv_proto::admin::{
     GetRoomRequest, GetRoomResponse,
     ListRoomsRequest, ListRoomsResponse,
     DeleteRoomRequest, DeleteRoomResponse,
-    SetRoomPasswordRequest, SetRoomPasswordResponse,
+    UpdateRoomPasswordRequest, UpdateRoomPasswordResponse,
     GetRoomMembersRequest, GetRoomMembersResponse,
     AdminRoom,
 };
@@ -1048,9 +1048,9 @@ impl RoomService {
     /// Set room password using gRPC types
     pub async fn set_room_password(
         &self,
-        request: SetRoomPasswordRequest,
+        request: UpdateRoomPasswordRequest,
         requesting_user_id: &UserId,
-    ) -> Result<SetRoomPasswordResponse> {
+    ) -> Result<UpdateRoomPasswordResponse> {
         let room_id = RoomId::from_string(request.room_id);
 
         // Check permission
@@ -1088,7 +1088,7 @@ impl RoomService {
         // Update settings
         self.room_settings_repo.set_settings(&room_id, &settings).await?;
 
-        Ok(SetRoomPasswordResponse { success: true })
+        Ok(UpdateRoomPasswordResponse { success: true })
     }
 
     // ========== Admin Operations ==========

@@ -76,18 +76,18 @@ impl BilibiliProvider {
         &self,
         url: String,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::MatchResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::MatchResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        let req = synctv_providers::grpc::bilibili::MatchReq { url };
+        let req = synctv_media_providers::grpc::bilibili::MatchReq { url };
         client.r#match(req).await.map_err(std::convert::Into::into)
     }
 
     /// Parse video page
     pub async fn parse_video_page(
         &self,
-        req: synctv_providers::grpc::bilibili::ParseVideoPageReq,
+        req: synctv_media_providers::grpc::bilibili::ParseVideoPageReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.parse_video_page(req).await.map_err(std::convert::Into::into)
     }
@@ -95,9 +95,9 @@ impl BilibiliProvider {
     /// Parse PGC page
     pub async fn parse_pgc_page(
         &self,
-        req: synctv_providers::grpc::bilibili::ParsePgcPageReq,
+        req: synctv_media_providers::grpc::bilibili::ParsePgcPageReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.parse_pgc_page(req).await.map_err(std::convert::Into::into)
     }
@@ -105,9 +105,9 @@ impl BilibiliProvider {
     /// Parse live page
     pub async fn parse_live_page(
         &self,
-        req: synctv_providers::grpc::bilibili::ParseLivePageReq,
+        req: synctv_media_providers::grpc::bilibili::ParseLivePageReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::VideoPageInfo, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.parse_live_page(req).await.map_err(std::convert::Into::into)
     }
@@ -116,10 +116,10 @@ impl BilibiliProvider {
     pub async fn new_qr_code(
         &self,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::NewQrCodeResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::NewQrCodeResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client
-            .new_qr_code(synctv_providers::grpc::bilibili::Empty {})
+            .new_qr_code(synctv_media_providers::grpc::bilibili::Empty {})
             .await
             .map_err(std::convert::Into::into)
     }
@@ -127,9 +127,9 @@ impl BilibiliProvider {
     /// Check QR code login status
     pub async fn login_with_qr_code(
         &self,
-        req: synctv_providers::grpc::bilibili::LoginWithQrCodeReq,
+        req: synctv_media_providers::grpc::bilibili::LoginWithQrCodeReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::LoginWithQrCodeResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::LoginWithQrCodeResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.login_with_qr_code(req).await.map_err(std::convert::Into::into)
     }
@@ -138,10 +138,10 @@ impl BilibiliProvider {
     pub async fn new_captcha(
         &self,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::NewCaptchaResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::NewCaptchaResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client
-            .new_captcha(synctv_providers::grpc::bilibili::Empty {})
+            .new_captcha(synctv_media_providers::grpc::bilibili::Empty {})
             .await
             .map_err(std::convert::Into::into)
     }
@@ -149,9 +149,9 @@ impl BilibiliProvider {
     /// Send SMS verification code
     pub async fn new_sms(
         &self,
-        req: synctv_providers::grpc::bilibili::NewSmsReq,
+        req: synctv_media_providers::grpc::bilibili::NewSmsReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::NewSmsResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::NewSmsResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.new_sms(req).await.map_err(std::convert::Into::into)
     }
@@ -159,9 +159,9 @@ impl BilibiliProvider {
     /// Login with SMS code
     pub async fn login_with_sms(
         &self,
-        req: synctv_providers::grpc::bilibili::LoginWithSmsReq,
+        req: synctv_media_providers::grpc::bilibili::LoginWithSmsReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::LoginWithSmsResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::LoginWithSmsResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.login_with_sms(req).await.map_err(std::convert::Into::into)
     }
@@ -169,9 +169,9 @@ impl BilibiliProvider {
     /// Get user info
     pub async fn user_info(
         &self,
-        req: synctv_providers::grpc::bilibili::UserInfoReq,
+        req: synctv_media_providers::grpc::bilibili::UserInfoReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::UserInfoResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::UserInfoResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.user_info(req).await.map_err(std::convert::Into::into)
     }
@@ -182,9 +182,9 @@ impl BilibiliProvider {
         room_id: u64,
         cookies: HashMap<String, String>,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::bilibili::GetLiveDanmuInfoResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::bilibili::GetLiveDanmuInfoResp, ProviderError> {
         let client = self.get_client(instance_name).await;
-        let req = synctv_providers::grpc::bilibili::GetLiveDanmuInfoReq {
+        let req = synctv_media_providers::grpc::bilibili::GetLiveDanmuInfoReq {
             cookies,
             room_id,
         };
@@ -285,7 +285,7 @@ impl MediaProvider for BilibiliProvider {
                 let bvid = bvid.unwrap_or_default();
                 let aid = aid.unwrap_or(0);
 
-                let request = synctv_providers::grpc::bilibili::GetDashVideoUrlReq {
+                let request = synctv_media_providers::grpc::bilibili::GetDashVideoUrlReq {
                     aid,
                     bvid: bvid.clone(),
                     cid,
@@ -297,7 +297,7 @@ impl MediaProvider for BilibiliProvider {
                 let mut subtitles = Vec::new();
 
                 // Fetch subtitles
-                let subtitle_request = synctv_providers::grpc::bilibili::GetSubtitlesReq {
+                let subtitle_request = synctv_media_providers::grpc::bilibili::GetSubtitlesReq {
                     aid,
                     bvid: bvid.clone(),
                     cid,
@@ -357,7 +357,7 @@ impl MediaProvider for BilibiliProvider {
             BilibiliSourceConfig::Pgc {
                 epid, cid, cookies, ..
             } => {
-                let request = synctv_providers::grpc::bilibili::GetDashPgcurlReq {
+                let request = synctv_media_providers::grpc::bilibili::GetDashPgcurlReq {
                     epid,
                     cid,
                     cookies: cookies.clone(),
@@ -404,7 +404,7 @@ impl MediaProvider for BilibiliProvider {
                 room_id, cookies, ..
             } => {
                 // Live streams use HLS — no DASH
-                let request = synctv_providers::grpc::bilibili::GetLiveStreamsReq {
+                let request = synctv_media_providers::grpc::bilibili::GetLiveStreamsReq {
                     cid: room_id,
                     hls: true,
                     cookies,
@@ -481,7 +481,7 @@ fn bilibili_headers() -> HashMap<String, String> {
 
 /// Convert proto `DashInfo` → provider-agnostic `DashManifestData`
 fn proto_dash_to_manifest(
-    dash: &synctv_providers::grpc::bilibili::DashInfo,
+    dash: &synctv_media_providers::grpc::bilibili::DashInfo,
 ) -> DashManifestData {
     let video_streams = dash
         .video_streams

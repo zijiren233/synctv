@@ -6,7 +6,7 @@ use synctv_core::service::{RemoteProviderManager, RoomService, UserService, Sett
 
 // Use synctv_proto for all gRPC types to avoid duplication
 use crate::proto::admin_service_server::AdminService;
-use crate::proto::admin::{GetSettingsRequest, GetSettingsResponse, GetSettingsGroupRequest, GetSettingsGroupResponse, SetSettingsRequest, SetSettingsResponse, SendTestEmailRequest, SendTestEmailResponse, ListProviderInstancesRequest, ListProviderInstancesResponse, AddProviderInstanceRequest, AddProviderInstanceResponse, SetProviderInstanceRequest, SetProviderInstanceResponse, DeleteProviderInstanceRequest, DeleteProviderInstanceResponse, ReconnectProviderInstanceRequest, ReconnectProviderInstanceResponse, EnableProviderInstanceRequest, EnableProviderInstanceResponse, DisableProviderInstanceRequest, DisableProviderInstanceResponse, CreateUserRequest, CreateUserResponse, AdminUser, DeleteUserRequest, DeleteUserResponse, ListUsersRequest, ListUsersResponse, GetUserRequest, GetUserResponse, SetUserPasswordRequest, SetUserPasswordResponse, SetUserUsernameRequest, SetUserUsernameResponse, SetUserRoleRequest, SetUserRoleResponse, BanUserRequest, BanUserResponse, UnbanUserRequest, UnbanUserResponse, GetUserRoomsRequest, GetUserRoomsResponse, AdminRoom, ApproveUserRequest, ApproveUserResponse, ListRoomsRequest, ListRoomsResponse, GetRoomRequest, GetRoomResponse, SetRoomPasswordRequest, SetRoomPasswordResponse, DeleteRoomRequest, DeleteRoomResponse, BanRoomRequest, BanRoomResponse, UnbanRoomRequest, UnbanRoomResponse, ApproveRoomRequest, ApproveRoomResponse, GetRoomMembersRequest, GetRoomMembersResponse, AddAdminRequest, AddAdminResponse, RemoveAdminRequest, RemoveAdminResponse, ListAdminsRequest, ListAdminsResponse, GetSystemStatsRequest, GetSystemStatsResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, SetRoomSettingsRequest, SetRoomSettingsResponse, UpdateRoomSettingRequest, UpdateRoomSettingResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse}; // Import all message types
+use crate::proto::admin::{GetSettingsRequest, GetSettingsResponse, GetSettingsGroupRequest, GetSettingsGroupResponse, UpdateSettingsRequest, UpdateSettingsResponse, SendTestEmailRequest, SendTestEmailResponse, ListProviderInstancesRequest, ListProviderInstancesResponse, AddProviderInstanceRequest, AddProviderInstanceResponse, UpdateProviderInstanceRequest, UpdateProviderInstanceResponse, DeleteProviderInstanceRequest, DeleteProviderInstanceResponse, ReconnectProviderInstanceRequest, ReconnectProviderInstanceResponse, EnableProviderInstanceRequest, EnableProviderInstanceResponse, DisableProviderInstanceRequest, DisableProviderInstanceResponse, CreateUserRequest, CreateUserResponse, AdminUser, DeleteUserRequest, DeleteUserResponse, ListUsersRequest, ListUsersResponse, GetUserRequest, GetUserResponse, UpdateUserPasswordRequest, UpdateUserPasswordResponse, UpdateUserUsernameRequest, UpdateUserUsernameResponse, UpdateUserRoleRequest, UpdateUserRoleResponse, BanUserRequest, BanUserResponse, UnbanUserRequest, UnbanUserResponse, GetUserRoomsRequest, GetUserRoomsResponse, AdminRoom, ApproveUserRequest, ApproveUserResponse, ListRoomsRequest, ListRoomsResponse, GetRoomRequest, GetRoomResponse, UpdateRoomPasswordRequest, UpdateRoomPasswordResponse, DeleteRoomRequest, DeleteRoomResponse, BanRoomRequest, BanRoomResponse, UnbanRoomRequest, UnbanRoomResponse, ApproveRoomRequest, ApproveRoomResponse, GetRoomMembersRequest, GetRoomMembersResponse, AddAdminRequest, AddAdminResponse, RemoveAdminRequest, RemoveAdminResponse, ListAdminsRequest, ListAdminsResponse, GetSystemStatsRequest, GetSystemStatsResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, UpdateRoomSettingsRequest, UpdateRoomSettingsResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse}; // Import all message types
 
 /// `AdminService` implementation
 #[derive(Clone)]
@@ -171,10 +171,10 @@ impl AdminService for AdminServiceImpl {
         }))
     }
 
-    async fn set_settings(
+    async fn update_settings(
         &self,
-        request: Request<SetSettingsRequest>,
-    ) -> Result<Response<SetSettingsResponse>, Status> {
+        request: Request<UpdateSettingsRequest>,
+    ) -> Result<Response<UpdateSettingsResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -204,7 +204,7 @@ impl AdminService for AdminServiceImpl {
         }
 
         tracing::info!("Updated {} settings in group '{}'", req.settings.len(), req.group);
-        Ok(Response::new(SetSettingsResponse {
+        Ok(Response::new(UpdateSettingsResponse {
             // Empty response
         }))
     }
@@ -351,10 +351,10 @@ impl AdminService for AdminServiceImpl {
         }))
     }
 
-    async fn set_provider_instance(
+    async fn update_provider_instance(
         &self,
-        request: Request<SetProviderInstanceRequest>,
-    ) -> Result<Response<SetProviderInstanceResponse>, Status> {
+        request: Request<UpdateProviderInstanceRequest>,
+    ) -> Result<Response<UpdateProviderInstanceResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -432,7 +432,7 @@ impl AdminService for AdminServiceImpl {
 
         tracing::info!("Updated provider instance: {}", req.name);
 
-        Ok(Response::new(SetProviderInstanceResponse {
+        Ok(Response::new(UpdateProviderInstanceResponse {
             instance: Some(self.instance_to_proto(&updated_instance)),
         }))
     }
@@ -781,10 +781,10 @@ impl AdminService for AdminServiceImpl {
         }))
     }
 
-    async fn set_user_password(
+    async fn update_user_password(
         &self,
-        request: Request<SetUserPasswordRequest>,
-    ) -> Result<Response<SetUserPasswordResponse>, Status> {
+        request: Request<UpdateUserPasswordRequest>,
+    ) -> Result<Response<UpdateUserPasswordResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -812,13 +812,13 @@ impl AdminService for AdminServiceImpl {
 
         tracing::info!("Password updated for user {} by admin", user_id.as_str());
 
-        Ok(Response::new(SetUserPasswordResponse { success: true }))
+        Ok(Response::new(UpdateUserPasswordResponse { success: true }))
     }
 
-    async fn set_user_username(
+    async fn update_user_username(
         &self,
-        request: Request<SetUserUsernameRequest>,
-    ) -> Result<Response<SetUserUsernameResponse>, Status> {
+        request: Request<UpdateUserUsernameRequest>,
+    ) -> Result<Response<UpdateUserUsernameResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -862,15 +862,15 @@ impl AdminService for AdminServiceImpl {
             updated_at: updated_user.updated_at.timestamp(),
         };
 
-        Ok(Response::new(SetUserUsernameResponse {
+        Ok(Response::new(UpdateUserUsernameResponse {
             user: Some(admin_user),
         }))
     }
 
-    async fn set_user_role(
+    async fn update_user_role(
         &self,
-        request: Request<SetUserRoleRequest>,
-    ) -> Result<Response<SetUserRoleResponse>, Status> {
+        request: Request<UpdateUserRoleRequest>,
+    ) -> Result<Response<UpdateUserRoleResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
@@ -922,7 +922,7 @@ impl AdminService for AdminServiceImpl {
             updated_at: updated_user.updated_at.timestamp(),
         };
 
-        Ok(Response::new(SetUserRoleResponse {
+        Ok(Response::new(UpdateUserRoleResponse {
             user: Some(admin_user),
         }))
     }
@@ -1213,10 +1213,10 @@ impl AdminService for AdminServiceImpl {
         Ok(Response::new(response))
     }
 
-    async fn set_room_password(
+    async fn update_room_password(
         &self,
-        request: Request<SetRoomPasswordRequest>,
-    ) -> Result<Response<SetRoomPasswordResponse>, Status> {
+        request: Request<UpdateRoomPasswordRequest>,
+    ) -> Result<Response<UpdateRoomPasswordResponse>, Status> {
         self.check_admin(&request).await?;
 
         // Get user_id from request metadata (set by interceptor)
@@ -1800,10 +1800,10 @@ impl AdminService for AdminServiceImpl {
         }))
     }
 
-    async fn set_room_settings(
+    async fn update_room_settings(
         &self,
-        request: Request<SetRoomSettingsRequest>,
-    ) -> Result<Response<SetRoomSettingsResponse>, Status> {
+        request: Request<UpdateRoomSettingsRequest>,
+    ) -> Result<Response<UpdateRoomSettingsResponse>, Status> {
         self.check_admin(&request).await?;
         let req = request.into_inner();
         let room_id = synctv_core::models::RoomId::from_string(req.room_id);
@@ -1826,7 +1826,7 @@ impl AdminService for AdminServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Failed to get room: {e}")))?;
 
-        Ok(Response::new(SetRoomSettingsResponse {
+        Ok(Response::new(UpdateRoomSettingsResponse {
             room: Some(crate::proto::admin::AdminRoom {
                 id: room.id.as_str().to_string(),
                 name: room.name.clone(),
@@ -1839,30 +1839,6 @@ impl AdminService for AdminServiceImpl {
                 created_at: room.created_at.timestamp(),
                 updated_at: room.updated_at.timestamp(),
             }),
-        }))
-    }
-
-    async fn update_room_setting(
-        &self,
-        request: Request<UpdateRoomSettingRequest>,
-    ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
-        self.check_admin(&request).await?;
-        let req = request.into_inner();
-        let room_id = synctv_core::models::RoomId::from_string(req.room_id);
-
-        // Parse the value as JSON
-        let value: serde_json::Value = serde_json::from_slice(&req.value)
-            .map_err(|e| Status::invalid_argument(format!("Invalid JSON value: {e}")))?;
-
-        // Update single setting
-        let settings_json = self
-            .room_service
-            .update_room_setting(&room_id, &req.key, &value)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to update room setting: {e}")))?;
-
-        Ok(Response::new(UpdateRoomSettingResponse {
-            settings: settings_json.into_bytes(),
         }))
     }
 

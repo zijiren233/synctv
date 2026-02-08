@@ -33,7 +33,7 @@ impl BilibiliApiImpl {
         // Step 2: Parse based on type
         let page_info = match match_resp.r#type.as_str() {
             "video" | "bv" | "av" => {
-                let parse_req = synctv_providers::grpc::bilibili::ParseVideoPageReq {
+                let parse_req = synctv_media_providers::grpc::bilibili::ParseVideoPageReq {
                     cookies: req.cookies.clone(),
                     bvid: if match_resp.r#type == "bv" { match_resp.id.clone() } else { String::new() },
                     aid: if match_resp.r#type == "av" { match_resp.id.parse().unwrap_or(0) } else { 0 },
@@ -46,7 +46,7 @@ impl BilibiliApiImpl {
                     .map_err(|e| e.to_string())?
             }
             "pgc" | "ep" | "ss" => {
-                let parse_req = synctv_providers::grpc::bilibili::ParsePgcPageReq {
+                let parse_req = synctv_media_providers::grpc::bilibili::ParsePgcPageReq {
                     cookies: req.cookies.clone(),
                     epid: if match_resp.r#type == "ep" { match_resp.id.parse().unwrap_or(0) } else { 0 },
                     ssid: if match_resp.r#type == "ss" { match_resp.id.parse().unwrap_or(0) } else { 0 },
@@ -58,7 +58,7 @@ impl BilibiliApiImpl {
                     .map_err(|e| e.to_string())?
             }
             "live" => {
-                let parse_req = synctv_providers::grpc::bilibili::ParseLivePageReq {
+                let parse_req = synctv_media_providers::grpc::bilibili::ParseLivePageReq {
                     cookies: req.cookies.clone(),
                     room_id: match_resp.id.parse().unwrap_or(0),
                 };
@@ -112,7 +112,7 @@ impl BilibiliApiImpl {
 
     /// Check QR code login status
     pub async fn check_qr(&self, req: CheckQrRequest, instance_name: Option<&str>) -> Result<QrStatusResponse, String> {
-        let check_req = synctv_providers::grpc::bilibili::LoginWithQrCodeReq {
+        let check_req = synctv_media_providers::grpc::bilibili::LoginWithQrCodeReq {
             key: req.key,
         };
 
@@ -143,7 +143,7 @@ impl BilibiliApiImpl {
 
     /// Send SMS verification code
     pub async fn send_sms(&self, req: SendSmsRequest, instance_name: Option<&str>) -> Result<SendSmsResponse, String> {
-        let sms_req = synctv_providers::grpc::bilibili::NewSmsReq {
+        let sms_req = synctv_media_providers::grpc::bilibili::NewSmsReq {
             phone: req.phone,
             token: req.token,
             challenge: req.challenge,
@@ -162,7 +162,7 @@ impl BilibiliApiImpl {
 
     /// Login with SMS code
     pub async fn login_sms(&self, req: LoginSmsRequest, instance_name: Option<&str>) -> Result<LoginSmsResponse, String> {
-        let login_req = synctv_providers::grpc::bilibili::LoginWithSmsReq {
+        let login_req = synctv_media_providers::grpc::bilibili::LoginWithSmsReq {
             phone: req.phone,
             code: req.code,
             captcha_key: req.captcha_key,
@@ -180,7 +180,7 @@ impl BilibiliApiImpl {
 
     /// Get user info
     pub async fn get_user_info(&self, req: UserInfoRequest, instance_name: Option<&str>) -> Result<UserInfoResponse, String> {
-        let info_req = synctv_providers::grpc::bilibili::UserInfoReq {
+        let info_req = synctv_media_providers::grpc::bilibili::UserInfoReq {
             cookies: req.cookies,
         };
 

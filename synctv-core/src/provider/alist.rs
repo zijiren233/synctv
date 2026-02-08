@@ -73,7 +73,7 @@ impl AlistProvider {
     /// Takes grpc-generated `LoginReq` and returns token string
     pub async fn login(
         &self,
-        req: synctv_providers::grpc::alist::LoginReq,
+        req: synctv_media_providers::grpc::alist::LoginReq,
         instance_name: Option<&str>,
     ) -> Result<String, ProviderError> {
         let client = self.get_client(instance_name).await;
@@ -85,9 +85,9 @@ impl AlistProvider {
     /// Takes grpc-generated `FsListReq` and returns `FsListResp`
     pub async fn fs_list(
         &self,
-        req: synctv_providers::grpc::alist::FsListReq,
+        req: synctv_media_providers::grpc::alist::FsListReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::alist::FsListResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::alist::FsListResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.fs_list(req).await.map_err(std::convert::Into::into)
     }
@@ -97,9 +97,9 @@ impl AlistProvider {
     /// Takes grpc-generated `MeReq` and returns `MeResp`
     pub async fn me(
         &self,
-        req: synctv_providers::grpc::alist::MeReq,
+        req: synctv_media_providers::grpc::alist::MeReq,
         instance_name: Option<&str>,
-    ) -> Result<synctv_providers::grpc::alist::MeResp, ProviderError> {
+    ) -> Result<synctv_media_providers::grpc::alist::MeResp, ProviderError> {
         let client = self.get_client(instance_name).await;
         client.me(req).await.map_err(std::convert::Into::into)
     }
@@ -149,7 +149,7 @@ impl MediaProvider for AlistProvider {
             .await;
 
         // Build proto request
-        let request = synctv_providers::grpc::alist::FsGetReq {
+        let request = synctv_media_providers::grpc::alist::FsGetReq {
             host: config.host.clone(),
             token: config.token.clone(),
             path: config.path.clone(),
@@ -317,7 +317,7 @@ impl DynamicFolder for AlistProvider {
             .await;
 
         // Build list request
-        let list_req = synctv_providers::grpc::alist::FsListReq {
+        let list_req = synctv_media_providers::grpc::alist::FsListReq {
             host: base_config.host.clone(),
             token: base_config.token.clone(),
             path: full_path.clone(),
