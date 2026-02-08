@@ -37,6 +37,7 @@ pub struct ClientServiceConfig {
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
     pub providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     pub config: Arc<synctv_core::Config>,
+    pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 }
 
 /// `ClientService` implementation
@@ -54,6 +55,7 @@ pub struct ClientServiceImpl {
     settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
     providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     config: Arc<synctv_core::Config>,
+    sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 }
 
 impl ClientServiceImpl {
@@ -72,6 +74,7 @@ impl ClientServiceImpl {
         settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
         providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
         config: Arc<synctv_core::Config>,
+        sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     ) -> Self {
         Self {
             user_service: Arc::new(user_service),
@@ -86,6 +89,7 @@ impl ClientServiceImpl {
             settings_registry,
             providers_manager,
             config,
+            sfu_manager,
         }
     }
 
@@ -105,6 +109,7 @@ impl ClientServiceImpl {
             settings_registry: config.settings_registry,
             providers_manager: config.providers_manager,
             config: config.config,
+            sfu_manager: config.sfu_manager,
         }
     }
 
@@ -303,6 +308,7 @@ impl AuthService for ClientServiceImpl {
             role: role_str.to_string(),
             status: status_str.to_string(),
             created_at: user.created_at.timestamp(),
+            email_verified: user.email_verified,
         });
 
         Ok(Response::new(RegisterResponse {
@@ -360,6 +366,7 @@ impl AuthService for ClientServiceImpl {
             role: role_str.to_string(),
             status: status_str.to_string(),
             created_at: user.created_at.timestamp(),
+            email_verified: user.email_verified,
         });
 
         Ok(Response::new(LoginResponse {
@@ -449,6 +456,7 @@ impl UserService for ClientServiceImpl {
                 role: user.role.to_string(),
                 status: user.status.as_str().to_string(),
                 created_at: user.created_at.timestamp(),
+                email_verified: user.email_verified,
             }),
         }))
     }
@@ -496,6 +504,7 @@ impl UserService for ClientServiceImpl {
             role: updated_user.role.to_string(),
             status: updated_user.status.as_str().to_string(),
             created_at: updated_user.created_at.timestamp(),
+            email_verified: updated_user.email_verified,
         };
 
         Ok(Response::new(SetUsernameResponse {
@@ -589,6 +598,7 @@ impl UserService for ClientServiceImpl {
             room_protos.push(Room {
                 id: rwc.room.id.to_string(),
                 name: rwc.room.name,
+                description: rwc.room.description,
                 created_by: rwc.room.created_by.to_string(),
                 status: match rwc.room.status {
                     RoomStatus::Pending => "pending".to_string(),
@@ -599,6 +609,7 @@ impl UserService for ClientServiceImpl {
                 settings: serde_json::to_vec(&settings).unwrap_or_default(),
                 created_at: rwc.room.created_at.timestamp(),
                 member_count: rwc.member_count,
+                updated_at: rwc.room.updated_at.timestamp(),
             });
         }
 
@@ -649,6 +660,7 @@ impl UserService for ClientServiceImpl {
             let room_proto = Room {
                 id: room.id.to_string(),
                 name: room.name,
+                description: room.description,
                 created_by: room.created_by.to_string(),
                 status: match room.status {
                     RoomStatus::Pending => "pending".to_string(),
@@ -659,6 +671,7 @@ impl UserService for ClientServiceImpl {
                 settings: serde_json::to_vec(&settings).unwrap_or_default(),
                 created_at: room.created_at.timestamp(),
                 member_count,
+                updated_at: room.updated_at.timestamp(),
             };
 
             room_with_roles.push(RoomWithRole {
@@ -711,7 +724,7 @@ impl RoomService for ClientServiceImpl {
         // Create room
         let (room, _member) = self
             .room_service
-            .create_room(req.name, user_id, password, settings)
+            .create_room(req.name, req.description, user_id, password, settings)
             .await
             .map_err(|e| match e {
                 synctv_core::Error::InvalidInput(msg) => Status::invalid_argument(msg),
@@ -728,11 +741,13 @@ impl RoomService for ClientServiceImpl {
         let proto_room = Some(Room {
             id: room.id.as_str().to_string(),
             name: room.name,
+            description: room.description,
             created_by: room.created_by.as_str().to_string(),
             status: room.status.as_str().to_string(),
             settings: serde_json::to_vec(&settings).unwrap_or_default(),
             created_at: room.created_at.timestamp(),
             member_count: 1,
+            updated_at: room.updated_at.timestamp(),
         });
 
         Ok(Response::new(CreateRoomResponse { room: proto_room }))
@@ -780,11 +795,13 @@ impl RoomService for ClientServiceImpl {
         let proto_room = Some(Room {
             id: room.id.as_str().to_string(),
             name: room.name,
+            description: room.description,
             created_by: room.created_by.as_str().to_string(),
             status: room.status.as_str().to_string(),
             settings: serde_json::to_vec(&settings).unwrap_or_default(),
             created_at: room.created_at.timestamp(),
             member_count,
+            updated_at: room.updated_at.timestamp(),
         });
 
         let proto_playback = Some(PlaybackState {
@@ -851,11 +868,13 @@ impl RoomService for ClientServiceImpl {
         let proto_room = Some(Room {
             id: room.id.as_str().to_string(),
             name: room.name,
+            description: room.description,
             created_by: room.created_by.as_str().to_string(),
             status: room.status.as_str().to_string(),
             settings: serde_json::to_vec(&settings).unwrap_or_default(),
             created_at: room.created_at.timestamp(),
             member_count: members.len() as i32,
+            updated_at: room.updated_at.timestamp(),
         });
 
         let proto_playback = Some(PlaybackState {
@@ -992,6 +1011,7 @@ impl RoomService for ClientServiceImpl {
             room: Some(Room {
                 id: updated_room.id.to_string(),
                 name: updated_room.name,
+                description: updated_room.description,
                 created_by: updated_room.created_by.to_string(),
                 status: match updated_room.status {
                     RoomStatus::Pending => "pending".to_string(),
@@ -1002,163 +1022,10 @@ impl RoomService for ClientServiceImpl {
                 settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
                 created_at: updated_room.created_at.timestamp(),
                 member_count,
+                updated_at: updated_room.updated_at.timestamp(),
             }),
         }))
     }
-
-//     async fn get_room_settings(
-//         &self,
-//         request: Request<GetRoomSettingsRequest>,
-//     ) -> Result<Response<GetRoomSettingsResponse>, Status> {
-//         let req = request.into_inner();
-//         let room_id = RoomId::from_string(req.room_id);
-// 
-//         // Get settings (with caching)
-//         let settings = self
-//             .room_service
-//             .get_room_settings(&room_id)
-//             .await
-//             .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
-// 
-//         let settings_bytes = serde_json::to_vec(&settings)
-//             .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
-// 
-//         Ok(Response::new(GetRoomSettingsResponse {
-//             settings: settings_bytes,
-//         }))
-//     }
-// 
-//     async fn update_room_setting(
-//         &self,
-//         request: Request<UpdateRoomSettingRequest>,
-//     ) -> Result<Response<UpdateRoomSettingResponse>, Status> {
-//         // Extract user_id from JWT token
-//         let user_id = self.get_user_id(&request)?;
-//         let req = request.into_inner();
-//         let room_id = RoomId::from_string(req.room_id);
-// 
-//         // Get current settings
-//         let mut settings = self
-//             .room_service
-//             .get_room_settings(&room_id)
-//             .await
-//             .map_err(|e| Status::internal(format!("Failed to get settings: {}", e)))?;
-// 
-//         // Update specific field based on key
-//         match req.key.as_str() {
-//             "require_password" => {
-//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-//                     settings.require_password = value;
-//                 }
-//             }
-//             "auto_play_next" => {
-//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-//                     settings.auto_play_next = value;
-//                 }
-//             }
-//             "auto_play" => {
-//                 if let Ok(value) = serde_json::from_slice::<synctv_core::models::AutoPlaySettings>(&req.value) {
-//                     settings.auto_play = value;
-//                 }
-//             }
-//             "loop_playlist" => {
-//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-//                     settings.loop_playlist = value;
-//                 }
-//             }
-//             "shuffle_playlist" => {
-//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-//                     settings.shuffle_playlist = value;
-//                 }
-//             }
-//             "allow_guest_join" => {
-//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-//                     settings.allow_guest_join = value;
-//                 }
-//             }
-//             "max_members" => {
-//                 if let Ok(value) = serde_json::from_slice::<i32>(&req.value) {
-//                     settings.max_members = Some(value);
-//                 }
-//             }
-//             "chat_enabled" => {
-//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-//                     settings.chat_enabled = value;
-//                 }
-//             }
-//             "danmaku_enabled" => {
-//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-//                     settings.danmaku_enabled = value;
-//                 }
-//             }
-//             "require_approval" => {
-//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-//                     settings.require_approval = value;
-//                 }
-//             }
-//             "allow_auto_join" => {
-//                 if let Ok(value) = serde_json::from_slice::<bool>(&req.value) {
-//                     settings.allow_auto_join = value;
-//                 }
-//             }
-//             _ => {
-//                 return Err(Status::invalid_argument(format!("Unknown setting key: {}", req.key)));
-//             }
-//         }
-// 
-//         // Save updated settings
-//         self.room_service
-//             .set_settings(room_id.clone(), user_id, settings)
-//             .await
-//             .map_err(|e| match e {
-//                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
-//                 synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-//                 _ => Status::internal("Failed to update setting"),
-//             })?;
-// 
-//         // Load updated settings
-//         let updated_settings = self
-//             .room_service
-//             .get_room_settings(&room_id)
-//             .await
-//             .map_err(|e| Status::internal(format!("Failed to get updated settings: {}", e)))?;
-// 
-//         let settings_bytes = serde_json::to_vec(&updated_settings)
-//             .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
-// 
-//         Ok(Response::new(UpdateRoomSettingResponse {
-//             settings: settings_bytes,
-//         }))
-//     }
-// 
-//     async fn reset_room_settings(
-//         &self,
-//         request: Request<ResetRoomSettingsRequest>,
-//     ) -> Result<Response<ResetRoomSettingsResponse>, Status> {
-//         // Extract user_id from JWT token
-//         let user_id = self.get_user_id(&request)?;
-//         let req = request.into_inner();
-//         let room_id = RoomId::from_string(req.room_id);
-// 
-//         // Reset to default
-//         let default_settings = synctv_core::models::RoomSettings::default();
-// 
-//         self.room_service
-//             .set_settings(room_id.clone(), user_id, default_settings)
-//             .await
-//             .map_err(|e| match e {
-//                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
-//                 synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-//                 _ => Status::internal("Failed to reset settings"),
-//             })?;
-// 
-//         let settings_bytes = serde_json::to_vec(&default_settings)
-//             .map_err(|e| Status::internal(format!("Failed to serialize settings: {}", e)))?;
-// 
-//         Ok(Response::new(ResetRoomSettingsResponse {
-//             settings: settings_bytes,
-//         }))
-//     }
 
     async fn get_room_members(
         &self,
@@ -1747,21 +1614,31 @@ impl RoomService for ClientServiceImpl {
             .await
             .map_err(|e| Status::permission_denied(format!("Not a member of the room: {e}")))?;
 
-        // Network quality stats require SFU integration
-        // The NetworkQualityMonitor is fully implemented in synctv-sfu but not yet
-        // integrated with the API layer. To enable this feature:
-        // 1. Add SfuManager to the gRPC service dependencies
-        // 2. Call sfu_manager.get_room_network_quality(room_id)
-        // 3. Convert NetworkStats to proto::NetworkQualityPeer
-        //
-        // For now, return empty list to avoid breaking the API
-        tracing::debug!(
-            room_id = %room_id,
-            user_id = %_user_id,
-            "Network quality monitoring requested but SFU integration not enabled"
-        );
+        // Get network quality stats from SFU manager if available
+        let sfu_manager = match &self.sfu_manager {
+            Some(mgr) => mgr,
+            None => {
+                tracing::debug!(
+                    room_id = %room_id,
+                    user_id = %_user_id,
+                    "Network quality requested but SFU manager not enabled"
+                );
+                return Ok(Response::new(GetNetworkQualityResponse { peers: vec![] }));
+            }
+        };
 
-        Ok(Response::new(GetNetworkQualityResponse { peers: vec![] }))
+        let stats = sfu_manager
+            .get_room_network_quality(
+                &synctv_sfu::RoomId::from(room_id.as_str()),
+            )
+            .map_err(|e| Status::internal(format!("Failed to get network quality: {e}")))?;
+
+        let peers = stats
+            .into_iter()
+            .map(|(peer_id, ns)| crate::impls::client::network_stats_to_proto(peer_id, ns))
+            .collect();
+
+        Ok(Response::new(GetNetworkQualityResponse { peers }))
     }
 }
 
@@ -2893,7 +2770,7 @@ impl PublicService for ClientServiceImpl {
         let query = RoomListQuery {
             page,
             page_size,
-            search: None,
+            search: if req.search.is_empty() { None } else { Some(req.search) },
             status: Some(RoomStatus::Active),
         };
 
@@ -2920,6 +2797,7 @@ impl PublicService for ClientServiceImpl {
             proto_rooms.push(Room {
                 id: room.id.to_string(),
                 name: room.name,
+                description: room.description,
                 created_by: room.created_by.to_string(),
                 status: match room.status {
                     RoomStatus::Pending => "pending".to_string(),
@@ -2930,6 +2808,7 @@ impl PublicService for ClientServiceImpl {
                 settings: serde_json::to_vec(&settings).unwrap_or_default(),
                 created_at: room.created_at.timestamp(),
                 member_count,
+                updated_at: room.updated_at.timestamp(),
             });
         }
 
@@ -2988,6 +2867,7 @@ impl PublicService for ClientServiceImpl {
             let room_proto = Room {
                 id: room.id.to_string(),
                 name: room.name,
+                description: room.description,
                 created_by: room.created_by.to_string(),
                 status: match room.status {
                     RoomStatus::Pending => "pending".to_string(),
@@ -2998,6 +2878,7 @@ impl PublicService for ClientServiceImpl {
                 settings: serde_json::to_vec(&settings).unwrap_or_default(),
                 created_at: room.created_at.timestamp(),
                 member_count,
+                updated_at: room.updated_at.timestamp(),
             };
 
             hot_rooms.push(RoomWithStats {
@@ -3015,7 +2896,7 @@ impl PublicService for ClientServiceImpl {
         _request: Request<GetPublicSettingsRequest>,
     ) -> Result<Response<GetPublicSettingsResponse>, Status> {
         let reg = self.settings_registry.as_ref()
-            .ok_or_else(|| Status::unimplemented("Settings registry not configured"))?;
+            .ok_or_else(|| Status::failed_precondition("Settings registry not configured"))?;
 
         let s = reg.to_public_settings();
         Ok(Response::new(GetPublicSettingsResponse {

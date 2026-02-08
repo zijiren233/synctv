@@ -17,6 +17,9 @@ pub struct User {
     pub status: ::prost::alloc::string::String,
     #[prost(int64, tag = "6")]
     pub created_at: i64,
+    /// Whether email has been verified
+    #[prost(bool, tag = "7")]
+    pub email_verified: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -37,6 +40,12 @@ pub struct Room {
     pub created_at: i64,
     #[prost(int32, tag = "7")]
     pub member_count: i32,
+    /// Room description
+    #[prost(string, tag = "8")]
+    pub description: ::prost::alloc::string::String,
+    /// Last updated timestamp
+    #[prost(int64, tag = "9")]
+    pub updated_at: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -226,6 +235,9 @@ pub struct CreateRoomRequest {
     /// JSON settings
     #[prost(bytes = "vec", tag = "3")]
     pub settings: ::prost::alloc::vec::Vec<u8>,
+    /// Room description
+    #[prost(string, tag = "4")]
+    pub description: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -279,12 +291,15 @@ pub struct LeaveRoomResponse {
     pub success: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListRoomsRequest {
     #[prost(int32, tag = "1")]
     pub page: i32,
     #[prost(int32, tag = "2")]
     pub page_size: i32,
+    /// Optional search by name/description
+    #[prost(string, tag = "3")]
+    pub search: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]

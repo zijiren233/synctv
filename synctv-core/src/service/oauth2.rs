@@ -277,6 +277,19 @@ impl OAuth2Service {
             .collect())
     }
 
+    /// List all configured `OAuth2` provider instances
+    ///
+    /// Returns a list of (instance_name, provider_type) pairs for all registered providers.
+    /// This is used by the HTTP API to tell clients which OAuth2 login options are available.
+    /// Returns an empty vector if no providers are configured. Order is not guaranteed.
+    pub async fn list_available_instances(&self) -> Vec<(String, OAuth2Provider)> {
+        let provider_types = self.provider_types.read().await;
+        provider_types
+            .iter()
+            .map(|(name, provider_type)| (name.clone(), provider_type.clone()))
+            .collect()
+    }
+
     /// Unlink `OAuth2` provider from user
     pub async fn unlink_provider(
         &self,

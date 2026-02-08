@@ -27,22 +27,26 @@ pub struct GoogleProvider {
 
 impl GoogleProvider {
     /// Create a new Google provider with configuration
-    #[must_use] 
-    pub fn create(client_id: String, client_secret: String, redirect_url: String) -> Self {
+    ///
+    /// # Errors
+    /// Returns error if `redirect_url` is not a valid URL.
+    pub fn create(client_id: String, client_secret: String, redirect_url: String) -> Result<Self, Error> {
+        let redirect = RedirectUrl::new(redirect_url)
+            .map_err(|e| Error::InvalidInput(format!("Invalid Google OAuth2 redirect URL: {e}")))?;
         let client = Arc::new(
             BasicClient::new(
                 ClientId::new(client_id),
                 Some(ClientSecret::new(client_secret)),
-                AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string()).unwrap(),
-                Some(TokenUrl::new("https://oauth2.googleapis.com/token".to_string()).unwrap()),
+                AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string()).expect("valid Google auth URL"),
+                Some(TokenUrl::new("https://oauth2.googleapis.com/token".to_string()).expect("valid Google token URL")),
             )
-            .set_redirect_uri(RedirectUrl::new(redirect_url).unwrap()),
+            .set_redirect_uri(redirect),
         );
 
-        Self {
+        Ok(Self {
             client,
             http_client: Arc::new(Client::new()),
-        }
+        })
     }
 }
 
@@ -111,5 +115,5 @@ pub fn google_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, E
         config.client_id,
         config.client_secret,
         config.redirect_url,
-    )))
+    )?))
 }

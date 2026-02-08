@@ -27,22 +27,27 @@ pub struct GitHubProvider {
 
 impl GitHubProvider {
     /// Create a new GitHub provider with configuration
-    #[must_use] 
-    pub fn create(client_id: String, client_secret: String, redirect_url: String) -> Self {
+    ///
+    /// # Errors
+    /// Returns error if `redirect_url` is not a valid URL.
+    pub fn create(client_id: String, client_secret: String, redirect_url: String) -> Result<Self, Error> {
+        let redirect = RedirectUrl::new(redirect_url)
+            .map_err(|e| Error::InvalidInput(format!("Invalid GitHub OAuth2 redirect URL: {e}")))?;
         let client = Arc::new(
             BasicClient::new(
                 ClientId::new(client_id),
                 Some(ClientSecret::new(client_secret)),
-                AuthUrl::new("https://github.com/login/oauth/authorize".to_string()).unwrap(),
-                Some(TokenUrl::new("https://github.com/login/oauth/access_token".to_string()).unwrap()),
+                // Well-known constant URLs — expect is safe here
+                AuthUrl::new("https://github.com/login/oauth/authorize".to_string()).expect("valid GitHub auth URL"),
+                Some(TokenUrl::new("https://github.com/login/oauth/access_token".to_string()).expect("valid GitHub token URL")),
             )
-            .set_redirect_uri(RedirectUrl::new(redirect_url).unwrap()),
+            .set_redirect_uri(redirect),
         );
 
-        Self {
+        Ok(Self {
             client,
             http_client: Arc::new(Client::new()),
-        }
+        })
     }
 }
 
@@ -112,5 +117,5 @@ pub fn github_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, E
         config.client_id,
         config.client_secret,
         config.redirect_url,
-    )))
+    )?))
 }

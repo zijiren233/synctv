@@ -41,6 +41,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -159,6 +160,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -311,6 +313,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -341,6 +344,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -440,6 +444,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -472,6 +477,7 @@ impl RoomMemberRepository {
              RETURNING
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason"
         )
@@ -572,7 +578,7 @@ impl RoomMemberRepository {
         let rows = sqlx::query(
             r"
             SELECT
-                r.id, r.name, r.created_by, r.status,
+                r.id, r.name, r.description, r.created_by, r.status,
                 r.created_at, r.updated_at, r.deleted_at,
                 rm.role as user_role,
                 rm.status as user_status,
@@ -608,6 +614,7 @@ impl RoomMemberRepository {
                 let room = crate::models::Room {
                     id: RoomId::from_string(row.try_get("id")?),
                     name: row.try_get("name")?,
+                    description: row.try_get("description")?,
                     created_by: UserId::from_string(row.try_get("created_by")?),
                     status,
                     created_at: row.try_get("created_at")?,

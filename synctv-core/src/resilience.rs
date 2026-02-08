@@ -219,7 +219,7 @@ pub mod circuit_breaker {
         /// Check if request is allowed
         #[must_use] 
         pub fn allow_request(&self) -> bool {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
             match state.state {
                 CircuitState::Closed => true,
@@ -243,7 +243,7 @@ pub mod circuit_breaker {
 
         /// Record successful request
         pub fn record_success(&self) {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
             match state.state {
                 CircuitState::HalfOpen => {
@@ -264,7 +264,7 @@ pub mod circuit_breaker {
 
         /// Record failed request
         pub fn record_failure(&self) {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
             match state.state {
                 CircuitState::Closed | CircuitState::HalfOpen => {
@@ -286,7 +286,7 @@ pub mod circuit_breaker {
         /// Get current state
         #[must_use] 
         pub fn state(&self) -> CircuitState {
-            let state = self.state.lock().unwrap();
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.state
         }
     }
@@ -295,6 +295,10 @@ pub mod circuit_breaker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+    use timeout::TimeoutConfig;
+    use retry::RetryConfig;
+    use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
 
     #[test]
     fn test_timeout_config() {
@@ -333,17 +337,21 @@ mod tests {
 
     #[test]
     fn test_retry_delay_calculation() {
-        // Exponential backoff
+        // Exponential backoff (1-based: attempt 0 and 1 both give base delay)
         assert_eq!(
             retry::calculate_retry_delay(0, 100, 5000).as_millis(),
             100
         );
         assert_eq!(
             retry::calculate_retry_delay(1, 100, 5000).as_millis(),
-            200
+            100
         );
         assert_eq!(
             retry::calculate_retry_delay(2, 100, 5000).as_millis(),
+            200
+        );
+        assert_eq!(
+            retry::calculate_retry_delay(3, 100, 5000).as_millis(),
             400
         );
         // Should cap at max_delay

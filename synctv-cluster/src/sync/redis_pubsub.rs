@@ -241,6 +241,8 @@ mod tests {
             username: "testuser".to_string(),
             message: "Hello!".to_string(),
             timestamp: Utc::now(),
+            position: None,
+            color: None,
         };
 
         let envelope = EventEnvelope {
@@ -293,6 +295,8 @@ mod tests {
             username: "testuser".to_string(),
             message: "Hello from node1!".to_string(),
             timestamp: Utc::now(),
+            position: None,
+            color: None,
         };
 
         publish_tx1

@@ -59,10 +59,10 @@ fn test_hls_segment_path_format() {
 
     // Verify order
     let parts: Vec<&str> = path.split('/').collect();
-    assert_eq!(parts[5], "data");
-    assert_eq!(parts[6], room_id);
-    assert_eq!(parts[7], media_id);
-    assert_eq!(parts[8], format!("{}.ts", segment));
+    assert_eq!(parts[6], "data");
+    assert_eq!(parts[7], room_id);
+    assert_eq!(parts[8], media_id);
+    assert_eq!(parts[9], format!("{}.ts", segment));
 }
 
 #[test]
@@ -101,9 +101,9 @@ fn test_path_parsing() {
     // Test parsing HLS segment path
     let segment_path = "/api/room/movie/live/hls/data/room111/media222/segment.ts";
     let parts: Vec<&str> = segment_path.split('/').collect();
-    assert_eq!(parts[6], "room111");
-    assert_eq!(parts[7], "media222");
-    assert_eq!(parts[8].replace(".ts", ""), "segment");
+    assert_eq!(parts[7], "room111");
+    assert_eq!(parts[8], "media222");
+    assert_eq!(parts[9].replace(".ts", ""), "segment");
 }
 
 #[test]
@@ -117,13 +117,13 @@ fn test_query_parsing() {
     }
 
     // Parse query with room_id and token
-    let query_str = "roomId=room123&token=abc123";
+    let query_str = "room_id=room123&token=abc123";
     let query: LiveQuery = serde_urlencoded::from_str(query_str).unwrap();
     assert_eq!(query.room_id.unwrap(), "room123");
     assert_eq!(query.token.unwrap(), "abc123");
 
     // Parse query with only room_id
-    let query_str = "roomId=room456";
+    let query_str = "room_id=room456";
     let query: LiveQuery = serde_urlencoded::from_str(query_str).unwrap();
     assert_eq!(query.room_id.unwrap(), "room456");
     assert!(query.token.is_none());
@@ -267,17 +267,17 @@ fn test_path_segment_count() {
     assert_eq!(flv_parts[5], "flv");
     assert_eq!(flv_parts[6], "media123.flv");
 
-    // HLS playlist: /api/room/movie/live/hls/list/:media_id (7 segments)
+    // HLS playlist: /api/room/movie/live/hls/list/:media_id (8 segments)
     let hls_path = "/api/room/movie/live/hls/list/media456";
     let hls_parts: Vec<&str> = hls_path.split('/').collect();
-    assert_eq!(hls_parts.len(), 7);
-    assert_eq!(hls_parts[6], "media456");
+    assert_eq!(hls_parts.len(), 8);
+    assert_eq!(hls_parts[7], "media456");
 
-    // HLS segment: /api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts (9 segments)
+    // HLS segment: /api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts (10 segments)
     let seg_path = "/api/room/movie/live/hls/data/room111/media222/segment.ts";
     let seg_parts: Vec<&str> = seg_path.split('/').collect();
-    assert_eq!(seg_parts.len(), 9);
-    assert_eq!(seg_parts[6], "room111");
-    assert_eq!(seg_parts[7], "media222");
-    assert_eq!(seg_parts[8], "segment.ts");
+    assert_eq!(seg_parts.len(), 10);
+    assert_eq!(seg_parts[7], "room111");
+    assert_eq!(seg_parts[8], "media222");
+    assert_eq!(seg_parts[9], "segment.ts");
 }

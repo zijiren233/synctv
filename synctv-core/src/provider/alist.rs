@@ -520,7 +520,7 @@ impl DynamicFolder for AlistProvider {
                 use std::time::{SystemTime, UNIX_EPOCH};
                 let seed = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs();
                 let random_idx = (seed as usize) % videos.len();
                 let random_item = videos[random_idx];

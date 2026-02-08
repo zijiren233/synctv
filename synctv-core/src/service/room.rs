@@ -132,6 +132,7 @@ impl RoomService {
     pub async fn create_room(
         &self,
         name: String,
+        description: String,
         created_by: UserId,
         password: Option<String>,
         settings: Option<RoomSettings>,
@@ -153,12 +154,18 @@ impl RoomService {
             return Err(Error::InvalidInput("Room name too long".to_string()));
         }
 
+        // Validate description length
+        if description.len() > 500 {
+            tracing::warn!(user_id = %created_by, desc_len = description.len(), "Attempted to create room with description too long");
+            return Err(Error::InvalidInput("Room description too long (max 500 characters)".to_string()));
+        }
+
         // Build settings
         let mut room_settings = settings.unwrap_or_default();
         room_settings.require_password = crate::models::room_settings::RequirePassword(password.is_some());
 
         // Create room
-        let room = Room::new(name, created_by.clone());
+        let room = Room::new_with_description(name, description, created_by.clone());
         let created_room = self.room_repo.create(&room).await?;
 
         tracing::info!(
@@ -473,6 +480,14 @@ impl RoomService {
             self.room_settings_repo.delete(room_id, "password").await?;
         }
         Ok(())
+    }
+
+    /// Update room description
+    pub async fn update_room_description(&self, room_id: &RoomId, description: String) -> Result<Room> {
+        if description.len() > 500 {
+            return Err(Error::InvalidInput("Room description too long (max 500 characters)".to_string()));
+        }
+        self.room_repo.update_description(room_id, &description).await
     }
 
     /// List all rooms (paginated)
@@ -870,7 +885,8 @@ impl RoomService {
 
         let admin_room = AdminRoom {
             id: room.id.as_str().to_string(),
-            name: room.name,
+            name: room.name.clone(),
+            description: room.description,
             creator_id: room.created_by.as_str().to_string(),
             creator_username,
             status: room.status.as_str().to_string(),
@@ -947,6 +963,7 @@ impl RoomService {
                     AdminRoom {
                         id: r.room.id.as_str().to_string(),
                         name: r.room.name,
+                        description: r.room.description,
                         creator_id: r.room.created_by.as_str().to_string(),
                         creator_username,
                         status: r.room.status.as_str().to_string(),
@@ -997,6 +1014,7 @@ impl RoomService {
                 AdminRoom {
                     id: r.room.id.as_str().to_string(),
                     name: r.room.name,
+                    description: r.room.description,
                     creator_id: r.room.created_by.as_str().to_string(),
                     creator_username,
                     status: r.room.status.as_str().to_string(),

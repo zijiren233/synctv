@@ -3,7 +3,7 @@
 // This layer now uses proto types and delegates to the impls layer for business logic
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use synctv_core::models::{
@@ -74,6 +74,11 @@ pub async fn create_room(
         return Err(super::AppError::bad_request("Room name cannot be empty"));
     }
 
+    let description = req.get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let password = req.get("password")
         .and_then(|v| v.as_str())
         .unwrap_or("")
@@ -104,6 +109,7 @@ pub async fn create_room(
         name,
         password,
         settings: settings_bytes,
+        description,
     };
 
     // Call impls layer
@@ -458,10 +464,16 @@ pub async fn check_room(
 /// List rooms (public endpoint)
 pub async fn list_rooms(
     State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<ListRoomsResponse>> {
+    let page = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
+    let page_size = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(50);
+    let search = params.get("search").cloned().unwrap_or_default();
+
     let proto_req = ListRoomsRequest {
-        page: 1,
-        page_size: 50,
+        page,
+        page_size,
+        search,
     };
     let response = state
         .client_api
@@ -479,6 +491,7 @@ pub async fn hot_rooms(
     let proto_req = ListRoomsRequest {
         page: 1,
         page_size: 100,
+        search: String::new(),
     };
     let mut response = state
         .client_api

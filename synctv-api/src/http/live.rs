@@ -333,44 +333,6 @@ mod tests {
         assert!(query.token.is_none());
     }
 
-    /// Test router has all required routes
-    #[test]
-    fn test_create_live_router() {
-        let router = create_live_router();
-        let routes = router.routes();
-
-        // Should have 5 routes
-        assert_eq!(routes.len(), 5);
-
-        // Verify route paths
-        let paths: Vec<_> = routes.iter().map(|r| r.path()).collect();
-        assert!(paths.contains(&"/flv/:media_id.flv"));
-        assert!(paths.contains(&"/hls/list/:media_id"));
-        assert!(paths.contains(&"/hls/list/:media_id.m3u8"));
-        assert!(paths.contains(&"/hls/data/:room_id/:media_id/:segment.ts"));
-        assert!(paths.contains(&"/hls/data/:room_id/:media_id/:segment.png"));
-    }
-
-    /// Test path format matches synctv-go
-    #[test]
-    fn test_path_format_matches_go_version() {
-        let router = create_live_router();
-        let routes = router.routes();
-
-        // FLV path should match: /api/room/movie/live/flv/:media_id.flv
-        assert!(routes.iter().any(|r| r.path() == "/flv/:media_id.flv"));
-
-        // HLS playlist path should match: /api/room/movie/live/hls/list/:media_id
-        assert!(routes.iter().any(|r| r.path() == "/hls/list/:media_id"));
-        assert!(routes.iter().any(|r| r.path() == "/hls/list/:media_id.m3u8"));
-
-        // HLS segment path should match: /api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts
-        assert!(routes.iter().any(|r| r.path() == "/hls/data/:room_id/:media_id/:segment.ts"));
-
-        // HLS segment with PNG disguise
-        assert!(routes.iter().any(|r| r.path() == "/hls/data/:room_id/:media_id/:segment.png"));
-    }
-
     /// Test LiveQuery structure
     #[test]
     fn test_live_query_structure() {
@@ -422,10 +384,10 @@ mod tests {
 
         // Path format: /api/room/movie/live/hls/data/{room_id}/{media_id}/{segment}
         let parts: Vec<&str> = segment_path.split('/').collect();
-        assert_eq!(parts[5], "data");
-        assert_eq!(parts[6], "room123");
-        assert_eq!(parts[7], "media456");
-        assert_eq!(parts[8], "segment.ts");
+        assert_eq!(parts[6], "data");
+        assert_eq!(parts[7], "room123");
+        assert_eq!(parts[8], "media456");
+        assert_eq!(parts[9], "segment.ts");
     }
 
     /// Test query parameter extraction

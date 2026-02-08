@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS rooms (
     id CHAR(12) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
     created_by CHAR(12) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     status SMALLINT NOT NULL DEFAULT 1,  -- 1=active, 2=pending, 3=banned
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -15,6 +16,7 @@ CREATE INDEX idx_rooms_status ON rooms(status) WHERE deleted_at IS NULL;
 CREATE INDEX idx_rooms_created_at ON rooms(created_at);
 CREATE INDEX idx_rooms_deleted_at ON rooms(deleted_at) WHERE deleted_at IS NOT NULL;
 CREATE INDEX idx_rooms_name ON rooms USING gin(to_tsvector('english', name));
+CREATE INDEX idx_rooms_description ON rooms USING gin(to_tsvector('english', description));
 
 -- Performance optimization indexes
 CREATE INDEX idx_rooms_status_created_at ON rooms(status, created_at DESC) WHERE deleted_at IS NULL;
@@ -32,5 +34,6 @@ ALTER TABLE rooms ADD CONSTRAINT rooms_status_check
 -- Comments
 COMMENT ON TABLE rooms IS 'Video watching rooms - all settings stored in room_settings table';
 COMMENT ON COLUMN rooms.id IS '12-character nanoid';
+COMMENT ON COLUMN rooms.description IS 'Room description, max 500 characters';
 COMMENT ON COLUMN rooms.status IS 'Room status: 1=active, 2=pending, 3=banned';
 

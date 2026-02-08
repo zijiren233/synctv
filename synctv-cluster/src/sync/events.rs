@@ -219,6 +219,8 @@ mod tests {
             username: "testuser".to_string(),
             message: "Hello world!".to_string(),
             timestamp: Utc::now(),
+            position: None,
+            color: None,
         };
 
         // Serialize to JSON

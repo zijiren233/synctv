@@ -13,6 +13,7 @@ synctv-cluster.workspace = true
 synctv-providers.workspace = true
 synctv-stream.workspace = true
 synctv-proto.workspace = true
+synctv-sfu.workspace = true
 
 # Async
 tokio.workspace = true
@@ -84,3 +85,4 @@ once_cell.workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true
+serde_urlencoded = "0.7"

@@ -267,6 +267,8 @@ mod tests {
             username: "testuser".to_string(),
             message: "Hello!".to_string(),
             timestamp: Utc::now(),
+            position: None,
+            color: None,
         };
 
         let sent_count = hub.broadcast(&room_id, event.clone());
@@ -314,6 +316,8 @@ mod tests {
             username: "user1".to_string(),
             message: "Hello!".to_string(),
             timestamp: Utc::now(),
+            position: None,
+            color: None,
         };
 
         let sent_count = hub.broadcast(&room_id, event.clone());

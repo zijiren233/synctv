@@ -160,7 +160,7 @@ impl UserRepository {
             UPDATE users
             SET password_hash = $2, updated_at = $3
             WHERE id = $1 AND deleted_at IS NULL
-            RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at
+            RETURNING id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             ",
         )
         .bind(user_id.as_str())
@@ -179,7 +179,7 @@ impl UserRepository {
             UPDATE users
             SET email_verified = $2, updated_at = $3
             WHERE id = $1 AND deleted_at IS NULL
-            RETURNING id, username, email, password_hash, signup_method, permissions, created_at, updated_at, deleted_at, email_verified
+            RETURNING id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             ",
         )
         .bind(user_id.as_str())
@@ -188,7 +188,7 @@ impl UserRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_user_with_email_verified(row)
+        self.row_to_user(row)
     }
 
     /// List users with pagination
@@ -293,7 +293,6 @@ impl UserRepository {
         let signup_method_str: Option<String> = row.try_get("signup_method")?;
         let signup_method = signup_method_str.map(|s| SignupMethod::from_str_name(&s));
 
-        // Try to get email_verified, default to false if column doesn't exist
         let email_verified = row.try_get::<bool, _>("email_verified").unwrap_or_default();
 
         let role_str: String = row.try_get("role")?;
@@ -311,34 +310,6 @@ impl UserRepository {
             password_hash: row.try_get("password_hash")?,
             signup_method,
             email_verified,
-            role,
-            status,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            deleted_at: row.try_get("deleted_at")?,
-        })
-    }
-
-    /// Convert database row to User model (with `email_verified` explicitly included)
-    fn row_to_user_with_email_verified(&self, row: PgRow) -> Result<User> {
-        let signup_method_str: Option<String> = row.try_get("signup_method")?;
-        let signup_method = signup_method_str.map(|s| SignupMethod::from_str_name(&s));
-
-        let role_str: String = row.try_get("role")?;
-        let role = UserRole::from_str(&role_str)
-            .map_err(|_| Error::InvalidInput(format!("Invalid role: {role_str}")))?;
-
-        let status_str: String = row.try_get("status")?;
-        let status = UserStatus::from_str(&status_str)
-            .map_err(|_| Error::InvalidInput(format!("Invalid status: {status_str}")))?;
-
-        Ok(User {
-            id: UserId::from_string(row.try_get("id")?),
-            username: row.try_get("username")?,
-            email: row.try_get("email")?,
-            password_hash: row.try_get("password_hash")?,
-            signup_method,
-            email_verified: row.try_get("email_verified")?,
             role,
             status,
             created_at: row.try_get("created_at")?,

@@ -902,6 +902,7 @@ fn admin_room_to_proto(
     crate::proto::admin::AdminRoom {
         id: room.id.to_string(),
         name: room.name.clone(),
+        description: room.description.clone(),
         creator_id: room.created_by.to_string(),
         creator_username: String::new(), // Would need to fetch user
         status: room.status.as_str().to_string(),

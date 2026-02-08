@@ -2,6 +2,7 @@
 //!
 //! This module provides production-grade input validation using the `validator` crate.
 
+use std::sync::LazyLock;
 
 /// Validation error
 #[derive(Debug, Clone, thiserror::Error)]
@@ -69,12 +70,13 @@ impl UsernameValidator {
         }
 
         // Cannot start with special character
-        let first_char = username.chars().next().unwrap();
-        if first_char == '_' || first_char == '-' {
-            return Err(ValidationError::Field {
-                field: "username".to_string(),
-                message: "cannot start with underscore or hyphen".to_string(),
-            });
+        if let Some(first_char) = username.chars().next() {
+            if first_char == '_' || first_char == '-' {
+                return Err(ValidationError::Field {
+                    field: "username".to_string(),
+                    message: "cannot start with underscore or hyphen".to_string(),
+                });
+            }
         }
 
         Ok(())
@@ -167,6 +169,12 @@ impl PasswordValidator {
     }
 }
 
+/// Pre-compiled email validation regex
+static EMAIL_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+        .expect("email validation regex is invalid")
+});
+
 /// Email validator
 #[derive(Default)]
 pub struct EmailValidator {}
@@ -179,12 +187,7 @@ impl EmailValidator {
     }
 
     pub fn validate(&self, email: &str) -> ValidationResult<()> {
-        // Basic email validation using regex
-        let email_regex = regex::Regex::new(
-            r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        ).unwrap();
-
-        if !email_regex.is_match(email) {
+        if !EMAIL_REGEX.is_match(email) {
             return Err(ValidationError::Field {
                 field: "email".to_string(),
                 message: "must be a valid email address".to_string(),
@@ -335,15 +338,16 @@ impl Validator {
     }
 
     pub fn into_result(self) -> ValidationResult<()> {
-        if self.errors.is_empty() {
-            Ok(())
-        } else if self.errors.len() == 1 {
-            Err(self.errors.into_iter().next().unwrap())
-        } else {
-            let messages: Vec<String> = self.errors.iter()
-                .map(std::string::ToString::to_string)
-                .collect();
-            Err(ValidationError::Multiple(messages.join("; ")))
+        let mut errors = self.errors;
+        match errors.len() {
+            0 => Ok(()),
+            1 => Err(errors.pop().expect("length checked")),
+            _ => {
+                let messages: Vec<String> = errors.iter()
+                    .map(std::string::ToString::to_string)
+                    .collect();
+                Err(ValidationError::Multiple(messages.join("; ")))
+            }
         }
     }
 }

@@ -10,24 +10,28 @@ use utoipa::{Modify, OpenApi, ToSchema};
 // These mirror the proto-generated types but with ToSchema derives.
 
 #[derive(ToSchema)]
-#[schema(example = json!({"id": "abc123", "username": "alice", "email": "alice@example.com", "permissions": 7, "created_at": 1700000000}))]
+#[schema(example = json!({"id": "abc123", "username": "alice", "email": "alice@example.com", "role": "user", "status": "active", "created_at": 1700000000, "email_verified": true}))]
 pub struct UserSchema {
     pub id: String,
     pub username: String,
     pub email: String,
-    pub permissions: i64,
+    pub role: String,
+    pub status: String,
     pub created_at: i64,
+    pub email_verified: bool,
 }
 
 #[derive(ToSchema)]
-#[schema(example = json!({"id": "room_abc", "name": "Movie Night", "created_by": "user123", "status": "active", "member_count": 5, "created_at": 1700000000}))]
+#[schema(example = json!({"id": "room_abc", "name": "Movie Night", "description": "Watch movies together every Friday", "created_by": "user123", "status": "active", "member_count": 5, "created_at": 1700000000, "updated_at": 1700000000}))]
 pub struct RoomSchema {
     pub id: String,
     pub name: String,
+    pub description: String,
     pub created_by: String,
     pub status: String,
     pub member_count: i32,
     pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(ToSchema)]
@@ -112,9 +116,12 @@ pub struct RefreshTokenResponseSchema {
 // --- Room schemas ---
 
 #[derive(ToSchema)]
-#[schema(example = json!({"name": "Movie Night", "password": ""}))]
+#[schema(example = json!({"name": "Movie Night", "description": "Watch movies together", "password": ""}))]
 pub struct CreateRoomRequestSchema {
     pub name: String,
+    /// Room description (max 500 characters)
+    #[schema(default = "")]
+    pub description: String,
     #[schema(default = "")]
     pub password: String,
 }

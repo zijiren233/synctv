@@ -117,6 +117,9 @@ impl Default for AutoPlaySettings {
 pub struct Room {
     pub id: RoomId,
     pub name: String,
+    /// Room description (max 500 characters)
+    #[serde(default)]
+    pub description: String,
     pub created_by: UserId,
     pub status: RoomStatus,
     pub created_at: DateTime<Utc>,
@@ -131,6 +134,23 @@ impl Room {
         Self {
             id: RoomId::new(),
             name,
+            description: String::new(),
+            created_by,
+            status: RoomStatus::Active,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+        }
+    }
+
+    /// Create a new room with description
+    #[must_use]
+    pub fn new_with_description(name: String, description: String, created_by: UserId) -> Self {
+        let now = Utc::now();
+        Self {
+            id: RoomId::new(),
+            name,
+            description,
             created_by,
             status: RoomStatus::Active,
             created_at: now,
@@ -148,6 +168,9 @@ impl Room {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateRoomRequest {
     pub name: String,
+    /// Room description (max 500 characters)
+    #[serde(default)]
+    pub description: String,
     pub password: Option<String>,
     pub settings: Option<JsonValue>,
 }
@@ -155,6 +178,8 @@ pub struct CreateRoomRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateRoomRequest {
     pub name: Option<String>,
+    /// Room description (max 500 characters)
+    pub description: Option<String>,
     pub status: Option<RoomStatus>,
     pub settings: Option<JsonValue>,
 }

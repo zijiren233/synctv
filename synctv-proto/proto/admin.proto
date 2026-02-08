@@ -91,6 +91,7 @@ message AdminRoom {
     int32 member_count = 7;
     int64 created_at = 8;
     int64 updated_at = 9;
+    string description = 10; // Room description
 }
 
 message ProviderInstance {

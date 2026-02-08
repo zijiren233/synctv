@@ -17,6 +17,7 @@ pub struct ClientApiImpl {
     pub room_service: Arc<RoomService>,
     pub connection_manager: Arc<ConnectionManager>,
     pub config: Arc<synctv_core::Config>,
+    pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 }
 
 impl ClientApiImpl {
@@ -26,12 +27,14 @@ impl ClientApiImpl {
         room_service: Arc<RoomService>,
         connection_manager: Arc<ConnectionManager>,
         config: Arc<synctv_core::Config>,
+        sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     ) -> Self {
         Self {
             user_service,
             room_service,
             connection_manager,
             config,
+            sfu_manager,
         }
     }
 
@@ -168,9 +171,16 @@ impl ClientApiImpl {
 
     pub async fn list_rooms(
         &self,
-        _req: crate::proto::client::ListRoomsRequest,
+        req: crate::proto::client::ListRoomsRequest,
     ) -> Result<crate::proto::client::ListRoomsResponse, String> {
-        let query = synctv_core::models::RoomListQuery::default();
+        let mut query = synctv_core::models::RoomListQuery {
+            page: req.page,
+            page_size: req.page_size,
+            ..Default::default()
+        };
+        if !req.search.is_empty() {
+            query.search = Some(req.search);
+        }
         let (rooms, total) = self.room_service.list_rooms(&query).await
             .map_err(|e| e.to_string())?;
 
@@ -244,7 +254,7 @@ impl ClientApiImpl {
 
         let password = if req.password.is_empty() { None } else { Some(req.password) };
 
-        let (room, _member) = self.room_service.create_room(req.name, uid, password, settings).await
+        let (room, _member) = self.room_service.create_room(req.name, req.description, uid, password, settings).await
             .map_err(|e| e.to_string())?;
 
         let member_count = self.connection_manager.room_connection_count(&room.id).try_into().ok();
@@ -1047,6 +1057,7 @@ fn user_to_proto(user: &synctv_core::models::User) -> crate::proto::client::User
         role: role_str.to_string(),
         status: status_str.to_string(),
         created_at: user.created_at.timestamp(),
+        email_verified: user.email_verified,
     }
 }
 
@@ -1059,11 +1070,13 @@ fn room_to_proto_basic(
     crate::proto::client::Room {
         id: room.id.as_str().to_string(),
         name: room.name.clone(),
+        description: room.description.clone(),
         created_by: room.created_by.as_str().to_string(),
         status: room.status.as_str().to_string(),
         settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
         created_at: room.created_at.timestamp(),
         member_count: member_count.unwrap_or(0),
+        updated_at: room.updated_at.timestamp(),
     }
 }
 
@@ -1243,25 +1256,54 @@ impl ClientApiImpl {
     /// Get network quality stats for peers in a room
     pub async fn get_network_quality(
         &self,
-        _room_id: &RoomId,
-        _user_id: &UserId,
+        room_id: &RoomId,
+        user_id: &UserId,
     ) -> Result<crate::proto::client::GetNetworkQualityResponse, anyhow::Error> {
         use crate::proto::client::GetNetworkQualityResponse;
 
-        // Network quality stats require SFU integration
-        // The NetworkQualityMonitor is implemented in synctv-sfu but not yet
-        // integrated with the API layer. To enable this feature:
-        // 1. Add SfuManager to ClientApiImpl
-        // 2. Call sfu_manager.get_room_network_quality(room_id)
-        // 3. Convert NetworkStats to proto::NetworkQualityPeer
-        //
-        // For now, return empty list to avoid breaking the API
-        tracing::debug!(
-            room_id = %_room_id,
-            user_id = %_user_id,
-            "Network quality monitoring requested but SFU integration not enabled"
-        );
+        let sfu_manager = match &self.sfu_manager {
+            Some(mgr) => mgr,
+            None => {
+                tracing::debug!(
+                    room_id = %room_id,
+                    user_id = %user_id,
+                    "Network quality requested but SFU manager not enabled"
+                );
+                return Ok(GetNetworkQualityResponse { peers: vec![] });
+            }
+        };
 
-        Ok(GetNetworkQualityResponse { peers: vec![] })
+        let stats = sfu_manager.get_room_network_quality(
+            &synctv_sfu::RoomId::from(room_id.as_str()),
+        )?;
+
+        let peers = stats
+            .into_iter()
+            .map(|(peer_id, ns)| network_stats_to_proto(peer_id, ns))
+            .collect();
+
+        Ok(GetNetworkQualityResponse { peers })
+    }
+}
+
+/// Convert SFU `NetworkStats` to proto `PeerNetworkQuality`
+pub fn network_stats_to_proto(
+    peer_id: String,
+    ns: synctv_sfu::NetworkStats,
+) -> crate::proto::client::PeerNetworkQuality {
+    let quality_action = match ns.quality_action {
+        synctv_sfu::QualityAction::None => "none",
+        synctv_sfu::QualityAction::ReduceQuality => "reduce_quality",
+        synctv_sfu::QualityAction::ReduceFramerate => "reduce_framerate",
+        synctv_sfu::QualityAction::AudioOnly => "audio_only",
+    };
+    crate::proto::client::PeerNetworkQuality {
+        peer_id,
+        rtt_ms: ns.rtt_ms,
+        packet_loss_rate: ns.packet_loss_rate,
+        jitter_ms: ns.jitter_ms,
+        available_bandwidth_kbps: ns.available_bandwidth_kbps,
+        quality_score: u32::from(ns.quality_score),
+        quality_action: quality_action.to_string(),
     }
 }
