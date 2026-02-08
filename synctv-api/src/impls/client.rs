@@ -382,6 +382,59 @@ impl ClientApiImpl {
         })
     }
 
+    pub async fn get_hot_rooms(
+        &self,
+        req: crate::proto::client::GetHotRoomsRequest,
+    ) -> Result<crate::proto::client::GetHotRoomsResponse, String> {
+        let limit = if req.limit == 0 || req.limit > 50 {
+            10
+        } else {
+            i64::from(req.limit)
+        };
+
+        // Query for active rooms
+        let query = synctv_core::models::RoomListQuery {
+            page: 1,
+            page_size: 100,
+            search: None,
+            status: Some(synctv_core::models::RoomStatus::Active),
+        };
+
+        let (rooms, _total) = self.room_service.list_rooms(&query).await
+            .map_err(|e| format!("Failed to list rooms: {e}"))?;
+
+        // Collect room stats (online count and member count)
+        let mut room_stats: Vec<(synctv_core::models::Room, i32, i32)> = Vec::new();
+        for room in rooms {
+            let online_count = self.connection_manager.room_connection_count(&room.id);
+            let member_count = self.room_service.get_member_count(&room.id).await
+                .unwrap_or(0);
+
+            room_stats.push((room, online_count as i32, member_count));
+        }
+
+        // Sort by online count (descending)
+        room_stats.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Take top N rooms
+        let mut hot_rooms: Vec<crate::proto::client::RoomWithStats> = Vec::new();
+        for (room, online_count, member_count) in room_stats.into_iter().take(limit as usize) {
+            // Load room settings
+            let settings = self.room_service.get_room_settings(&room.id).await
+                .unwrap_or_default();
+
+            let room_proto = room_to_proto_basic(&room, Some(&settings), Some(member_count));
+
+            hot_rooms.push(crate::proto::client::RoomWithStats {
+                room: Some(room_proto),
+                online_count,
+                total_members: member_count,
+            });
+        }
+
+        Ok(crate::proto::client::GetHotRoomsResponse { rooms: hot_rooms })
+    }
+
     // === Chat Operations ===
 
     pub async fn get_chat_history(
