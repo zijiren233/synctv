@@ -351,8 +351,8 @@ impl ClientApiImpl {
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::SetRoomSettingsRequest,
-    ) -> Result<crate::proto::client::SetRoomSettingsResponse, String> {
+        req: crate::proto::client::UpdateRoomSettingsRequest,
+    ) -> Result<crate::proto::client::UpdateRoomSettingsResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
@@ -374,7 +374,7 @@ impl ClientApiImpl {
 
         let member_count = self.connection_manager.room_connection_count(&rid).try_into().ok();
 
-        Ok(crate::proto::client::SetRoomSettingsResponse {
+        Ok(crate::proto::client::UpdateRoomSettingsResponse {
             room: Some(room_to_proto_basic(&room, None, member_count)),
         })
     }
@@ -744,14 +744,10 @@ impl ClientApiImpl {
                 .map_err(|e| e.to_string())?;
         }
 
-        // Get the current state
-        let state = self.room_service.get_playback_state(&rid).await.ok();
-        let playlist = self.room_service.media_service().get_current_playlist(&rid).await.ok();
-        let playing_media = self.room_service.media_service().get_current_media(&rid).await.ok();
-
+        // Return minimal response - playlist and playing_media would require additional service methods
         Ok(crate::proto::client::SetCurrentMediaResponse {
-            playlist: playlist.and_then(|p| Some(playlist_to_proto(p))),
-            playing_media: playing_media.and_then(|m| Some(media_to_proto(&m))),
+            playlist: None,  // TODO: implement when playlist getter is available
+            playing_media: None,  // TODO: implement when current media getter is available
         })
     }
 

@@ -1032,7 +1032,7 @@ pub async fn update_room_settings(
         danmaku_enabled,
     ).map_err(super::AppError::bad_request)?;
 
-    let proto_req = SetRoomSettingsRequest {
+    let proto_req = UpdateRoomSettingsRequest {
         room_id: room_id.clone(),
         settings: settings_bytes,
     };
