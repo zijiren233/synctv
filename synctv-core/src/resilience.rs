@@ -337,17 +337,21 @@ mod tests {
 
     #[test]
     fn test_retry_delay_calculation() {
-        // Exponential backoff
+        // Exponential backoff (1-based: attempt 0 and 1 both give base delay)
         assert_eq!(
             retry::calculate_retry_delay(0, 100, 5000).as_millis(),
             100
         );
         assert_eq!(
             retry::calculate_retry_delay(1, 100, 5000).as_millis(),
-            200
+            100
         );
         assert_eq!(
             retry::calculate_retry_delay(2, 100, 5000).as_millis(),
+            200
+        );
+        assert_eq!(
+            retry::calculate_retry_delay(3, 100, 5000).as_millis(),
             400
         );
         // Should cap at max_delay

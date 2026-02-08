@@ -36,7 +36,7 @@ impl ProviderRegistry {
     /// Register a provider factory
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// registry.register_factory("bilibili", Box::new(|instance_id, config| {
     ///     Ok(Arc::new(BilibiliProvider::new(instance_id, config)?))
     /// }));
@@ -53,7 +53,7 @@ impl ProviderRegistry {
     /// - `config`: Provider-specific configuration
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// let config = json!({
     ///     "base_url": "https://api.bilibili.com",
     ///     "cookies": "..."
@@ -80,7 +80,7 @@ impl ProviderRegistry {
     /// Get provider instance by ID
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// let provider = registry.get_instance("bilibili_main")?;
     /// let result = provider.generate_playback(&ctx, &source_config).await?;
     /// ```

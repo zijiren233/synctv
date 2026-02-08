@@ -309,12 +309,11 @@ mod tests {
     #[test]
     fn test_partition_health_deserialization() {
         let json = r#"{
-            "status": "checked",
             "total_partitions": 10,
             "total_size_mb": 1024.5,
             "total_size_gb": 1.0,
             "missing_partitions": [
-                {"partition_name": "audit_logs_2026_06", "status": "missing"}
+                "audit_logs_2026_06"
             ],
             "missing_count": 1,
             "health_status": "warning"

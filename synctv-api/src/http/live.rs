@@ -31,6 +31,7 @@ use synctv_stream::api::{FlvStreamingApi, HlsStreamingApi};
 #[derive(Debug, Deserialize)]
 pub struct LiveQuery {
     /// Room ID (required for most endpoints)
+    #[serde(rename = "roomId")]
     room_id: Option<String>,
     /// Authentication token (deserialized from query params, used for future auth)
     #[allow(dead_code)]
@@ -384,10 +385,10 @@ mod tests {
 
         // Path format: /api/room/movie/live/hls/data/{room_id}/{media_id}/{segment}
         let parts: Vec<&str> = segment_path.split('/').collect();
-        assert_eq!(parts[5], "data");
-        assert_eq!(parts[6], "room123");
-        assert_eq!(parts[7], "media456");
-        assert_eq!(parts[8], "segment.ts");
+        assert_eq!(parts[6], "data");
+        assert_eq!(parts[7], "room123");
+        assert_eq!(parts[8], "media456");
+        assert_eq!(parts[9], "segment.ts");
     }
 
     /// Test query parameter extraction

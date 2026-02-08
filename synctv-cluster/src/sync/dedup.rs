@@ -165,8 +165,8 @@ mod tests {
     use chrono::Utc;
     use synctv_core::models::id::{RoomId, UserId};
 
-    #[test]
-    fn test_dedup_basic() {
+    #[tokio::test]
+    async fn test_dedup_basic() {
         let dedup = MessageDeduplicator::with_defaults();
 
         let key = DedupKey {
@@ -189,8 +189,8 @@ mod tests {
         assert!(dedup.should_process(&key));
     }
 
-    #[test]
-    fn test_dedup_from_event() {
+    #[tokio::test]
+    async fn test_dedup_from_event() {
         let dedup = MessageDeduplicator::with_defaults();
 
         let event = crate::sync::events::ClusterEvent::ChatMessage {

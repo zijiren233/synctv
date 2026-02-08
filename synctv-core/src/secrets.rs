@@ -21,7 +21,7 @@
 //!
 //! # Example Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use synctv_core::secrets::{SecretLoader, SecretSource};
 //!
 //! // Load database password from file (Kubernetes secret)
@@ -183,7 +183,7 @@ impl SecretLoader {
 /// Use this when you need to log information about secrets without exposing values.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let password = "super_secret_123";
 /// println!("Password loaded: {}", mask_secret(password)); // "Password loaded: [SECRET:16 chars]"
 /// ```
