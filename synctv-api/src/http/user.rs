@@ -10,9 +10,9 @@ use synctv_core::models::id::RoomId;
 
 use super::{middleware::AuthUser, AppResult, AppState};
 use crate::proto::client::{
-    LogoutRequest, LogoutResponse, GetProfileResponse, SetUsernameRequest, SetUsernameResponse,
-    SetPasswordRequest, SetPasswordResponse, ListParticipatedRoomsResponse,
-    LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse,
+    LogoutRequest, LogoutResponse, GetProfileResponse, SetUsernameRequest,
+    SetPasswordRequest, ListParticipatedRoomsResponse,
+    DeleteRoomRequest, DeleteRoomResponse,
 };
 
 /// Logout user
@@ -67,15 +67,27 @@ pub async fn update_user(
             .await
             .map_err(super::AppError::internal_server_error)?;
 
+        // Extract username from user object
+        let new_username = response.user.as_ref()
+            .map(|u| u.username.clone())
+            .unwrap_or_else(|| username.to_string());
+
         return Ok(Json(serde_json::json!({
             "message": "Username updated successfully",
-            "username": response.new_username
+            "username": new_username
         })));
     }
 
     // Check if password update is requested
     if let Some(password) = req.get("password").and_then(|v| v.as_str()) {
+        // Get old password if provided (for security)
+        let old_password = req.get("old_password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
         let set_password_req = SetPasswordRequest {
+            old_password,
             new_password: password.to_string(),
         };
 

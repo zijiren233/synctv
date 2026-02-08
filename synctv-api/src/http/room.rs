@@ -1010,7 +1010,7 @@ pub async fn get_movie_info(
 /// Unified handler for listing rooms (with query params) or getting single room by ID
 /// GET /api/rooms (list) or GET /api/rooms?id=xxx (single)
 pub async fn list_or_get_rooms(
-    auth: Option<AuthUser>,
+    _auth: Option<AuthUser>,
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -1026,19 +1026,8 @@ pub async fn list_or_get_rooms(
         return Ok(Json(serde_json::json!(response.room)));
     }
 
-    // Check for sort parameter (hot rooms)
-    if params.get("sort") == Some(&"hot".to_string()) || params.get("sort") == Some(&"activity".to_string()) {
-        let response = state
-            .client_api
-            .get_hot_rooms()
-            .await
-            .map_err(super::AppError::internal_server_error)?;
-
-        return Ok(Json(serde_json::json!(response)));
-    }
-
     // List rooms with optional filtering
-    let search = params.get("search").map(|s| s.to_string());
+    let search = params.get("search").map(|s| s.to_string()).unwrap_or_default();
     let limit = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
     let offset = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
 
@@ -1091,9 +1080,9 @@ pub async fn update_room_settings(
         settings: settings_bytes,
     };
 
-    let response = state
+    let _response = state
         .client_api
-        .set_room_settings(&auth.user_id.to_string(), proto_req)
+        .update_room_settings(&auth.user_id.to_string(), &room_id, proto_req)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -1118,10 +1107,10 @@ pub async fn update_playback(
     if let Some(state_str) = req.get("state").and_then(|v| v.as_str()) {
         match state_str {
             "playing" => {
-                let request = PlayRequest { room_id: room_id.clone() };
+                let request = PlayRequest {};
                 let _response = state
                     .client_api
-                    .play(&auth.user_id.to_string(), request)
+                    .play(&auth.user_id.to_string(), &room_id, request)
                     .await
                     .map_err(super::AppError::internal_server_error)?;
 
@@ -1131,10 +1120,9 @@ pub async fn update_playback(
                 })));
             }
             "paused" => {
-                let request = crate::proto::client::PauseRequest { room_id: room_id.clone() };
                 let _response = state
                     .client_api
-                    .pause(&auth.user_id.to_string(), request)
+                    .pause(&auth.user_id.to_string(), &room_id)
                     .await
                     .map_err(super::AppError::internal_server_error)?;
 
@@ -1150,13 +1138,12 @@ pub async fn update_playback(
     // Handle position change (seek)
     if let Some(position) = req.get("position").and_then(|v| v.as_f64()) {
         let request = SeekRequest {
-            room_id: room_id.clone(),
             position,
         };
 
         let _response = state
             .client_api
-            .seek(&auth.user_id.to_string(), request)
+            .seek(&auth.user_id.to_string(), &room_id, request)
             .await
             .map_err(super::AppError::internal_server_error)?;
 
@@ -1169,13 +1156,12 @@ pub async fn update_playback(
     // Handle speed change
     if let Some(speed) = req.get("speed").and_then(|v| v.as_f64()) {
         let request = ChangeSpeedRequest {
-            room_id: room_id.clone(),
             speed,
         };
 
         let _response = state
             .client_api
-            .change_speed(&auth.user_id.to_string(), request)
+            .change_speed(&auth.user_id.to_string(), &room_id, request)
             .await
             .map_err(super::AppError::internal_server_error)?;
 
@@ -1188,13 +1174,12 @@ pub async fn update_playback(
     // Handle media switch
     if let Some(media_id) = req.get("media_id").and_then(|v| v.as_str()) {
         let request = SwitchMediaRequest {
-            room_id: room_id.clone(),
             media_id: media_id.to_string(),
         };
 
         let _response = state
             .client_api
-            .switch_media(&auth.user_id.to_string(), request)
+            .switch_media(&auth.user_id.to_string(), &room_id, request)
             .await
             .map_err(super::AppError::internal_server_error)?;
 
