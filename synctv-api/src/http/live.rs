@@ -49,20 +49,28 @@ pub fn create_live_router() -> Router<AppState> {
     Router::new()
         // FLV streaming endpoint
         .route("/flv/:media_id.flv", get(handle_flv_stream))
-        // HLS playlist endpoint
+        // HLS playlist endpoint (matches both with and without .m3u8 extension)
         .route("/hls/list/:media_id", get(handle_hls_playlist))
-        // HLS playlist with .m3u8 extension
-        .route("/hls/list/:media_id.m3u8", get(handle_hls_playlist))
         // HLS segment endpoint
         .route(
-            "/hls/data/:room_id/:media_id/:segment.ts",
-            get(handle_hls_segment),
+            "/hls/data/:room_id/:media_id/*segment",
+            get(handle_hls_segment_with_disguise),
         )
-        // HLS segment with .png extension (disguised mode)
-        .route(
-            "/hls/data/:room_id/:media_id/:segment.png",
-            get(handle_hls_segment_disguised),
-        )
+}
+
+/// Handle HLS segment request with automatic extension detection
+///
+/// Handles both regular .ts segments and disguised .png segments
+async fn handle_hls_segment_with_disguise(
+    Path((room_id, media_id, segment)): Path<(String, String, String)>,
+    State(state): State<AppState>,
+) -> AppResult<Response> {
+    // Check if this is a disguised PNG request
+    if segment.ends_with(".png") {
+        handle_hls_segment_disguised(Path((room_id, media_id, segment)), State(state)).await
+    } else {
+        handle_hls_segment(Path((room_id, media_id, segment)), State(state)).await
+    }
 }
 
 /// Handle FLV streaming request

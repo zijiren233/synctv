@@ -1,0 +1,43 @@
+server:
+  host: "0.0.0.0"
+  grpc_port: 50051
+  http_port: 8080
+  enable_reflection: true
+
+database:
+  url: "postgresql://synctv:synctv@localhost:5432/synctv"
+  max_connections: 20
+  min_connections: 5
+  connect_timeout_seconds: 10
+  idle_timeout_seconds: 600
+
+redis:
+  url: "redis://localhost:6379"
+  pool_size: 10
+  connect_timeout_seconds: 5
+  key_prefix: "synctv:"
+
+jwt:
+  secret: "test-secret-for-functional-testing-this-is-a-long-secure-secret"
+  access_token_duration_hours: 1
+  refresh_token_duration_days: 30
+
+logging:
+  level: "info"
+  format: "pretty"
+
+streaming:
+  rtmp_port: 1935
+  hls_port: 8081
+  max_streams: 50
+  gop_cache_size: 2
+  stream_timeout_seconds: 300
+
+email:
+  smtp_host: ""
+  smtp_port: 587
+  smtp_username: ""
+  smtp_password: ""
+  from_email: "noreply@synctv.local"
+  from_name: "SyncTV"
+  use_tls: true
