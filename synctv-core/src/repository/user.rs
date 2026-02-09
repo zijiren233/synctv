@@ -39,8 +39,8 @@ impl UserRepository {
         .bind(user.email.as_ref())
         .bind(&user.password_hash)
         .bind(user.signup_method.map(|m| m.as_str()))
-        .bind(user.role.as_str())
-        .bind(user.status.as_str())
+        .bind(&user.role)
+        .bind(&user.status)
         .bind(user.email_verified)
         .bind(user.created_at)
         .bind(user.updated_at)
@@ -127,8 +127,8 @@ impl UserRepository {
         .bind(&user.username)
         .bind(user.email.as_ref())
         .bind(&user.password_hash)
-        .bind(user.role.as_str())
-        .bind(user.status.as_str())
+        .bind(&user.role)
+        .bind(&user.status)
         .bind(Utc::now())
         .fetch_one(&self.pool)
         .await?;
@@ -295,13 +295,8 @@ impl UserRepository {
 
         let email_verified = row.try_get::<bool, _>("email_verified").unwrap_or_default();
 
-        let role_str: String = row.try_get("role")?;
-        let role = UserRole::from_str(&role_str)
-            .map_err(|_| Error::InvalidInput(format!("Invalid role: {role_str}")))?;
-
-        let status_str: String = row.try_get("status")?;
-        let status = UserStatus::from_str(&status_str)
-            .map_err(|_| Error::InvalidInput(format!("Invalid status: {status_str}")))?;
+        let role: UserRole = row.try_get("role")?;
+        let status: UserStatus = row.try_get("status")?;
 
         Ok(User {
             id: UserId::from_string(row.try_get("id")?),
