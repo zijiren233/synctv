@@ -4,9 +4,8 @@ use jsonwebtoken::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::str::FromStr;
 
-use crate::{models::{UserId, RoomId}, models::UserRole, Error, Result};
+use crate::{models::{UserId, RoomId}, Error, Result};
 
 /// JWT token type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,12 +16,13 @@ pub enum TokenType {
 }
 
 /// JWT claims structure
+///
+/// Note: Does NOT contain role/permissions - these must be fetched from database in real-time
+/// to ensure current permissions are enforced (roles can change after token issuance)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     /// User ID
     pub sub: String,
-    /// User RBAC role (root, admin, user)
-    pub role: String,
     /// Token type (access or refresh)
     pub typ: String,
     /// Issued at (Unix timestamp)
@@ -35,12 +35,6 @@ impl Claims {
     #[must_use]
     pub fn user_id(&self) -> UserId {
         UserId::from_string(self.sub.clone())
-    }
-
-    /// Parse role from string
-    pub fn role(&self) -> Result<UserRole> {
-        UserRole::from_str(&self.role)
-            .map_err(|_| Error::Internal(format!("Invalid role in token: {}", self.role)))
     }
 
     #[must_use]
@@ -139,24 +133,23 @@ impl JwtService {
     ///
     /// # Arguments
     /// * `user_id` - User ID
-    /// * `role` - User RBAC role (root, admin, user)
-    /// * `token_type` - Access, refresh, or guest token
+    /// * `token_type` - Access or refresh token
+    ///
+    /// Note: Role is NOT included in token - it must be fetched from database on each request
     pub fn sign_token(
         &self,
         user_id: &UserId,
-        role: UserRole,
         token_type: TokenType,
     ) -> Result<String> {
         let now = Utc::now();
         let duration = match token_type {
             TokenType::Access => Duration::hours(1),
             TokenType::Refresh => Duration::days(30),
-            TokenType::Guest => Duration::hours(4),
+            TokenType::Guest => Duration::hours(4), // Not used for user tokens
         };
 
         let claims = Claims {
             sub: user_id.as_str().to_string(),
-            role: role.as_str().to_string(),
             typ: match token_type {
                 TokenType::Access => "access".to_string(),
                 TokenType::Refresh => "refresh".to_string(),
@@ -368,13 +361,11 @@ mod tests {
     fn test_sign_and_verify_access_token() {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
-        let role = UserRole::Admin;
 
-        let token = jwt.sign_token(&user_id, role, TokenType::Access).unwrap();
+        let token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
         let claims = jwt.verify_access_token(&token).unwrap();
 
         assert_eq!(claims.sub, user_id.as_str());
-        assert_eq!(claims.role().unwrap(), UserRole::Admin);
         assert!(claims.is_access_token());
     }
 
@@ -382,13 +373,11 @@ mod tests {
     fn test_sign_and_verify_refresh_token() {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
-        let role = UserRole::User;
 
-        let token = jwt.sign_token(&user_id, role, TokenType::Refresh).unwrap();
+        let token = jwt.sign_token(&user_id, TokenType::Refresh).unwrap();
         let claims = jwt.verify_refresh_token(&token).unwrap();
 
         assert_eq!(claims.sub, user_id.as_str());
-        assert_eq!(claims.role().unwrap(), UserRole::User);
         assert!(claims.is_refresh_token());
     }
 
@@ -397,11 +386,11 @@ mod tests {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
 
-        let access_token = jwt.sign_token(&user_id, UserRole::User, TokenType::Access).unwrap();
+        let access_token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
         let result = jwt.verify_refresh_token(&access_token);
         assert!(result.is_err());
 
-        let refresh_token = jwt.sign_token(&user_id, UserRole::User, TokenType::Refresh).unwrap();
+        let refresh_token = jwt.sign_token(&user_id, TokenType::Refresh).unwrap();
         let result = jwt.verify_access_token(&refresh_token);
         assert!(result.is_err());
     }
@@ -418,7 +407,7 @@ mod tests {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
 
-        let token = jwt.sign_token(&user_id, UserRole::User, TokenType::Access).unwrap();
+        let token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
         let mut parts: Vec<&str> = token.split('.').collect();
         parts[1] = "tampered_payload";
         let tampered_token = parts.join(".");
@@ -472,7 +461,7 @@ mod tests {
         assert!(jwt.is_guest_token(&guest_token));
 
         let user_id = UserId::new();
-        let access_token = jwt.sign_token(&user_id, UserRole::User, TokenType::Access).unwrap();
+        let access_token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
         assert!(!jwt.is_guest_token(&access_token));
     }
 
@@ -481,7 +470,7 @@ mod tests {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
 
-        let access_token = jwt.sign_token(&user_id, UserRole::User, TokenType::Access).unwrap();
+        let access_token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
         let result = jwt.verify_guest_token(&access_token);
         assert!(result.is_err());
     }
