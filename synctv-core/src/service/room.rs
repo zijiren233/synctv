@@ -438,8 +438,11 @@ impl RoomService {
     /// Update single room setting
     pub async fn update_room_setting(&self, room_id: &RoomId, key: &str, value: &serde_json::Value) -> Result<String> {
         use crate::models::{AutoPlaySettings, PlayMode, room_settings::{ChatEnabled, DanmakuEnabled, AutoPlay, AllowGuestJoin, RequirePassword, MaxMembers, AutoPlayNext, LoopPlaylist, ShufflePlaylist}};
+        use crate::service::notification::GuestKickReason;
 
         let mut settings = self.room_settings_repo.get(room_id).await?;
+        let mut should_kick_guests = false;
+        let mut kick_reason = GuestKickReason::RoomGuestModeDisabled;
 
         // Update the specific setting based on key
         match key {
@@ -465,11 +468,21 @@ impl RoomService {
             "allow_guest_join" => {
                 if let Some(bool_val) = value.as_bool() {
                     settings.allow_guest_join = AllowGuestJoin(bool_val);
+                    // If guest mode is disabled, kick all guests
+                    if !bool_val {
+                        should_kick_guests = true;
+                        kick_reason = GuestKickReason::RoomGuestModeDisabled;
+                    }
                 }
             }
             "require_password" => {
                 if let Some(bool_val) = value.as_bool() {
                     settings.require_password = RequirePassword(bool_val);
+                    // If password is now required, kick all guests (guests cannot access password-protected rooms)
+                    if bool_val {
+                        should_kick_guests = true;
+                        kick_reason = GuestKickReason::RoomPasswordAdded;
+                    }
                 }
             }
             "max_members" => {
@@ -499,6 +512,13 @@ impl RoomService {
 
         // Save the updated settings
         self.room_settings_repo.set_settings(room_id, &settings).await?;
+
+        // Kick guests if needed
+        if should_kick_guests {
+            if let Err(e) = self.notification_service.kick_all_guests(room_id, kick_reason).await {
+                tracing::warn!("Failed to kick guests after settings change: {}", e);
+            }
+        }
 
         // Return updated settings as JSON string
         serde_json::to_string(&settings)
@@ -530,8 +550,18 @@ impl RoomService {
 
     /// Update room password
     pub async fn update_room_password(&self, room_id: &RoomId, password_hash: Option<String>) -> Result<()> {
+        use crate::service::notification::GuestKickReason;
+
         if let Some(pwd_hash) = password_hash {
             self.room_settings_repo.set(room_id, "password", &pwd_hash).await?;
+
+            // Kick all guests when password is added (guests cannot access password-protected rooms)
+            if let Err(e) = self.notification_service.kick_all_guests(
+                room_id,
+                GuestKickReason::RoomPasswordAdded
+            ).await {
+                tracing::warn!("Failed to kick guests after password was added: {}", e);
+            }
         } else {
             self.room_settings_repo.delete(room_id, "password").await?;
         }

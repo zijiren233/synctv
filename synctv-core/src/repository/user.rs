@@ -1,6 +1,5 @@
 use chrono::Utc;
 use sqlx::{postgres::PgRow, PgPool, Row};
-use std::str::FromStr;
 
 use crate::{
     models::{SignupMethod, User, UserId, UserListQuery, UserRole, UserStatus},
