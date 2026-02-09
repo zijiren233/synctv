@@ -304,6 +304,59 @@ impl RoomService {
         Ok(())
     }
 
+    /// Check if guests are allowed to access a room
+    ///
+    /// Validates guest access based on:
+    /// 1. Global enable_guest setting
+    /// 2. Room allow_guest_join setting
+    /// 3. Room password requirement (guests blocked if password required)
+    ///
+    /// # Arguments
+    /// * `room_id` - Room ID to check
+    /// * `settings_registry` - Optional global settings registry (if None, guest mode is allowed)
+    ///
+    /// # Returns
+    /// * `Ok(())` if guests are allowed
+    /// * `Err` with appropriate error message if guests are not allowed
+    pub async fn check_guest_allowed(
+        &self,
+        room_id: &RoomId,
+        settings_registry: Option<&crate::service::SettingsRegistry>,
+    ) -> Result<()> {
+        // Check global enable_guest setting
+        if let Some(registry) = settings_registry {
+            let enable_guest = registry.enable_guest.get().unwrap_or(true);
+            if !enable_guest {
+                tracing::debug!(room_id = %room_id, "Guest access denied: global guest mode disabled");
+                return Err(Error::Authorization(
+                    "Guest mode is disabled globally".to_string(),
+                ));
+            }
+        }
+
+        // Get room settings
+        let room_settings = self.room_settings_repo.get(room_id).await?;
+
+        // Check room-level allow_guest_join setting
+        if !room_settings.allow_guest_join.0 {
+            tracing::debug!(room_id = %room_id, "Guest access denied: room guest mode disabled");
+            return Err(Error::Authorization(
+                "Guest access is not allowed in this room".to_string(),
+            ));
+        }
+
+        // Check if room has password (guests cannot join password-protected rooms)
+        if room_settings.require_password.0 {
+            tracing::debug!(room_id = %room_id, "Guest access denied: room has password");
+            return Err(Error::Authorization(
+                "Guests cannot join password-protected rooms. Please create an account and join as a member.".to_string(),
+            ));
+        }
+
+        tracing::debug!(room_id = %room_id, "Guest access allowed");
+        Ok(())
+    }
+
     /// Delete a room (creator only)
     pub async fn delete_room(&self, room_id: RoomId, user_id: UserId) -> Result<()> {
         tracing::info!(room_id = %room_id, user_id = %user_id, "Deleting room");
