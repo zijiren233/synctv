@@ -1113,8 +1113,11 @@ impl ClientApiImpl {
         let rid = RoomId::from_string(room_id.to_string());
         let target_uid = UserId::from_string(req.user_id.clone());
 
-        self.room_service.kick_member(rid, uid, target_uid).await
+        self.room_service.kick_member(rid.clone(), uid, target_uid.clone()).await
             .map_err(|e| e.to_string())?;
+
+        // Force disconnect the kicked user's connections in this specific room
+        self.connection_manager.disconnect_user_from_room(&target_uid, &rid);
 
         Ok(crate::proto::client::KickMemberResponse {
             success: true,

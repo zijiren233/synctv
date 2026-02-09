@@ -139,7 +139,8 @@ impl StreamMessageHandler {
     /// 2. Receives client messages via the `StreamMessage` trait
     /// 3. Handles rate limiting, content filtering, and permissions
     /// 4. Broadcasts events to the cluster
-    /// 5. Handles cleanup on disconnect
+    /// 5. Monitors for disconnect signals (user ban, kick, etc.)
+    /// 6. Handles cleanup on disconnect
     ///
     /// The caller only needs to provide a `StreamMessage` implementation (WebSocket or gRPC).
     pub async fn run<S: StreamMessage>(&self, stream: &mut S) -> Result<(), String> {
@@ -158,6 +159,9 @@ impl StreamMessageHandler {
             self.room_id.clone(),
             self.user_id.clone()
         );
+
+        // Subscribe to disconnect signals
+        let mut disconnect_rx = self.connection_manager.subscribe_disconnect();
 
         // Send initial user joined notification
         stream.send(self.create_user_joined_message(&room_id_str))?;
@@ -197,6 +201,58 @@ impl StreamMessageHandler {
                     } else {
                         tracing::error!("Cluster event channel closed");
                         break;
+                    }
+                }
+
+                // Disconnect signal (forced disconnect by server)
+                signal = disconnect_rx.recv() => {
+                    match signal {
+                        Ok(synctv_cluster::sync::DisconnectSignal::Connection(conn_id)) => {
+                            if conn_id == self.connection_id {
+                                tracing::info!(
+                                    connection_id = %self.connection_id,
+                                    "Received disconnect signal for this connection"
+                                );
+                                break;
+                            }
+                        }
+                        Ok(synctv_cluster::sync::DisconnectSignal::User(uid)) => {
+                            if uid == self.user_id {
+                                tracing::info!(
+                                    user_id = %self.user_id.as_str(),
+                                    "Received disconnect signal for this user (ban/kick)"
+                                );
+                                break;
+                            }
+                        }
+                        Ok(synctv_cluster::sync::DisconnectSignal::Room(rid)) => {
+                            if rid == self.room_id {
+                                tracing::info!(
+                                    room_id = %self.room_id.as_str(),
+                                    "Received disconnect signal for this room"
+                                );
+                                break;
+                            }
+                        }
+                        Ok(synctv_cluster::sync::DisconnectSignal::UserFromRoom { user_id: uid, room_id: rid }) => {
+                            if uid == self.user_id && rid == self.room_id {
+                                tracing::info!(
+                                    user_id = %self.user_id.as_str(),
+                                    room_id = %self.room_id.as_str(),
+                                    "Received disconnect signal: kicked from room"
+                                );
+                                break;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // Channel lagged, continue - we might have missed some signals
+                            // but we'll still receive future ones
+                            tracing::warn!("Disconnect signal channel lagged");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::error!("Disconnect signal channel closed");
+                            break;
+                        }
                     }
                 }
 
