@@ -163,12 +163,12 @@ async fn main() -> Result<()> {
         .as_ref()
         .and_then(|cm| cm.redis_publish_tx().cloned());
 
-    // 9. Initialize streaming components (RTMP server and live streaming infrastructure)
-    let (streaming_state, live_streaming_infrastructure) = if config.redis.url.is_empty() {
-        info!("Redis not configured, streaming features disabled");
+    // 9. Initialize livestream components (RTMP server and live streaming infrastructure)
+    let (livestream_state, live_streaming_infrastructure) = if config.redis.url.is_empty() {
+        info!("Redis not configured, livestream features disabled");
         (None, None)
     } else {
-        info!("Initializing streaming infrastructure...");
+        info!("Initializing livestream infrastructure...");
 
         match redis::Client::open(config.redis.url.clone()) {
             Ok(redis_client) => {
@@ -176,14 +176,14 @@ async fn main() -> Result<()> {
                     Ok(redis_conn) => {
                         // Create two registries:
                         // 1. Stream state registry for HLS (DashMap-based)
-                        let stream_registry: synctv_stream::StreamRegistry = Arc::new(dashmap::DashMap::new());
+                        let stream_registry: synctv_livestream::StreamRegistry = Arc::new(dashmap::DashMap::new());
 
                         // 2. Publisher registry for Redis (used by PullStreamManager)
-                        let publisher_registry = Arc::new(synctv_stream::relay::StreamRegistry::new(redis_conn)) as Arc<dyn synctv_stream::relay::StreamRegistryTrait>;
+                        let publisher_registry = Arc::new(synctv_livestream::relay::StreamRegistry::new(redis_conn)) as Arc<dyn synctv_livestream::relay::StreamRegistryTrait>;
 
                         // Create GOP cache
-                        let gop_cache_config = synctv_stream::libraries::gop_cache::GopCacheConfig::default();
-                        let gop_cache = Arc::new(synctv_stream::GopCache::new(gop_cache_config));
+                        let gop_cache_config = synctv_livestream::libraries::gop_cache::GopCacheConfig::default();
+                        let gop_cache = Arc::new(synctv_livestream::GopCache::new(gop_cache_config));
 
                         // Create StreamHub event sender (needed by PullStreamManager)
                         let (stream_hub_event_sender, _stream_hub_event_receiver) =
@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
 
                         // Create PullStreamManager (uses publisher_registry for Redis)
                         let node_id = generate_node_id();
-                        let pull_manager = Arc::new(synctv_stream::streaming::PullStreamManager::new(
+                        let pull_manager = Arc::new(synctv_livestream::livestream::PullStreamManager::new(
                             gop_cache.clone(),
                             publisher_registry.clone(),
                             node_id.clone(),
@@ -203,7 +203,7 @@ async fn main() -> Result<()> {
                         let rtmp_event_sender = stream_hub_event_sender.clone();
 
                         // Create LiveStreamingInfrastructure (uses publisher_registry for Redis)
-                        let live_infra = Arc::new(synctv_stream::api::LiveStreamingInfrastructure::new(
+                        let live_infra = Arc::new(synctv_livestream::api::LiveStreamingInfrastructure::new(
                             publisher_registry.clone(),
                             stream_hub_event_sender,
                             gop_cache,
@@ -211,7 +211,7 @@ async fn main() -> Result<()> {
                         ));
 
                         // Create RTMP authentication callback
-                        let rtmp_auth: Arc<dyn synctv_stream::protocols::rtmp::auth::RtmpAuthCallback> =
+                        let rtmp_auth: Arc<dyn synctv_livestream::protocols::rtmp::auth::RtmpAuthCallback> =
                             Arc::new(rtmp::SyncTvRtmpAuth::new(
                                 synctv_services.room_service.clone(),
                                 synctv_services.publish_key_service.clone(),
@@ -219,8 +219,8 @@ async fn main() -> Result<()> {
                             ));
 
                         // Create and start RTMP server with auth integration
-                        let rtmp_listen_addr = format!("{}:{}", config.server.host, config.streaming.rtmp_port);
-                        let mut rtmp_server = synctv_stream::protocols::RtmpStreamingServer::new(
+                        let rtmp_listen_addr = format!("{}:{}", config.server.host, config.livestream.rtmp_port);
+                        let mut rtmp_server = synctv_livestream::protocols::RtmpStreamingServer::new(
                             rtmp_listen_addr.clone(),
                             rtmp_gop_cache,
                             publisher_registry.clone(),
@@ -235,9 +235,9 @@ async fn main() -> Result<()> {
                             }
                         });
 
-                        info!("Streaming infrastructure initialized, RTMP server listening on rtmp://{}", rtmp_listen_addr);
+                        info!("Livestream infrastructure initialized, RTMP server listening on rtmp://{}", rtmp_listen_addr);
 
-                        let state = Some(server::StreamingState {
+                        let state = Some(server::LivestreamState {
                             registry: stream_registry,
                             pull_manager,
                         });
@@ -245,13 +245,13 @@ async fn main() -> Result<()> {
                         (state, Some(live_infra))
                     }
                     Err(e) => {
-                        error!("Failed to connect to Redis for streaming: {}", e);
+                        error!("Failed to connect to Redis for livestream: {}", e);
                         (None, None)
                     }
                 }
             }
             Err(e) => {
-                error!("Failed to create Redis client for streaming: {}", e);
+                error!("Failed to create Redis client for livestream: {}", e);
                 (None, None)
             }
         }
@@ -420,7 +420,7 @@ async fn main() -> Result<()> {
         sfu_manager,
     };
 
-    let server = SyncTvServer::new(config, services, streaming_state, pool);
+    let server = SyncTvServer::new(config, services, livestream_state, pool);
 
     // 11. Start all servers
     server.start().await?;

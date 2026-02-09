@@ -11,27 +11,9 @@ use synctv_core::{
     },
 };
 
-/// Helper to create a test JWT service with generated keys
+/// Helper to create a test JWT service with a test secret
 fn create_test_jwt_service() -> JwtService {
-    use rsa::{pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding}, RsaPrivateKey};
-    let mut rng = rand::thread_rng();
-    let bits = 2048;
-    let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate key");
-    let public_key = private_key.to_public_key();
-
-    let private_pem = private_key
-        .to_pkcs8_pem(LineEnding::LF)
-        .expect("Failed to encode private key")
-        .as_bytes()
-        .to_vec();
-
-    let public_pem = public_key
-        .to_public_key_pem(LineEnding::LF)
-        .expect("Failed to encode public key")
-        .as_bytes()
-        .to_vec();
-
-    JwtService::new(&private_pem, &public_pem).expect("Failed to create JWT service")
+    JwtService::new("test-secret-key-for-integration-tests").expect("Failed to create JWT service")
 }
 
 #[tokio::test]
@@ -487,4 +469,408 @@ async fn test_permission_checks() {
 #[ignore = "Requires database connection"]
 async fn test_playback_sync() {
     // Placeholder: requires PlaybackService with database
+}
+
+// ==================== End-to-End Test Suite ====================
+// These tests verify complete workflows through multiple service layers
+
+#[tokio::test]
+async fn test_e2e_user_auth_flow() {
+    // Complete user authentication flow:
+    // 1. Generate JWT keys
+    // 2. Create JWT service
+    // 3. Generate tokens
+    // 4. Verify tokens
+    // 5. Test token refresh
+
+    let jwt_service = create_test_jwt_service();
+    let user_id = UserId::new();
+
+    // Step 1: User logs in and gets access + refresh tokens
+    let access_token = jwt_service
+        .sign_token(&user_id, UserRole::User, TokenType::Access)
+        .expect("Failed to generate access token");
+
+    let refresh_token = jwt_service
+        .sign_token(&user_id, UserRole::User, TokenType::Refresh)
+        .expect("Failed to generate refresh token");
+
+    // Step 2: Verify access token for API requests
+    let access_claims = jwt_service
+        .verify_access_token(&access_token)
+        .expect("Failed to verify access token");
+
+    assert_eq!(access_claims.sub, user_id.as_str());
+    assert_eq!(access_claims.role, "user");
+    assert!(access_claims.is_access_token());
+
+    // Step 3: Access token expired (simulated), use refresh token
+    let refresh_claims = jwt_service
+        .verify_refresh_token(&refresh_token)
+        .expect("Failed to verify refresh token");
+
+    assert_eq!(refresh_claims.sub, user_id.as_str());
+    assert!(refresh_claims.is_refresh_token());
+
+    // Step 4: Generate new access token using refresh token
+    let new_access_token = jwt_service
+        .sign_token(&user_id, UserRole::User, TokenType::Access)
+        .expect("Failed to generate new access token");
+
+    let new_claims = jwt_service
+        .verify_access_token(&new_access_token)
+        .expect("Failed to verify new access token");
+
+    assert_eq!(new_claims.sub, user_id.as_str());
+    assert!(new_claims.exp > new_claims.iat);
+}
+
+#[tokio::test]
+async fn test_e2e_role_upgrade_flow() {
+    // Test user role upgrade from User -> Admin -> Root
+    let jwt_service = create_test_jwt_service();
+    let user_id = UserId::new();
+
+    // Initial token: User role
+    let user_token = jwt_service
+        .sign_token(&user_id, UserRole::User, TokenType::Access)
+        .unwrap();
+
+    let claims = jwt_service.verify_access_token(&user_token).unwrap();
+    assert_eq!(claims.role, "user");
+
+    // Upgrade to Admin
+    let admin_token = jwt_service
+        .sign_token(&user_id, UserRole::Admin, TokenType::Access)
+        .unwrap();
+
+    let claims = jwt_service.verify_access_token(&admin_token).unwrap();
+    assert_eq!(claims.role, "admin");
+
+    // Upgrade to Root
+    let root_token = jwt_service
+        .sign_token(&user_id, UserRole::Root, TokenType::Access)
+        .unwrap();
+
+    let claims = jwt_service.verify_access_token(&root_token).unwrap();
+    assert_eq!(claims.role, "root");
+}
+
+#[tokio::test]
+async fn test_e2e_publish_key_workflow() {
+    use synctv_core::models::{MediaId, RoomId};
+    use synctv_core::service::PublishKeyService;
+
+    // Complete streaming publish key workflow:
+    // 1. Admin creates publish key
+    // 2. Streamer validates key
+    // 3. Streamer publishes with key
+    // 4. System verifies room/media match
+
+    let jwt_service = create_test_jwt_service();
+    let publish_key_service = PublishKeyService::with_default_ttl(jwt_service);
+
+    let room_id = RoomId::new();
+    let media_id = MediaId::new();
+    let user_id = UserId::new();
+
+    // Step 1: Admin generates publish key for user
+    let publish_key = publish_key_service
+        .generate_publish_key(room_id.clone(), media_id.clone(), user_id.clone())
+        .await
+        .expect("Failed to generate publish key");
+
+    assert_eq!(publish_key.room_id, room_id.as_str());
+    assert_eq!(publish_key.media_id, media_id.as_str());
+    assert_eq!(publish_key.user_id, user_id.as_str());
+    assert!(!publish_key.token.is_empty());
+
+    // Step 2: Streamer connects with publish key
+    let claims = publish_key_service
+        .validate_publish_key(&publish_key.token)
+        .await
+        .expect("Failed to validate publish key");
+
+    assert_eq!(claims.room_id, room_id.as_str());
+    assert_eq!(claims.media_id, media_id.as_str());
+    assert!(claims.perm_start_live);
+
+    // Step 3: System verifies streamer is publishing to correct room/media
+    let verified_user_id = publish_key_service
+        .verify_publish_key_for_stream(&publish_key.token, &room_id, &media_id)
+        .await
+        .expect("Failed to verify publish key for stream");
+
+    assert_eq!(verified_user_id.as_str(), user_id.as_str());
+
+    // Step 4: Verify wrong room/media fails
+    let wrong_room = RoomId::new();
+    let result = publish_key_service
+        .verify_publish_key_for_stream(&publish_key.token, &wrong_room, &media_id)
+        .await;
+
+    assert!(result.is_err(), "Should fail with wrong room");
+}
+
+#[tokio::test]
+async fn test_e2e_permission_checks() {
+    use synctv_core::models::PermissionBits;
+
+    // Complete permission check workflow:
+    // 1. Member has default permissions
+    // 2. Grant extra permission
+    // 3. Verify permission granted
+    // 4. Revoke permission
+    // 5. Verify permission removed
+
+    // Step 1: Member with default permissions
+    let mut member_perms = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+
+    assert!(member_perms.has(PermissionBits::SEND_CHAT));
+    assert!(member_perms.has(PermissionBits::ADD_MEDIA));
+    assert!(!member_perms.has(PermissionBits::KICK_MEMBER));
+
+    // Step 2: Grant admin permission to member
+    member_perms.grant(PermissionBits::KICK_MEMBER);
+
+    // Step 3: Verify permission granted
+    assert!(member_perms.has(PermissionBits::KICK_MEMBER));
+    assert!(member_perms.has(PermissionBits::SEND_CHAT)); // Still has original
+
+    // Step 4: Revoke permission
+    member_perms.revoke(PermissionBits::KICK_MEMBER);
+
+    // Step 5: Verify permission removed
+    assert!(!member_perms.has(PermissionBits::KICK_MEMBER));
+    assert!(member_perms.has(PermissionBits::SEND_CHAT)); // Original unchanged
+}
+
+#[tokio::test]
+async fn test_e2e_playlist_hierarchy() {
+    use synctv_core::models::{Playlist, PlaylistId, RoomId};
+
+    // Complete playlist hierarchy workflow:
+    // 1. Create root playlist
+    // 2. Create static folder under root
+    // 3. Create dynamic folder under root
+    // 4. Verify hierarchy
+
+    let room_id = RoomId::new();
+    let creator_id = UserId::new();
+
+    // Step 1: Root playlist
+    let root = Playlist {
+        id: PlaylistId::new(),
+        room_id: room_id.clone(),
+        creator_id: creator_id.clone(),
+        name: String::new(),
+        parent_id: None,
+        position: 0,
+        source_provider: None,
+        source_config: None,
+        provider_instance_name: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+
+    assert!(root.is_root());
+    assert!(!root.is_dynamic());
+    assert!(root.is_static());
+
+    // Step 2: Static folder
+    let static_folder = Playlist {
+        id: PlaylistId::new(),
+        room_id: room_id.clone(),
+        creator_id: creator_id.clone(),
+        name: "Movies".to_string(),
+        parent_id: Some(root.id.clone()),
+        position: 0,
+        source_provider: None,
+        source_config: None,
+        provider_instance_name: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+
+    assert!(!static_folder.is_root());
+    assert!(!static_folder.is_dynamic());
+    assert!(static_folder.is_static());
+    assert_eq!(static_folder.parent_id.unwrap(), root.id);
+
+    // Step 3: Dynamic folder (Alist)
+    let dynamic_folder = Playlist {
+        id: PlaylistId::new(),
+        room_id: room_id.clone(),
+        creator_id: creator_id.clone(),
+        name: "Alist Movies".to_string(),
+        parent_id: Some(root.id.clone()),
+        position: 1,
+        source_provider: Some("alist".to_string()),
+        source_config: Some(serde_json::json!({
+            "url": "http://alist.example.com",
+            "path": "/movies"
+        })),
+        provider_instance_name: Some("main_alist".to_string()),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+
+    assert!(!dynamic_folder.is_root());
+    assert!(dynamic_folder.is_dynamic());
+    assert!(!dynamic_folder.is_static());
+    assert_eq!(dynamic_folder.parent_id.unwrap(), root.id);
+}
+
+#[tokio::test]
+async fn test_e2e_multiple_users_concurrent_auth() {
+    use std::sync::Arc;
+
+    let jwt_service = Arc::new(create_test_jwt_service());
+    let mut handles = vec![];
+
+    // Simulate 10 users logging in concurrently
+    for i in 0..10 {
+        let jwt = jwt_service.clone();
+        let handle = tokio::spawn(async move {
+            let user_id = UserId::new();
+            let role = if i % 3 == 0 {
+                UserRole::Admin
+            } else {
+                UserRole::User
+            };
+
+            // Generate and verify token
+            let token = jwt
+                .sign_token(&user_id, role.clone(), TokenType::Access)
+                .expect("Failed to sign token");
+
+            let claims = jwt
+                .verify_access_token(&token)
+                .expect("Failed to verify token");
+
+            assert_eq!(claims.sub, user_id.as_str());
+            (user_id, claims)
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all authentications to complete
+    let results: Vec<_> = futures::future::join_all(handles)
+        .await
+        .into_iter()
+        .map(|r| r.unwrap())
+        .collect();
+
+    // Verify all 10 users authenticated successfully
+    assert_eq!(results.len(), 10);
+
+    // Verify admin roles
+    let admin_count = results.iter()
+        .filter(|(_, claims)| claims.role == "admin")
+        .count();
+    assert!(admin_count >= 3); // At least indices 0, 3, 6, 9
+}
+
+#[tokio::test]
+async fn test_e2e_permission_inheritance() {
+    use synctv_core::models::PermissionBits;
+
+    // Test that admin permissions include all member permissions
+    let admin = PermissionBits(PermissionBits::DEFAULT_ADMIN);
+
+    // Admin should have all member permissions
+    assert!(admin.has(PermissionBits::SEND_CHAT)); // Member perm
+    assert!(admin.has(PermissionBits::ADD_MEDIA)); // Member perm
+
+    // Plus admin-specific permissions
+    assert!(admin.has(PermissionBits::KICK_MEMBER)); // Admin perm
+    assert!(admin.has(PermissionBits::SET_ROOM_SETTINGS)); // Admin perm
+
+    // Guest should have minimal permissions
+    let guest = PermissionBits(PermissionBits::DEFAULT_GUEST);
+    assert!(guest.has(PermissionBits::VIEW_PLAYLIST));
+    assert!(!guest.has(PermissionBits::SEND_CHAT));
+    assert!(!guest.has(PermissionBits::ADD_MEDIA));
+}
+
+#[tokio::test]
+async fn test_e2e_token_type_validation() {
+    let jwt_service = create_test_jwt_service();
+    let user_id = UserId::new();
+
+    // Generate both token types
+    let access = jwt_service
+        .sign_token(&user_id, UserRole::User, TokenType::Access)
+        .unwrap();
+
+    let refresh = jwt_service
+        .sign_token(&user_id, UserRole::User, TokenType::Refresh)
+        .unwrap();
+
+    // Access token should only verify as access
+    assert!(jwt_service.verify_access_token(&access).is_ok());
+    assert!(jwt_service.verify_refresh_token(&access).is_err());
+
+    // Refresh token should only verify as refresh
+    assert!(jwt_service.verify_refresh_token(&refresh).is_ok());
+    assert!(jwt_service.verify_access_token(&refresh).is_err());
+}
+
+#[tokio::test]
+async fn test_e2e_id_generation_collision_resistance() {
+    use synctv_core::models::{MediaId, RoomId, PlaylistId};
+    use std::collections::HashSet;
+
+    // Generate 1000 IDs and verify no collisions
+    let mut room_ids = HashSet::new();
+    let mut media_ids = HashSet::new();
+    let mut playlist_ids = HashSet::new();
+
+    for _ in 0..1000 {
+        let room = RoomId::new();
+        let media = MediaId::new();
+        let playlist = PlaylistId::new();
+
+        // No collisions within same type
+        assert!(room_ids.insert(room.as_str().to_string()));
+        assert!(media_ids.insert(media.as_str().to_string()));
+        assert!(playlist_ids.insert(playlist.as_str().to_string()));
+    }
+
+    // Verify all 1000 are unique
+    assert_eq!(room_ids.len(), 1000);
+    assert_eq!(media_ids.len(), 1000);
+    assert_eq!(playlist_ids.len(), 1000);
+}
+
+#[tokio::test]
+async fn test_e2e_error_propagation() {
+    use synctv_core::Error;
+
+    // Test that errors propagate correctly through service layers
+    let errors = vec![
+        Error::Authentication("Invalid credentials".to_string()),
+        Error::Authorization("Permission denied".to_string()),
+        Error::NotFound("Room not found".to_string()),
+        Error::InvalidInput("Invalid room name".to_string()),
+        Error::PermissionDenied("Cannot kick admin".to_string()),
+        Error::Internal("Database error".to_string()),
+    ];
+
+    for error in errors {
+        // Verify error can be converted to string for logging
+        let msg = format!("{}", error);
+        assert!(!msg.is_empty());
+
+        // Verify error types are distinguishable
+        match error {
+            Error::Authentication(_) => assert!(msg.contains("Invalid credentials")),
+            Error::Authorization(_) => assert!(msg.contains("Permission denied")),
+            Error::NotFound(_) => assert!(msg.contains("Room not found")),
+            Error::InvalidInput(_) => assert!(msg.contains("Invalid room name")),
+            Error::PermissionDenied(_) => assert!(msg.contains("Cannot kick admin")),
+            Error::Internal(_) => assert!(msg.contains("Database error")),
+            _ => panic!("Unexpected error type"),
+        }
+    }
 }

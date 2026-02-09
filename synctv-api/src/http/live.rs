@@ -3,7 +3,7 @@
 //! Provides FLV and HLS streaming endpoints for live video.
 //!
 //! Architecture:
-//! - Uses synctv-stream's `LiveStreamingInfrastructure` via `AppState`
+//! - Uses synctv-livestream's `LiveStreamingInfrastructure` via `AppState`
 //! - Implements lazy-load FLV streaming
 //! - Implements HLS playlist generation and segment serving
 //!
@@ -25,7 +25,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, info, warn};
 
 use crate::http::{AppError, AppResult, AppState};
-use synctv_stream::api::{FlvStreamingApi, HlsStreamingApi};
+use synctv_livestream::api::{FlvStreamingApi, HlsStreamingApi};
 
 /// Query parameters for live streaming endpoints
 #[derive(Debug, Deserialize)]
@@ -49,20 +49,28 @@ pub fn create_live_router() -> Router<AppState> {
     Router::new()
         // FLV streaming endpoint
         .route("/flv/:media_id.flv", get(handle_flv_stream))
-        // HLS playlist endpoint
+        // HLS playlist endpoint (matches both with and without .m3u8 extension)
         .route("/hls/list/:media_id", get(handle_hls_playlist))
-        // HLS playlist with .m3u8 extension
-        .route("/hls/list/:media_id.m3u8", get(handle_hls_playlist))
         // HLS segment endpoint
         .route(
-            "/hls/data/:room_id/:media_id/:segment.ts",
-            get(handle_hls_segment),
+            "/hls/data/:room_id/:media_id/*segment",
+            get(handle_hls_segment_with_disguise),
         )
-        // HLS segment with .png extension (disguised mode)
-        .route(
-            "/hls/data/:room_id/:media_id/:segment.png",
-            get(handle_hls_segment_disguised),
-        )
+}
+
+/// Handle HLS segment request with automatic extension detection
+///
+/// Handles both regular .ts segments and disguised .png segments
+async fn handle_hls_segment_with_disguise(
+    Path((room_id, media_id, segment)): Path<(String, String, String)>,
+    State(state): State<AppState>,
+) -> AppResult<Response> {
+    // Check if this is a disguised PNG request
+    if segment.ends_with(".png") {
+        handle_hls_segment_disguised(Path((room_id, media_id, segment)), State(state)).await
+    } else {
+        handle_hls_segment(Path((room_id, media_id, segment)), State(state)).await
+    }
 }
 
 /// Handle FLV streaming request
@@ -308,22 +316,17 @@ async fn handle_hls_segment_disguised(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        body::Body,
-        http::{Method, StatusCode},
-    };
-    use tower::ServiceExt;
 
     /// Test LiveQuery deserialization
     #[test]
     fn test_live_query_deserialize() {
-        // Query with room_id and token
-        let query: LiveQuery = serde_urlencoded::from_str("roomId=room123&token=abc123").unwrap();
+        // Query with room_id and token (using snake_case as per convention)
+        let query: LiveQuery = serde_urlencoded::from_str("room_id=room123&token=abc123").unwrap();
         assert_eq!(query.room_id, Some("room123".to_string()));
         assert_eq!(query.token, Some("abc123".to_string()));
 
         // Query with only room_id
-        let query: LiveQuery = serde_urlencoded::from_str("roomId=room123").unwrap();
+        let query: LiveQuery = serde_urlencoded::from_str("room_id=room123").unwrap();
         assert_eq!(query.room_id, Some("room123".to_string()));
         assert!(query.token.is_none());
 
@@ -393,15 +396,15 @@ mod tests {
     /// Test query parameter extraction
     #[test]
     fn test_query_parameter_extraction() {
-        // Query string for FLV
-        let query_str = "roomId=room123&token=test_token";
+        // Query string for FLV (using snake_case as per convention)
+        let query_str = "room_id=room123&token=test_token";
         let query: LiveQuery = serde_urlencoded::from_str(query_str).unwrap();
 
         assert_eq!(query.room_id, Some("room123".to_string()));
         assert_eq!(query.token, Some("test_token".to_string()));
 
         // Query string for HLS playlist
-        let query_str = "roomId=room456";
+        let query_str = "room_id=room456";
         let query: LiveQuery = serde_urlencoded::from_str(query_str).unwrap();
 
         assert_eq!(query.room_id, Some("room456".to_string()));
@@ -411,16 +414,16 @@ mod tests {
     /// Test media_id in path and room_id in query
     #[test]
     fn test_media_in_path_room_in_query() {
-        // FLV endpoint: /api/room/movie/live/flv/:media_id.flv?roomId=:room_id
+        // FLV endpoint: /api/room/movie/live/flv/:media_id.flv?room_id=:room_id
         let path = "/api/room/movie/live/flv/media123.flv";
-        let query = "roomId=room456";
+        let query = "room_id=room456";
 
         assert!(path.contains("media123"));
         assert!(query.contains("room456"));
 
-        // HLS playlist: /api/room/movie/live/hls/list/:media_id?roomId=:room_id
+        // HLS playlist: /api/room/movie/live/hls/list/:media_id?room_id=:room_id
         let path = "/api/room/movie/live/hls/list/media456";
-        let query = "roomId=room789";
+        let query = "room_id=room789";
 
         assert!(path.contains("media456"));
         assert!(query.contains("room789"));

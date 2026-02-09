@@ -11,7 +11,7 @@ synctv-core.workspace = true
 synctv-proxy.workspace = true
 synctv-cluster.workspace = true
 synctv-media-providers.workspace = true
-synctv-stream.workspace = true
+synctv-livestream.workspace = true
 synctv-proto.workspace = true
 synctv-sfu.workspace = true
 

@@ -31,7 +31,7 @@ pub struct Claims {
 }
 
 impl Claims {
-    #[must_use] 
+    #[must_use]
     pub fn user_id(&self) -> UserId {
         UserId::from_string(self.sub.clone())
     }
@@ -42,12 +42,12 @@ impl Claims {
             .map_err(|_| Error::Internal(format!("Invalid role in token: {}", self.role)))
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_access_token(&self) -> bool {
         self.typ == "access"
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_refresh_token(&self) -> bool {
         self.typ == "refresh"
     }
@@ -70,50 +70,23 @@ impl std::fmt::Debug for JwtService {
 }
 
 impl JwtService {
-    /// Create a new JWT service with RS256 keys
+    /// Create a new JWT service with HS256 secret
     ///
     /// # Arguments
-    /// * `private_key_pem` - RSA private key in PEM format
-    /// * `public_key_pem` - RSA public key in PEM format
-    pub fn new(private_key_pem: &[u8], public_key_pem: &[u8]) -> Result<Self> {
-        let encoding_key = EncodingKey::from_rsa_pem(private_key_pem)
-            .map_err(|e| Error::Internal(format!("Failed to load private key: {e}")))?;
+    /// * `secret` - Secret string for HMAC signing
+    pub fn new(secret: &str) -> Result<Self> {
+        if secret.is_empty() {
+            return Err(Error::Internal("JWT secret cannot be empty".to_string()));
+        }
 
-        let decoding_key = DecodingKey::from_rsa_pem(public_key_pem)
-            .map_err(|e| Error::Internal(format!("Failed to load public key: {e}")))?;
+        let encoding_key = EncodingKey::from_secret(secret.as_bytes());
+        let decoding_key = DecodingKey::from_secret(secret.as_bytes());
 
         Ok(Self {
             encoding_key: Arc::new(encoding_key),
             decoding_key: Arc::new(decoding_key),
-            algorithm: Algorithm::RS256,
+            algorithm: Algorithm::HS256,
         })
-    }
-
-    /// Generate RSA key pair (for development/testing)
-    ///
-    /// In production, keys should be generated externally and loaded from secure storage.
-    #[cfg(test)]
-    pub fn generate_keys() -> (Vec<u8>, Vec<u8>) {
-        use rsa::{pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding}, RsaPrivateKey};
-
-        let mut rng = rand::thread_rng();
-        let bits = 2048;
-        let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate key");
-        let public_key = private_key.to_public_key();
-
-        let private_pem = private_key
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("Failed to encode private key")
-            .as_bytes()
-            .to_vec();
-
-        let public_pem = public_key
-            .to_public_key_pem(LineEnding::LF)
-            .expect("Failed to encode public key")
-            .as_bytes()
-            .to_vec();
-
-        (private_pem, public_pem)
     }
 
     /// Sign a token
@@ -263,8 +236,7 @@ mod tests {
     use super::*;
 
     fn create_jwt_service() -> JwtService {
-        let (private_pem, public_pem) = JwtService::generate_keys();
-        JwtService::new(&private_pem, &public_pem).unwrap()
+        JwtService::new("test-secret-key-for-jwt").unwrap()
     }
 
     #[test]
@@ -327,6 +299,12 @@ mod tests {
         let tampered_token = parts.join(".");
 
         let result = jwt.verify_token(&tampered_token);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_secret() {
+        let result = JwtService::new("");
         assert!(result.is_err());
     }
 }

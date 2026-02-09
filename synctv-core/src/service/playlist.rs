@@ -150,6 +150,38 @@ impl PlaylistService {
         self.playlist_repo.get_root_playlist(room_id).await
     }
 
+    /// Create root playlist for a room (internal use only, no permission check)
+    /// This should be called when creating a new room.
+    pub(crate) async fn create_root_playlist(
+        &self,
+        room_id: &RoomId,
+        creator_id: &UserId,
+    ) -> Result<Playlist> {
+        let playlist = Playlist {
+            id: PlaylistId::new(),
+            room_id: room_id.clone(),
+            creator_id: creator_id.clone(),
+            name: String::new(), // Root playlist has empty name
+            parent_id: None,     // Root has no parent
+            position: 0,
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let created_playlist = self.playlist_repo.create(&playlist).await?;
+
+        tracing::debug!(
+            room_id = %room_id.as_str(),
+            playlist_id = %created_playlist.id.as_str(),
+            "Root playlist created"
+        );
+
+        Ok(created_playlist)
+    }
+
     /// Get children playlists
     pub async fn get_children(&self, parent_id: &PlaylistId) -> Result<Vec<Playlist>> {
         self.playlist_repo.get_children(parent_id).await

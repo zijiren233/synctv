@@ -59,29 +59,7 @@ CREATE TRIGGER update_playlists_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Trigger to auto-create root playlist for each room
-CREATE OR REPLACE FUNCTION create_root_playlist()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO playlists (id, room_id, creator_id, name, parent_id, position)
-    VALUES (
-        nanoid(12),
-        NEW.id,
-        NEW.creator_id,
-        '',
-        NULL,
-        0
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER create_room_root_playlist
-    AFTER INSERT ON rooms
-    FOR EACH ROW
-    EXECUTE FUNCTION create_root_playlist();
-
-COMMENT ON TABLE playlists IS 'Playlist directory table (supporting static folders and dynamic folders)';
+COMMENT ON TABLE playlists IS 'Playlist directory table (supporting static folders and dynamic folders). Root playlist (empty name, NULL parent_id) is created in Rust when room is created.';
 COMMENT ON COLUMN playlists.name IS 'Directory name (root directory is empty string)';
 COMMENT ON COLUMN playlists.parent_id IS 'Parent directory ID, NULL means root directory';
 COMMENT ON COLUMN playlists.position IS 'Sort position in parent directory';
@@ -91,4 +69,3 @@ COMMENT ON COLUMN playlists.provider_instance_name IS 'Recommended media provide
 COMMENT ON CONSTRAINT unique_playlist_name ON playlists IS 'No duplicate names in same directory';
 COMMENT ON CONSTRAINT valid_name ON playlists IS 'Name validation: root directory must be empty string, non-root cannot be empty/spaces, forbids / character';
 COMMENT ON CONSTRAINT valid_dynamic_folder ON playlists IS 'Dynamic folder constraint: source_provider/source_config must either both exist or both be NULL';
-COMMENT ON FUNCTION create_root_playlist IS 'Auto-create root directory when room is created';

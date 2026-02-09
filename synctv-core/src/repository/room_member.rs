@@ -47,8 +47,8 @@ impl RoomMemberRepository {
         )
         .bind(member.room_id.as_str())
         .bind(member.user_id.as_str())
-        .bind(member.role.to_string())
-        .bind(member.status.to_string())
+        .bind(member.role)
+        .bind(member.status)
         .bind(member.added_permissions as i64)
         .bind(member.removed_permissions as i64)
         .bind(member.joined_at)
@@ -83,8 +83,8 @@ impl RoomMemberRepository {
 
         // 1. Check if room exists and lock the row
         let room_row = sqlx::query(
-            "SELECT room_id, status FROM rooms
-             WHERE room_id = $1
+            "SELECT id, status FROM rooms
+             WHERE id = $1
              FOR UPDATE"
         )
         .bind(member.room_id.as_str())
@@ -98,8 +98,8 @@ impl RoomMemberRepository {
 
         // 2. Check if room is active (if option enabled)
         if options.check_room_active {
-            let status: String = room_row.try_get("status")?;
-            if status != "Active" {
+            let status: i16 = room_row.try_get("status")?;
+            if status != 1 {  // 1 = Active
                 return Err(Error::InvalidInput("Room is not active".to_string()));
             }
         }
@@ -166,8 +166,8 @@ impl RoomMemberRepository {
         )
         .bind(member.room_id.as_str())
         .bind(member.user_id.as_str())
-        .bind(member.role.to_string())
-        .bind(member.status.to_string())
+        .bind(member.role)
+        .bind(member.status)
         .bind(member.added_permissions as i64)
         .bind(member.removed_permissions as i64)
         .bind(member.joined_at)
@@ -203,6 +203,7 @@ impl RoomMemberRepository {
             "SELECT
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason
              FROM room_members
@@ -225,6 +226,7 @@ impl RoomMemberRepository {
             "SELECT
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason
              FROM room_members
@@ -247,6 +249,7 @@ impl RoomMemberRepository {
             "SELECT
                 rm.room_id, rm.user_id, rm.role, rm.status,
                 rm.added_permissions, rm.removed_permissions,
+                rm.admin_added_permissions, rm.admin_removed_permissions,
                 rm.joined_at, rm.banned_at, rm.banned_reason,
                 u.username
              FROM room_members rm
@@ -273,6 +276,7 @@ impl RoomMemberRepository {
             "SELECT
                 rm.room_id, rm.user_id, rm.role, rm.status,
                 rm.added_permissions, rm.removed_permissions,
+                rm.admin_added_permissions, rm.admin_removed_permissions,
                 rm.joined_at, rm.banned_at, rm.banned_reason,
                 u.username
              FROM room_members rm
@@ -319,7 +323,7 @@ impl RoomMemberRepository {
         )
         .bind(room_id.as_str())
         .bind(user_id.as_str())
-        .bind(role.to_string())
+        .bind(role)
         .bind(current_version)
         .fetch_one(&self.pool)
         .await?;
@@ -350,7 +354,7 @@ impl RoomMemberRepository {
         )
         .bind(room_id.as_str())
         .bind(user_id.as_str())
-        .bind(status.to_string())
+        .bind(status)
         .bind(current_version)
         .fetch_one(&self.pool)
         .await?;
@@ -435,10 +439,10 @@ impl RoomMemberRepository {
         let row = sqlx::query(
             "UPDATE room_members
              SET
-                status = 'banned',
-                banned_at = $3,
-                banned_by = $4,
-                banned_reason = $5,
+                status = $3,
+                banned_at = $4,
+                banned_by = $5,
+                banned_reason = $6,
                 version = version + 1
              WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL
              RETURNING
@@ -450,6 +454,7 @@ impl RoomMemberRepository {
         )
         .bind(room_id.as_str())
         .bind(user_id.as_str())
+        .bind(MemberStatus::Banned)
         .bind(chrono::Utc::now())
         .bind(banned_by.as_str())
         .bind(reason)
@@ -678,22 +683,8 @@ impl RoomMemberRepository {
 
     /// Convert database row to `RoomMember`
     fn row_to_member(&self, row: PgRow) -> Result<RoomMember> {
-        let role_str: String = row.try_get("role")?;
-        let role = match role_str.as_str() {
-            "creator" => RoomRole::Creator,
-            "admin" => RoomRole::Admin,
-            "member" => RoomRole::Member,
-            "guest" => RoomRole::Guest,
-            _ => return Err(Error::InvalidInput(format!("Unknown role: {role_str}"))),
-        };
-
-        let status_str: String = row.try_get("status")?;
-        let status = match status_str.as_str() {
-            "active" => MemberStatus::Active,
-            "pending" => MemberStatus::Pending,
-            "banned" => MemberStatus::Banned,
-            _ => return Err(Error::InvalidInput(format!("Unknown status: {status_str}"))),
-        };
+        let role: RoomRole = row.try_get("role")?;
+        let status: MemberStatus = row.try_get("status")?;
 
         let banned_by: Option<String> = row.try_get("banned_by")?;
 
@@ -717,22 +708,8 @@ impl RoomMemberRepository {
 
     /// Convert database row to `RoomMemberWithUser`
     fn row_to_member_with_user(&self, row: PgRow) -> Result<RoomMemberWithUser> {
-        let role_str: String = row.try_get("role")?;
-        let role = match role_str.as_str() {
-            "creator" => RoomRole::Creator,
-            "admin" => RoomRole::Admin,
-            "member" => RoomRole::Member,
-            "guest" => RoomRole::Guest,
-            _ => return Err(Error::InvalidInput(format!("Unknown role: {role_str}"))),
-        };
-
-        let status_str: String = row.try_get("status")?;
-        let status = match status_str.as_str() {
-            "active" => MemberStatus::Active,
-            "pending" => MemberStatus::Pending,
-            "banned" => MemberStatus::Banned,
-            _ => return Err(Error::InvalidInput(format!("Unknown status: {status_str}"))),
-        };
+        let role: RoomRole = row.try_get("role")?;
+        let status: MemberStatus = row.try_get("status")?;
 
         Ok(RoomMemberWithUser {
             room_id: RoomId::from_string(row.try_get("room_id")?),

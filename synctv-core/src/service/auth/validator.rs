@@ -192,8 +192,7 @@ mod tests {
 
     fn create_test_jwt_service() -> Arc<JwtService> {
         use super::super::jwt::JwtService;
-        let (private_pem, public_pem) = JwtService::generate_keys();
-        Arc::new(JwtService::new(&private_pem, &public_pem).unwrap())
+        Arc::new(JwtService::new("test-secret-for-validator").unwrap())
     }
 
     fn create_test_token(jwt_service: &JwtService, user_id: &str) -> String {

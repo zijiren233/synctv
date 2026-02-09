@@ -4,7 +4,7 @@ members = [
     "synctv-core",
     "synctv-proxy",
     "synctv-api",
-    "synctv-stream",
+    "synctv-livestream",
     "synctv-cluster",
     "synctv-media-providers",
     "synctv", "synctv-sfu",
@@ -154,5 +154,5 @@ synctv-core = { path = "synctv-core" }
 synctv-cluster = { path = "synctv-cluster" }
 synctv-media-providers = { path = "synctv-media-providers" }
 synctv-proxy = { path = "synctv-proxy" }
-synctv-stream = { path = "synctv-stream" }
+synctv-livestream = { path = "synctv-livestream" }
 synctv-sfu = { path = "synctv-sfu" }

@@ -22,9 +22,9 @@ impl SettingsRepository {
     pub async fn get_all(&self) -> Result<Vec<SettingsGroup>> {
         let rows = sqlx::query(
             r#"
-            SELECT key, "group", value, created_at, updated_at
+            SELECT key, group_name, value, created_at, updated_at
             FROM settings
-            ORDER BY "group"
+            ORDER BY group_name
             "#,
         )
         .fetch_all(&self.pool)
@@ -35,7 +35,7 @@ impl SettingsRepository {
             .map(|row| {
                 Ok(SettingsGroup {
                     key: row.try_get("key")?,
-                    group: row.try_get("group")?,
+                    group: row.try_get("group_name")?,
                     value: row.try_get("value")?,
                     created_at: row.try_get("created_at")?,
                     updated_at: row.try_get("updated_at")?,
@@ -51,7 +51,7 @@ impl SettingsRepository {
     pub async fn get(&self, key: &str) -> Result<SettingsGroup> {
         let row = sqlx::query(
             r#"
-            SELECT key, "group", value, created_at, updated_at
+            SELECT key, group_name, value, created_at, updated_at
             FROM settings
             WHERE key = $1
             "#,
@@ -62,7 +62,7 @@ impl SettingsRepository {
 
         Ok(SettingsGroup {
             key: row.try_get("key")?,
-            group: row.try_get("group")?,
+            group: row.try_get("group_name")?,
             value: row.try_get("value")?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
@@ -76,7 +76,7 @@ impl SettingsRepository {
             UPDATE settings
             SET value = $1, updated_at = NOW()
             WHERE key = $2
-            RETURNING key, "group", value, created_at, updated_at
+            RETURNING key, group_name, value, created_at, updated_at
             "#,
         )
         .bind(value)
@@ -87,7 +87,7 @@ impl SettingsRepository {
         debug!("Updated setting '{}'", key);
         Ok(SettingsGroup {
             key: row.try_get("key")?,
-            group: row.try_get("group")?,
+            group: row.try_get("group_name")?,
             value: row.try_get("value")?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,

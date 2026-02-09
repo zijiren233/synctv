@@ -337,7 +337,9 @@ pub struct RoomSettings {
     pub require_password: RequirePassword,
     pub allow_guest_join: AllowGuestJoin,
     pub max_members: MaxMembers,
+    #[serde(default)]
     pub require_approval: RequireApproval,
+    #[serde(default)]
     pub allow_auto_join: AllowAutoJoin,
     pub chat_enabled: ChatEnabled,
     pub danmaku_enabled: DanmakuEnabled,
@@ -347,12 +349,19 @@ pub struct RoomSettings {
     pub loop_playlist: LoopPlaylist,
     #[serde(default)]
     pub shuffle_playlist: ShufflePlaylist,
+    #[serde(default)]
     pub auto_play: AutoPlay,
+    #[serde(default)]
     pub admin_added_permissions: AdminAddedPermissions,
+    #[serde(default)]
     pub admin_removed_permissions: AdminRemovedPermissions,
+    #[serde(default)]
     pub member_added_permissions: MemberAddedPermissions,
+    #[serde(default)]
     pub member_removed_permissions: MemberRemovedPermissions,
+    #[serde(default)]
     pub guest_added_permissions: GuestAddedPermissions,
+    #[serde(default)]
     pub guest_removed_permissions: GuestRemovedPermissions,
 }
 

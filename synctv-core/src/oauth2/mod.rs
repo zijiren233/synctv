@@ -16,7 +16,7 @@ pub use providers::{GitHubConfig, GoogleConfig, LogtoConfig, OidcConfig};
 use crate::Error;
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use tokio::sync::RwLock;
+use std::sync::RwLock;
 use async_trait::async_trait;
 
 // ============================================================================
@@ -90,13 +90,13 @@ static PROVIDER_REGISTRY: LazyLock<RwLock<HashMap<String, ProviderFactory>>> =
 /// register_provider_factory("github", github_factory);
 /// ```
 pub fn register_provider_factory(provider_type: &str, factory: ProviderFactory) {
-    let mut registry = PROVIDER_REGISTRY.blocking_write();
+    let mut registry = PROVIDER_REGISTRY.write().unwrap();
     registry.insert(provider_type.to_string(), factory);
 }
 
 /// Get a registered factory function by type
 async fn get_provider_factory(provider_type: &str) -> Option<ProviderFactory> {
-    let registry = PROVIDER_REGISTRY.read().await;
+    let registry = PROVIDER_REGISTRY.read().unwrap();
     registry.get(provider_type).copied()
 }
 

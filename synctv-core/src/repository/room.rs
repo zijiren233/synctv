@@ -28,7 +28,7 @@ impl RoomRepository {
         .bind(&room.name)
         .bind(&room.description)
         .bind(room.created_by.as_str())
-        .bind(self.status_to_str(&room.status))
+        .bind(self.status_to_i16(&room.status))
         .bind(room.created_at)
         .bind(room.updated_at)
         .fetch_one(&self.pool)
@@ -65,7 +65,7 @@ impl RoomRepository {
         .bind(room.id.as_str())
         .bind(&room.name)
         .bind(&room.description)
-        .bind(self.status_to_str(&room.status))
+        .bind(self.status_to_i16(&room.status))
         .bind(chrono::Utc::now())
         .fetch_one(&self.pool)
         .await?;
@@ -96,9 +96,9 @@ impl RoomRepository {
         let mut where_conditions = vec!["r.deleted_at IS NULL"];
 
         let status_filter = match &query.status {
-            Some(RoomStatus::Pending) => "r.status = 'pending'",
-            Some(RoomStatus::Active) => "r.status = 'active'",
-            Some(RoomStatus::Banned) => "r.status = 'banned'",
+            Some(RoomStatus::Pending) => "r.status = 2",
+            Some(RoomStatus::Active) => "r.status = 1",
+            Some(RoomStatus::Banned) => "r.status = 3",
             None => "",
         };
         if !status_filter.is_empty() {
@@ -166,9 +166,9 @@ impl RoomRepository {
 
         // Dynamic query building for status filter
         let status_filter = match &query.status {
-            Some(RoomStatus::Pending) => "r.status = 'pending'",
-            Some(RoomStatus::Active) => "r.status = 'active'",
-            Some(RoomStatus::Banned) => "r.status = 'banned'",
+            Some(RoomStatus::Pending) => "r.status = 2",
+            Some(RoomStatus::Active) => "r.status = 1",
+            Some(RoomStatus::Banned) => "r.status = 3",
             None => "",
         };
         if !status_filter.is_empty() {
@@ -252,7 +252,7 @@ impl RoomRepository {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) as count
              FROM rooms
-             WHERE id = $1 AND deleted_at IS NULL AND status = 'active'"
+             WHERE id = $1 AND deleted_at IS NULL AND status = 1"
         )
         .bind(room_id.as_str())
         .fetch_one(&self.pool)
@@ -365,14 +365,14 @@ impl RoomRepository {
 
     /// Convert database row to Room model
     fn row_to_room(&self, row: PgRow) -> Result<Room> {
-        let status_str: String = row.try_get("status")?;
+        let status_i16: i16 = row.try_get("status")?;
 
         Ok(Room {
             id: RoomId::from_string(row.try_get("id")?),
             name: row.try_get("name")?,
             description: row.try_get("description")?,
             created_by: UserId::from_string(row.try_get("created_by")?),
-            status: self.str_to_status(&status_str),
+            status: self.i16_to_status(status_i16),
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             deleted_at: row.try_get("deleted_at")?,
@@ -381,7 +381,7 @@ impl RoomRepository {
 
     /// Update room status
     pub async fn update_status(&self, room_id: &RoomId, status: RoomStatus) -> Result<Room> {
-        let status_str = self.status_to_str(&status);
+        let status_i16 = self.status_to_i16(&status);
 
         let row = sqlx::query(
             r"
@@ -391,7 +391,7 @@ impl RoomRepository {
             RETURNING id, name, description, created_by, status, created_at, updated_at, deleted_at
             ",
         )
-        .bind(status_str)
+        .bind(status_i16)
         .bind(room_id.as_str())
         .fetch_one(&self.pool)
         .await
@@ -417,6 +417,23 @@ impl RoomRepository {
         .map_err(Error::Database)?;
 
         self.row_to_room(row)
+    }
+
+    const fn status_to_i16(&self, status: &RoomStatus) -> i16 {
+        match status {
+            RoomStatus::Active => 1,
+            RoomStatus::Pending => 2,
+            RoomStatus::Banned => 3,
+        }
+    }
+
+    const fn i16_to_status(&self, val: i16) -> RoomStatus {
+        match val {
+            1 => RoomStatus::Active,
+            2 => RoomStatus::Pending,
+            3 => RoomStatus::Banned,
+            _ => RoomStatus::Active, // Default to Active for invalid values
+        }
     }
 
     const fn status_to_str(&self, status: &RoomStatus) -> &'static str {

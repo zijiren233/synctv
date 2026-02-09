@@ -312,7 +312,6 @@ mod tests {
     use super::*;
     use crate::libraries::GopCacheConfig;
     use crate::relay::MockStreamRegistry;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_pull_stream_manager_creation() {

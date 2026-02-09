@@ -17,7 +17,7 @@
 use crate::{
     libraries::gop_cache::GopCache,
     relay::StreamRegistryTrait,
-    streaming::{
+    livestream::{
         pull_manager::PullStreamManager,
         segment_manager::SegmentManager,
     },

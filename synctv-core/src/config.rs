@@ -11,7 +11,7 @@ pub struct Config {
     pub redis: RedisConfig,
     pub jwt: JwtConfig,
     pub logging: LoggingConfig,
-    pub streaming: StreamingConfig,
+    pub livestream: LivestreamConfig,
     pub oauth2: OAuth2Config,
     pub email: EmailConfig,
     pub media_providers: MediaProvidersConfig,
@@ -81,8 +81,7 @@ impl Default for RedisConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtConfig {
-    pub private_key_path: String,
-    pub public_key_path: String,
+    pub secret: String,
     pub access_token_duration_hours: u64,
     pub refresh_token_duration_days: u64,
 }
@@ -90,8 +89,7 @@ pub struct JwtConfig {
 impl Default for JwtConfig {
     fn default() -> Self {
         Self {
-            private_key_path: "./keys/jwt_private.pem".to_string(),
-            public_key_path: "./keys/jwt_public.pem".to_string(),
+            secret: "change-me-in-production".to_string(),
             access_token_duration_hours: 1,
             refresh_token_duration_days: 30,
         }
@@ -116,7 +114,7 @@ impl Default for LoggingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamingConfig {
+pub struct LivestreamConfig {
     pub rtmp_port: u16,
     pub hls_port: u16,
     pub max_streams: u32,
@@ -124,7 +122,7 @@ pub struct StreamingConfig {
     pub stream_timeout_seconds: u64,
 }
 
-impl Default for StreamingConfig {
+impl Default for LivestreamConfig {
     fn default() -> Self {
         Self {
             rtmp_port: 1935,
@@ -408,8 +406,8 @@ impl Config {
         let ports_to_check: &[(&str, u16)] = &[
             ("server.http_port", self.server.http_port),
             ("server.grpc_port", self.server.grpc_port),
-            ("streaming.rtmp_port", self.streaming.rtmp_port),
-            ("streaming.hls_port", self.streaming.hls_port),
+            ("livestream.rtmp_port", self.livestream.rtmp_port),
+            ("livestream.hls_port", self.livestream.hls_port),
         ];
         for (name, port) in ports_to_check {
             if *port == 0 {
@@ -431,22 +429,11 @@ impl Config {
             errors.push("database.url must not be empty".to_string());
         }
 
-        // Validate JWT key files exist (only if paths are configured / non-empty)
-        if !self.jwt.private_key_path.is_empty()
-            && !Path::new(&self.jwt.private_key_path).exists()
-        {
-            errors.push(format!(
-                "JWT private key file not found: {}",
-                self.jwt.private_key_path
-            ));
-        }
-        if !self.jwt.public_key_path.is_empty()
-            && !Path::new(&self.jwt.public_key_path).exists()
-        {
-            errors.push(format!(
-                "JWT public key file not found: {}",
-                self.jwt.public_key_path
-            ));
+        // Validate JWT secret (warn if using default)
+        if self.jwt.secret.is_empty() {
+            errors.push("JWT secret is empty".to_string());
+        } else if self.jwt.secret == "change-me-in-production" {
+            errors.push("JWT secret is set to default value 'change-me-in-production' - this is insecure for production!".to_string());
         }
 
         // Validate port conflicts: RTMP != HTTP != gRPC (all three must differ)
@@ -456,16 +443,16 @@ impl Config {
                 self.server.grpc_port, self.server.http_port
             ));
         }
-        if self.streaming.rtmp_port == self.server.http_port {
+        if self.livestream.rtmp_port == self.server.http_port {
             errors.push(format!(
-                "streaming.rtmp_port ({}) and server.http_port ({}) must be different",
-                self.streaming.rtmp_port, self.server.http_port
+                "livestream.rtmp_port ({}) and server.http_port ({}) must be different",
+                self.livestream.rtmp_port, self.server.http_port
             ));
         }
-        if self.streaming.rtmp_port == self.server.grpc_port {
+        if self.livestream.rtmp_port == self.server.grpc_port {
             errors.push(format!(
-                "streaming.rtmp_port ({}) and server.grpc_port ({}) must be different",
-                self.streaming.rtmp_port, self.server.grpc_port
+                "livestream.rtmp_port ({}) and server.grpc_port ({}) must be different",
+                self.livestream.rtmp_port, self.server.grpc_port
             ));
         }
 
@@ -531,7 +518,7 @@ mod tests {
             redis: RedisConfig::default(),
             jwt: JwtConfig::default(),
             logging: LoggingConfig::default(),
-            streaming: StreamingConfig::default(),
+            livestream: LivestreamConfig::default(),
             oauth2: OAuth2Config::default(),
             email: EmailConfig::default(),
             media_providers: MediaProvidersConfig::default(),
@@ -559,7 +546,7 @@ mod tests {
             redis: RedisConfig::default(),
             jwt: JwtConfig::default(),
             logging: LoggingConfig::default(),
-            streaming: StreamingConfig::default(),
+            livestream: LivestreamConfig::default(),
             oauth2: OAuth2Config::default(),
             email: EmailConfig::default(),
             media_providers: MediaProvidersConfig::default(),

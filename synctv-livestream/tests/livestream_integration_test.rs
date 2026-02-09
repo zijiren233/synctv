@@ -7,15 +7,15 @@
 // - Room/Media separation
 // - Storage key formats
 
-use synctv_stream::api::{
+use synctv_livestream::api::{
     LiveStreamingInfrastructure, HlsStreamingApi,
 };
-use synctv_stream::libraries::{
+use synctv_livestream::libraries::{
     gop_cache::{GopCache, GopCacheConfig},
     storage::MemoryStorage,
 };
-use synctv_stream::streaming::segment_manager::{SegmentManager, CleanupConfig};
-use synctv_stream::protocols::hls::remuxer::{StreamProcessorState, SegmentInfo};
+use synctv_livestream::livestream::segment_manager::{SegmentManager, CleanupConfig};
+use synctv_livestream::protocols::hls::remuxer::{StreamProcessorState, SegmentInfo};
 use std::sync::Arc;
 use std::time::Instant;
 use bytes::Bytes;
@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 struct MockStreamRegistry;
 
 #[async_trait::async_trait]
-impl synctv_stream::relay::StreamRegistryTrait for MockStreamRegistry {
+impl synctv_livestream::relay::StreamRegistryTrait for MockStreamRegistry {
     async fn register_publisher(
         &mut self,
         _room_id: &str,

@@ -11,7 +11,7 @@
 // - Automatic segment cleanup
 
 use crate::{
-    streaming::SegmentManager,
+    livestream::SegmentManager,
     protocols::hls::remuxer::{CustomHlsRemuxer, StreamRegistry},
     error::StreamResult,
 };

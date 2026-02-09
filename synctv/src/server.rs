@@ -3,7 +3,7 @@
 //! Manages the startup and shutdown of all server components:
 //! - gRPC API server
 //! - HTTP/REST server
-//! - RTMP streaming server
+//! - RTMP livestream server
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,16 +18,16 @@ use synctv_core::{
     provider::{AlistProvider, BilibiliProvider, EmbyProvider},
     Config,
 };
-use synctv_stream::StreamRegistry;
+use synctv_livestream::StreamRegistry;
 
-/// Streaming server state (held for health checks and graceful shutdown).
+/// Livestream server state (held for health checks and graceful shutdown).
 ///
 /// Fields are not read directly -- ownership keeps the `StreamRegistry` and
 /// `PullStreamManager` alive for the lifetime of the server (RAII).
 #[allow(dead_code)]
-pub struct StreamingState {
+pub struct LivestreamState {
     pub registry: StreamRegistry,
-    pub pull_manager: Arc<synctv_stream::streaming::PullStreamManager>,
+    pub pull_manager: Arc<synctv_livestream::livestream::PullStreamManager>,
 }
 
 /// Container for shared services
@@ -57,7 +57,7 @@ pub struct Services {
     pub email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
     pub publish_key_service: Arc<synctv_core::service::PublishKeyService>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
-    pub live_streaming_infrastructure: Option<Arc<synctv_stream::api::LiveStreamingInfrastructure>>,
+    pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     pub stun_server: Option<Arc<synctv_core::service::StunServer>>,
     pub turn_server: Option<Arc<synctv_core::service::TurnServer>>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
@@ -67,7 +67,7 @@ pub struct Services {
 pub struct SyncTvServer {
     config: Config,
     services: Services,
-    streaming_state: Option<StreamingState>,
+    livestream_state: Option<LivestreamState>,
     pool: PgPool,
     grpc_handle: Option<JoinHandle<()>>,
     http_handle: Option<JoinHandle<()>>,
@@ -85,13 +85,13 @@ impl SyncTvServer {
     pub fn new(
         config: Config,
         services: Services,
-        streaming_state: Option<StreamingState>,
+        livestream_state: Option<LivestreamState>,
         pool: PgPool,
     ) -> Self {
         Self {
             config,
             services,
-            streaming_state,
+            livestream_state,
             pool,
             grpc_handle: None,
             http_handle: None,
@@ -106,8 +106,8 @@ impl SyncTvServer {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         // Log infrastructure state
-        if self.streaming_state.is_some() {
-            info!("Streaming infrastructure: enabled");
+        if self.livestream_state.is_some() {
+            info!("Livestream infrastructure: enabled");
         }
         if self.services.stun_server.is_some() {
             info!("STUN server: enabled");
@@ -202,10 +202,10 @@ impl SyncTvServer {
             info!("TURN server shutting down");
         }
 
-        // 4. Stop streaming: drain active pull streams and clear the registry
-        if let Some(ref state) = self.streaming_state {
+        // 4. Stop livestream: drain active pull streams and clear the registry
+        if let Some(ref state) = self.livestream_state {
             let stream_count = state.registry.len();
-            info!("Stopping streaming infrastructure ({} active stream(s))...", stream_count);
+            info!("Stopping livestream infrastructure ({} active stream(s))...", stream_count);
 
             // Clear the HLS stream registry so no new segments are served
             state.registry.clear();
@@ -213,7 +213,7 @@ impl SyncTvServer {
             // Stop all active pull streams managed by the PullStreamManager
             // (PullStreamManager.streams is private, but dropping the Arc will
             //  clean up; the registry clear above prevents new pull requests.)
-            info!("Streaming infrastructure shut down");
+            info!("Livestream infrastructure shut down");
         }
 
         // 5. Redis publish channel closes when sender is dropped

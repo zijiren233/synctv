@@ -5,29 +5,34 @@ use tracing::info;
 
 use crate::Config;
 
-/// Load configuration from environment variables
+/// Load configuration from config file or environment variables
 ///
-/// For now, this just calls `Config::from_env()`. In the future,
-/// it could also load from config files.
+/// Tries to load from config.yaml first, then falls back to environment variables
 pub fn load_config() -> Result<Config> {
-    // Try to load from environment, with fallback to defaults
-    let config = Config::from_env().unwrap_or_else(|e| {
-        eprintln!("Failed to load config: {e}");
-        eprintln!("Using default configuration");
-        Config {
-            server: crate::config::ServerConfig::default(),
-            database: crate::config::DatabaseConfig::default(),
-            redis: crate::config::RedisConfig::default(),
-            jwt: crate::config::JwtConfig::default(),
-            logging: crate::config::LoggingConfig::default(),
-            streaming: crate::config::StreamingConfig::default(),
-            oauth2: crate::config::OAuth2Config::default(),
-            email: crate::config::EmailConfig::default(),
-            media_providers: crate::config::MediaProvidersConfig::default(),
-            webrtc: crate::config::WebRTCConfig::default(),
-            connection_limits: crate::config::ConnectionLimitsConfig::default(),
+    // Try to load from config file first
+    let config = if std::path::Path::new("config.yaml").exists() {
+        eprintln!("Loading config from config.yaml");
+        match Config::from_file("config.yaml") {
+            Ok(cfg) => {
+                eprintln!("Successfully loaded config.yaml");
+                eprintln!("JWT secret length: {}", cfg.jwt.secret.len());
+                cfg
+            }
+            Err(e) => {
+                eprintln!("Failed to load config.yaml: {e}");
+                eprintln!("Falling back to environment variables");
+                Config::from_env().unwrap_or_default()
+            }
         }
-    });
+    } else {
+        eprintln!("config.yaml not found, using environment variables");
+        // Fall back to environment variables
+        Config::from_env().unwrap_or_else(|e| {
+            eprintln!("Failed to load config: {e}");
+            eprintln!("Using default configuration");
+            Config::default()
+        })
+    };
 
     // Validate configuration (fail fast on misconfigurations)
     if let Err(errors) = config.validate() {
