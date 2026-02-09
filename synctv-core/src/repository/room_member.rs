@@ -203,6 +203,7 @@ impl RoomMemberRepository {
             "SELECT
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason
              FROM room_members
@@ -225,6 +226,7 @@ impl RoomMemberRepository {
             "SELECT
                 room_id, user_id, role, status,
                 added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
                 joined_at, left_at, version,
                 banned_at, banned_by, banned_reason
              FROM room_members
@@ -247,6 +249,7 @@ impl RoomMemberRepository {
             "SELECT
                 rm.room_id, rm.user_id, rm.role, rm.status,
                 rm.added_permissions, rm.removed_permissions,
+                rm.admin_added_permissions, rm.admin_removed_permissions,
                 rm.joined_at, rm.banned_at, rm.banned_reason,
                 u.username
              FROM room_members rm
@@ -273,6 +276,7 @@ impl RoomMemberRepository {
             "SELECT
                 rm.room_id, rm.user_id, rm.role, rm.status,
                 rm.added_permissions, rm.removed_permissions,
+                rm.admin_added_permissions, rm.admin_removed_permissions,
                 rm.joined_at, rm.banned_at, rm.banned_reason,
                 u.username
              FROM room_members rm
