@@ -10,9 +10,9 @@ use synctv_core::models::id::RoomId;
 
 use super::{middleware::AuthUser, AppResult, AppState};
 use crate::proto::client::{
-    LogoutRequest, LogoutResponse, GetProfileResponse, SetUsernameRequest, SetUsernameResponse,
-    SetPasswordRequest, SetPasswordResponse, ListParticipatedRoomsResponse,
-    LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse,
+    LogoutRequest, LogoutResponse, GetProfileResponse, SetUsernameRequest,
+    SetPasswordRequest, ListParticipatedRoomsResponse,
+    DeleteRoomRequest, DeleteRoomResponse,
 };
 
 /// Logout user
@@ -31,7 +31,7 @@ pub async fn logout(
     Ok(Json(response))
 }
 
-/// Get current user info (equivalent to `GetProfile`)
+/// Get current user info
 pub async fn get_me(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -45,41 +45,64 @@ pub async fn get_me(
     Ok(Json(response))
 }
 
-/// Update username
-pub async fn update_username(
+/// Update user (unified endpoint for username and password via PATCH)
+pub async fn update_user(
     auth: AuthUser,
     State(state): State<AppState>,
-    Json(req): Json<SetUsernameRequest>,
-) -> AppResult<Json<SetUsernameResponse>> {
-    if req.new_username.is_empty() {
-        return Err(super::AppError::bad_request("Username cannot be empty"));
+    Json(req): Json<serde_json::Value>,
+) -> AppResult<Json<serde_json::Value>> {
+    // Check if username update is requested
+    if let Some(username) = req.get("username").and_then(|v| v.as_str()) {
+        if username.is_empty() {
+            return Err(super::AppError::bad_request("Username cannot be empty"));
+        }
+
+        let set_username_req = SetUsernameRequest {
+            new_username: username.to_string(),
+        };
+
+        let response = state
+            .client_api
+            .set_username(&auth.user_id.to_string(), set_username_req)
+            .await
+            .map_err(super::AppError::internal_server_error)?;
+
+        // Extract username from user object
+        let new_username = response.user.as_ref()
+            .map(|u| u.username.clone())
+            .unwrap_or_else(|| username.to_string());
+
+        return Ok(Json(serde_json::json!({
+            "message": "Username updated successfully",
+            "username": new_username
+        })));
     }
 
-    let response = state
-        .client_api
-        .set_username(&auth.user_id.to_string(), req)
-        .await
-        .map_err(super::AppError::internal_server_error)?;
+    // Check if password update is requested
+    if let Some(password) = req.get("password").and_then(|v| v.as_str()) {
+        // Get old password if provided (for security)
+        let old_password = req.get("old_password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-    Ok(Json(response))
-}
+        let set_password_req = SetPasswordRequest {
+            old_password,
+            new_password: password.to_string(),
+        };
 
-/// Update password
-pub async fn update_password(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Json(req): Json<SetPasswordRequest>,
-) -> AppResult<Json<SetPasswordResponse>> {
-    // Note: The proto SetPasswordRequest only has new_password, no old_password
-    // In a real implementation, we'd want old_password verification
-    // For now, we'll proceed with the new proto-based approach
-    let response = state
-        .client_api
-        .set_password(&auth.user_id.to_string(), req)
-        .await
-        .map_err(super::AppError::internal_server_error)?;
+        let _response = state
+            .client_api
+            .set_password(&auth.user_id.to_string(), set_password_req)
+            .await
+            .map_err(super::AppError::internal_server_error)?;
 
-    Ok(Json(response))
+        return Ok(Json(serde_json::json!({
+            "message": "Password updated successfully"
+        })));
+    }
+
+    Err(super::AppError::bad_request("No valid update fields provided (username or password)"))
 }
 
 /// Get user's joined rooms
@@ -90,22 +113,6 @@ pub async fn get_joined_rooms(
     let response = state
         .client_api
         .get_joined_rooms(&auth.user_id.to_string())
-        .await
-        .map_err(super::AppError::internal_server_error)?;
-
-    Ok(Json(response))
-}
-
-/// Exit a room
-pub async fn exit_room(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-) -> AppResult<Json<LeaveRoomResponse>> {
-    let request = LeaveRoomRequest { room_id };
-    let response = state
-        .client_api
-        .leave_room(&auth.user_id.to_string(), request)
         .await
         .map_err(super::AppError::internal_server_error)?;
 

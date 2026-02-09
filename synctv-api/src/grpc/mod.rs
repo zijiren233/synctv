@@ -234,6 +234,7 @@ pub async fn serve(
                 Arc::new(connection_manager_for_provider.clone()),
                 Arc::new(config.clone()),
                 sfu_manager,
+                None, // No publish_key_service for provider gRPC
             )),
             admin_api: None,
         });

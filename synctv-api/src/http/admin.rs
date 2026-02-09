@@ -157,13 +157,12 @@ pub fn create_admin_router() -> Router<AppState> {
         .route("/rooms/:room_id/approve", post(approve_room))
         .route("/rooms/:room_id/settings", get(get_room_settings).post(set_room_settings))
         .route("/rooms/:room_id/settings/reset", post(reset_room_settings))
-        .route("/rooms/:room_id/settings/:key", put(update_room_setting))
-        // Provider instances (vendors)
-        .route("/vendors", get(list_vendors).post(add_vendor))
-        .route("/vendors/:name", put(set_vendor).delete(delete_vendor))
-        .route("/vendors/:name/reconnect", post(reconnect_vendor))
-        .route("/vendors/:name/enable", post(enable_vendor))
-        .route("/vendors/:name/disable", post(disable_vendor))
+        // Provider instances
+        .route("/providers", get(list_providers).post(add_provider))
+        .route("/providers/:name", put(update_provider).delete(delete_provider))
+        .route("/providers/:name/reconnect", post(reconnect_provider))
+        .route("/providers/:name/enable", post(enable_provider))
+        .route("/providers/:name/disable", post(disable_provider))
         // Admin management (root only)
         .route("/admins", get(list_admins))
         .route("/admins/:user_id", post(add_admin).delete(remove_admin))
@@ -217,10 +216,10 @@ async fn get_settings_group(
 async fn set_settings(
     _auth: AuthAdmin,
     State(state): State<AppState>,
-    Json(req): Json<admin::SetSettingsRequest>,
-) -> AppResult<Json<admin::SetSettingsResponse>> {
+    Json(req): Json<admin::UpdateSettingsRequest>,
+) -> AppResult<Json<admin::UpdateSettingsResponse>> {
     let api = require_admin_api(&state)?;
-    let resp = api.set_settings(req).await.map_err(AppError::internal)?;
+    let resp = api.update_settings(req).await.map_err(AppError::internal)?;
     Ok(Json(resp))
 }
 
@@ -311,7 +310,7 @@ async fn set_user_role(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
     Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<admin::SetUserRoleResponse>> {
+) -> AppResult<Json<admin::UpdateUserRoleResponse>> {
     let role = req
         .get("role")
         .and_then(|v| v.as_str())
@@ -320,7 +319,7 @@ async fn set_user_role(
 
     let api = require_admin_api(&state)?;
     let resp = api
-        .set_user_role(admin::SetUserRoleRequest { user_id, role })
+        .update_user_role(admin::UpdateUserRoleRequest { user_id, role })
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))
@@ -331,7 +330,7 @@ async fn set_user_password(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
     Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<admin::SetUserPasswordResponse>> {
+) -> AppResult<Json<admin::UpdateUserPasswordResponse>> {
     let new_password = req
         .get("password")
         .and_then(|v| v.as_str())
@@ -340,7 +339,7 @@ async fn set_user_password(
 
     let api = require_admin_api(&state)?;
     let resp = api
-        .set_user_password(admin::SetUserPasswordRequest {
+        .update_user_password(admin::UpdateUserPasswordRequest {
             user_id,
             new_password,
         })
@@ -354,7 +353,7 @@ async fn set_user_username(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
     Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<admin::SetUserUsernameResponse>> {
+) -> AppResult<Json<admin::UpdateUserUsernameResponse>> {
     let new_username = req
         .get("username")
         .and_then(|v| v.as_str())
@@ -363,7 +362,7 @@ async fn set_user_username(
 
     let api = require_admin_api(&state)?;
     let resp = api
-        .set_user_username(admin::SetUserUsernameRequest {
+        .update_user_username(admin::UpdateUserUsernameRequest {
             user_id,
             new_username,
         })
@@ -494,7 +493,7 @@ async fn set_room_password(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<admin::SetRoomPasswordResponse>> {
+) -> AppResult<Json<admin::UpdateRoomPasswordResponse>> {
     let new_password = req
         .get("password")
         .and_then(|v| v.as_str())
@@ -503,7 +502,7 @@ async fn set_room_password(
 
     let api = require_admin_api(&state)?;
     let resp = api
-        .set_room_password(admin::SetRoomPasswordRequest {
+        .update_room_password(admin::UpdateRoomPasswordRequest {
             room_id,
             new_password,
         })
@@ -589,34 +588,13 @@ async fn set_room_settings(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<admin::SetRoomSettingsResponse>> {
+) -> AppResult<Json<admin::UpdateRoomSettingsResponse>> {
     let settings = serde_json::to_vec(&req)
         .map_err(|e| AppError::bad_request(format!("Invalid settings JSON: {e}")))?;
 
     let api = require_admin_api(&state)?;
     let resp = api
-        .set_room_settings(admin::SetRoomSettingsRequest { room_id, settings })
-        .await
-        .map_err(AppError::internal)?;
-    Ok(Json(resp))
-}
-
-async fn update_room_setting(
-    _auth: AuthAdmin,
-    State(state): State<AppState>,
-    Path((room_id, key)): Path<(String, String)>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<admin::UpdateRoomSettingResponse>> {
-    let value = serde_json::to_vec(&req)
-        .map_err(|e| AppError::bad_request(format!("Invalid value: {e}")))?;
-
-    let api = require_admin_api(&state)?;
-    let resp = api
-        .update_room_setting(admin::UpdateRoomSettingRequest {
-            room_id,
-            key,
-            value,
-        })
+        .update_room_settings(admin::UpdateRoomSettingsRequest { room_id, settings })
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))
@@ -636,10 +614,10 @@ async fn reset_room_settings(
 }
 
 // ------------------------------------------------------------------
-// Provider Instances (Vendors)
+// Provider Instances
 // ------------------------------------------------------------------
 
-async fn list_vendors(
+async fn list_providers(
     _auth: AuthAdmin,
     State(state): State<AppState>,
 ) -> AppResult<Json<admin::ListProviderInstancesResponse>> {
@@ -653,7 +631,7 @@ async fn list_vendors(
     Ok(Json(resp))
 }
 
-async fn add_vendor(
+async fn add_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Json(req): Json<admin::AddProviderInstanceRequest>,
@@ -666,22 +644,22 @@ async fn add_vendor(
     Ok(Json(resp))
 }
 
-async fn set_vendor(
+async fn update_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,
-    Json(mut req): Json<admin::SetProviderInstanceRequest>,
-) -> AppResult<Json<admin::SetProviderInstanceResponse>> {
+    Json(mut req): Json<admin::UpdateProviderInstanceRequest>,
+) -> AppResult<Json<admin::UpdateProviderInstanceResponse>> {
     req.name = name;
     let api = require_admin_api(&state)?;
     let resp = api
-        .set_provider_instance(req)
+        .update_provider_instance(req)
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))
 }
 
-async fn delete_vendor(
+async fn delete_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -694,7 +672,7 @@ async fn delete_vendor(
     Ok(Json(resp))
 }
 
-async fn reconnect_vendor(
+async fn reconnect_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -707,7 +685,7 @@ async fn reconnect_vendor(
     Ok(Json(resp))
 }
 
-async fn enable_vendor(
+async fn enable_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -720,7 +698,7 @@ async fn enable_vendor(
     Ok(Json(resp))
 }
 
-async fn disable_vendor(
+async fn disable_provider(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(name): Path<String>,

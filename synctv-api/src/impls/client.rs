@@ -18,6 +18,7 @@ pub struct ClientApiImpl {
     pub connection_manager: Arc<ConnectionManager>,
     pub config: Arc<synctv_core::Config>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+    pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
 }
 
 impl ClientApiImpl {
@@ -28,6 +29,7 @@ impl ClientApiImpl {
         connection_manager: Arc<ConnectionManager>,
         config: Arc<synctv_core::Config>,
         sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+        publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     ) -> Self {
         Self {
             user_service,
@@ -35,6 +37,7 @@ impl ClientApiImpl {
             connection_manager,
             config,
             sfu_manager,
+            publish_key_service,
         }
     }
 
@@ -351,8 +354,8 @@ impl ClientApiImpl {
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::SetRoomSettingsRequest,
-    ) -> Result<crate::proto::client::SetRoomSettingsResponse, String> {
+        req: crate::proto::client::UpdateRoomSettingsRequest,
+    ) -> Result<crate::proto::client::UpdateRoomSettingsResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
@@ -374,9 +377,62 @@ impl ClientApiImpl {
 
         let member_count = self.connection_manager.room_connection_count(&rid).try_into().ok();
 
-        Ok(crate::proto::client::SetRoomSettingsResponse {
+        Ok(crate::proto::client::UpdateRoomSettingsResponse {
             room: Some(room_to_proto_basic(&room, None, member_count)),
         })
+    }
+
+    pub async fn get_hot_rooms(
+        &self,
+        req: crate::proto::client::GetHotRoomsRequest,
+    ) -> Result<crate::proto::client::GetHotRoomsResponse, String> {
+        let limit = if req.limit == 0 || req.limit > 50 {
+            10
+        } else {
+            i64::from(req.limit)
+        };
+
+        // Query for active rooms
+        let query = synctv_core::models::RoomListQuery {
+            page: 1,
+            page_size: 100,
+            search: None,
+            status: Some(synctv_core::models::RoomStatus::Active),
+        };
+
+        let (rooms, _total) = self.room_service.list_rooms(&query).await
+            .map_err(|e| format!("Failed to list rooms: {e}"))?;
+
+        // Collect room stats (online count and member count)
+        let mut room_stats: Vec<(synctv_core::models::Room, i32, i32)> = Vec::new();
+        for room in rooms {
+            let online_count = self.connection_manager.room_connection_count(&room.id);
+            let member_count = self.room_service.get_member_count(&room.id).await
+                .unwrap_or(0);
+
+            room_stats.push((room, online_count as i32, member_count));
+        }
+
+        // Sort by online count (descending)
+        room_stats.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Take top N rooms
+        let mut hot_rooms: Vec<crate::proto::client::RoomWithStats> = Vec::new();
+        for (room, online_count, member_count) in room_stats.into_iter().take(limit as usize) {
+            // Load room settings
+            let settings = self.room_service.get_room_settings(&room.id).await
+                .unwrap_or_default();
+
+            let room_proto = room_to_proto_basic(&room, Some(&settings), Some(member_count));
+
+            hot_rooms.push(crate::proto::client::RoomWithStats {
+                room: Some(room_proto),
+                online_count,
+                total_members: member_count,
+            });
+        }
+
+        Ok(crate::proto::client::GetHotRoomsResponse { rooms: hot_rooms })
     }
 
     // === Chat Operations ===
@@ -492,6 +548,48 @@ impl ClientApiImpl {
         Ok(crate::proto::client::RemoveMediaResponse {
             success: true,
         })
+    }
+
+    /// Bulk remove multiple media items
+    pub async fn remove_media_batch(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        media_ids: Vec<String>,
+    ) -> Result<usize, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+        let mids: Vec<synctv_core::models::MediaId> = media_ids
+            .into_iter()
+            .map(synctv_core::models::MediaId::from_string)
+            .collect();
+
+        self.room_service
+            .media_service()
+            .remove_media_batch(rid, uid, mids)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Bulk reorder multiple media items
+    pub async fn reorder_media_batch(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        updates: Vec<(String, i32)>,
+    ) -> Result<(), String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+        let updates_converted: Vec<(synctv_core::models::MediaId, i32)> = updates
+            .into_iter()
+            .map(|(id, pos)| (synctv_core::models::MediaId::from_string(id), pos))
+            .collect();
+
+        self.room_service
+            .media_service()
+            .reorder_media_batch(rid, uid, updates_converted)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     pub async fn get_playlist(
@@ -667,12 +765,12 @@ impl ClientApiImpl {
         })
     }
 
-    pub async fn change_speed(
+    pub async fn set_playback_speed(
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::ChangeSpeedRequest,
-    ) -> Result<crate::proto::client::ChangeSpeedResponse, String> {
+        req: crate::proto::client::SetPlaybackSpeedRequest,
+    ) -> Result<crate::proto::client::SetPlaybackSpeedResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
@@ -680,29 +778,45 @@ impl ClientApiImpl {
             .map_err(|e| e.to_string())?;
 
         let state = self.room_service.get_playback_state(&rid).await.ok();
-        Ok(crate::proto::client::ChangeSpeedResponse {
+        Ok(crate::proto::client::SetPlaybackSpeedResponse {
             playback_state: state.map(|s| playback_state_to_proto(&s)),
         })
     }
 
-    pub async fn switch_media(
+    // set_current_media - Set which media to play (previously set_playing)
+    pub async fn set_current_media(
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::SwitchMediaRequest,
-    ) -> Result<crate::proto::client::SwitchMediaResponse, String> {
+        req: crate::proto::client::SetCurrentMediaRequest,
+    ) -> Result<crate::proto::client::SetCurrentMediaResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
-        let media_id = synctv_core::models::MediaId::from_string(req.media_id);
 
-        self.room_service.playback_service().switch_media(rid.clone(), uid, media_id).await
+        // If media_id is provided, switch to that media
+        if !req.media_id.is_empty() {
+            let media_id = synctv_core::models::MediaId::from_string(req.media_id);
+            self.room_service.playback_service().switch_media(rid.clone(), uid, media_id).await
+                .map_err(|e| e.to_string())?;
+        }
+
+        // Get the current root playlist and its item count
+        let playlist = self.room_service.playlist_service().get_root_playlist(&rid).await
+            .map_err(|e| e.to_string())?;
+        let item_count = self.room_service.media_service().count_playlist_media(&playlist.id).await
+            .map_err(|e| e.to_string())? as i32;
+
+        // Get the currently playing media
+        let playing_media = self.room_service.get_playing_media(&rid).await
             .map_err(|e| e.to_string())?;
 
-        let state = self.room_service.get_playback_state(&rid).await.ok();
-        Ok(crate::proto::client::SwitchMediaResponse {
-            playback_state: state.map(|s| playback_state_to_proto(&s)),
+        Ok(crate::proto::client::SetCurrentMediaResponse {
+            playlist: Some(playlist_to_proto(&playlist, item_count)),
+            playing_media: playing_media.map(|m| media_to_proto(&m)),
         })
     }
+
+    // Note: switch_media removed - use set_current_media instead
 
     pub async fn get_playback_state(
         &self,
@@ -716,6 +830,198 @@ impl ClientApiImpl {
 
         Ok(crate::proto::client::GetPlaybackStateResponse {
             playback_state: Some(playback_state_to_proto(&state)),
+        })
+    }
+
+    // === Live Streaming Operations ===
+
+    pub async fn create_publish_key(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::CreatePublishKeyRequest,
+    ) -> Result<crate::proto::client::CreatePublishKeyResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        // Validate media ID
+        if req.id.is_empty() {
+            return Err("Media ID is required".to_string());
+        }
+        let media_id = synctv_core::models::MediaId::from_string(req.id.clone());
+
+        // Check room exists
+        let _room = self.room_service.get_room(&rid).await
+            .map_err(|e| match e {
+                synctv_core::Error::NotFound(msg) => format!("Room not found: {msg}"),
+                _ => format!("Failed to get room: {e}"),
+            })?;
+
+        // Check permission to start live stream
+        self.room_service
+            .check_permission(&rid, &uid, synctv_core::models::PermissionBits::START_LIVE)
+            .await
+            .map_err(|e| format!("Permission denied: {e}"))?;
+
+        // Get publish key service
+        let publish_key_service = self.publish_key_service.as_ref()
+            .ok_or_else(|| "Publish key service not configured".to_string())?;
+
+        // Generate publish key
+        let publish_key = publish_key_service
+            .generate_publish_key(rid.clone(), media_id.clone(), uid.clone())
+            .await
+            .map_err(|e| format!("Failed to generate publish key: {e}"))?;
+
+        // Construct RTMP URL and stream key
+        let rtmp_url = "rtmp://localhost:1935/live".to_string();
+        let stream_key = format!("{}/{}", rid.as_str(), media_id.as_str());
+
+        tracing::info!(
+            room_id = %rid.as_str(),
+            media_id = %media_id.as_str(),
+            user_id = %uid.as_str(),
+            expires_at = publish_key.expires_at,
+            "Generated publish key for live streaming"
+        );
+
+        Ok(crate::proto::client::CreatePublishKeyResponse {
+            publish_key: publish_key.token,
+            rtmp_url,
+            stream_key,
+            expires_at: publish_key.expires_at,
+        })
+    }
+
+    // === Playlist Operations ===
+
+    pub async fn create_playlist(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::CreatePlaylistRequest,
+    ) -> Result<crate::proto::client::CreatePlaylistResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        let parent_id = if req.parent_id.is_empty() {
+            None
+        } else {
+            Some(synctv_core::models::PlaylistId::from_string(req.parent_id))
+        };
+
+        let service_req = synctv_core::service::playlist::CreatePlaylistRequest {
+            room_id: rid.clone(),
+            name: req.name,
+            parent_id,
+            position: None,
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+        };
+
+        let playlist = self.room_service.playlist_service()
+            .create_playlist(rid, uid, service_req)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let item_count = self.room_service.media_service()
+            .count_playlist_media(&playlist.id)
+            .await
+            .unwrap_or(0) as i32;
+
+        Ok(crate::proto::client::CreatePlaylistResponse {
+            playlist: Some(playlist_to_proto(&playlist, item_count)),
+        })
+    }
+
+    pub async fn update_playlist(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::UpdatePlaylistRequest,
+    ) -> Result<crate::proto::client::UpdatePlaylistResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        let playlist_id = synctv_core::models::PlaylistId::from_string(req.playlist_id);
+
+        let name = if req.name.is_empty() { None } else { Some(req.name) };
+        let position = if req.position == 0 { None } else { Some(req.position) };
+
+        let service_req = synctv_core::service::playlist::SetPlaylistRequest {
+            playlist_id,
+            name,
+            position,
+        };
+
+        let playlist = self.room_service.playlist_service()
+            .set_playlist(rid, uid, service_req)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let item_count = self.room_service.media_service()
+            .count_playlist_media(&playlist.id)
+            .await
+            .unwrap_or(0) as i32;
+
+        Ok(crate::proto::client::UpdatePlaylistResponse {
+            playlist: Some(playlist_to_proto(&playlist, item_count)),
+        })
+    }
+
+    pub async fn delete_playlist(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::DeletePlaylistRequest,
+    ) -> Result<crate::proto::client::DeletePlaylistResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        let playlist_id = synctv_core::models::PlaylistId::from_string(req.playlist_id);
+
+        self.room_service.playlist_service()
+            .delete_playlist(rid, uid, playlist_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::client::DeletePlaylistResponse { success: true })
+    }
+
+    pub async fn list_playlists(
+        &self,
+        room_id: &str,
+        req: crate::proto::client::ListPlaylistsRequest,
+    ) -> Result<crate::proto::client::ListPlaylistsResponse, String> {
+        let rid = RoomId::from_string(room_id.to_string());
+
+        let playlists = if req.parent_id.is_empty() {
+            // Get all playlists in room
+            self.room_service.playlist_service()
+                .get_room_playlists(&rid)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            // Get children of specific playlist
+            let parent_id = synctv_core::models::PlaylistId::from_string(req.parent_id);
+            self.room_service.playlist_service()
+                .get_children(&parent_id)
+                .await
+                .map_err(|e| e.to_string())?
+        };
+
+        let mut proto_playlists = Vec::with_capacity(playlists.len());
+        for pl in &playlists {
+            let item_count = self.room_service.media_service()
+                .count_playlist_media(&pl.id)
+                .await
+                .unwrap_or(0) as i32;
+            proto_playlists.push(playlist_to_proto(pl, item_count));
+        }
+
+        Ok(crate::proto::client::ListPlaylistsResponse {
+            playlists: proto_playlists,
         })
     }
 
@@ -738,12 +1044,12 @@ impl ClientApiImpl {
         })
     }
 
-    pub async fn update_member_permission(
+    pub async fn update_member_permissions(
         &self,
         user_id: &str,
         room_id: &str,
-        req: crate::proto::client::SetMemberPermissionRequest,
-    ) -> Result<crate::proto::client::SetMemberPermissionResponse, String> {
+        req: crate::proto::client::UpdateMemberPermissionsRequest,
+    ) -> Result<crate::proto::client::UpdateMemberPermissionsResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
         let target_uid = UserId::from_string(req.user_id.clone());
@@ -792,7 +1098,7 @@ impl ClientApiImpl {
             .find(|m| m.user_id == target_uid)
             .ok_or_else(|| "Member not found".to_string())?;
 
-        Ok(crate::proto::client::SetMemberPermissionResponse {
+        Ok(crate::proto::client::UpdateMemberPermissionsResponse {
             member: Some(room_member_to_proto(member)),
         })
     }
@@ -1109,6 +1415,21 @@ pub fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::clien
         added_by: media.creator_id.as_str().to_string(),
         provider_instance_name: media.provider_instance_name.clone().unwrap_or_default(),
         source_config: serde_json::to_vec(&media.source_config).unwrap_or_default(),
+    }
+}
+
+fn playlist_to_proto(playlist: &synctv_core::models::Playlist, item_count: i32) -> crate::proto::client::Playlist {
+    crate::proto::client::Playlist {
+        id: playlist.id.as_str().to_string(),
+        room_id: playlist.room_id.as_str().to_string(),
+        name: playlist.name.clone(),
+        parent_id: playlist.parent_id.as_ref().map(|id| id.as_str().to_string()).unwrap_or_default(),
+        position: playlist.position,
+        is_folder: playlist.parent_id.is_none() || playlist.source_provider.is_some(),
+        is_dynamic: playlist.is_dynamic(),
+        item_count,
+        created_at: playlist.created_at.timestamp(),
+        updated_at: playlist.updated_at.timestamp(),
     }
 }
 

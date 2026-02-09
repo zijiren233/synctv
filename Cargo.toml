@@ -6,7 +6,7 @@ members = [
     "synctv-api",
     "synctv-stream",
     "synctv-cluster",
-    "synctv-providers",
+    "synctv-media-providers",
     "synctv", "synctv-sfu",
 ]
 resolver = "2"
@@ -152,7 +152,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 synctv-proto = { path = "synctv-proto" }
 synctv-core = { path = "synctv-core" }
 synctv-cluster = { path = "synctv-cluster" }
-synctv-providers = { path = "synctv-providers" }
+synctv-media-providers = { path = "synctv-media-providers" }
 synctv-proxy = { path = "synctv-proxy" }
 synctv-stream = { path = "synctv-stream" }
 synctv-sfu = { path = "synctv-sfu" }

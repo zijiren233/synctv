@@ -140,13 +140,13 @@ pub async fn set_member_permissions(
     State(state): State<AppState>,
     Path((room_id, target_user_id)): Path<(String, String)>,
     Json(req): Json<SetMemberPermissionsRequest>,
-) -> AppResult<Json<crate::proto::client::SetMemberPermissionResponse>> {
+) -> AppResult<Json<crate::proto::client::UpdateMemberPermissionsResponse>> {
     let resp = state
         .client_api
-        .update_member_permission(
+        .update_member_permissions(
             auth.user_id.as_str(),
             &room_id,
-            crate::proto::client::SetMemberPermissionRequest {
+            crate::proto::client::UpdateMemberPermissionsRequest {
                 user_id: target_user_id,
                 role: req.role,
                 added_permissions: req.added_permissions,
@@ -161,12 +161,18 @@ pub async fn set_member_permissions(
 }
 
 /// Ban a member from a room
+/// POST /api/rooms/:room_id/bans with body: {user_id, reason}
 pub async fn ban_member(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path((room_id, target_user_id)): Path<(String, String)>,
+    Path(room_id): Path<String>,
     Json(req): Json<serde_json::Value>,
 ) -> AppResult<Json<crate::proto::client::BanMemberResponse>> {
+    let target_user_id = req.get("user_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::bad_request("Missing user_id in request body"))?
+        .to_string();
+
     let reason = req.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     let resp = state

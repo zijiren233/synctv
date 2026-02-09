@@ -4,8 +4,10 @@
 
 use async_trait::async_trait;
 use anyhow::Result;
-use chrono::Utc;
 use super::registry::{PublisherInfo, StreamRegistry};
+
+#[cfg(test)]
+use chrono::Utc;
 
 /// `StreamRegistry` trait for publisher registration
 #[async_trait]

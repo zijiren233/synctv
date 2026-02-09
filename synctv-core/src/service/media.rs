@@ -388,6 +388,92 @@ impl MediaService {
         Ok(())
     }
 
+    /// Bulk remove media from playlist
+    ///
+    /// Removes multiple media items in a single transaction
+    pub async fn remove_media_batch(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        media_ids: Vec<MediaId>,
+    ) -> Result<usize> {
+        // Check permission
+        self.permission_service
+            .check_permission(&room_id, &user_id, PermissionBits::REMOVE_MEDIA)
+            .await?;
+
+        if media_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // Verify all media belong to the room
+        for media_id in &media_ids {
+            let media = self
+                .media_repo
+                .get_by_id(media_id)
+                .await?
+                .ok_or_else(|| Error::NotFound("Media not found".to_string()))?;
+
+            if media.room_id != room_id {
+                return Err(Error::Authorization("Media does not belong to this room".to_string()));
+            }
+        }
+
+        // Bulk delete
+        let deleted_count = self.media_repo.delete_batch(&media_ids).await?;
+
+        tracing::info!(
+            room_id = %room_id.as_str(),
+            count = deleted_count,
+            "Bulk removed media from playlist"
+        );
+
+        Ok(deleted_count)
+    }
+
+    /// Bulk reorder media items
+    ///
+    /// Reorders multiple media items to new positions in a single transaction
+    pub async fn reorder_media_batch(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        updates: Vec<(MediaId, i32)>,
+    ) -> Result<()> {
+        // Check permission
+        self.permission_service
+            .check_permission(&room_id, &user_id, PermissionBits::REORDER_PLAYLIST)
+            .await?;
+
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        // Verify all media belong to the room
+        for (media_id, _) in &updates {
+            let media = self
+                .media_repo
+                .get_by_id(media_id)
+                .await?
+                .ok_or_else(|| Error::NotFound("Media not found".to_string()))?;
+
+            if media.room_id != room_id {
+                return Err(Error::Authorization("Media does not belong to this room".to_string()));
+            }
+        }
+
+        // Bulk reorder
+        self.media_repo.reorder_batch(&updates).await?;
+
+        tracing::info!(
+            room_id = %room_id.as_str(),
+            count = updates.len(),
+            "Bulk reordered media in playlist"
+        );
+
+        Ok(())
+    }
+
     /// Count media items in a playlist
     pub async fn count_playlist_media(&self, playlist_id: &PlaylistId) -> Result<i64> {
         self.media_repo.count_by_playlist(playlist_id).await

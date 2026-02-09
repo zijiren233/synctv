@@ -116,10 +116,10 @@ impl AdminApiImpl {
         })
     }
 
-    pub async fn set_room_password(
+    pub async fn update_room_password(
         &self,
-        req: crate::proto::admin::SetRoomPasswordRequest,
-    ) -> Result<crate::proto::admin::SetRoomPasswordResponse, String> {
+        req: crate::proto::admin::UpdateRoomPasswordRequest,
+    ) -> Result<crate::proto::admin::UpdateRoomPasswordResponse, String> {
         // For admin operations, use a system user ID (in real implementation, you'd get this from auth context)
         use synctv_core::models::UserId;
         let admin_user_id = UserId::new(); // System user
@@ -127,7 +127,7 @@ impl AdminApiImpl {
         self.room_service.set_room_password(req, &admin_user_id).await
             .map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::admin::SetRoomPasswordResponse {
+        Ok(crate::proto::admin::UpdateRoomPasswordResponse {
             success: true,
         })
     }
@@ -186,10 +186,10 @@ impl AdminApiImpl {
         })
     }
 
-    pub async fn set_user_role(
+    pub async fn update_user_role(
         &self,
-        req: crate::proto::admin::SetUserRoleRequest,
-    ) -> Result<crate::proto::admin::SetUserRoleResponse, String> {
+        req: crate::proto::admin::UpdateUserRoleRequest,
+    ) -> Result<crate::proto::admin::UpdateUserRoleResponse, String> {
         let uid = UserId::from_string(req.user_id);
         let user = self.user_service.get_user(&uid).await
             .map_err(|e| e.to_string())?;
@@ -205,21 +205,21 @@ impl AdminApiImpl {
         self.user_service.update_user(&updated_user).await
             .map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::admin::SetUserRoleResponse {
+        Ok(crate::proto::admin::UpdateUserRoleResponse {
             user: Some(admin_user_to_proto(&updated_user)),
         })
     }
 
-    pub async fn set_user_password(
+    pub async fn update_user_password(
         &self,
-        req: crate::proto::admin::SetUserPasswordRequest,
-    ) -> Result<crate::proto::admin::SetUserPasswordResponse, String> {
+        req: crate::proto::admin::UpdateUserPasswordRequest,
+    ) -> Result<crate::proto::admin::UpdateUserPasswordResponse, String> {
         let uid = UserId::from_string(req.user_id);
 
         self.user_service.set_password(&uid, &req.new_password).await
             .map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::admin::SetUserPasswordResponse {
+        Ok(crate::proto::admin::UpdateUserPasswordResponse {
             success: true,
         })
     }
@@ -260,17 +260,17 @@ impl AdminApiImpl {
         })
     }
 
-    pub async fn set_settings(
+    pub async fn update_settings(
         &self,
-        req: crate::proto::admin::SetSettingsRequest,
-    ) -> Result<crate::proto::admin::SetSettingsResponse, String> {
+        req: crate::proto::admin::UpdateSettingsRequest,
+    ) -> Result<crate::proto::admin::UpdateSettingsResponse, String> {
         // Update each setting in the group
         for (key, value) in &req.settings {
             self.settings_service.update(key, value.clone()).await
                 .map_err(|e| e.to_string())?;
         }
 
-        Ok(crate::proto::admin::SetSettingsResponse {})
+        Ok(crate::proto::admin::UpdateSettingsResponse {})
     }
 
     // === Email Management ===
@@ -354,10 +354,10 @@ impl AdminApiImpl {
         })
     }
 
-    pub async fn set_provider_instance(
+    pub async fn update_provider_instance(
         &self,
-        req: crate::proto::admin::SetProviderInstanceRequest,
-    ) -> Result<crate::proto::admin::SetProviderInstanceResponse, String> {
+        req: crate::proto::admin::UpdateProviderInstanceRequest,
+    ) -> Result<crate::proto::admin::UpdateProviderInstanceResponse, String> {
         // Get existing instance
         let instances = self.provider_instance_manager.get_all_instances().await
             .map_err(|e| e.to_string())?;
@@ -400,7 +400,7 @@ impl AdminApiImpl {
             .await
             .map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::admin::SetProviderInstanceResponse {
+        Ok(crate::proto::admin::UpdateProviderInstanceResponse {
             instance: Some(provider_instance_to_proto(instance)),
         })
     }
@@ -526,10 +526,10 @@ impl AdminApiImpl {
         Ok(crate::proto::admin::DeleteUserResponse { success: true })
     }
 
-    pub async fn set_user_username(
+    pub async fn update_user_username(
         &self,
-        req: crate::proto::admin::SetUserUsernameRequest,
-    ) -> Result<crate::proto::admin::SetUserUsernameResponse, String> {
+        req: crate::proto::admin::UpdateUserUsernameRequest,
+    ) -> Result<crate::proto::admin::UpdateUserUsernameResponse, String> {
         let uid = UserId::from_string(req.user_id);
 
         if req.new_username.is_empty() {
@@ -540,7 +540,7 @@ impl AdminApiImpl {
         user.username = req.new_username;
         let updated = self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::admin::SetUserUsernameResponse {
+        Ok(crate::proto::admin::UpdateUserUsernameResponse {
             user: Some(admin_user_to_proto(&updated)),
         })
     }
@@ -713,10 +713,10 @@ impl AdminApiImpl {
         Ok(crate::proto::admin::GetRoomSettingsResponse { settings: settings_json })
     }
 
-    pub async fn set_room_settings(
+    pub async fn update_room_settings(
         &self,
-        req: crate::proto::admin::SetRoomSettingsRequest,
-    ) -> Result<crate::proto::admin::SetRoomSettingsResponse, String> {
+        req: crate::proto::admin::UpdateRoomSettingsRequest,
+    ) -> Result<crate::proto::admin::UpdateRoomSettingsResponse, String> {
         let rid = RoomId::from_string(req.room_id);
         let settings: synctv_core::models::RoomSettings = serde_json::from_slice(&req.settings)
             .map_err(|e| format!("Invalid settings JSON: {e}"))?;
@@ -725,29 +725,11 @@ impl AdminApiImpl {
 
         let room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
 
-        Ok(crate::proto::admin::SetRoomSettingsResponse {
+        Ok(crate::proto::admin::UpdateRoomSettingsResponse {
             room: Some(admin_room_to_proto(
                 &room, Some(&settings),
                 self.connection_manager.room_connection_count(&rid).try_into().ok(),
             )),
-        })
-    }
-
-    pub async fn update_room_setting(
-        &self,
-        req: crate::proto::admin::UpdateRoomSettingRequest,
-    ) -> Result<crate::proto::admin::UpdateRoomSettingResponse, String> {
-        let rid = RoomId::from_string(req.room_id);
-        let value: serde_json::Value = serde_json::from_slice(&req.value)
-            .map_err(|e| format!("Invalid JSON value: {e}"))?;
-
-        let settings_json = self.room_service
-            .update_room_setting(&rid, &req.key, &value)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        Ok(crate::proto::admin::UpdateRoomSettingResponse {
-            settings: settings_json.into_bytes(),
         })
     }
 

@@ -85,9 +85,9 @@ COMMENT ON TABLE playlists IS 'Playlist directory table (supporting static folde
 COMMENT ON COLUMN playlists.name IS 'Directory name (root directory is empty string)';
 COMMENT ON COLUMN playlists.parent_id IS 'Parent directory ID, NULL means root directory';
 COMMENT ON COLUMN playlists.position IS 'Sort position in parent directory';
-COMMENT ON COLUMN playlists.source_provider IS 'Provider type name (NULL=static folder, non-NULL=dynamic folder, e.g., "alist", "emby")';
-COMMENT ON COLUMN playlists.source_config IS 'Provider configuration (required for dynamic folders)';
-COMMENT ON COLUMN playlists.provider_instance_name IS 'Recommended backend instance name (optional)';
+COMMENT ON COLUMN playlists.source_provider IS 'Media provider type name (NULL=static folder, non-NULL=dynamic folder, e.g., "alist", "emby")';
+COMMENT ON COLUMN playlists.source_config IS 'Media provider configuration (required for dynamic folders)';
+COMMENT ON COLUMN playlists.provider_instance_name IS 'Recommended media provider backend instance name (optional)';
 COMMENT ON CONSTRAINT unique_playlist_name ON playlists IS 'No duplicate names in same directory';
 COMMENT ON CONSTRAINT valid_name ON playlists IS 'Name validation: root directory must be empty string, non-root cannot be empty/spaces, forbids / character';
 COMMENT ON CONSTRAINT valid_dynamic_folder ON playlists IS 'Dynamic folder constraint: source_provider/source_config must either both exist or both be NULL';
