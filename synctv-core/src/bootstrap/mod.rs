@@ -4,11 +4,14 @@
 //! - Database initialization
 //! - Configuration loading
 //! - Service initialization and dependency injection
+//! - User bootstrap (root user creation)
 
 pub mod database;
 pub mod config;
 pub mod services;
+pub mod user;
 
 pub use database::init_database;
 pub use config::load_config;
 pub use services::init_services;
+pub use user::bootstrap_root_user;
