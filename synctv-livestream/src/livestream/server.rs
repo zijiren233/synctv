@@ -1,4 +1,4 @@
-// Complete integration of streaming servers into SyncTV architecture
+// Complete integration of livestream servers into SyncTV architecture
 //
 // Architecture:
 // 1. Single shared StreamHub (xiu's event bus) for all protocols
@@ -14,7 +14,7 @@ use crate::{
     libraries::gop_cache::GopCache,
     libraries::storage::{HlsStorage, StorageBackend, FileStorage, MemoryStorage, OssStorage, OssConfig},
     relay::registry_trait::StreamRegistryTrait,
-    streaming::{
+    livestream::{
         pull_manager::PullStreamManager,
         segment_manager::{SegmentManager, CleanupConfig},
     },
@@ -27,7 +27,7 @@ use tokio::sync::Mutex;
 use tracing as log;
 use streamhub::{StreamsHub, define::StreamHubEventSender};
 
-pub struct StreamingServer {
+pub struct LivestreamServer {
     // Configuration
     rtmp_address: String,
     hls_address: String,
@@ -42,7 +42,7 @@ pub struct StreamingServer {
     segment_manager: Option<Arc<SegmentManager>>,
 }
 
-impl StreamingServer {
+impl LivestreamServer {
     pub fn new(
         rtmp_address: String,
         hls_address: String,

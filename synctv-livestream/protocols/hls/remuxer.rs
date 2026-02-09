@@ -8,7 +8,7 @@
 //
 // Based on xiu's implementation but with storage abstraction
 
-use crate::streaming::segment_manager::SegmentManager;
+use crate::livestream::segment_manager::SegmentManager;
 use bytes::BytesMut;
 use dashmap::DashMap;
 use std::collections::VecDeque;

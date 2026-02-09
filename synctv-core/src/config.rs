@@ -11,7 +11,7 @@ pub struct Config {
     pub redis: RedisConfig,
     pub jwt: JwtConfig,
     pub logging: LoggingConfig,
-    pub streaming: StreamingConfig,
+    pub livestream: LivestreamConfig,
     pub oauth2: OAuth2Config,
     pub email: EmailConfig,
     pub media_providers: MediaProvidersConfig,
@@ -114,7 +114,7 @@ impl Default for LoggingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamingConfig {
+pub struct LivestreamConfig {
     pub rtmp_port: u16,
     pub hls_port: u16,
     pub max_streams: u32,
@@ -122,7 +122,7 @@ pub struct StreamingConfig {
     pub stream_timeout_seconds: u64,
 }
 
-impl Default for StreamingConfig {
+impl Default for LivestreamConfig {
     fn default() -> Self {
         Self {
             rtmp_port: 1935,
@@ -406,8 +406,8 @@ impl Config {
         let ports_to_check: &[(&str, u16)] = &[
             ("server.http_port", self.server.http_port),
             ("server.grpc_port", self.server.grpc_port),
-            ("streaming.rtmp_port", self.streaming.rtmp_port),
-            ("streaming.hls_port", self.streaming.hls_port),
+            ("livestream.rtmp_port", self.livestream.rtmp_port),
+            ("livestream.hls_port", self.livestream.hls_port),
         ];
         for (name, port) in ports_to_check {
             if *port == 0 {
@@ -443,16 +443,16 @@ impl Config {
                 self.server.grpc_port, self.server.http_port
             ));
         }
-        if self.streaming.rtmp_port == self.server.http_port {
+        if self.livestream.rtmp_port == self.server.http_port {
             errors.push(format!(
-                "streaming.rtmp_port ({}) and server.http_port ({}) must be different",
-                self.streaming.rtmp_port, self.server.http_port
+                "livestream.rtmp_port ({}) and server.http_port ({}) must be different",
+                self.livestream.rtmp_port, self.server.http_port
             ));
         }
-        if self.streaming.rtmp_port == self.server.grpc_port {
+        if self.livestream.rtmp_port == self.server.grpc_port {
             errors.push(format!(
-                "streaming.rtmp_port ({}) and server.grpc_port ({}) must be different",
-                self.streaming.rtmp_port, self.server.grpc_port
+                "livestream.rtmp_port ({}) and server.grpc_port ({}) must be different",
+                self.livestream.rtmp_port, self.server.grpc_port
             ));
         }
 
@@ -518,7 +518,7 @@ mod tests {
             redis: RedisConfig::default(),
             jwt: JwtConfig::default(),
             logging: LoggingConfig::default(),
-            streaming: StreamingConfig::default(),
+            livestream: LivestreamConfig::default(),
             oauth2: OAuth2Config::default(),
             email: EmailConfig::default(),
             media_providers: MediaProvidersConfig::default(),
@@ -546,7 +546,7 @@ mod tests {
             redis: RedisConfig::default(),
             jwt: JwtConfig::default(),
             logging: LoggingConfig::default(),
-            streaming: StreamingConfig::default(),
+            livestream: LivestreamConfig::default(),
             oauth2: OAuth2Config::default(),
             email: EmailConfig::default(),
             media_providers: MediaProvidersConfig::default(),

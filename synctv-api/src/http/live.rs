@@ -3,7 +3,7 @@
 //! Provides FLV and HLS streaming endpoints for live video.
 //!
 //! Architecture:
-//! - Uses synctv-stream's `LiveStreamingInfrastructure` via `AppState`
+//! - Uses synctv-livestream's `LiveStreamingInfrastructure` via `AppState`
 //! - Implements lazy-load FLV streaming
 //! - Implements HLS playlist generation and segment serving
 //!
@@ -25,7 +25,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, info, warn};
 
 use crate::http::{AppError, AppResult, AppState};
-use synctv_stream::api::{FlvStreamingApi, HlsStreamingApi};
+use synctv_livestream::api::{FlvStreamingApi, HlsStreamingApi};
 
 /// Query parameters for live streaming endpoints
 #[derive(Debug, Deserialize)]

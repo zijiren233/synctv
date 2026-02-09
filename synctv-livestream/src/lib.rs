@@ -1,4 +1,4 @@
-// synctv-stream - Live streaming infrastructure for SyncTV
+// synctv-livestream - Live streaming infrastructure for SyncTV
 //
 // Architecture (following xiu's modular design):
 // - protocols/   - Protocol implementations (RTMP, HTTP-FLV, HLS)
@@ -30,7 +30,7 @@ pub mod relay;
 pub mod api;
 
 // Server orchestration (in src/)
-pub mod streaming;
+pub mod livestream;
 
 // Re-exports for convenience
 pub use libraries::gop_cache::GopCache;
@@ -39,4 +39,4 @@ pub use xiu_integration::RtmpServer;
 pub use protocols::httpflv::HttpFlvSession;
 pub use protocols::hls::{HlsServer, CustomHlsRemuxer, StreamRegistry};
 pub use api::{LiveStreamingInfrastructure, FlvStreamingApi, HlsStreamingApi};
-pub use streaming::{StreamingServer, PullStreamManager, SegmentManager};
+pub use livestream::{LivestreamServer, PullStreamManager, SegmentManager};

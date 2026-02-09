@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use synctv_stream::protocols::rtmp::auth::{RtmpAuthCallback, Channel};
-use synctv_stream::error::{StreamError, StreamResult};
+use synctv_livestream::protocols::rtmp::auth::{RtmpAuthCallback, Channel};
+use synctv_livestream::error::{StreamError, StreamResult};
 
 use synctv_core::{
     models::RoomStatus,

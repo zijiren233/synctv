@@ -37,7 +37,7 @@ use synctv_cluster::sync::PublishRequest;
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::repository::UserProviderCredentialRepository;
 use synctv_core::service::{RemoteProviderManager, RoomService, UserService};
-use synctv_stream::api::LiveStreamingInfrastructure;
+use synctv_livestream::api::LiveStreamingInfrastructure;
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
