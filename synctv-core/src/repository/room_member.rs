@@ -435,10 +435,10 @@ impl RoomMemberRepository {
         let row = sqlx::query(
             "UPDATE room_members
              SET
-                status = 'banned',
-                banned_at = $3,
-                banned_by = $4,
-                banned_reason = $5,
+                status = $3,
+                banned_at = $4,
+                banned_by = $5,
+                banned_reason = $6,
                 version = version + 1
              WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL
              RETURNING
@@ -450,6 +450,7 @@ impl RoomMemberRepository {
         )
         .bind(room_id.as_str())
         .bind(user_id.as_str())
+        .bind(MemberStatus::Banned)
         .bind(chrono::Utc::now())
         .bind(banned_by.as_str())
         .bind(reason)
@@ -678,22 +679,8 @@ impl RoomMemberRepository {
 
     /// Convert database row to `RoomMember`
     fn row_to_member(&self, row: PgRow) -> Result<RoomMember> {
-        let role_str: String = row.try_get("role")?;
-        let role = match role_str.as_str() {
-            "creator" => RoomRole::Creator,
-            "admin" => RoomRole::Admin,
-            "member" => RoomRole::Member,
-            "guest" => RoomRole::Guest,
-            _ => return Err(Error::InvalidInput(format!("Unknown role: {role_str}"))),
-        };
-
-        let status_str: String = row.try_get("status")?;
-        let status = match status_str.as_str() {
-            "active" => MemberStatus::Active,
-            "pending" => MemberStatus::Pending,
-            "banned" => MemberStatus::Banned,
-            _ => return Err(Error::InvalidInput(format!("Unknown status: {status_str}"))),
-        };
+        let role: RoomRole = row.try_get("role")?;
+        let status: MemberStatus = row.try_get("status")?;
 
         let banned_by: Option<String> = row.try_get("banned_by")?;
 
@@ -717,22 +704,8 @@ impl RoomMemberRepository {
 
     /// Convert database row to `RoomMemberWithUser`
     fn row_to_member_with_user(&self, row: PgRow) -> Result<RoomMemberWithUser> {
-        let role_str: String = row.try_get("role")?;
-        let role = match role_str.as_str() {
-            "creator" => RoomRole::Creator,
-            "admin" => RoomRole::Admin,
-            "member" => RoomRole::Member,
-            "guest" => RoomRole::Guest,
-            _ => return Err(Error::InvalidInput(format!("Unknown role: {role_str}"))),
-        };
-
-        let status_str: String = row.try_get("status")?;
-        let status = match status_str.as_str() {
-            "active" => MemberStatus::Active,
-            "pending" => MemberStatus::Pending,
-            "banned" => MemberStatus::Banned,
-            _ => return Err(Error::InvalidInput(format!("Unknown status: {status_str}"))),
-        };
+        let role: RoomRole = row.try_get("role")?;
+        let status: MemberStatus = row.try_get("status")?;
 
         Ok(RoomMemberWithUser {
             room_id: RoomId::from_string(row.try_get("room_id")?),
