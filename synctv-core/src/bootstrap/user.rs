@@ -8,7 +8,7 @@ use crate::{
     models::{User, UserRole, UserStatus},
     repository::UserRepository,
     service::auth::hash_password,
-    Error, Result,
+    Result,
 };
 
 /// Bootstrap root user on first startup
