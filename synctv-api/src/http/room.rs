@@ -43,7 +43,7 @@ fn build_room_settings_bytes(
 
     let settings = json!({
         "require_password": password.is_some(),
-        "max_members": max_members,
+        "max_members": max_members.unwrap_or(0),
         "allow_guest_join": allow_guest_join.unwrap_or(false),
         "auto_play_next": auto_play_next.unwrap_or(true),
         "loop_playlist": loop_playlist.unwrap_or(false),

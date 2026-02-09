@@ -28,7 +28,7 @@ impl RoomRepository {
         .bind(&room.name)
         .bind(&room.description)
         .bind(room.created_by.as_str())
-        .bind(self.status_to_str(&room.status))
+        .bind(self.status_to_i16(&room.status))
         .bind(room.created_at)
         .bind(room.updated_at)
         .fetch_one(&self.pool)
@@ -417,6 +417,14 @@ impl RoomRepository {
         .map_err(Error::Database)?;
 
         self.row_to_room(row)
+    }
+
+    const fn status_to_i16(&self, status: &RoomStatus) -> i16 {
+        match status {
+            RoomStatus::Active => 1,
+            RoomStatus::Pending => 2,
+            RoomStatus::Banned => 3,
+        }
     }
 
     const fn status_to_str(&self, status: &RoomStatus) -> &'static str {
