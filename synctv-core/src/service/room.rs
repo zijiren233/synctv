@@ -197,6 +197,9 @@ impl RoomService {
             RoomRole::Creator,
         ).await?;
 
+        // Create root playlist for the room
+        self.playlist_service.create_root_playlist(&created_room.id, &created_by).await?;
+
         // Initialize playback state
         self.playback_repo.create_or_get(&created_room.id).await?;
 
