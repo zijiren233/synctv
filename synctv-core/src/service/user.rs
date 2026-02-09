@@ -427,28 +427,11 @@ impl UserService {
 mod tests {
     use super::*;
 
-    // Helper to create a test service with dummy keys
+    // Helper to create a test service with dummy JWT secret
     fn create_test_service() -> UserService {
         let pool = PgPool::connect_lazy("postgresql://fake").unwrap();
 
-        // Generate test RSA keys
-        use rsa::RsaPrivateKey;
-        use rand::rngs::OsRng;
-        let mut rng = OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
-
-        // Encode to PEM
-        use rsa::pkcs8::EncodePrivateKey;
-        let private_pem = private_key.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF).unwrap();
-        let private_bytes = private_pem.as_bytes();
-
-        use rsa::RsaPublicKey;
-        use rsa::pkcs8::EncodePublicKey;
-        let public_key = RsaPublicKey::from(&private_key);
-        let public_pem = public_key.to_public_key_pem(rsa::pkcs8::LineEnding::LF).unwrap();
-        let public_bytes = public_pem.as_bytes();
-
-        let jwt = JwtService::new(private_bytes, public_bytes).unwrap();
+        let jwt = JwtService::new("test-secret-for-user-service").unwrap();
         let blacklist = TokenBlacklistService::new(None).unwrap(); // Disabled for tests
         let username_cache = UsernameCache::new(None, "test:".to_string(), 10, 0).unwrap();
         UserService::new(pool, jwt, blacklist, username_cache)

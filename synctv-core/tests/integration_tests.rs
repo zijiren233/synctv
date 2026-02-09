@@ -11,27 +11,9 @@ use synctv_core::{
     },
 };
 
-/// Helper to create a test JWT service with generated keys
+/// Helper to create a test JWT service with a test secret
 fn create_test_jwt_service() -> JwtService {
-    use rsa::{pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding}, RsaPrivateKey};
-    let mut rng = rand::thread_rng();
-    let bits = 2048;
-    let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate key");
-    let public_key = private_key.to_public_key();
-
-    let private_pem = private_key
-        .to_pkcs8_pem(LineEnding::LF)
-        .expect("Failed to encode private key")
-        .as_bytes()
-        .to_vec();
-
-    let public_pem = public_key
-        .to_public_key_pem(LineEnding::LF)
-        .expect("Failed to encode public key")
-        .as_bytes()
-        .to_vec();
-
-    JwtService::new(&private_pem, &public_pem).expect("Failed to create JWT service")
+    JwtService::new("test-secret-key-for-integration-tests").expect("Failed to create JWT service")
 }
 
 #[tokio::test]

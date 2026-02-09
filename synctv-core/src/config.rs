@@ -81,8 +81,7 @@ impl Default for RedisConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtConfig {
-    pub private_key_path: String,
-    pub public_key_path: String,
+    pub secret: String,
     pub access_token_duration_hours: u64,
     pub refresh_token_duration_days: u64,
 }
@@ -90,8 +89,7 @@ pub struct JwtConfig {
 impl Default for JwtConfig {
     fn default() -> Self {
         Self {
-            private_key_path: "./keys/jwt_private.pem".to_string(),
-            public_key_path: "./keys/jwt_public.pem".to_string(),
+            secret: "change-me-in-production".to_string(),
             access_token_duration_hours: 1,
             refresh_token_duration_days: 30,
         }
@@ -431,22 +429,11 @@ impl Config {
             errors.push("database.url must not be empty".to_string());
         }
 
-        // Validate JWT key files exist (only if paths are configured / non-empty)
-        if !self.jwt.private_key_path.is_empty()
-            && !Path::new(&self.jwt.private_key_path).exists()
-        {
-            errors.push(format!(
-                "JWT private key file not found: {}",
-                self.jwt.private_key_path
-            ));
-        }
-        if !self.jwt.public_key_path.is_empty()
-            && !Path::new(&self.jwt.public_key_path).exists()
-        {
-            errors.push(format!(
-                "JWT public key file not found: {}",
-                self.jwt.public_key_path
-            ));
+        // Validate JWT secret (warn if using default)
+        if self.jwt.secret.is_empty() {
+            errors.push("JWT secret is empty".to_string());
+        } else if self.jwt.secret == "change-me-in-production" {
+            errors.push("JWT secret is set to default value 'change-me-in-production' - this is insecure for production!".to_string());
         }
 
         // Validate port conflicts: RTMP != HTTP != gRPC (all three must differ)

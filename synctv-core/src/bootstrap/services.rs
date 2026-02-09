@@ -329,33 +329,21 @@ async fn init_oauth2_service(
 }
 
 
-/// Load JWT service from key files or generate keys for development
+/// Load JWT service from secret in configuration
 fn load_jwt_service(config: &Config) -> Result<JwtService, anyhow::Error> {
-    // Try to load keys from files
-    let private_key = std::fs::read(&config.jwt.private_key_path);
-    let public_key = std::fs::read(&config.jwt.public_key_path);
-
-    if let (Ok(priv_key), Ok(pub_key)) = (private_key, public_key) {
-        info!("Loaded JWT keys from files");
-        JwtService::new(&priv_key, &pub_key)
-            .map_err(|e| anyhow::anyhow!("Failed to initialize JWT service: {e}"))
-    } else {
-        // In development, generate temporary keys
-        error!("JWT key files not found. Generating temporary keys for development.");
-        error!("WARNING: These keys will not persist across restarts!");
-        error!("For production, generate keys with: openssl genrsa -out jwt_private.pem 2048");
-        error!("                                  openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem");
-
-        // For now, return error - keys must be provided
-        Err(anyhow::anyhow!(
-            "JWT keys not found at {} and {}. Please generate keys with:\n  openssl genrsa -out {} 2048\n  openssl rsa -in {} -pubout -out {}",
-            config.jwt.private_key_path,
-            config.jwt.public_key_path,
-            config.jwt.private_key_path,
-            config.jwt.private_key_path,
-            config.jwt.public_key_path
-        ))
+    if config.jwt.secret.is_empty() {
+        return Err(anyhow::anyhow!(
+            "JWT secret is empty. Please set SYNCTV__JWT__SECRET environment variable or configure jwt.secret in config file"
+        ));
     }
+
+    if config.jwt.secret == "change-me-in-production" {
+        warn!("Using default JWT secret! This is insecure for production use.");
+        warn!("Please set SYNCTV__JWT__SECRET to a strong random value.");
+    }
+
+    JwtService::new(&config.jwt.secret)
+        .map_err(|e| anyhow::anyhow!("Failed to initialize JWT service: {e}"))
 }
 
 /// Initialize Email service (optional - requires SMTP configuration)
