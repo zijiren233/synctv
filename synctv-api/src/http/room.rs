@@ -970,19 +970,7 @@ pub async fn list_or_get_rooms(
     _auth: Option<AuthUser>,
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> AppResult<Json<serde_json::Value>> {
-    // Check if specific room ID is requested
-    if let Some(room_id) = params.get("id") {
-        // Get single room
-        let response = state
-            .client_api
-            .get_room(room_id)
-            .await
-            .map_err(super::AppError::internal_server_error)?;
-
-        return Ok(Json(serde_json::json!(response.room)));
-    }
-
+) -> AppResult<Json<ListRoomsResponse>> {
     // List rooms with optional filtering
     let search = params.get("search").map(|s| s.to_string()).unwrap_or_default();
     let limit = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
@@ -1000,7 +988,7 @@ pub async fn list_or_get_rooms(
         .await
         .map_err(super::AppError::internal_server_error)?;
 
-    Ok(Json(serde_json::json!(response)))
+    Ok(Json(response))
 }
 
 /// Unified handler for updating room settings via PATCH

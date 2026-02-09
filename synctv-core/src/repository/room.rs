@@ -96,9 +96,9 @@ impl RoomRepository {
         let mut where_conditions = vec!["r.deleted_at IS NULL"];
 
         let status_filter = match &query.status {
-            Some(RoomStatus::Pending) => "r.status = 'pending'",
-            Some(RoomStatus::Active) => "r.status = 'active'",
-            Some(RoomStatus::Banned) => "r.status = 'banned'",
+            Some(RoomStatus::Pending) => "r.status = 2",
+            Some(RoomStatus::Active) => "r.status = 1",
+            Some(RoomStatus::Banned) => "r.status = 3",
             None => "",
         };
         if !status_filter.is_empty() {
@@ -166,9 +166,9 @@ impl RoomRepository {
 
         // Dynamic query building for status filter
         let status_filter = match &query.status {
-            Some(RoomStatus::Pending) => "r.status = 'pending'",
-            Some(RoomStatus::Active) => "r.status = 'active'",
-            Some(RoomStatus::Banned) => "r.status = 'banned'",
+            Some(RoomStatus::Pending) => "r.status = 2",
+            Some(RoomStatus::Active) => "r.status = 1",
+            Some(RoomStatus::Banned) => "r.status = 3",
             None => "",
         };
         if !status_filter.is_empty() {
@@ -252,7 +252,7 @@ impl RoomRepository {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) as count
              FROM rooms
-             WHERE id = $1 AND deleted_at IS NULL AND status = 'active'"
+             WHERE id = $1 AND deleted_at IS NULL AND status = 1"
         )
         .bind(room_id.as_str())
         .fetch_one(&self.pool)

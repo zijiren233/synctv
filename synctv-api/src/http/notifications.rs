@@ -120,14 +120,16 @@ pub async fn mark_as_read(
 pub async fn mark_all_as_read(
     auth: AuthUser,
     State(state): State<AppState>,
-    Json(req): Json<MarkAllAsReadRequest>,
+    req: Option<Json<MarkAllAsReadRequest>>,
 ) -> AppResult<StatusCode> {
     let notification_service = state.notification_service.as_ref()
         .ok_or_else(|| anyhow::anyhow!("Notification service not configured"))?;
 
+    let before = req.and_then(|r| r.before);
+
     notification_service
         .mark_all_as_read(&auth.user_id, synctv_core::models::notification::MarkAllAsReadRequest {
-            before: req.before,
+            before,
         })
         .await?;
 
