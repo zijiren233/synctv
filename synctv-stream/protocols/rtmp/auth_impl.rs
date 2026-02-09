@@ -112,9 +112,7 @@ impl RtmpAuthCallback for RtmpAuthCallbackImpl {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::protocols::rtmp::auth::{Channel, NoAuthCallback};
-    use std::sync::Arc;
+    use crate::protocols::rtmp::auth::Channel;
 
     // Mock PublishKeyService for testing
     struct MockPublishKeyService;
