@@ -33,7 +33,7 @@ pub struct RtmpServer {
     registry: Arc<dyn StreamRegistryTrait>,
     node_id: String,
     gop_num: usize,
-    pub(in crate::streaming) stream_hub: Arc<Mutex<StreamsHub>>,
+    pub(in crate::livestream) stream_hub: Arc<Mutex<StreamsHub>>,
 }
 
 impl RtmpServer {
