@@ -83,8 +83,8 @@ impl RoomMemberRepository {
 
         // 1. Check if room exists and lock the row
         let room_row = sqlx::query(
-            "SELECT room_id, status FROM rooms
-             WHERE room_id = $1
+            "SELECT id, status FROM rooms
+             WHERE id = $1
              FOR UPDATE"
         )
         .bind(member.room_id.as_str())
@@ -98,8 +98,8 @@ impl RoomMemberRepository {
 
         // 2. Check if room is active (if option enabled)
         if options.check_room_active {
-            let status: String = room_row.try_get("status")?;
-            if status != "Active" {
+            let status: i16 = room_row.try_get("status")?;
+            if status != 1 {  // 1 = Active
                 return Err(Error::InvalidInput("Room is not active".to_string()));
             }
         }

@@ -67,7 +67,7 @@ BEGIN
     VALUES (
         nanoid(12),
         NEW.id,
-        NEW.creator_id,
+        NEW.created_by,
         '',
         NULL,
         0
