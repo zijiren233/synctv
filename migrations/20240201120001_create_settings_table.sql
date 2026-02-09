@@ -4,13 +4,13 @@
 
 CREATE TABLE IF NOT EXISTS settings (
     key VARCHAR(200) PRIMARY KEY,
-    group VARCHAR(100) NOT NULL,
+    group_name VARCHAR(100) NOT NULL,
     value TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_settings_group ON settings(group);
+CREATE INDEX idx_settings_group ON settings(group_name);
 
 -- Index for faster group lookups
 CREATE INDEX IF NOT EXISTS idx_settings_group_name ON settings(group_name);
@@ -55,6 +55,6 @@ CREATE TRIGGER settings_change_trigger
 -- Add comments
 COMMENT ON TABLE settings IS 'Runtime system settings organized by groups with JSON values';
 COMMENT ON COLUMN settings.key IS 'Unique settings key (e.g., server, email, oauth)';
-COMMENT ON COLUMN settings.group IS 'Settings group name (e.g., server, email, oauth)';
+COMMENT ON COLUMN settings.group_name IS 'Settings group name (e.g., server, email, oauth)';
 COMMENT ON FUNCTION notify_settings_change() IS 'Notifies all replicas via PostgreSQL LISTEN/NOTIFY when settings change';
 COMMENT ON TRIGGER settings_change_trigger ON settings IS 'Triggers settings_changed notification for hot reload across replicas';

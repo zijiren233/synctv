@@ -93,19 +93,19 @@ CREATE OR REPLACE FUNCTION create_audit_logs_partitions(
 ) RETURNS JSON AS $$
 DECLARE
     i INTEGER;
-    current_date DATE;
+    partition_date DATE;
     result JSON;
-    partitions JSON := '[]'::JSON;
+    partitions JSONB := '[]'::JSONB;
     success_count INTEGER := 0;
 BEGIN
     -- 从下个月开始创建
-    current_date := DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month';
+    partition_date := DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month';
 
     FOR i IN 1..months_ahead LOOP
-        result := create_audit_logs_partition(current_date);
-        partitions := partitions || result;
+        result := create_audit_logs_partition(partition_date);
+        partitions := partitions || result::JSONB;
         success_count := success_count + 1;
-        current_date := current_date + INTERVAL '1 month';
+        partition_date := partition_date + INTERVAL '1 month';
     END LOOP;
 
     RAISE NOTICE 'Created % audit log partitions', months_ahead;
