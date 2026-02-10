@@ -304,6 +304,59 @@ impl RoomService {
         Ok(())
     }
 
+    /// Check if guests are allowed to access a room
+    ///
+    /// Validates guest access based on:
+    /// 1. Global enable_guest setting
+    /// 2. Room allow_guest_join setting
+    /// 3. Room password requirement (guests blocked if password required)
+    ///
+    /// # Arguments
+    /// * `room_id` - Room ID to check
+    /// * `settings_registry` - Optional global settings registry (if None, guest mode is allowed)
+    ///
+    /// # Returns
+    /// * `Ok(())` if guests are allowed
+    /// * `Err` with appropriate error message if guests are not allowed
+    pub async fn check_guest_allowed(
+        &self,
+        room_id: &RoomId,
+        settings_registry: Option<&crate::service::SettingsRegistry>,
+    ) -> Result<()> {
+        // Check global enable_guest setting
+        if let Some(registry) = settings_registry {
+            let enable_guest = registry.enable_guest.get().unwrap_or(true);
+            if !enable_guest {
+                tracing::debug!(room_id = %room_id, "Guest access denied: global guest mode disabled");
+                return Err(Error::Authorization(
+                    "Guest mode is disabled globally".to_string(),
+                ));
+            }
+        }
+
+        // Get room settings
+        let room_settings = self.room_settings_repo.get(room_id).await?;
+
+        // Check room-level allow_guest_join setting
+        if !room_settings.allow_guest_join.0 {
+            tracing::debug!(room_id = %room_id, "Guest access denied: room guest mode disabled");
+            return Err(Error::Authorization(
+                "Guest access is not allowed in this room".to_string(),
+            ));
+        }
+
+        // Check if room has password (guests cannot join password-protected rooms)
+        if room_settings.require_password.0 {
+            tracing::debug!(room_id = %room_id, "Guest access denied: room has password");
+            return Err(Error::Authorization(
+                "Guests cannot join password-protected rooms. Please create an account and join as a member.".to_string(),
+            ));
+        }
+
+        tracing::debug!(room_id = %room_id, "Guest access allowed");
+        Ok(())
+    }
+
     /// Delete a room (creator only)
     pub async fn delete_room(&self, room_id: RoomId, user_id: UserId) -> Result<()> {
         tracing::info!(room_id = %room_id, user_id = %user_id, "Deleting room");
@@ -385,8 +438,11 @@ impl RoomService {
     /// Update single room setting
     pub async fn update_room_setting(&self, room_id: &RoomId, key: &str, value: &serde_json::Value) -> Result<String> {
         use crate::models::{AutoPlaySettings, PlayMode, room_settings::{ChatEnabled, DanmakuEnabled, AutoPlay, AllowGuestJoin, RequirePassword, MaxMembers, AutoPlayNext, LoopPlaylist, ShufflePlaylist}};
+        use crate::service::notification::GuestKickReason;
 
         let mut settings = self.room_settings_repo.get(room_id).await?;
+        let mut should_kick_guests = false;
+        let mut kick_reason = GuestKickReason::RoomGuestModeDisabled;
 
         // Update the specific setting based on key
         match key {
@@ -412,11 +468,21 @@ impl RoomService {
             "allow_guest_join" => {
                 if let Some(bool_val) = value.as_bool() {
                     settings.allow_guest_join = AllowGuestJoin(bool_val);
+                    // If guest mode is disabled, kick all guests
+                    if !bool_val {
+                        should_kick_guests = true;
+                        kick_reason = GuestKickReason::RoomGuestModeDisabled;
+                    }
                 }
             }
             "require_password" => {
                 if let Some(bool_val) = value.as_bool() {
                     settings.require_password = RequirePassword(bool_val);
+                    // If password is now required, kick all guests (guests cannot access password-protected rooms)
+                    if bool_val {
+                        should_kick_guests = true;
+                        kick_reason = GuestKickReason::RoomPasswordAdded;
+                    }
                 }
             }
             "max_members" => {
@@ -446,6 +512,13 @@ impl RoomService {
 
         // Save the updated settings
         self.room_settings_repo.set_settings(room_id, &settings).await?;
+
+        // Kick guests if needed
+        if should_kick_guests {
+            if let Err(e) = self.notification_service.kick_all_guests(room_id, kick_reason).await {
+                tracing::warn!("Failed to kick guests after settings change: {}", e);
+            }
+        }
 
         // Return updated settings as JSON string
         serde_json::to_string(&settings)
@@ -477,8 +550,18 @@ impl RoomService {
 
     /// Update room password
     pub async fn update_room_password(&self, room_id: &RoomId, password_hash: Option<String>) -> Result<()> {
+        use crate::service::notification::GuestKickReason;
+
         if let Some(pwd_hash) = password_hash {
             self.room_settings_repo.set(room_id, "password", &pwd_hash).await?;
+
+            // Kick all guests when password is added (guests cannot access password-protected rooms)
+            if let Err(e) = self.notification_service.kick_all_guests(
+                room_id,
+                GuestKickReason::RoomPasswordAdded
+            ).await {
+                tracing::warn!("Failed to kick guests after password was added: {}", e);
+            }
         } else {
             self.room_settings_repo.delete(room_id, "password").await?;
         }

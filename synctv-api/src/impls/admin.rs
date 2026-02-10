@@ -108,8 +108,11 @@ impl AdminApiImpl {
         // Use a system admin user for admin operations
         let admin_uid = UserId::from_string("system".to_string());
 
-        self.room_service.delete_room(rid, admin_uid).await
+        self.room_service.delete_room(rid.clone(), admin_uid).await
             .map_err(|e| e.to_string())?;
+
+        // Force disconnect all connections in the deleted room
+        self.connection_manager.disconnect_room(&rid);
 
         Ok(crate::proto::admin::DeleteRoomResponse {
             success: true,
@@ -523,6 +526,9 @@ impl AdminApiImpl {
         user.deleted_at = Some(chrono::Utc::now());
         self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
 
+        // Force disconnect all user connections (WebSocket and streaming)
+        self.connection_manager.disconnect_user(&uid);
+
         Ok(crate::proto::admin::DeleteUserResponse { success: true })
     }
 
@@ -558,6 +564,9 @@ impl AdminApiImpl {
 
         user.status = UserStatus::Banned;
         let updated = self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
+
+        // Force disconnect all user connections (WebSocket and streaming)
+        self.connection_manager.disconnect_user(&uid);
 
         Ok(crate::proto::admin::BanUserResponse {
             user: Some(admin_user_to_proto(&updated)),
@@ -656,6 +665,9 @@ impl AdminApiImpl {
 
         room.deleted_at = Some(chrono::Utc::now());
         let updated = self.room_service.admin_update_room(&room).await.map_err(|e| e.to_string())?;
+
+        // Force disconnect all connections in the banned room
+        self.connection_manager.disconnect_room(&rid);
 
         Ok(crate::proto::admin::BanRoomResponse {
             room: Some(admin_room_to_proto(

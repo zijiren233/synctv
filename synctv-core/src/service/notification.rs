@@ -12,6 +12,33 @@ use crate::{
     Result,
 };
 
+/// Guest kick reasons
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuestKickReason {
+    /// Global guest mode was disabled
+    GlobalGuestModeDisabled,
+    /// Room guest mode was disabled
+    RoomGuestModeDisabled,
+    /// Room password was added (guests cannot join password-protected rooms)
+    RoomPasswordAdded,
+    /// Admin manually kicked the guest
+    AdminKick,
+}
+
+impl GuestKickReason {
+    /// Get human-readable message for the kick reason
+    #[must_use]
+    pub const fn message(&self) -> &'static str {
+        match self {
+            Self::GlobalGuestModeDisabled => "Guest mode has been disabled globally",
+            Self::RoomGuestModeDisabled => "Guest access has been disabled for this room",
+            Self::RoomPasswordAdded => "This room now requires authentication",
+            Self::AdminKick => "You have been removed from the room",
+        }
+    }
+}
+
 /// Room event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
@@ -61,6 +88,11 @@ pub enum RoomEvent {
     },
     /// Member kicked
     MemberKicked { user_id: UserId },
+    /// Guest kicked (for anonymous guests)
+    GuestKicked {
+        reason: GuestKickReason,
+        message: String,
+    },
     /// Room settings updated
     SettingsUpdated { settings: serde_json::Value },
     /// Room deleted
@@ -75,7 +107,7 @@ impl RoomEvent {
     }
 
     /// Get event type name
-    #[must_use] 
+    #[must_use]
     pub const fn event_type(&self) -> &'static str {
         match self {
             Self::UserJoined { .. } => "user_joined",
@@ -88,6 +120,7 @@ impl RoomEvent {
             Self::PlaylistReordered { .. } => "playlist_reordered",
             Self::PermissionChanged { .. } => "permission_changed",
             Self::MemberKicked { .. } => "member_kicked",
+            Self::GuestKicked { .. } => "guest_kicked",
             Self::SettingsUpdated { .. } => "settings_updated",
             Self::RoomDeleted => "room_deleted",
         }
@@ -408,6 +441,35 @@ impl NotificationService {
         let event = RoomEvent::RoomDeleted;
         self.broadcast_to_room(room_id, event).await
     }
+
+    /// Kick all guests from a room
+    ///
+    /// This sends a `GuestKicked` event to all guest connections in the room.
+    /// The actual disconnection logic should be handled by the WebSocket server
+    /// or connection manager when they receive this event.
+    ///
+    /// # Arguments
+    /// * `room_id` - Room ID to kick guests from
+    /// * `reason` - Reason for kicking guests
+    pub async fn kick_all_guests(
+        &self,
+        room_id: &RoomId,
+        reason: GuestKickReason,
+    ) -> Result<()> {
+        let message = reason.message().to_string();
+        let event = RoomEvent::GuestKicked {
+            reason,
+            message,
+        };
+
+        tracing::info!(
+            "Kicking all guests from room {} due to: {}",
+            room_id.as_str(),
+            event.event_type()
+        );
+
+        self.broadcast_to_room(room_id, event).await
+    }
 }
 
 impl Default for NotificationService {
@@ -575,6 +637,10 @@ mod tests {
             },
             RoomEvent::MemberKicked {
                 user_id: UserId::new(),
+            },
+            RoomEvent::GuestKicked {
+                reason: GuestKickReason::RoomGuestModeDisabled,
+                message: "Guest access has been disabled for this room".to_string(),
             },
             RoomEvent::SettingsUpdated {
                 settings: serde_json::json!({"key": "value"}),

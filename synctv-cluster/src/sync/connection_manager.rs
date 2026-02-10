@@ -3,7 +3,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use synctv_core::models::id::{RoomId, UserId};
+use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
+
+/// Disconnect signal for forcing connections to close
+#[derive(Debug, Clone)]
+pub enum DisconnectSignal {
+    /// Disconnect a specific connection
+    Connection(String),
+    /// Disconnect all connections for a user
+    User(UserId),
+    /// Disconnect all connections in a room
+    Room(RoomId),
+    /// Disconnect a specific user from a specific room
+    UserFromRoom { user_id: UserId, room_id: RoomId },
+}
 
 /// Connection information
 #[derive(Debug, Clone)]
@@ -92,12 +106,16 @@ pub struct ConnectionManager {
     /// Metrics
     total_connections: Arc<AtomicU64>,
     total_messages: Arc<AtomicU64>,
+
+    /// Broadcast channel for disconnect signals
+    disconnect_tx: Arc<broadcast::Sender<DisconnectSignal>>,
 }
 
 impl ConnectionManager {
     /// Create a new `ConnectionManager`
-    #[must_use] 
+    #[must_use]
     pub fn new(limits: ConnectionLimits) -> Self {
+        let (disconnect_tx, _) = broadcast::channel(1000); // Buffer for disconnect signals
         Self {
             connections: Arc::new(DashMap::new()),
             user_connections: Arc::new(DashMap::new()),
@@ -105,7 +123,69 @@ impl ConnectionManager {
             limits: Arc::new(limits),
             total_connections: Arc::new(AtomicU64::new(0)),
             total_messages: Arc::new(AtomicU64::new(0)),
+            disconnect_tx: Arc::new(disconnect_tx),
         }
+    }
+
+    /// Subscribe to disconnect signals
+    ///
+    /// Each connection should subscribe to this and monitor for disconnect signals
+    /// that apply to them (by connection ID, user ID, or room ID)
+    #[must_use]
+    pub fn subscribe_disconnect(&self) -> broadcast::Receiver<DisconnectSignal> {
+        self.disconnect_tx.subscribe()
+    }
+
+    /// Force disconnect a specific connection
+    ///
+    /// Sends a signal to the connection to close immediately
+    pub fn disconnect_connection(&self, connection_id: &str) {
+        info!(
+            connection_id = %connection_id,
+            "Forcing connection disconnect"
+        );
+        let _ = self.disconnect_tx.send(DisconnectSignal::Connection(connection_id.to_string()));
+    }
+
+    /// Force disconnect all connections for a user
+    ///
+    /// Used when a user is banned or kicked from all rooms
+    pub fn disconnect_user(&self, user_id: &UserId) {
+        let conn_count = self.user_connection_count(user_id);
+        info!(
+            user_id = %user_id.as_str(),
+            connection_count = conn_count,
+            "Forcing disconnect of all user connections"
+        );
+        let _ = self.disconnect_tx.send(DisconnectSignal::User(user_id.clone()));
+    }
+
+    /// Force disconnect all connections in a room
+    ///
+    /// Used when a room is deleted or all users need to be removed
+    pub fn disconnect_room(&self, room_id: &RoomId) {
+        let conn_count = self.room_connection_count(room_id);
+        info!(
+            room_id = %room_id.as_str(),
+            connection_count = conn_count,
+            "Forcing disconnect of all room connections"
+        );
+        let _ = self.disconnect_tx.send(DisconnectSignal::Room(room_id.clone()));
+    }
+
+    /// Force disconnect a specific user from a specific room
+    ///
+    /// Used when kicking a member from a room (not banning globally)
+    pub fn disconnect_user_from_room(&self, user_id: &UserId, room_id: &RoomId) {
+        info!(
+            user_id = %user_id.as_str(),
+            room_id = %room_id.as_str(),
+            "Forcing disconnect of user from room"
+        );
+        let _ = self.disconnect_tx.send(DisconnectSignal::UserFromRoom {
+            user_id: user_id.clone(),
+            room_id: room_id.clone(),
+        });
     }
 
     /// Register a new connection

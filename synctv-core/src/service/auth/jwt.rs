@@ -4,24 +4,25 @@ use jsonwebtoken::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::str::FromStr;
 
-use crate::{models::UserId, models::UserRole, Error, Result};
+use crate::{models::{UserId, RoomId}, Error, Result};
 
 /// JWT token type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
     Access,  // 1 hour
     Refresh, // 30 days
+    Guest,   // 4 hours (for guest sessions)
 }
 
 /// JWT claims structure
+///
+/// Note: Does NOT contain role/permissions - these must be fetched from database in real-time
+/// to ensure current permissions are enforced (roles can change after token issuance)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     /// User ID
     pub sub: String,
-    /// User RBAC role (root, admin, user)
-    pub role: String,
     /// Token type (access or refresh)
     pub typ: String,
     /// Issued at (Unix timestamp)
@@ -36,12 +37,6 @@ impl Claims {
         UserId::from_string(self.sub.clone())
     }
 
-    /// Parse role from string
-    pub fn role(&self) -> Result<UserRole> {
-        UserRole::from_str(&self.role)
-            .map_err(|_| Error::Internal(format!("Invalid role in token: {}", self.role)))
-    }
-
     #[must_use]
     pub fn is_access_token(&self) -> bool {
         self.typ == "access"
@@ -50,6 +45,51 @@ impl Claims {
     #[must_use]
     pub fn is_refresh_token(&self) -> bool {
         self.typ == "refresh"
+    }
+
+    #[must_use]
+    pub fn is_guest_token(&self) -> bool {
+        self.typ == "guest"
+    }
+}
+
+/// Guest token claims structure (stateless guest authentication)
+///
+/// Guest tokens contain the room ID and a random session ID instead of a user ID.
+/// Format: `guest:{room_id}:{session_id}`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuestClaims {
+    /// Guest subject (format: "guest:{room_id}:{session_id}")
+    pub sub: String,
+    /// Room ID
+    pub room_id: String,
+    /// Random session ID for this guest
+    pub session_id: String,
+    /// Token type (always "guest")
+    pub typ: String,
+    /// Issued at (Unix timestamp)
+    pub iat: i64,
+    /// Expiration time (Unix timestamp)
+    pub exp: i64,
+}
+
+impl GuestClaims {
+    /// Parse room ID from claims
+    #[must_use]
+    pub fn room_id(&self) -> RoomId {
+        RoomId::from_string(self.room_id.clone())
+    }
+
+    /// Get session ID
+    #[must_use]
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Check if this is a guest token
+    #[must_use]
+    pub fn is_guest(&self) -> bool {
+        self.sub.starts_with("guest:")
     }
 }
 
@@ -93,26 +133,27 @@ impl JwtService {
     ///
     /// # Arguments
     /// * `user_id` - User ID
-    /// * `role` - User RBAC role (root, admin, user)
     /// * `token_type` - Access or refresh token
+    ///
+    /// Note: Role is NOT included in token - it must be fetched from database on each request
     pub fn sign_token(
         &self,
         user_id: &UserId,
-        role: UserRole,
         token_type: TokenType,
     ) -> Result<String> {
         let now = Utc::now();
         let duration = match token_type {
             TokenType::Access => Duration::hours(1),
             TokenType::Refresh => Duration::days(30),
+            TokenType::Guest => Duration::hours(4), // Not used for user tokens
         };
 
         let claims = Claims {
             sub: user_id.as_str().to_string(),
-            role: role.as_str().to_string(),
             typ: match token_type {
                 TokenType::Access => "access".to_string(),
                 TokenType::Refresh => "refresh".to_string(),
+                TokenType::Guest => "guest".to_string(),
             },
             iat: now.timestamp(),
             exp: (now + duration).timestamp(),
@@ -166,6 +207,83 @@ impl JwtService {
             return Err(Error::Authentication("Not a refresh token".to_string()));
         }
         Ok(claims)
+    }
+
+    /// Sign a guest token for stateless guest authentication
+    ///
+    /// Guest tokens do NOT store user information in the database.
+    /// Instead, they contain the room ID and a random session ID.
+    ///
+    /// # Arguments
+    /// * `room_id` - Room ID the guest is joining
+    ///
+    /// # Returns
+    /// * Guest JWT token string
+    pub fn sign_guest_token(&self, room_id: &RoomId) -> Result<String> {
+        let now = Utc::now();
+        let duration = Duration::hours(4); // Guest tokens expire after 4 hours
+        let session_id = nanoid::nanoid!(16); // Generate random session ID
+
+        let guest_claims = GuestClaims {
+            sub: format!("guest:{}:{}", room_id.as_str(), session_id),
+            room_id: room_id.as_str().to_string(),
+            session_id,
+            typ: "guest".to_string(),
+            iat: now.timestamp(),
+            exp: (now + duration).timestamp(),
+        };
+
+        let header = Header::new(self.algorithm);
+        encode(&header, &guest_claims, &self.encoding_key)
+            .map_err(|e| Error::Internal(format!("Failed to sign guest token: {e}")))
+    }
+
+    /// Verify a guest token and extract guest claims
+    ///
+    /// # Arguments
+    /// * `token` - Guest JWT token string
+    ///
+    /// # Returns
+    /// * Guest claims with room ID and session ID
+    pub fn verify_guest_token(&self, token: &str) -> Result<GuestClaims> {
+        let mut validation = Validation::new(self.algorithm);
+        validation.validate_exp = true;
+        validation.validate_nbf = false;
+        validation.leeway = 60; // 60 seconds leeway for clock skew
+
+        let token_data: TokenData<GuestClaims> = decode(token, &self.decoding_key, &validation)
+            .map_err(|e| match e.kind() {
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
+                    Error::Authentication("Guest token expired".to_string())
+                }
+                jsonwebtoken::errors::ErrorKind::InvalidToken => {
+                    Error::Authentication("Invalid guest token".to_string())
+                }
+                jsonwebtoken::errors::ErrorKind::InvalidSignature => {
+                    Error::Authentication("Invalid guest token signature".to_string())
+                }
+                _ => Error::Authentication(format!("Guest token verification failed: {e}")),
+            })?;
+
+        let claims = token_data.claims;
+
+        // Verify it's actually a guest token
+        if !claims.is_guest() {
+            return Err(Error::Authentication("Not a guest token".to_string()));
+        }
+
+        Ok(claims)
+    }
+
+    /// Check if a token string is a guest token (by attempting to parse it)
+    ///
+    /// # Arguments
+    /// * `token` - JWT token string
+    ///
+    /// # Returns
+    /// * `true` if token is a valid guest token, `false` otherwise
+    pub fn is_guest_token(&self, token: &str) -> bool {
+        self.verify_guest_token(token).is_ok()
     }
 
     /// Sign a custom JSON value as JWT
@@ -243,13 +361,11 @@ mod tests {
     fn test_sign_and_verify_access_token() {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
-        let role = UserRole::Admin;
 
-        let token = jwt.sign_token(&user_id, role, TokenType::Access).unwrap();
+        let token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
         let claims = jwt.verify_access_token(&token).unwrap();
 
         assert_eq!(claims.sub, user_id.as_str());
-        assert_eq!(claims.role().unwrap(), UserRole::Admin);
         assert!(claims.is_access_token());
     }
 
@@ -257,13 +373,11 @@ mod tests {
     fn test_sign_and_verify_refresh_token() {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
-        let role = UserRole::User;
 
-        let token = jwt.sign_token(&user_id, role, TokenType::Refresh).unwrap();
+        let token = jwt.sign_token(&user_id, TokenType::Refresh).unwrap();
         let claims = jwt.verify_refresh_token(&token).unwrap();
 
         assert_eq!(claims.sub, user_id.as_str());
-        assert_eq!(claims.role().unwrap(), UserRole::User);
         assert!(claims.is_refresh_token());
     }
 
@@ -272,11 +386,11 @@ mod tests {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
 
-        let access_token = jwt.sign_token(&user_id, UserRole::User, TokenType::Access).unwrap();
+        let access_token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
         let result = jwt.verify_refresh_token(&access_token);
         assert!(result.is_err());
 
-        let refresh_token = jwt.sign_token(&user_id, UserRole::User, TokenType::Refresh).unwrap();
+        let refresh_token = jwt.sign_token(&user_id, TokenType::Refresh).unwrap();
         let result = jwt.verify_access_token(&refresh_token);
         assert!(result.is_err());
     }
@@ -293,7 +407,7 @@ mod tests {
         let jwt = create_jwt_service();
         let user_id = UserId::new();
 
-        let token = jwt.sign_token(&user_id, UserRole::User, TokenType::Access).unwrap();
+        let token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
         let mut parts: Vec<&str> = token.split('.').collect();
         parts[1] = "tampered_payload";
         let tampered_token = parts.join(".");
@@ -305,6 +419,59 @@ mod tests {
     #[test]
     fn test_empty_secret() {
         let result = JwtService::new("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sign_and_verify_guest_token() {
+        let jwt = create_jwt_service();
+        let room_id = RoomId::new();
+
+        let token = jwt.sign_guest_token(&room_id).unwrap();
+        let claims = jwt.verify_guest_token(&token).unwrap();
+
+        assert_eq!(claims.room_id(), room_id);
+        assert!(claims.is_guest());
+        assert_eq!(claims.typ, "guest");
+        assert!(!claims.session_id().is_empty());
+        assert!(claims.sub.starts_with("guest:"));
+    }
+
+    #[test]
+    fn test_guest_token_contains_session_id() {
+        let jwt = create_jwt_service();
+        let room_id = RoomId::new();
+
+        let token1 = jwt.sign_guest_token(&room_id).unwrap();
+        let token2 = jwt.sign_guest_token(&room_id).unwrap();
+
+        let claims1 = jwt.verify_guest_token(&token1).unwrap();
+        let claims2 = jwt.verify_guest_token(&token2).unwrap();
+
+        // Each guest token should have a unique session ID
+        assert_ne!(claims1.session_id(), claims2.session_id());
+    }
+
+    #[test]
+    fn test_is_guest_token() {
+        let jwt = create_jwt_service();
+        let room_id = RoomId::new();
+
+        let guest_token = jwt.sign_guest_token(&room_id).unwrap();
+        assert!(jwt.is_guest_token(&guest_token));
+
+        let user_id = UserId::new();
+        let access_token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
+        assert!(!jwt.is_guest_token(&access_token));
+    }
+
+    #[test]
+    fn test_verify_regular_token_as_guest_fails() {
+        let jwt = create_jwt_service();
+        let user_id = UserId::new();
+
+        let access_token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
+        let result = jwt.verify_guest_token(&access_token);
         assert!(result.is_err());
     }
 }

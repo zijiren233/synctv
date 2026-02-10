@@ -21,6 +21,7 @@ use axum::{
     Router,
 };
 use serde::Deserialize;
+use std::sync::Arc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, info, warn};
 
@@ -79,6 +80,7 @@ async fn handle_hls_segment_with_disguise(
 ///
 /// Streaming endpoint for HTTP-FLV live streaming.
 /// Creates a lazy-load pull stream on first request.
+/// Supports disconnect signals for forced termination (ban/kick).
 ///
 /// # Response
 /// Returns streaming FLV data with `video/x-flv` content type.
@@ -87,11 +89,23 @@ async fn handle_flv_stream(
     Query(params): Query<LiveQuery>,
     State(state): State<AppState>,
 ) -> AppResult<Response> {
-    let room_id = params
+    let room_id_str = params
         .room_id
         .ok_or_else(|| AppError::bad_request("roomId query parameter is required"))?;
 
-    info!(room_id = %room_id, media_id = %media_id, "FLV streaming request");
+    info!(room_id = %room_id_str, media_id = %media_id, "FLV streaming request");
+
+    // Extract user_id from token if provided
+    let user_id = if let Some(token) = &params.token {
+        // Validate token and extract user_id
+        let validator = synctv_core::service::auth::JwtValidator::new(Arc::new(state.jwt_service.clone()));
+        let bearer_token = format!("Bearer {}", token);
+        validator
+            .validate_http_extract_user_id(&bearer_token)
+            .ok()
+    } else {
+        None
+    };
 
     // Get live streaming infrastructure
     let infrastructure = state
@@ -100,14 +114,100 @@ async fn handle_flv_stream(
         .ok_or_else(|| AppError::internal_server_error("Live streaming not configured"))?;
 
     // Create FLV streaming session with lazy-load pull
-    let rx = FlvStreamingApi::create_session_with_pull(infrastructure, &room_id, &media_id)
+    let rx = FlvStreamingApi::create_session_with_pull(infrastructure, &room_id_str, &media_id)
         .await
         .map_err(|e| AppError::internal_server_error(format!("Failed to create FLV session: {e}")))?;
 
-    // Convert to streaming response
-    let body = Body::from_stream(UnboundedReceiverStream::new(rx));
+    // Subscribe to disconnect signals if we have a user_id
+    let mut disconnect_rx = state.connection_manager.subscribe_disconnect();
+    let room_id = synctv_core::models::id::RoomId::from_string(room_id_str.clone());
 
-    info!(room_id = %room_id, media_id = %media_id, "FLV streaming started");
+    // Create channel wrapper that monitors disconnect signals
+    let (tx, rx_wrapped) = tokio::sync::mpsc::unbounded_channel();
+
+    // Spawn task to forward data and monitor disconnect signals
+    let user_id_clone = user_id.clone();
+    let room_id_clone = room_id.clone();
+    tokio::spawn(async move {
+        let mut rx = rx;
+        loop {
+            tokio::select! {
+                // Forward FLV data from source
+                data = rx.recv() => {
+                    match data {
+                        Some(chunk) => {
+                            if tx.send(chunk).is_err() {
+                                debug!("FLV client disconnected");
+                                break;
+                            }
+                        }
+                        None => {
+                            debug!("FLV source ended");
+                            break;
+                        }
+                    }
+                }
+
+                // Monitor disconnect signals
+                signal = disconnect_rx.recv() => {
+                    match signal {
+                        Ok(synctv_cluster::sync::DisconnectSignal::User(uid)) => {
+                            if let Some(ref user_id) = user_id_clone {
+                                if uid == *user_id {
+                                    info!(
+                                        user_id = %user_id.as_str(),
+                                        "FLV stream terminated: user disconnected (ban/delete)"
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(synctv_cluster::sync::DisconnectSignal::Room(rid)) => {
+                            if rid == room_id_clone {
+                                info!(
+                                    room_id = %room_id_clone.as_str(),
+                                    "FLV stream terminated: room disconnected (ban/delete)"
+                                );
+                                break;
+                            }
+                        }
+                        Ok(synctv_cluster::sync::DisconnectSignal::UserFromRoom { user_id: uid, room_id: rid }) => {
+                            if let Some(ref user_id) = user_id_clone {
+                                if uid == *user_id && rid == room_id_clone {
+                                    info!(
+                                        user_id = %user_id.as_str(),
+                                        room_id = %room_id_clone.as_str(),
+                                        "FLV stream terminated: user kicked from room"
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(synctv_cluster::sync::DisconnectSignal::Connection(_)) => {
+                            // Connection-specific signals don't apply to FLV streams
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            warn!("FLV disconnect signal channel lagged");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            warn!("FLV disconnect signal channel closed");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Convert to streaming response
+    let body = Body::from_stream(UnboundedReceiverStream::new(rx_wrapped));
+
+    info!(
+        room_id = %room_id.as_str(),
+        media_id = %media_id,
+        authenticated = %user_id.is_some(),
+        "FLV streaming started"
+    );
 
     Ok(Response::builder()
         .status(StatusCode::OK)

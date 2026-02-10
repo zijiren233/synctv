@@ -326,8 +326,11 @@ impl ClientApiImpl {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(req.room_id);
 
-        self.room_service.leave_room(rid, uid).await
+        self.room_service.leave_room(rid.clone(), uid.clone()).await
             .map_err(|e| e.to_string())?;
+
+        // Force disconnect the user's connections from this room
+        self.connection_manager.disconnect_user_from_room(&uid, &rid);
 
         Ok(crate::proto::client::LeaveRoomResponse {
             success: true,
@@ -342,8 +345,11 @@ impl ClientApiImpl {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(req.room_id);
 
-        self.room_service.delete_room(rid, uid).await
+        self.room_service.delete_room(rid.clone(), uid).await
             .map_err(|e| e.to_string())?;
+
+        // Force disconnect all connections in the deleted room
+        self.connection_manager.disconnect_room(&rid);
 
         Ok(crate::proto::client::DeleteRoomResponse {
             success: true,
@@ -1113,8 +1119,11 @@ impl ClientApiImpl {
         let rid = RoomId::from_string(room_id.to_string());
         let target_uid = UserId::from_string(req.user_id.clone());
 
-        self.room_service.kick_member(rid, uid, target_uid).await
+        self.room_service.kick_member(rid.clone(), uid, target_uid.clone()).await
             .map_err(|e| e.to_string())?;
+
+        // Force disconnect the kicked user's connections in this specific room
+        self.connection_manager.disconnect_user_from_room(&target_uid, &rid);
 
         Ok(crate::proto::client::KickMemberResponse {
             success: true,
@@ -1133,9 +1142,12 @@ impl ClientApiImpl {
         let reason = if req.reason.is_empty() { None } else { Some(req.reason) };
 
         self.room_service.member_service()
-            .ban_member(rid, uid, target_uid, reason)
+            .ban_member(rid.clone(), uid, target_uid.clone(), reason)
             .await
             .map_err(|e| e.to_string())?;
+
+        // Force disconnect the banned user's connections in this specific room
+        self.connection_manager.disconnect_user_from_room(&target_uid, &rid);
 
         Ok(crate::proto::client::BanMemberResponse { success: true })
     }

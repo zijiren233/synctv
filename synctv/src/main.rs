@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 
 use synctv_core::{
     logging,
-    bootstrap::{load_config, init_database, init_services},
+    bootstrap::{load_config, init_database, init_services, bootstrap_root_user},
     provider::{AlistProvider, BilibiliProvider, EmbyProvider},
 };
 use synctv_cluster::sync::{RoomMessageHub, ConnectionManager, ClusterManager, ClusterConfig};
@@ -78,6 +78,14 @@ async fn main() -> Result<()> {
             anyhow::anyhow!("Migration failed: {e}")
         })?;
     info!("Migrations completed");
+
+    // 4.3. Bootstrap root user (if enabled and no root user exists)
+    info!("Checking root user bootstrap...");
+    if let Err(e) = bootstrap_root_user(&pool, &config.bootstrap).await {
+        error!("Failed to bootstrap root user: {}", e);
+        error!("You may need to manually create a root user");
+        // Non-fatal: continue startup even if bootstrap fails
+    }
 
     // 4.5. Initialize audit log partitions
     info!("Initializing audit log partitions...");

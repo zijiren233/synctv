@@ -17,6 +17,7 @@ pub struct Config {
     pub media_providers: MediaProvidersConfig,
     pub webrtc: WebRTCConfig,
     pub connection_limits: ConnectionLimitsConfig,
+    pub bootstrap: BootstrapConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -506,6 +507,28 @@ impl Default for ConnectionLimitsConfig {
     }
 }
 
+/// Bootstrap configuration for initial setup
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BootstrapConfig {
+    /// Whether to create root user on first startup
+    pub create_root_user: bool,
+    /// Root username (default: "root")
+    pub root_username: String,
+    /// Root password (IMPORTANT: Change this in production!)
+    pub root_password: String,
+}
+
+impl Default for BootstrapConfig {
+    fn default() -> Self {
+        Self {
+            create_root_user: true,
+            root_username: "root".to_string(),
+            root_password: "root".to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,6 +547,7 @@ mod tests {
             media_providers: MediaProvidersConfig::default(),
             webrtc: WebRTCConfig::default(),
             connection_limits: ConnectionLimitsConfig::default(),
+            bootstrap: BootstrapConfig::default(),
         });
 
         assert!(!config.database_url().is_empty());
@@ -531,6 +555,7 @@ mod tests {
         assert!(config.server.grpc_port > 0);
         assert!(config.server.http_port > 0);
         assert!(config.webrtc.enable_builtin_stun);
+        assert!(config.bootstrap.create_root_user);
     }
 
     #[test]
@@ -552,6 +577,7 @@ mod tests {
             media_providers: MediaProvidersConfig::default(),
             webrtc: WebRTCConfig::default(),
             connection_limits: ConnectionLimitsConfig::default(),
+            bootstrap: BootstrapConfig::default(),
         };
 
         assert_eq!(config.grpc_address(), "127.0.0.1:50051");

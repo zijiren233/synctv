@@ -9,7 +9,7 @@ pub mod room_hub;
 
 pub use cluster_manager::{BroadcastResult, ClusterConfig, ClusterManager, ClusterMetrics};
 pub use connection_manager::{
-    ConnectionInfo, ConnectionLimits, ConnectionManager, ConnectionMetrics,
+    ConnectionInfo, ConnectionLimits, ConnectionManager, ConnectionMetrics, DisconnectSignal,
 };
 pub use dedup::{DedupKey, MessageDeduplicator};
 pub use events::{ClusterEvent, NotificationLevel};

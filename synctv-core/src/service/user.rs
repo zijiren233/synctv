@@ -81,13 +81,13 @@ impl UserService {
         // Populate username cache
         self.username_cache.set(&created_user.id, &username).await?;
 
-        // Generate JWT tokens
+        // Generate JWT tokens (role will be fetched from DB on each request)
         let access_token = self
             .jwt_service
-            .sign_token(&created_user.id, created_user.role, TokenType::Access)?;
+            .sign_token(&created_user.id, TokenType::Access)?;
         let refresh_token = self
             .jwt_service
-            .sign_token(&created_user.id, created_user.role, TokenType::Refresh)?;
+            .sign_token(&created_user.id, TokenType::Refresh)?;
 
         Ok((created_user, access_token, refresh_token))
     }
@@ -111,13 +111,13 @@ impl UserService {
             return Err(Error::Authentication("Invalid username or password".to_string()));
         }
 
-        // Generate JWT tokens
+        // Generate JWT tokens (role will be fetched from DB on each request)
         let access_token = self
             .jwt_service
-            .sign_token(&user.id, user.role, TokenType::Access)?;
+            .sign_token(&user.id, TokenType::Access)?;
         let refresh_token = self
             .jwt_service
-            .sign_token(&user.id, user.role, TokenType::Refresh)?;
+            .sign_token(&user.id, TokenType::Refresh)?;
 
         Ok((user, access_token, refresh_token))
     }
@@ -135,13 +135,13 @@ impl UserService {
             .await?
             .ok_or_else(|| Error::Authentication("User not found".to_string()))?;
 
-        // Generate new tokens
+        // Generate new tokens (role will be fetched from DB on each request)
         let new_access_token = self
             .jwt_service
-            .sign_token(&user.id, user.role, TokenType::Access)?;
+            .sign_token(&user.id, TokenType::Access)?;
         let new_refresh_token = self
             .jwt_service
-            .sign_token(&user.id, user.role, TokenType::Refresh)?;
+            .sign_token(&user.id, TokenType::Refresh)?;
 
         Ok((new_access_token, new_refresh_token))
     }
