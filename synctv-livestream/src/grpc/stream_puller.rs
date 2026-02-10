@@ -3,7 +3,7 @@ use bytes::BytesMut;
 use streamhub::{
     define::{
         FrameData, FrameDataSender, NotifyInfo, PublishType, PublisherInfo, StreamHubEvent,
-        StreamHubEventSender,
+        StreamHubEventSender
     },
     stream::StreamIdentifier,
     utils::{RandomDigitCount, Uuid},
@@ -23,7 +23,6 @@ pub struct GrpcStreamPuller {
     media_id: String,
     publisher_node_addr: String,
     stream_hub_event_sender: StreamHubEventSender,
-    publisher_info: Option<PublisherInfo>,
 }
 
 impl GrpcStreamPuller {
@@ -40,7 +39,6 @@ impl GrpcStreamPuller {
             media_id,
             publisher_node_addr,
             stream_hub_event_sender,
-            publisher_info: None,
         }
     }
 
@@ -139,7 +137,7 @@ impl GrpcStreamPuller {
         let (event_result_sender, event_result_receiver) = oneshot::channel();
         let publish_event = StreamHubEvent::Publish {
             identifier,
-            info: publisher_info.clone(),
+            info: publisher_info,
             stream_handler,
             result_sender: event_result_sender,
         };
@@ -157,9 +155,6 @@ impl GrpcStreamPuller {
             .0
             .ok_or_else(|| anyhow::anyhow!("No data sender from publish result"))?;
 
-        // Save publisher_info for unpublish
-        self.publisher_info = Some(publisher_info);
-
         info!("Successfully published to local StreamHub");
         Ok(data_sender)
     }
@@ -172,11 +167,7 @@ impl GrpcStreamPuller {
             stream_name,
         };
 
-        let info = self.publisher_info.take().ok_or_else(|| {
-            anyhow::anyhow!("Publisher info not found, cannot unpublish")
-        })?;
-
-        let unpublish_event = StreamHubEvent::UnPublish { identifier, info };
+        let unpublish_event = StreamHubEvent::UnPublish { identifier };
 
         if let Err(e) = self.stream_hub_event_sender.send(unpublish_event) {
             warn!("Failed to send unpublish event: {}", e);
@@ -207,7 +198,6 @@ mod tests {
         assert_eq!(puller.room_id, "room123");
         assert_eq!(puller.media_id, "media456");
         assert_eq!(puller.publisher_node_addr, "publisher-node:50051");
-        assert!(puller.publisher_info.is_none());
     }
 
     #[tokio::test]

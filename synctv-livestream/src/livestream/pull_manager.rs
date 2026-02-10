@@ -1,10 +1,9 @@
 // Pull Stream Manager for lazy-load FLV streaming
 //
-// Based on design doc 02-整体架构.md § 2.2.2
 // Key feature: Create pull streams only when clients request FLV (not on publisher events)
+// GOP cache is handled by xiu's StreamHub internally.
 
 use crate::{
-    libraries::gop_cache::GopCache,
     relay::registry_trait::StreamRegistryTrait,
     error::StreamResult,
     grpc::GrpcStreamPuller,
@@ -20,7 +19,6 @@ use anyhow::Result;
 pub struct PullStreamManager {
     // stream_key -> PullStream
     streams: Arc<DashMap<String, Arc<PullStream>>>,
-    gop_cache: Arc<GopCache>,
     registry: Arc<dyn StreamRegistryTrait>,
     local_node_id: String,
     stream_hub_event_sender: StreamHubEventSender,
@@ -28,14 +26,12 @@ pub struct PullStreamManager {
 
 impl PullStreamManager {
     pub fn new(
-        gop_cache: Arc<GopCache>,
         registry: Arc<dyn StreamRegistryTrait>,
         local_node_id: String,
         stream_hub_event_sender: StreamHubEventSender,
     ) -> Self {
         Self {
             streams: Arc::new(DashMap::new()),
-            gop_cache,
             registry,
             local_node_id,
             stream_hub_event_sender,
@@ -91,7 +87,6 @@ impl PullStreamManager {
                 media_id.to_string(),
                 publisher_info.node_id.clone(),
                 self.local_node_id.clone(),
-                Arc::clone(&self.gop_cache),
                 Arc::clone(&self.registry),
                 self.stream_hub_event_sender.clone(),
             )
@@ -153,12 +148,15 @@ impl PullStreamManager {
 }
 
 /// Pull stream instance (pulls RTMP from publisher via gRPC, serves FLV to local clients)
+///
+/// GOP cache is handled by xiu's StreamHub — when the gRPC puller publishes
+/// frames to the local StreamHub, and a new subscriber joins, StreamHub
+/// automatically sends cached GOP frames via `send_prior_data`.
 pub struct PullStream {
     room_id: String,
     media_id: String,
     publisher_node: String,
     local_node_id: String,
-    gop_cache: Arc<GopCache>,
     registry: Arc<dyn StreamRegistryTrait>,
     stream_hub_event_sender: StreamHubEventSender,
     subscriber_count: Arc<RwLock<usize>>,
@@ -173,7 +171,6 @@ impl PullStream {
         media_id: String,
         publisher_node: String,
         local_node_id: String,
-        gop_cache: Arc<GopCache>,
         registry: Arc<dyn StreamRegistryTrait>,
         stream_hub_event_sender: StreamHubEventSender,
     ) -> Self {
@@ -182,7 +179,6 @@ impl PullStream {
             media_id,
             publisher_node,
             local_node_id,
-            gop_cache,
             registry,
             stream_hub_event_sender,
             subscriber_count: Arc::new(RwLock::new(0)),
@@ -250,7 +246,7 @@ impl PullStream {
     }
 
     /// Get the current subscriber count
-    #[must_use] 
+    #[must_use]
     pub fn subscriber_count(&self) -> usize {
         // Use try_read for non-blocking access
         if let Ok(count) = self.subscriber_count.try_read() {
@@ -277,7 +273,7 @@ impl PullStream {
     }
 
     /// Get the last active time
-    #[must_use] 
+    #[must_use]
     pub fn last_active_time(&self) -> Instant {
         if let Ok(time) = self.last_active.try_read() {
             *time
@@ -294,33 +290,23 @@ impl PullStream {
     }
 
     /// Get the stream key for this pull stream
-    #[must_use] 
+    #[must_use]
     pub fn stream_key(&self) -> String {
         format!("{}:{}", self.room_id, self.media_id)
-    }
-
-    /// Get cached GOP frames for instant playback
-    #[must_use] 
-    pub fn get_cached_frames(&self) -> Vec<crate::libraries::gop_cache::GopFrame> {
-        let stream_key = self.stream_key();
-        self.gop_cache.get_frames(&stream_key)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libraries::GopCacheConfig;
     use crate::relay::MockStreamRegistry;
 
     #[tokio::test]
     async fn test_pull_stream_manager_creation() {
-        let gop_cache = Arc::new(GopCache::new(GopCacheConfig::default()));
         let registry = Arc::new(MockStreamRegistry::new()) as Arc<dyn StreamRegistryTrait>;
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 
         let manager = PullStreamManager::new(
-            gop_cache,
             registry,
             "node-1".to_string(),
             stream_hub_event_sender,
@@ -332,7 +318,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_pull_stream_creation() {
-        let gop_cache = Arc::new(GopCache::new(GopCacheConfig::default()));
         let registry = Arc::new(MockStreamRegistry::new()) as Arc<dyn StreamRegistryTrait>;
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 
@@ -341,7 +326,6 @@ mod tests {
             "media-456".to_string(),
             "publisher-node".to_string(),
             "puller-node".to_string(),
-            gop_cache,
             registry,
             stream_hub_event_sender,
         );
@@ -353,7 +337,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscriber_count() {
-        let gop_cache = Arc::new(GopCache::new(GopCacheConfig::default()));
         let registry = Arc::new(MockStreamRegistry::new()) as Arc<dyn StreamRegistryTrait>;
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 
@@ -362,7 +345,6 @@ mod tests {
             "media-456".to_string(),
             "publisher-node".to_string(),
             "puller-node".to_string(),
-            gop_cache,
             registry,
             stream_hub_event_sender,
         );
@@ -381,7 +363,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_key() {
-        let gop_cache = Arc::new(GopCache::new(GopCacheConfig::default()));
         let registry = Arc::new(MockStreamRegistry::new()) as Arc<dyn StreamRegistryTrait>;
         let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
 
@@ -390,7 +371,6 @@ mod tests {
             "media-456".to_string(),
             "publisher-node".to_string(),
             "puller-node".to_string(),
-            gop_cache,
             registry,
             stream_hub_event_sender,
         );

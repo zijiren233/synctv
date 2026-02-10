@@ -11,30 +11,29 @@ use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
 use super::proto::{RtmpPacket, stream_relay_service_server, PullRtmpStreamRequest, FrameType};
-use crate::libraries::GopCache;
 use crate::relay::StreamRegistry;
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<RtmpPacket, Status>> + Send>>;
 
 /// `StreamRelayService` implementation
 /// Publisher nodes use this to serve RTMP packets to Puller nodes via subscription
+///
+/// GOP cache is handled by xiu's StreamHub internally — when a new subscriber
+/// joins, StreamHub automatically sends cached GOP frames via `send_prior_data`.
 pub struct StreamRelayServiceImpl {
-    gop_cache: Arc<GopCache>,
     registry: Arc<StreamRegistry>,
     node_id: String,
     stream_hub_event_sender: Arc<Mutex<StreamHubEventSender>>,
 }
 
 impl StreamRelayServiceImpl {
-    #[must_use] 
+    #[must_use]
     pub fn new(
-        gop_cache: Arc<GopCache>,
         registry: Arc<StreamRegistry>,
         node_id: String,
         stream_hub_event_sender: StreamHubEventSender,
     ) -> Self {
         Self {
-            gop_cache,
             registry,
             node_id,
             stream_hub_event_sender: Arc::new(Mutex::new(stream_hub_event_sender)),
@@ -45,7 +44,7 @@ impl StreamRelayServiceImpl {
 #[tonic::async_trait]
 impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl {
     /// Pull RTMP stream from publisher node (server streaming)
-    /// Similar to FLV/HLS: subscribe to `StreamHub` and forward data
+    /// Subscribe to StreamHub and forward data — GOP is sent automatically by StreamHub.
     type PullRtmpStreamStream = ResponseStream;
 
     async fn pull_rtmp_stream(
@@ -74,17 +73,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
             )));
         }
 
-        // Get GOP cache frames for fast start
-        let stream_key = format!("{}:{}", req.room_id, req.media_id);
-        let cached_frames = self.gop_cache.get_frames(&stream_key);
-        info!(
-            room_id = req.room_id,
-            media_id = req.media_id,
-            cached_frame_count = cached_frames.len(),
-            "Sending cached frames + live subscription to puller"
-        );
-
-        // Subscribe to StreamHub for live data
+        // Subscribe to StreamHub for live data (GOP is sent automatically by StreamHub)
         let subscriber_id = Uuid::new(RandomDigitCount::Four);
         let sub_info = SubscriberInfo {
             id: subscriber_id,
@@ -135,34 +124,9 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         let stream_name_clone = stream_name.clone();
         let event_sender_clone = Arc::clone(&self.stream_hub_event_sender);
         tokio::spawn(async move {
-            // 1. Send GOP cache first (fast start)
-            for frame in cached_frames {
-                let frame_type = match frame.frame_type {
-                    crate::libraries::gop_cache::FrameType::Video => FrameType::Video as i32,
-                    crate::libraries::gop_cache::FrameType::Audio => FrameType::Audio as i32,
-                };
-
-                let packet = RtmpPacket {
-                    data: frame.data.to_vec(),
-                    timestamp: frame.timestamp,
-                    frame_type,
-                };
-
-                if tx.send(Ok(packet)).await.is_err() {
-                    warn!("Client disconnected while sending cached frames");
-                    // Unsubscribe
-                    Self::unsubscribe_from_hub(
-                        event_sender_clone,
-                        subscriber_id,
-                        stream_name_clone,
-                    )
-                    .await;
-                    return;
-                }
-            }
-
-            // 2. Stream live data from StreamHub subscription
-            info!("GOP cache sent, now streaming live data");
+            // Stream live data from StreamHub subscription
+            // (GOP frames are automatically sent first by StreamHub's send_prior_data)
+            info!("Streaming live data to puller");
             while let Some(frame_data) = frame_receiver.recv().await {
                 // Extract data, timestamp, and frame_type from FrameData enum
                 let (data, timestamp, frame_type) = match frame_data {
@@ -238,12 +202,9 @@ impl StreamRelayServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_service_creation() {
-        // Create real components for testing
-        let gop_cache = Arc::new(GopCache::new(Default::default()));
         let (_event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
         let node_id = "test_node".to_string();
 
@@ -251,14 +212,11 @@ mod tests {
         assert_eq!(node_id, "test_node");
 
         // Note: Full service creation requires StreamRegistry which needs Redis
-        // This test verifies basic type compatibility
-        assert!(Arc::strong_count(&gop_cache) >= 1);
     }
 
     #[test]
     fn test_response_stream_type() {
         // Just verify the ResponseStream type alias compiles
-        // In production, this would be tested via integration tests
         let (_tx, rx) = tokio::sync::mpsc::channel(128);
         let _: ResponseStream = Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx));
     }

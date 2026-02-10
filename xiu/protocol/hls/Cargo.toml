@@ -1,0 +1,21 @@
+[package]
+name = "xiu-hls"
+description = "HLS protocol implementation: RTMP-to-HLS remuxer, segment management, HTTP server"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+streamhub = { path = "../../library/streamhub" }
+xflv = { path = "../../library/container/flv" }
+xmpegts = { path = "../../library/container/mpegts" }
+xiu-storage = { path = "../../library/storage" }
+
+bytes = "1.9"
+dashmap = "6.0"
+parking_lot = "0.12"
+tokio = { version = "1.41", features = ["full"] }
+tracing = "0.1"
+thiserror = "1.0"
+nanoid = "0.4"
+axum = { version = "0.7", features = ["macros"] }

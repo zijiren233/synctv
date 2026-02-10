@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    # SyncTV crates
     "synctv-proto",
     "synctv-core",
     "synctv-proxy",
@@ -8,6 +9,16 @@ members = [
     "synctv-cluster",
     "synctv-media-providers",
     "synctv", "synctv-sfu",
+    # xiu crates (maintained locally)
+    "xiu/library/bytesio",
+    "xiu/library/codec/h264",
+    "xiu/library/container/flv",
+    "xiu/library/container/mpegts",
+    "xiu/library/streamhub",
+    "xiu/protocol/rtmp",
+    "xiu/library/storage",
+    "xiu/protocol/hls",
+    "xiu/protocol/httpflv",
 ]
 resolver = "2"
 
@@ -24,7 +35,7 @@ tokio-util = { version = "0.7", features = ["full"] }
 tokio-stream = "0.1"
 
 # gRPC & Protobuf
-tonic = { version = "0.12", features = ["transport", "tls-rustls"] }
+tonic = { version = "0.12", default-features = false, features = ["transport", "tls-roots", "prost", "codegen"] }
 tonic-web = "0.12"
 tonic-reflection = "0.12"
 tonic-health = "0.12"
@@ -41,7 +52,7 @@ tower-http = { version = "0.5", features = [
     "compression-full",
     "limit",
 ] }
-hyper = { version = "1.0", features = ["full"] }
+hyper = { version = "1.0", default-features = false, features = ["http1", "http2", "server", "client"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "rustls-tls"] }
 
 # Database
@@ -56,12 +67,13 @@ sqlx = { version = "0.8", features = [
 ] }
 
 # Redis
-redis = { version = "0.26", default-features = false, features = [
+redis = { version = "0.26", features = [
     "tokio-comp",
     "connection-manager",
     "streams",
     "cluster",
     "tokio-rustls-comp",
+    "script",
 ] }
 
 # Security
@@ -89,14 +101,14 @@ md5 = "0.7"
 humantime = "2.1"
 hex = "0.4"
 
-# Streaming
-xiu = { git = "https://github.com/harlanc/xiu.git", tag = "v0.13.0" }
-rtmp = { git = "https://github.com/harlanc/xiu.git", tag = "v0.13.0" }
-streamhub = { git = "https://github.com/harlanc/xiu.git", tag = "v0.13.0" }
-hls = { git = "https://github.com/harlanc/xiu.git", tag = "v0.13.0" }
-httpflv = { git = "https://github.com/harlanc/xiu.git", tag = "v0.13.0" }
-xflv = { git = "https://github.com/harlanc/xiu.git", tag = "v0.13.0" }
-xmpegts = { git = "https://github.com/harlanc/xiu.git", tag = "v0.13.0" }
+# Streaming (xiu crates maintained locally)
+rtmp = { path = "xiu/protocol/rtmp" }
+streamhub = { path = "xiu/library/streamhub" }
+xflv = { path = "xiu/library/container/flv" }
+xmpegts = { path = "xiu/library/container/mpegts" }
+xiu-storage = { path = "xiu/library/storage" }
+xiu-hls = { path = "xiu/protocol/hls" }
+xiu-httpflv = { path = "xiu/protocol/httpflv" }
 
 # Object Storage
 opendal = { version = "0.49", features = ["services-s3"] }
@@ -157,3 +169,4 @@ synctv-media-providers = { path = "synctv-media-providers" }
 synctv-proxy = { path = "synctv-proxy" }
 synctv-livestream = { path = "synctv-livestream" }
 synctv-sfu = { path = "synctv-sfu" }
+

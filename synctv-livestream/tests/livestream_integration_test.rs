@@ -10,16 +10,13 @@
 use synctv_livestream::api::{
     LiveStreamingInfrastructure, HlsStreamingApi,
 };
-use synctv_livestream::libraries::{
-    gop_cache::{GopCache, GopCacheConfig},
-    storage::MemoryStorage,
-};
+use synctv_livestream::libraries::storage::MemoryStorage;
 use synctv_livestream::livestream::segment_manager::{SegmentManager, CleanupConfig};
 use synctv_livestream::protocols::hls::remuxer::{StreamProcessorState, SegmentInfo};
 use std::sync::Arc;
 use std::time::Instant;
 use bytes::Bytes;
-use dashmap::DashMap;
+use dashmap::DashMap; // still used for hls_registry
 use parking_lot::RwLock;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
@@ -44,11 +41,12 @@ impl synctv_livestream::relay::StreamRegistryTrait for MockStreamRegistry {
         _room_id: &str,
         _media_id: &str,
         _node_id: &str,
+        _user_id: &str,
     ) -> anyhow::Result<bool> {
         Ok(true)
     }
 
-    async fn refresh_publisher_ttl(&self, _room_id: &str, _media_id: &str) -> anyhow::Result<()> {
+    async fn refresh_publisher_ttl(&self, _room_id: &str, _media_id: &str, _user_id: &str) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -64,10 +62,11 @@ impl synctv_livestream::relay::StreamRegistryTrait for MockStreamRegistry {
         &self,
         _room_id: &str,
         _media_id: &str,
-    ) -> anyhow::Result<Option<synctv_stream::relay::PublisherInfo>> {
-        Ok(Some(synctv_stream::relay::PublisherInfo {
+    ) -> anyhow::Result<Option<synctv_livestream::relay::PublisherInfo>> {
+        Ok(Some(synctv_livestream::relay::PublisherInfo {
             node_id: "test_node".to_string(),
             app_name: "live".to_string(),
+            user_id: String::new(),
             started_at: chrono::Utc::now(),
         }))
     }
@@ -79,24 +78,31 @@ impl synctv_livestream::relay::StreamRegistryTrait for MockStreamRegistry {
     async fn list_active_streams(&self) -> anyhow::Result<Vec<(String, String)>> {
         Ok(vec![])
     }
+
+    async fn get_user_publishers(&self, _user_id: &str) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(vec![])
+    }
+
+    async fn unregister_all_user_publishers(&self, _user_id: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 fn create_test_infrastructure() -> LiveStreamingInfrastructure {
-    let registry = Arc::new(MockStreamRegistry) as Arc<dyn synctv_stream::relay::StreamRegistryTrait>;
+    let registry = Arc::new(MockStreamRegistry) as Arc<dyn synctv_livestream::relay::StreamRegistryTrait>;
     let (event_sender, _) = mpsc::unbounded_channel();
-    let gop_cache = Arc::new(GopCache::new(GopCacheConfig::default()));
     let storage = Arc::new(MemoryStorage::new());
     let segment_manager = Arc::new(SegmentManager::new(storage, CleanupConfig::default()));
     let hls_registry = Arc::new(DashMap::new());
 
-    let pull_manager = Arc::new(synctv_stream::streaming::pull_manager::PullStreamManager::new(
-        gop_cache.clone(),
+    let pull_manager = Arc::new(synctv_livestream::livestream::PullStreamManager::new(
         registry.clone(),
         "test-node".to_string(),
         event_sender.clone(),
     ));
 
-    LiveStreamingInfrastructure::new(registry, event_sender, gop_cache, pull_manager)
+    let user_stream_tracker = Arc::new(synctv_livestream::api::StreamTracker::new());
+    LiveStreamingInfrastructure::new(registry, event_sender, pull_manager, user_stream_tracker)
         .with_segment_manager(segment_manager)
         .with_hls_stream_registry(hls_registry)
 }

@@ -1,10 +1,7 @@
-// HLS protocol implementation
-//
-// Provides HLS remuxer and HTTP server for HLS streaming.
-// Converts RTMP to HLS segments (M3U8 + TS).
+// Re-export from xiu-hls crate
+pub use xiu_hls::remuxer;
+pub use xiu_hls::server;
 
-pub mod remuxer;
-pub mod server;
-
-pub use remuxer::{CustomHlsRemuxer, StreamRegistry, StreamProcessorState, SegmentInfo};
-pub use server::HlsServer;
+pub use xiu_hls::{CustomHlsRemuxer, StreamRegistry, StreamProcessorState, SegmentInfo, HlsRemuxerError};
+pub use xiu_hls::server::HlsServer;
+pub use xiu_hls::segment_manager::{SegmentManager, CleanupConfig};

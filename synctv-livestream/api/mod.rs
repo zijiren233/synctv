@@ -10,4 +10,6 @@ pub use livestream::{
     LiveStreamingInfrastructure,
     FlvStreamingApi,
     HlsStreamingApi,
+    StreamTracker,
+    UserStreamTracker,
 };

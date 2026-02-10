@@ -15,7 +15,6 @@
 // - Cross-node gRPC relay
 
 use crate::{
-    libraries::gop_cache::GopCache,
     relay::StreamRegistryTrait,
     livestream::{
         pull_manager::PullStreamManager,
@@ -26,9 +25,263 @@ use crate::{
 };
 use anyhow::Result;
 use bytes::Bytes;
+use dashmap::DashMap;
 use std::sync::Arc;
 use streamhub::define::StreamHubEventSender;
 use tokio::sync::mpsc;
+
+/// Legacy type alias — prefer `StreamTracker` for new code.
+pub type UserStreamTracker = Arc<StreamTracker>;
+
+/// Tracks active RTMP publishers with five cross-referenced indexes
+/// for fast lookup in any direction:
+///
+/// 1. `user_id → Set<(room_id, media_id)>` — kick all streams for a user (supports multiple)
+/// 2. `room_id → Set<media_id>` — kick all streams in a room
+/// 3. `(room_id, media_id) → user_id` — find who is publishing a specific stream
+/// 4. `(rtmp_app_name, rtmp_stream_name) → (room_id, media_id)` — map RTMP identifiers to logical stream
+/// 5. `(room_id, media_id) → (rtmp_app_name, rtmp_stream_name)` — reverse map for cleanup
+///
+/// The RTMP mapping is needed because `stream_name` in RTMP may be a JWT token,
+/// not the `media_id`. On unpublish, we only know `(app_name, stream_name)` and
+/// need to resolve the logical `(room_id, media_id)`.
+///
+/// All mutations atomically update all indexes.
+/// A single user may publish to multiple rooms/media simultaneously.
+pub struct StreamTracker {
+    /// user_id → Set of "room_id:media_id" composite keys
+    by_user: DashMap<String, dashmap::DashSet<String>>,
+    /// room_id → Set<media_id>
+    by_room: DashMap<String, dashmap::DashSet<String>>,
+    /// "room_id:media_id" → user_id
+    by_stream: DashMap<String, String>,
+    /// "app_name\0stream_name" → "room_id:media_id" (RTMP→logical)
+    by_rtmp: DashMap<String, String>,
+    /// "room_id:media_id" → "app_name\0stream_name" (logical→RTMP, for cleanup)
+    rtmp_reverse: DashMap<String, String>,
+}
+
+impl StreamTracker {
+    pub fn new() -> Self {
+        Self {
+            by_user: DashMap::new(),
+            by_room: DashMap::new(),
+            by_stream: DashMap::new(),
+            by_rtmp: DashMap::new(),
+            rtmp_reverse: DashMap::new(),
+        }
+    }
+
+    fn stream_key(room_id: &str, media_id: &str) -> String {
+        format!("{room_id}:{media_id}")
+    }
+
+    fn parse_stream_key(key: &str) -> Option<(String, String)> {
+        key.split_once(':').map(|(r, m)| (r.to_string(), m.to_string()))
+    }
+
+    fn rtmp_key(app_name: &str, stream_name: &str) -> String {
+        format!("{app_name}\0{stream_name}")
+    }
+
+    /// Register that `user_id` is publishing `(room_id, media_id)` via RTMP
+    /// with the given `(rtmp_app_name, rtmp_stream_name)` identifiers.
+    ///
+    /// The RTMP mapping is essential because `rtmp_stream_name` is typically
+    /// a JWT token, not the logical `media_id`.
+    ///
+    /// A user may publish to multiple streams simultaneously.
+    pub fn insert(
+        &self,
+        user_id: String,
+        room_id: String,
+        media_id: String,
+        rtmp_app_name: &str,
+        rtmp_stream_name: &str,
+    ) {
+        let sk = Self::stream_key(&room_id, &media_id);
+        let rk = Self::rtmp_key(rtmp_app_name, rtmp_stream_name);
+
+        // If another user was publishing this exact stream, remove them first
+        if let Some((_, old_user)) = self.by_stream.remove(&sk) {
+            if old_user != user_id {
+                if let Some(user_set) = self.by_user.get(&old_user) {
+                    user_set.remove(&sk);
+                    if user_set.is_empty() {
+                        drop(user_set);
+                        self.by_user.remove(&old_user);
+                    }
+                }
+            }
+        }
+
+        // Clean up any old RTMP mapping for this stream
+        if let Some((_, old_rk)) = self.rtmp_reverse.remove(&sk) {
+            self.by_rtmp.remove(&old_rk);
+        }
+
+        self.by_user
+            .entry(user_id.clone())
+            .or_insert_with(dashmap::DashSet::new)
+            .insert(sk.clone());
+
+        self.by_room
+            .entry(room_id)
+            .or_insert_with(dashmap::DashSet::new)
+            .insert(media_id);
+
+        self.by_stream.insert(sk.clone(), user_id);
+        self.by_rtmp.insert(rk.clone(), sk.clone());
+        self.rtmp_reverse.insert(sk, rk);
+    }
+
+    /// Remove ALL tracking entries for a user. Returns list of `(room_id, media_id)`.
+    pub fn remove_user(&self, user_id: &str) -> Vec<(String, String)> {
+        let mut removed = Vec::new();
+        if let Some((_, keys)) = self.by_user.remove(user_id) {
+            for key in keys.iter() {
+                self.by_stream.remove(key.as_str());
+                // Clean up RTMP mapping
+                if let Some((_, rk)) = self.rtmp_reverse.remove(key.as_str()) {
+                    self.by_rtmp.remove(&rk);
+                }
+                if let Some((room_id, media_id)) = Self::parse_stream_key(&key) {
+                    if let Some(set) = self.by_room.get(&room_id) {
+                        set.remove(&media_id);
+                        if set.is_empty() {
+                            drop(set);
+                            self.by_room.remove(&room_id);
+                        }
+                    }
+                    removed.push((room_id, media_id));
+                }
+            }
+        }
+        removed
+    }
+
+    /// Remove tracking by (room_id, media_id). Returns the `user_id` if present.
+    pub fn remove_stream(&self, room_id: &str, media_id: &str) -> Option<String> {
+        let sk = Self::stream_key(room_id, media_id);
+        if let Some((_, user_id)) = self.by_stream.remove(&sk) {
+            // Clean up RTMP mapping
+            if let Some((_, rk)) = self.rtmp_reverse.remove(&sk) {
+                self.by_rtmp.remove(&rk);
+            }
+            if let Some(user_set) = self.by_user.get(&user_id) {
+                user_set.remove(&sk);
+                if user_set.is_empty() {
+                    drop(user_set);
+                    self.by_user.remove(&user_id);
+                }
+            }
+            if let Some(set) = self.by_room.get(room_id) {
+                set.remove(media_id);
+                if set.is_empty() {
+                    drop(set);
+                    self.by_room.remove(room_id);
+                }
+            }
+            Some(user_id)
+        } else {
+            None
+        }
+    }
+
+    /// Remove by RTMP identifiers (app_name, stream_name) — used by `on_unpublish`.
+    ///
+    /// Uses the RTMP→logical mapping to resolve `(room_id, media_id)` from the
+    /// RTMP identifiers, then removes all tracking entries.
+    ///
+    /// Returns `Some((user_id, room_id, media_id))` if found, `None` otherwise.
+    pub fn remove_by_app_stream(&self, app_name: &str, stream_name: &str) -> Option<(String, String, String)> {
+        let rk = Self::rtmp_key(app_name, stream_name);
+
+        // Look up logical stream from RTMP mapping
+        if let Some((_, sk)) = self.by_rtmp.remove(&rk) {
+            self.rtmp_reverse.remove(&sk);
+            if let Some((room_id, media_id)) = Self::parse_stream_key(&sk) {
+                if let Some(user_id) = self.remove_stream_internal(&room_id, &media_id) {
+                    tracing::debug!(
+                        user_id = %user_id,
+                        room_id = %room_id,
+                        media_id = %media_id,
+                        rtmp_app = %app_name,
+                        "Removed publisher from tracker on unpublish (RTMP mapping)"
+                    );
+                    return Some((user_id, room_id, media_id));
+                }
+            }
+        }
+
+        // Fallback: try direct stream key match (app_name = room_id, stream_name = media_id)
+        if let Some(user_id) = self.remove_stream(app_name, stream_name) {
+            tracing::debug!(
+                user_id = %user_id,
+                room_id = %app_name,
+                media_id = %stream_name,
+                "Removed publisher from tracker on unpublish (direct match)"
+            );
+            return Some((user_id, app_name.to_string(), stream_name.to_string()));
+        }
+
+        None
+    }
+
+    /// Internal: remove stream without touching RTMP maps (already cleaned by caller).
+    fn remove_stream_internal(&self, room_id: &str, media_id: &str) -> Option<String> {
+        let sk = Self::stream_key(room_id, media_id);
+        if let Some((_, user_id)) = self.by_stream.remove(&sk) {
+            if let Some(user_set) = self.by_user.get(&user_id) {
+                user_set.remove(&sk);
+                if user_set.is_empty() {
+                    drop(user_set);
+                    self.by_user.remove(&user_id);
+                }
+            }
+            if let Some(set) = self.by_room.get(room_id) {
+                set.remove(media_id);
+                if set.is_empty() {
+                    drop(set);
+                    self.by_room.remove(room_id);
+                }
+            }
+            Some(user_id)
+        } else {
+            None
+        }
+    }
+
+    /// Get all (room_id, media_id) pairs for a user.
+    pub fn get_user_streams(&self, user_id: &str) -> Vec<(String, String)> {
+        self.by_user
+            .get(user_id)
+            .map(|set| {
+                set.iter()
+                    .filter_map(|key| Self::parse_stream_key(&key))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get all media_ids currently publishing in a room.
+    pub fn get_room_streams(&self, room_id: &str) -> Vec<String> {
+        self.by_room
+            .get(room_id)
+            .map(|set| set.iter().map(|e| e.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get user_id publishing a specific (room_id, media_id).
+    pub fn get_stream_user(&self, room_id: &str, media_id: &str) -> Option<String> {
+        self.by_stream.get(&Self::stream_key(room_id, media_id)).map(|e| e.value().clone())
+    }
+
+    /// Iterate over all stream entries. Provides `("room_id:media_id", user_id)`.
+    pub fn iter_streams(&self) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, String, String>> {
+        self.by_stream.iter()
+    }
+}
 
 /// Live streaming infrastructure bundle
 ///
@@ -44,14 +297,14 @@ pub struct LiveStreamingInfrastructure {
     pub registry: Arc<dyn StreamRegistryTrait>,
     /// `StreamHub` event sender for subscribing to streams
     pub stream_hub_event_sender: StreamHubEventSender,
-    /// GOP cache for instant playback
-    pub gop_cache: Arc<GopCache>,
     /// Pull stream manager for lazy-load streaming
     pub pull_manager: Arc<PullStreamManager>,
     /// Segment manager for HLS storage
     pub segment_manager: Option<Arc<SegmentManager>>,
     /// HLS stream registry for M3U8 generation
     pub hls_stream_registry: Option<HlsStreamRegistry>,
+    /// Tracks active RTMP publishers by user_id for kick-on-ban
+    pub user_stream_tracker: UserStreamTracker,
 }
 
 impl LiveStreamingInfrastructure {
@@ -59,16 +312,16 @@ impl LiveStreamingInfrastructure {
     pub fn new(
         registry: Arc<dyn StreamRegistryTrait>,
         stream_hub_event_sender: StreamHubEventSender,
-        gop_cache: Arc<GopCache>,
         pull_manager: Arc<PullStreamManager>,
+        user_stream_tracker: UserStreamTracker,
     ) -> Self {
         Self {
             registry,
             stream_hub_event_sender,
-            gop_cache,
             pull_manager,
             segment_manager: None,
             hls_stream_registry: None,
+            user_stream_tracker,
         }
     }
 
@@ -80,10 +333,72 @@ impl LiveStreamingInfrastructure {
     }
 
     /// Add HLS stream registry
-    #[must_use] 
+    #[must_use]
     pub fn with_hls_stream_registry(mut self, hls_stream_registry: HlsStreamRegistry) -> Self {
         self.hls_stream_registry = Some(hls_stream_registry);
         self
+    }
+
+    /// Kick an active RTMP publisher, forcing their session to disconnect.
+    ///
+    /// Sends an UnPublish event through StreamHub which terminates the transceiver's data pipeline.
+    /// The RTMP session naturally terminates when its data_sender channel closes.
+    ///
+    /// Returns Ok(()) if the event was sent. The actual disconnection is asynchronous.
+    pub fn kick_publisher(&self, room_id: &str, media_id: &str) -> Result<()> {
+        use streamhub::stream::StreamIdentifier;
+
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: room_id.to_string(),
+            stream_name: media_id.to_string(),
+        };
+
+        self.stream_hub_event_sender
+            .send(streamhub::define::StreamHubEvent::UnPublish { identifier })
+            .map_err(|_| anyhow::anyhow!("Failed to send unpublish event (StreamHub not running)"))?;
+
+        Ok(())
+    }
+
+    /// Kick all active RTMP publishers for a given user.
+    ///
+    /// Looks up all of the user's active streams from the tracker and sends UnPublish events.
+    /// Used when banning or deleting a user to terminate all their RTMP publish sessions.
+    pub fn kick_user_publishers(&self, user_id: &str) {
+        let streams = self.user_stream_tracker.remove_user(user_id);
+        for (room_id, media_id) in streams {
+            tracing::info!(
+                user_id = %user_id,
+                room_id = %room_id,
+                media_id = %media_id,
+                "Kicking RTMP publisher for banned user"
+            );
+            if let Err(e) = self.kick_publisher(&room_id, &media_id) {
+                tracing::error!("Failed to kick publisher for user {}: {}", user_id, e);
+            }
+        }
+    }
+
+    /// Kick all active RTMP publishers in a given room.
+    ///
+    /// Uses the room→media index for O(1) lookup instead of scanning all entries.
+    /// Used when banning or deleting a room.
+    pub fn kick_room_publishers(&self, room_id: &str) {
+        let media_ids = self.user_stream_tracker.get_room_streams(room_id);
+
+        for media_id in media_ids {
+            if let Some(user_id) = self.user_stream_tracker.remove_stream(room_id, &media_id) {
+                tracing::info!(
+                    user_id = %user_id,
+                    room_id = %room_id,
+                    media_id = %media_id,
+                    "Kicking RTMP publisher for banned room"
+                );
+            }
+            if let Err(e) = self.kick_publisher(room_id, &media_id) {
+                tracing::error!("Failed to kick publisher in room {}: {}", room_id, e);
+            }
+        }
     }
 
     /// Check if publisher exists for a room/media

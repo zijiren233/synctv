@@ -67,14 +67,11 @@ impl PublisherManager {
     /// Handle `StreamHub` broadcast events
     async fn handle_broadcast_event(&self, event: streamhub::define::BroadcastEvent) -> anyhow::Result<()> {
         match event {
-            streamhub::define::BroadcastEvent::Publish { identifier, .. } => {
+            streamhub::define::BroadcastEvent::Publish { identifier } => {
                 self.handle_publish(identifier).await?;
             }
-            streamhub::define::BroadcastEvent::UnPublish { identifier, .. } => {
+            streamhub::define::BroadcastEvent::UnPublish { identifier } => {
                 self.handle_unpublish(identifier).await?;
-            }
-            _ => {
-                // Ignore other events (Subscribe, UnSubscribe)
             }
         }
         Ok(())
@@ -105,7 +102,7 @@ impl PublisherManager {
         };
 
         // Try to register as publisher (atomic HSETNX)
-        match self.registry.try_register_publisher(&room_id, &media_id, &self.local_node_id).await {
+        match self.registry.try_register_publisher(&room_id, &media_id, &self.local_node_id, "").await {
             Ok(true) => {
                 log::info!(
                     "Successfully registered as publisher for room {} / media {} (stream: {})",
@@ -179,7 +176,7 @@ impl PublisherManager {
 
                 // Parse room_id and media_id from the composite key
                 if let Some((room_id, media_id)) = publisher_key.split_once(':') {
-                    if let Err(e) = self.registry.refresh_publisher_ttl(room_id, media_id).await {
+                    if let Err(e) = self.registry.refresh_publisher_ttl(room_id, media_id, "").await {
                         log::error!("Failed to refresh TTL for room {} / media {}: {}", room_id, media_id, e);
                     }
                 }

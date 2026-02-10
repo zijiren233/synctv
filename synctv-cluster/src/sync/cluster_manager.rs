@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
 use super::dedup::{DedupKey, MessageDeduplicator};
@@ -59,6 +59,8 @@ pub struct ClusterManager {
     redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
     /// This node's unique identifier
     node_id: String,
+    /// Broadcast channel for admin events (kick, etc.) received from cluster
+    admin_event_tx: broadcast::Sender<ClusterEvent>,
 }
 
 impl ClusterManager {
@@ -70,6 +72,8 @@ impl ClusterManager {
             config.cleanup_interval,
         ));
 
+        let (admin_event_tx, _) = broadcast::channel(256);
+
         // Start Redis pub/sub if Redis URL is provided
         let redis_publish_tx = if config.redis_url.is_empty() {
             warn!("Redis URL not provided, running in single-node mode");
@@ -80,6 +84,7 @@ impl ClusterManager {
                     &config.redis_url,
                     message_hub.clone(),
                     config.node_id.clone(),
+                    admin_event_tx.clone(),
                 )?
             );
 
@@ -91,6 +96,7 @@ impl ClusterManager {
             deduplicator,
             redis_publish_tx,
             node_id: config.node_id,
+            admin_event_tx,
         })
     }
 
@@ -115,6 +121,16 @@ impl ClusterManager {
     #[must_use] 
     pub const fn redis_publish_tx(&self) -> Option<&mpsc::UnboundedSender<PublishRequest>> {
         self.redis_publish_tx.as_ref()
+    }
+
+    /// Subscribe to admin events (kick, etc.) received from cluster
+    pub fn subscribe_admin_events(&self) -> broadcast::Receiver<ClusterEvent> {
+        self.admin_event_tx.subscribe()
+    }
+
+    /// Get the admin event sender (for local kick events)
+    pub fn admin_event_tx(&self) -> &broadcast::Sender<ClusterEvent> {
+        &self.admin_event_tx
     }
 
     /// Broadcast an event to all subscribers
@@ -299,5 +315,73 @@ mod tests {
 
         let metrics = manager.metrics();
         assert_eq!(metrics.total_connections, 0);
+    }
+
+    #[tokio::test]
+    async fn test_admin_event_channel_subscription() {
+        let config = ClusterConfig {
+            redis_url: "".to_string(),
+            node_id: "test_node".to_string(),
+            dedup_window: Duration::from_secs(1),
+            cleanup_interval: Duration::from_secs(1),
+        };
+
+        let manager = ClusterManager::new(config).await.unwrap();
+
+        // Subscribe to admin events
+        let mut admin_rx = manager.subscribe_admin_events();
+
+        // Send a KickPublisher event through the admin channel
+        let event = ClusterEvent::KickPublisher {
+            room_id: RoomId::from_string("room1".to_string()),
+            media_id: synctv_core::models::MediaId::from_string("media1".to_string()),
+            reason: "user_banned".to_string(),
+            timestamp: Utc::now(),
+        };
+
+        let _ = manager.admin_event_tx().send(event.clone());
+
+        // Verify event received
+        let received = admin_rx.recv().await.unwrap();
+        assert_eq!(received.event_type(), "kick_publisher");
+
+        if let ClusterEvent::KickPublisher { room_id, media_id, reason, .. } = &received {
+            assert_eq!(room_id.as_str(), "room1");
+            assert_eq!(media_id.as_str(), "media1");
+            assert_eq!(reason, "user_banned");
+        } else {
+            panic!("Expected KickPublisher event");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_admin_event_channel_multiple_subscribers() {
+        let config = ClusterConfig {
+            redis_url: "".to_string(),
+            node_id: "test_node".to_string(),
+            dedup_window: Duration::from_secs(1),
+            cleanup_interval: Duration::from_secs(1),
+        };
+
+        let manager = ClusterManager::new(config).await.unwrap();
+
+        // Subscribe two receivers
+        let mut rx1 = manager.subscribe_admin_events();
+        let mut rx2 = manager.subscribe_admin_events();
+
+        // Send event
+        let event = ClusterEvent::KickPublisher {
+            room_id: RoomId::from_string("room1".to_string()),
+            media_id: synctv_core::models::MediaId::from_string("media1".to_string()),
+            reason: "room_deleted".to_string(),
+            timestamp: Utc::now(),
+        };
+        let _ = manager.admin_event_tx().send(event);
+
+        // Both receivers should get the event
+        let r1 = rx1.recv().await.unwrap();
+        let r2 = rx2.recv().await.unwrap();
+        assert_eq!(r1.event_type(), "kick_publisher");
+        assert_eq!(r2.event_type(), "kick_publisher");
     }
 }

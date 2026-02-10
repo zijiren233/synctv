@@ -17,5 +17,4 @@ pub use crate::protocols::httpflv::HttpFlvSession;
 pub use crate::protocols::hls::{HlsServer, CustomHlsRemuxer, StreamRegistry};
 
 // Re-export from libraries
-pub use crate::libraries::gop_cache::GopCache;
 pub use crate::libraries::storage::HlsStorage;

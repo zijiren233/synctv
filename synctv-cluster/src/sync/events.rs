@@ -119,6 +119,15 @@ pub enum ClusterEvent {
         level: NotificationLevel,
         timestamp: DateTime<Utc>,
     },
+
+    /// Kick an active publisher (RTMP stream termination).
+    /// Broadcast cluster-wide when admin bans user/room or deletes media/room.
+    KickPublisher {
+        room_id: RoomId,
+        media_id: MediaId,
+        reason: String,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 /// Notification severity level
@@ -145,7 +154,8 @@ impl ClusterEvent {
             | Self::RoomSettingsChanged { room_id, .. }
             | Self::WebRTCSignaling { room_id, .. }
             | Self::WebRTCJoin { room_id, .. }
-            | Self::WebRTCLeave { room_id, .. } => Some(room_id),
+            | Self::WebRTCLeave { room_id, .. }
+            | Self::KickPublisher { room_id, .. } => Some(room_id),
             Self::SystemNotification { .. } => None,
         }
     }
@@ -164,7 +174,8 @@ impl ClusterEvent {
             | Self::WebRTCJoin { user_id, .. }
             | Self::WebRTCLeave { user_id, .. } => Some(user_id),
             Self::PermissionChanged { changed_by, .. } => Some(changed_by),
-            Self::WebRTCSignaling { .. } | Self::SystemNotification { .. } => None,
+            Self::WebRTCSignaling { .. } | Self::SystemNotification { .. }
+            | Self::KickPublisher { .. } => None,
         }
     }
 
@@ -183,7 +194,8 @@ impl ClusterEvent {
             | Self::WebRTCSignaling { timestamp, .. }
             | Self::WebRTCJoin { timestamp, .. }
             | Self::WebRTCLeave { timestamp, .. }
-            | Self::SystemNotification { timestamp, .. } => timestamp,
+            | Self::SystemNotification { timestamp, .. }
+            | Self::KickPublisher { timestamp, .. } => timestamp,
         }
     }
 
@@ -203,6 +215,7 @@ impl ClusterEvent {
             Self::WebRTCJoin { .. } => "webrtc_join",
             Self::WebRTCLeave { .. } => "webrtc_leave",
             Self::SystemNotification { .. } => "system_notification",
+            Self::KickPublisher { .. } => "kick_publisher",
         }
     }
 }
@@ -258,5 +271,50 @@ mod tests {
         assert!(event.room_id().is_none());
         assert!(event.user_id().is_none());
         assert_eq!(event.event_type(), "system_notification");
+    }
+
+    #[test]
+    fn test_kick_publisher_serialization() {
+        let event = ClusterEvent::KickPublisher {
+            room_id: RoomId::from_string("room123".to_string()),
+            media_id: MediaId::from_string("media456".to_string()),
+            reason: "user_banned".to_string(),
+            timestamp: Utc::now(),
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("kick_publisher"));
+        assert!(json.contains("room123"));
+        assert!(json.contains("media456"));
+        assert!(json.contains("user_banned"));
+
+        // Deserialize back
+        let deserialized: ClusterEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.event_type(), "kick_publisher");
+        assert_eq!(deserialized.room_id().unwrap().as_str(), "room123");
+        assert!(deserialized.user_id().is_none());
+
+        if let ClusterEvent::KickPublisher { room_id, media_id, reason, .. } = &deserialized {
+            assert_eq!(room_id.as_str(), "room123");
+            assert_eq!(media_id.as_str(), "media456");
+            assert_eq!(reason, "user_banned");
+        } else {
+            panic!("Expected KickPublisher variant");
+        }
+    }
+
+    #[test]
+    fn test_kick_publisher_has_room_id_no_user_id() {
+        let event = ClusterEvent::KickPublisher {
+            room_id: RoomId::from_string("room789".to_string()),
+            media_id: MediaId::from_string("media012".to_string()),
+            reason: "room_deleted".to_string(),
+            timestamp: Utc::now(),
+        };
+
+        assert_eq!(event.room_id().unwrap().as_str(), "room789");
+        assert!(event.user_id().is_none());
+        assert_eq!(event.event_type(), "kick_publisher");
     }
 }

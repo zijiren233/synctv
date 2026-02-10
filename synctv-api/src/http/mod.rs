@@ -33,7 +33,8 @@ use axum::{
 use std::sync::Arc;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
-use synctv_cluster::sync::PublishRequest;
+use synctv_cluster::sync::{ClusterEvent, PublishRequest};
+use synctv_core::models::{RoomId, MediaId};
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::repository::UserProviderCredentialRepository;
 use synctv_core::service::{RemoteProviderManager, RoomService, UserService};
@@ -97,6 +98,29 @@ pub struct AppState {
     pub admin_api: Option<Arc<crate::impls::AdminApiImpl>>,
 }
 
+/// Kick a stream both locally and cluster-wide via Redis Pub/Sub.
+///
+/// Used by HTTP handlers that delete media to terminate any active RTMP stream.
+pub(crate) fn kick_stream_cluster(state: &AppState, room_id: &str, media_id: &str, reason: &str) {
+    // 1. Local kick (no-op if stream not on this node)
+    if let Some(infra) = &state.live_streaming_infrastructure {
+        let _ = infra.kick_publisher(room_id, media_id);
+    }
+
+    // 2. Cluster-wide via Redis
+    if let Some(tx) = &state.redis_publish_tx {
+        let _ = tx.send(PublishRequest {
+            room_id: RoomId::from_string(room_id.to_string()),
+            event: ClusterEvent::KickPublisher {
+                room_id: RoomId::from_string(room_id.to_string()),
+                media_id: MediaId::from_string(media_id.to_string()),
+                reason: reason.to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        });
+    }
+}
+
 /// Create the HTTP router with all routes
 #[allow(clippy::too_many_arguments)]
 pub fn create_router(
@@ -144,6 +168,8 @@ pub fn create_router(
             email_svc.clone(),
             connection_manager.clone(),
             provider_instance_manager.clone(),
+            live_streaming_infrastructure.clone(),
+            redis_publish_tx.clone(),
         )))
     } else {
         None

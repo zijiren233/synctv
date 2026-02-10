@@ -3,6 +3,7 @@ use tonic::{Request, Response, Status};
 
 use synctv_core::models::{ProviderInstance, RoomId, UserId, SettingsGroup as CoreSettingsGroup};
 use synctv_core::service::{RemoteProviderManager, RoomService, UserService, SettingsService, SettingsRegistry};
+use synctv_livestream::api::LiveStreamingInfrastructure;
 
 // Use synctv_proto for all gRPC types to avoid duplication
 use crate::proto::admin_service_server::AdminService;
@@ -17,10 +18,11 @@ pub struct AdminServiceImpl {
     settings_service: Arc<SettingsService>,
     settings_registry: Option<Arc<SettingsRegistry>>,
     email_service: Option<Arc<synctv_core::service::EmailService>>,
+    live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
 }
 
 impl AdminServiceImpl {
-    #[must_use] 
+    #[must_use]
     pub fn new(
         user_service: UserService,
         room_service: RoomService,
@@ -28,6 +30,7 @@ impl AdminServiceImpl {
         settings_service: Arc<SettingsService>,
         settings_registry: Option<Arc<SettingsRegistry>>,
         email_service: Option<Arc<synctv_core::service::EmailService>>,
+        live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
     ) -> Self {
         Self {
             user_service: Arc::new(user_service),
@@ -36,6 +39,7 @@ impl AdminServiceImpl {
             settings_service,
             settings_registry,
             email_service,
+            live_streaming_infrastructure,
         }
     }
 
@@ -959,6 +963,11 @@ impl AdminService for AdminServiceImpl {
 
         tracing::info!("User {} banned by admin", user_id.as_str());
 
+        // Kick active RTMP publisher if the user is streaming
+        if let Some(infra) = &self.live_streaming_infrastructure {
+            infra.kick_user_publishers(user_id.as_str());
+        }
+
         // Convert to AdminUser proto
         let admin_user = AdminUser {
             id: updated_user.id.to_string(),
@@ -1295,6 +1304,11 @@ impl AdminService for AdminServiceImpl {
             .map_err(|e| Status::internal(format!("Failed to ban room: {e}")))?;
 
         tracing::info!("Admin banned room {}", room_id.as_str());
+
+        // Kick active RTMP publishers in the banned room
+        if let Some(infra) = &self.live_streaming_infrastructure {
+            infra.kick_room_publishers(room_id.as_str());
+        }
 
         // Get member count
         let member_count = self

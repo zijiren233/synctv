@@ -17,12 +17,12 @@ synctv-livestream.workspace = true
 synctv-cluster.workspace = true
 synctv-sfu.workspace = true
 
+# Streaming (for AuthCallback trait)
+rtmp.workspace = true
+
 # Async
 tokio.workspace = true
 async-trait.workspace = true
-
-# Streaming
-streamhub.workspace = true
 
 # HTTP Framework
 axum.workspace = true

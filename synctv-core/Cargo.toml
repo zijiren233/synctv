@@ -86,7 +86,7 @@ config.workspace = true
 prometheus = "0.14.0"
 
 # Email
-lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "smtp-transport"] }
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "hostname", "tokio1"] }
 handlebars = "5.1"
 
 # WebRTC/TURN credentials

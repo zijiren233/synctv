@@ -1,4 +1,4 @@
-mod rtmp;
+mod rtmp_auth;
 mod server;
 
 use anyhow::Result;
@@ -189,56 +189,57 @@ async fn main() -> Result<()> {
                         // 2. Publisher registry for Redis (used by PullStreamManager)
                         let publisher_registry = Arc::new(synctv_livestream::relay::StreamRegistry::new(redis_conn)) as Arc<dyn synctv_livestream::relay::StreamRegistryTrait>;
 
-                        // Create GOP cache
-                        let gop_cache_config = synctv_livestream::libraries::gop_cache::GopCacheConfig::default();
-                        let gop_cache = Arc::new(synctv_livestream::GopCache::new(gop_cache_config));
-
-                        // Create StreamHub event sender (needed by PullStreamManager)
-                        let (stream_hub_event_sender, _stream_hub_event_receiver) =
-                            tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
+                        // Create dummy StreamHub event sender (events not currently handled)
+                        // TODO: Implement event handling via PublisherManager if needed
+                        let (stream_hub_event_sender, _) =
+                            tokio::sync::mpsc::unbounded_channel();
 
                         // Create PullStreamManager (uses publisher_registry for Redis)
                         let node_id = generate_node_id();
                         let pull_manager = Arc::new(synctv_livestream::livestream::PullStreamManager::new(
-                            gop_cache.clone(),
                             publisher_registry.clone(),
                             node_id.clone(),
                             stream_hub_event_sender.clone(),
                         ));
 
-                        // Clone resources for RTMP server before they are moved into LiveStreamingInfrastructure
-                        let rtmp_gop_cache = gop_cache.clone();
+                        // Clone resources for RTMP server
                         let rtmp_event_sender = stream_hub_event_sender.clone();
+
+                        // Shared tracker for user→stream mapping (kick-on-ban)
+                        let user_stream_tracker: synctv_livestream::api::UserStreamTracker =
+                            Arc::new(synctv_livestream::api::StreamTracker::new());
 
                         // Create LiveStreamingInfrastructure (uses publisher_registry for Redis)
                         let live_infra = Arc::new(synctv_livestream::api::LiveStreamingInfrastructure::new(
                             publisher_registry.clone(),
                             stream_hub_event_sender,
-                            gop_cache,
                             pull_manager.clone(),
+                            user_stream_tracker.clone(),
                         ));
 
                         // Create RTMP authentication callback
-                        let rtmp_auth: Arc<dyn synctv_livestream::protocols::rtmp::auth::RtmpAuthCallback> =
-                            Arc::new(rtmp::SyncTvRtmpAuth::new(
+                        let rtmp_auth: Arc<dyn ::rtmp::auth::AuthCallback> =
+                            Arc::new(rtmp_auth::SyncTvRtmpAuth::new(
                                 synctv_services.room_service.clone(),
+                                synctv_services.user_service.clone(),
                                 synctv_services.publish_key_service.clone(),
                                 Some(synctv_services.settings_registry.clone()),
+                                user_stream_tracker,
+                                publisher_registry.clone(),
+                                node_id.clone(),
                             ));
 
                         // Create and start RTMP server with auth integration
                         let rtmp_listen_addr = format!("{}:{}", config.server.host, config.livestream.rtmp_port);
-                        let mut rtmp_server = synctv_livestream::protocols::RtmpStreamingServer::new(
+                        let mut rtmp_server = ::rtmp::rtmp::RtmpServer::new(
                             rtmp_listen_addr.clone(),
-                            rtmp_gop_cache,
-                            publisher_registry.clone(),
-                            node_id,
-                            rtmp_auth,
                             rtmp_event_sender,
+                            2, // gop_num
+                            Some(rtmp_auth),
                         );
 
                         tokio::spawn(async move {
-                            if let Err(e) = rtmp_server.start().await {
+                            if let Err(e) = rtmp_server.run().await {
                                 error!("RTMP server error: {}", e);
                             }
                         });

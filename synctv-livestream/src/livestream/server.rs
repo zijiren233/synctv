@@ -2,30 +2,26 @@
 //
 // Architecture:
 // 1. Single shared StreamHub (xiu's event bus) for all protocols
-// 2. RTMP server for push (creates ServerSessions per connection)
+// 2. RTMP server for push (xiu handles protocol, auth via AuthCallback)
 // 3. HLS server for pull (xiu handles HLS transcoding)
 // 4. HTTP-FLV server for pull (lazy-load pattern)
 // 5. All communicate via StreamHub events
-//
-// Based on design docs at /Volumes/workspace/rust/synctv-rs-design/02-整体架构.md
-// and /Volumes/workspace/rust/synctv-rs-design/17-数据流设计.md
 
 use crate::{
-    libraries::gop_cache::GopCache,
     libraries::storage::{HlsStorage, StorageBackend, FileStorage, MemoryStorage, OssStorage, OssConfig},
     relay::registry_trait::StreamRegistryTrait,
     livestream::{
         pull_manager::PullStreamManager,
         segment_manager::{SegmentManager, CleanupConfig},
     },
-    protocols::rtmp::{RtmpStreamingServer, auth::NoAuthCallback},
     protocols::hls::HlsServer,
     error::StreamResult,
 };
+use rtmp::auth::AuthCallback;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tracing as log;
-use streamhub::{StreamsHub, define::StreamHubEventSender};
+use streamhub::StreamsHub;
 
 pub struct LivestreamServer {
     // Configuration
@@ -36,10 +32,10 @@ pub struct LivestreamServer {
     oss_config: Option<OssConfig>,
 
     // Shared components
-    gop_cache: Arc<GopCache>,
     registry: Arc<dyn StreamRegistryTrait>,
     node_id: String,
     segment_manager: Option<Arc<SegmentManager>>,
+    auth: Option<Arc<dyn AuthCallback>>,
 }
 
 impl LivestreamServer {
@@ -48,7 +44,6 @@ impl LivestreamServer {
         hls_address: String,
         hls_storage_path: String,
         storage_backend: StorageBackend,
-        gop_cache: Arc<GopCache>,
         registry: Arc<dyn StreamRegistryTrait>,
         node_id: String,
     ) -> Self {
@@ -58,10 +53,10 @@ impl LivestreamServer {
             hls_storage_path,
             storage_backend,
             oss_config: None,
-            gop_cache,
             registry,
             node_id,
             segment_manager: None,
+            auth: None,
         }
     }
 
@@ -72,7 +67,14 @@ impl LivestreamServer {
         self
     }
 
-    pub async fn start(mut self) -> StreamResult<()> {
+    /// Set RTMP auth callback
+    #[must_use]
+    pub fn with_auth(mut self, auth: Arc<dyn AuthCallback>) -> Self {
+        self.auth = Some(auth);
+        self
+    }
+
+    pub async fn start(&mut self) -> StreamResult<()> {
         // Initialize HLS storage backend
         let storage: Arc<dyn HlsStorage> = match self.storage_backend {
             StorageBackend::File => {
@@ -118,19 +120,18 @@ impl LivestreamServer {
         // Store segment manager for later use
         self.segment_manager = Some(Arc::clone(&segment_manager));
 
-        // Create StreamHub for RTMP (shared with PullStreamManager)
-        let stream_hub = Arc::new(Mutex::new(StreamsHub::new(None)));
-        let event_sender = {
-            let mut hub = stream_hub.lock().await;
-            hub.get_hub_event_sender()
-        };
+        // Create StreamHub channels and hub
+        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let stream_hub = Arc::new(Mutex::new(StreamsHub::new(
+            event_sender.clone(),
+            event_receiver,
+        )));
 
         // Start RTMP server with the event sender
         self.start_rtmp_server(event_sender.clone()).await?;
 
         // Create PullStreamManager with the event sender from StreamHub
         let _pull_manager = Arc::new(PullStreamManager::new(
-            Arc::clone(&self.gop_cache),
             self.registry.clone(),
             self.node_id.clone(),
             event_sender,
@@ -139,29 +140,31 @@ impl LivestreamServer {
         // Start HLS server
         self.start_hls_server(Arc::clone(&stream_hub), segment_manager).await?;
 
-        // Start HLS StreamHub event loop
-        let hls_stream_hub = Arc::clone(&stream_hub);
+        // Start StreamHub event loop
+        let hub_clone = Arc::clone(&stream_hub);
         tokio::spawn(async move {
-            let mut hub = hls_stream_hub.lock().await;
+            let mut hub = hub_clone.lock().await;
             hub.run().await;
-            log::info!("HLS StreamHub event loop ended");
+            log::info!("StreamHub event loop ended");
         });
 
         Ok(())
     }
 
-    async fn start_rtmp_server(&self, event_sender: StreamHubEventSender) -> StreamResult<()> {
-        let mut rtmp_server = RtmpStreamingServer::new(
+    async fn start_rtmp_server(
+        &self,
+        event_sender: streamhub::define::StreamHubEventSender,
+    ) -> StreamResult<()> {
+        let auth = self.auth.clone();
+        let mut xiu_rtmp_server = rtmp::rtmp::RtmpServer::new(
             self.rtmp_address.clone(),
-            Arc::clone(&self.gop_cache),
-            self.registry.clone(),
-            self.node_id.clone(),
-            Arc::new(NoAuthCallback), // No auth callback for now
             event_sender,
+            2, // gop_num
+            auth,
         );
 
         tokio::spawn(async move {
-            if let Err(e) = rtmp_server.start().await {
+            if let Err(e) = xiu_rtmp_server.run().await {
                 log::error!("RTMP server error: {}", e);
             }
         });

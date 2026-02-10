@@ -111,7 +111,7 @@ impl DistributedLock {
         let result: i32 = script
             .key(&lock_key)
             .arg(lock_value)
-            .invoke_async(&mut conn)
+            .invoke_async::<i32>(&mut conn)
             .await
             .map_err(|e| Error::Internal(format!("Failed to release lock: {e}")))?;
 
@@ -249,7 +249,7 @@ impl DistributedLock {
             .key(&lock_key)
             .arg(lock_value)
             .arg(ttl_seconds)
-            .invoke_async(&mut conn)
+            .invoke_async::<i32>(&mut conn)
             .await
             .map_err(|e| Error::Internal(format!("Failed to extend lock: {e}")))?;
 

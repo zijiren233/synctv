@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use futures::stream::StreamExt;
 use redis::{AsyncCommands, Client as RedisClient};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
 use super::events::ClusterEvent;
@@ -21,17 +21,24 @@ pub struct RedisPubSub {
     redis_client: RedisClient,
     message_hub: Arc<RoomMessageHub>,
     node_id: String,
+    admin_event_tx: broadcast::Sender<ClusterEvent>,
 }
 
 impl RedisPubSub {
     /// Create a new `RedisPubSub` service
-    pub fn new(redis_url: &str, message_hub: Arc<RoomMessageHub>, node_id: String) -> Result<Self> {
+    pub fn new(
+        redis_url: &str,
+        message_hub: Arc<RoomMessageHub>,
+        node_id: String,
+        admin_event_tx: broadcast::Sender<ClusterEvent>,
+    ) -> Result<Self> {
         let redis_client = RedisClient::open(redis_url).context("Failed to create Redis client")?;
 
         Ok(Self {
             redis_client,
             message_hub,
             node_id,
+            admin_event_tx,
         })
     }
 
@@ -156,6 +163,11 @@ impl RedisPubSub {
                             "Received event from Redis"
                         );
 
+                        // Forward KickPublisher events to admin channel
+                        if matches!(&envelope.event, ClusterEvent::KickPublisher { .. }) {
+                            let _ = self.admin_event_tx.send(envelope.event.clone());
+                        }
+
                         // Broadcast to local subscribers
                         let sent_count = self.message_hub.broadcast(&room_id, envelope.event);
 
@@ -268,12 +280,14 @@ mod tests {
         let redis_url = "redis://127.0.0.1:6379";
         let message_hub = Arc::new(RoomMessageHub::new());
 
+        let (admin_tx, _) = broadcast::channel(256);
+
         // Create two PubSub instances simulating different nodes
         let pubsub1 = Arc::new(
-            RedisPubSub::new(redis_url, message_hub.clone(), "node1".to_string()).unwrap(),
+            RedisPubSub::new(redis_url, message_hub.clone(), "node1".to_string(), admin_tx.clone()).unwrap(),
         );
         let pubsub2 = Arc::new(
-            RedisPubSub::new(redis_url, message_hub.clone(), "node2".to_string()).unwrap(),
+            RedisPubSub::new(redis_url, message_hub.clone(), "node2".to_string(), admin_tx.clone()).unwrap(),
         );
 
         // Start both

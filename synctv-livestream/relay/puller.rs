@@ -181,6 +181,7 @@ mod tests {
             PublisherInfo {
                 node_id: "publisher-node".to_string(),
                 app_name: "live".to_string(),
+                user_id: String::new(),
                 started_at: chrono::Utc::now(),
             }
         );
@@ -233,6 +234,7 @@ mod tests {
             PublisherInfo {
                 node_id: "publisher-node".to_string(),
                 app_name: "live".to_string(),
+                user_id: String::new(),
                 started_at: chrono::Utc::now(),
             }
         );

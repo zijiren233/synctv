@@ -5,9 +5,11 @@
 
 use std::sync::Arc;
 use std::str::FromStr;
-use synctv_core::models::{UserId, RoomId, UserRole, UserStatus};
+use synctv_core::models::{UserId, RoomId, MediaId, UserRole, UserStatus};
 use synctv_core::service::{RoomService, UserService, SettingsService, EmailService, RemoteProviderManager, SettingsRegistry};
-use synctv_cluster::sync::ConnectionManager;
+use synctv_cluster::sync::{ConnectionManager, ClusterEvent, PublishRequest};
+use synctv_livestream::api::LiveStreamingInfrastructure;
+use tokio::sync::mpsc;
 
 /// Admin API implementation
 #[derive(Clone)]
@@ -19,6 +21,8 @@ pub struct AdminApiImpl {
     pub email_service: Arc<EmailService>,
     pub connection_manager: Arc<ConnectionManager>,
     pub provider_instance_manager: Arc<RemoteProviderManager>,
+    pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
+    pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
 }
 
 impl AdminApiImpl {
@@ -31,6 +35,8 @@ impl AdminApiImpl {
         email_service: Arc<EmailService>,
         connection_manager: Arc<ConnectionManager>,
         provider_instance_manager: Arc<RemoteProviderManager>,
+        live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
+        redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
     ) -> Self {
         Self {
             room_service,
@@ -40,6 +46,29 @@ impl AdminApiImpl {
             email_service,
             connection_manager,
             provider_instance_manager,
+            live_streaming_infrastructure,
+            redis_publish_tx,
+        }
+    }
+
+    /// Kick a stream both locally and cluster-wide via Redis Pub/Sub
+    fn kick_stream_cluster(&self, room_id: &str, media_id: &str, reason: &str) {
+        // 1. Local kick (no-op if stream not on this node)
+        if let Some(infra) = &self.live_streaming_infrastructure {
+            let _ = infra.kick_publisher(room_id, media_id);
+        }
+
+        // 2. Cluster-wide via Redis
+        if let Some(tx) = &self.redis_publish_tx {
+            let _ = tx.send(PublishRequest {
+                room_id: RoomId::from_string(room_id.to_string()),
+                event: ClusterEvent::KickPublisher {
+                    room_id: RoomId::from_string(room_id.to_string()),
+                    media_id: MediaId::from_string(media_id.to_string()),
+                    reason: reason.to_string(),
+                    timestamp: chrono::Utc::now(),
+                },
+            });
         }
     }
 
@@ -113,6 +142,17 @@ impl AdminApiImpl {
 
         // Force disconnect all connections in the deleted room
         self.connection_manager.disconnect_room(&rid);
+
+        // Kick active RTMP publishers in the deleted room (local + cluster-wide)
+        if let Some(infra) = &self.live_streaming_infrastructure {
+            let media_ids = infra.user_stream_tracker.get_room_streams(rid.as_str());
+
+            for media_id in &media_ids {
+                self.kick_stream_cluster(rid.as_str(), media_id, "room_deleted");
+            }
+
+            infra.kick_room_publishers(rid.as_str());
+        }
 
         Ok(crate::proto::admin::DeleteRoomResponse {
             success: true,
@@ -529,6 +569,17 @@ impl AdminApiImpl {
         // Force disconnect all user connections (WebSocket and streaming)
         self.connection_manager.disconnect_user(&uid);
 
+        // Kick active RTMP publishers (local + cluster-wide)
+        if let Some(infra) = &self.live_streaming_infrastructure {
+            let streams = infra.user_stream_tracker.get_user_streams(uid.as_str());
+
+            for (room_id, media_id) in &streams {
+                self.kick_stream_cluster(room_id, media_id, "user_deleted");
+            }
+
+            infra.kick_user_publishers(uid.as_str());
+        }
+
         Ok(crate::proto::admin::DeleteUserResponse { success: true })
     }
 
@@ -567,6 +618,18 @@ impl AdminApiImpl {
 
         // Force disconnect all user connections (WebSocket and streaming)
         self.connection_manager.disconnect_user(&uid);
+
+        // Kick active RTMP publisher if the user is streaming (local + cluster-wide)
+        if let Some(infra) = &self.live_streaming_infrastructure {
+            let streams = infra.user_stream_tracker.get_user_streams(uid.as_str());
+
+            for (room_id, media_id) in &streams {
+                self.kick_stream_cluster(room_id, media_id, "user_banned");
+            }
+
+            // Also do local tracker cleanup
+            infra.kick_user_publishers(uid.as_str());
+        }
 
         Ok(crate::proto::admin::BanUserResponse {
             user: Some(admin_user_to_proto(&updated)),
@@ -668,6 +731,17 @@ impl AdminApiImpl {
 
         // Force disconnect all connections in the banned room
         self.connection_manager.disconnect_room(&rid);
+
+        // Kick active RTMP publishers in the banned room (local + cluster-wide)
+        if let Some(infra) = &self.live_streaming_infrastructure {
+            let media_ids = infra.user_stream_tracker.get_room_streams(rid.as_str());
+
+            for media_id in &media_ids {
+                self.kick_stream_cluster(rid.as_str(), media_id, "room_banned");
+            }
+
+            infra.kick_room_publishers(rid.as_str());
+        }
 
         Ok(crate::proto::admin::BanRoomResponse {
             room: Some(admin_room_to_proto(

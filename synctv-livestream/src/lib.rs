@@ -33,10 +33,10 @@ pub mod api;
 pub mod livestream;
 
 // Re-exports for convenience
-pub use libraries::gop_cache::GopCache;
 pub use libraries::storage::HlsStorage;
 pub use xiu_integration::RtmpServer;
 pub use protocols::httpflv::HttpFlvSession;
 pub use protocols::hls::{HlsServer, CustomHlsRemuxer, StreamRegistry};
+pub use protocols::rtmp::RtmpAuthCallbackImpl;
 pub use api::{LiveStreamingInfrastructure, FlvStreamingApi, HlsStreamingApi};
 pub use livestream::{LivestreamServer, PullStreamManager, SegmentManager};

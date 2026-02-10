@@ -27,16 +27,11 @@ prost-types.workspace = true
 tokio-stream.workspace = true
 
 # Streaming
-xiu.workspace = true
 rtmp.workspace = true
 streamhub.workspace = true
-hls.workspace = true
-httpflv.workspace = true
-xflv.workspace = true
-xmpegts.workspace = true
-
-# Object Storage
-opendal.workspace = true
+xiu-storage = { workspace = true, features = ["oss"] }
+xiu-hls.workspace = true
+xiu-httpflv.workspace = true
 
 # Redis
 redis.workspace = true
@@ -56,8 +51,6 @@ serde_json.workspace = true
 hostname.workspace = true
 uuid.workspace = true
 nanoid.workspace = true
-sha2.workspace = true
-base64 = "0.22"
 
 # Logging
 tracing.workspace = true

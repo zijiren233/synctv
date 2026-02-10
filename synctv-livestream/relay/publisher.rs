@@ -3,8 +3,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 use bytes::Bytes;
 use tokio::sync::mpsc;
-use streamhub::define::{StreamHubEventSender};
-use crate::libraries::{GopCache, GopFrame};
+use streamhub::define::StreamHubEventSender;
 use crate::relay::StreamRegistryTrait;
 use crate::grpc::{FrameType, RtmpPacket, PullRtmpStreamRequest, StreamRelayService};
 use tonic::{Request, Response, Status};
@@ -14,18 +13,16 @@ use std::collections::HashMap;
 /// Publisher node - accepts RTMP push and serves to Pullers
 ///
 /// Note: In the xiu architecture, frame data distribution to local subscribers
-/// is handled automatically by the `StreamHub` when a session publishes.
+/// (including GOP cache for fast startup) is handled automatically by the
+/// StreamHub + RTMP cache when a session publishes.
 /// The Publisher here primarily handles:
-/// 1. Caching frames in GOP cache for fast startup
-/// 2. Broadcasting to gRPC relay clients (Puller nodes on other servers)
+/// 1. Broadcasting to gRPC relay clients (Puller nodes on other servers)
 pub struct Publisher {
     room_id: String,
     media_id: String,
     node_id: String,
-    gop_cache: Arc<GopCache>,
     registry: Arc<dyn StreamRegistryTrait>,
     /// Event sender for `StreamHub` (for Publish/UnPublish events)
-    /// Will be used when full StreamHub integration is wired up
     #[allow(dead_code)]
     stream_hub_sender: Option<StreamHubEventSender>,
     /// Channel for gRPC relay to Puller nodes
@@ -38,7 +35,6 @@ impl Publisher {
         room_id: String,
         media_id: String,
         node_id: String,
-        gop_cache: Arc<GopCache>,
         registry: Arc<dyn StreamRegistryTrait>,
         stream_hub_sender: Option<StreamHubEventSender>,
     ) -> Self {
@@ -46,7 +42,6 @@ impl Publisher {
             room_id,
             media_id,
             node_id,
-            gop_cache,
             registry,
             stream_hub_sender,
             relay_senders: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -62,24 +57,8 @@ impl Publisher {
         is_keyframe: bool,
         is_video: bool,
     ) -> Result<()> {
-        // Add frame to GOP cache for fast viewer startup
-        let frame = GopFrame {
-            data: data.clone(),
-            timestamp,
-            is_keyframe,
-            frame_type: if is_video {
-                crate::libraries::FrameType::Video
-            } else {
-                crate::libraries::FrameType::Audio
-            },
-        };
-
-        // Use composite key "room_id:media_id" for GOP cache
-        let stream_key = format!("{}:{}", self.room_id, self.media_id);
-        self.gop_cache.add_frame(&stream_key, frame);
-
-        // Note: Local viewer distribution is handled by xiu's StreamHub automatically
-        // The RTMP session publishes to StreamHub, which distributes to all subscribers
+        // Note: Local viewer distribution + GOP caching is handled by xiu's
+        // StreamHub + RTMP cache automatically.
 
         // Send to gRPC stream relay service for Puller nodes on other servers
         self.broadcast_to_grpc_relays(data, timestamp, is_keyframe, is_video).await?;
@@ -113,7 +92,7 @@ impl Publisher {
         let mut dead_clients = Vec::new();
 
         for (id, sender) in senders.iter() {
-            if let Err(_) = sender.send(Ok(packet.clone())) {
+            if sender.send(Ok(packet.clone())).is_err() {
                 dead_clients.push(id.clone());
             }
         }
@@ -155,10 +134,6 @@ impl Publisher {
         // Unregister from Redis
         self.registry.unregister_publisher(&self.room_id, &self.media_id).await?;
 
-        // Clear GOP cache
-        let stream_key = format!("{}:{}", self.room_id, self.media_id);
-        self.gop_cache.clear_stream(&stream_key);
-
         // Clear all relay clients
         let mut senders = self.relay_senders.lock().await;
         senders.clear();
@@ -183,7 +158,7 @@ pub struct PublisherRelayService {
 }
 
 impl PublisherRelayService {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             publishers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -242,19 +217,16 @@ impl StreamRelayService for PublisherRelayService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::libraries::GopCacheConfig;
     use crate::relay::MockStreamRegistry;
 
     #[tokio::test]
     async fn test_publisher_creation() {
-        let gop_cache = Arc::new(GopCache::new(GopCacheConfig::default()));
         let registry = Arc::new(MockStreamRegistry::new()) as Arc<dyn StreamRegistryTrait>;
 
         let publisher = Publisher::new(
             "room123".to_string(),
             "media123".to_string(),
             "node1".to_string(),
-            gop_cache,
             registry,
             None,
         );
@@ -265,14 +237,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_publisher_on_rtmp_data() {
-        let gop_cache = Arc::new(GopCache::new(GopCacheConfig::default()));
         let registry = Arc::new(MockStreamRegistry::new()) as Arc<dyn StreamRegistryTrait>;
 
         let mut publisher = Publisher::new(
             "room123".to_string(),
             "media123".to_string(),
             "node1".to_string(),
-            gop_cache,
             registry,
             None,
         );
@@ -286,14 +256,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_client_registration() {
-        let gop_cache = Arc::new(GopCache::new(GopCacheConfig::default()));
         let registry = Arc::new(MockStreamRegistry::new()) as Arc<dyn StreamRegistryTrait>;
 
         let publisher = Publisher::new(
             "room123".to_string(),
             "media123".to_string(),
             "node1".to_string(),
-            gop_cache,
             registry,
             None,
         );

@@ -23,16 +23,19 @@ pub trait StreamRegistryTrait: Send + Sync {
     ) -> Result<bool>;
 
     /// Try to register as publisher (atomic operation)
-    /// Returns true if registered successfully, false if already exists
+    /// Returns true if registered successfully, false if already exists.
+    /// `user_id` is stored for reverse-index lookups (pass "" if unknown).
     async fn try_register_publisher(
         &self,
         room_id: &str,
         media_id: &str,
         node_id: &str,
+        user_id: &str,
     ) -> Result<bool>;
 
-    /// Refresh TTL for a publisher (called by heartbeat)
-    async fn refresh_publisher_ttl(&self, room_id: &str, media_id: &str) -> Result<()>;
+    /// Refresh TTL for a publisher (called by heartbeat).
+    /// `user_id` is used to also refresh the user reverse-index TTL (pass "" to skip).
+    async fn refresh_publisher_ttl(&self, room_id: &str, media_id: &str, user_id: &str) -> Result<()>;
 
     /// Unregister a publisher
     async fn unregister_publisher(&self, room_id: &str, media_id: &str) -> Result<()>;
@@ -45,6 +48,13 @@ pub trait StreamRegistryTrait: Send + Sync {
 
     /// List all active streams (returns tuples of (`room_id`, `media_id`))
     async fn list_active_streams(&self) -> Result<Vec<(String, String)>>;
+
+    /// Get all active publishers for a user (via reverse index)
+    /// Returns list of (room_id, media_id) pairs
+    async fn get_user_publishers(&self, user_id: &str) -> Result<Vec<(String, String)>>;
+
+    /// Remove all publisher entries for a user
+    async fn unregister_all_user_publishers(&self, user_id: &str) -> Result<()>;
 }
 
 // Implement StreamRegistryTrait for StreamRegistry
@@ -65,12 +75,13 @@ impl StreamRegistryTrait for StreamRegistry {
         room_id: &str,
         media_id: &str,
         node_id: &str,
+        user_id: &str,
     ) -> Result<bool> {
-        Self::try_register_publisher(self, room_id, media_id, node_id).await
+        Self::try_register_publisher_with_user(self, room_id, media_id, node_id, user_id).await
     }
 
-    async fn refresh_publisher_ttl(&self, room_id: &str, media_id: &str) -> Result<()> {
-        Self::refresh_publisher_ttl(self, room_id, media_id).await
+    async fn refresh_publisher_ttl(&self, room_id: &str, media_id: &str, user_id: &str) -> Result<()> {
+        Self::refresh_publisher_ttl_with_user(self, room_id, media_id, user_id).await
     }
 
     async fn unregister_publisher(&self, room_id: &str, media_id: &str) -> Result<()> {
@@ -87,6 +98,14 @@ impl StreamRegistryTrait for StreamRegistry {
 
     async fn list_active_streams(&self) -> Result<Vec<(String, String)>> {
         Self::list_active_streams_immut(self).await
+    }
+
+    async fn get_user_publishers(&self, user_id: &str) -> Result<Vec<(String, String)>> {
+        Self::get_user_publishers(self, user_id).await
+    }
+
+    async fn unregister_all_user_publishers(&self, user_id: &str) -> Result<()> {
+        Self::unregister_all_user_publishers(self, user_id).await
     }
 }
 
@@ -138,6 +157,7 @@ impl StreamRegistryTrait for MockStreamRegistry {
             publishers.insert(key, PublisherInfo {
                 node_id: node_id.to_string(),
                 app_name: app_name.to_string(),
+                user_id: String::new(),
                 started_at: Utc::now(),
             });
             Ok(true)
@@ -149,6 +169,7 @@ impl StreamRegistryTrait for MockStreamRegistry {
         room_id: &str,
         media_id: &str,
         node_id: &str,
+        user_id: &str,
     ) -> Result<bool> {
         let mut publishers = self.publishers.lock().await;
         let key = (room_id.to_string(), media_id.to_string());
@@ -159,13 +180,14 @@ impl StreamRegistryTrait for MockStreamRegistry {
             publishers.insert(key, PublisherInfo {
                 node_id: node_id.to_string(),
                 app_name: "live".to_string(),
+                user_id: user_id.to_string(),
                 started_at: Utc::now(),
             });
             Ok(true)
         }
     }
 
-    async fn refresh_publisher_ttl(&self, _room_id: &str, _media_id: &str) -> Result<()> {
+    async fn refresh_publisher_ttl(&self, _room_id: &str, _media_id: &str, _user_id: &str) -> Result<()> {
         // No-op for mock
         Ok(())
     }
@@ -189,6 +211,21 @@ impl StreamRegistryTrait for MockStreamRegistry {
     async fn list_active_streams(&self) -> Result<Vec<(String, String)>> {
         let publishers = self.publishers.lock().await;
         Ok(publishers.keys().cloned().collect())
+    }
+
+    async fn get_user_publishers(&self, user_id: &str) -> Result<Vec<(String, String)>> {
+        let publishers = self.publishers.lock().await;
+        Ok(publishers
+            .iter()
+            .filter(|(_, info)| info.user_id == user_id)
+            .map(|((room_id, media_id), _)| (room_id.clone(), media_id.clone()))
+            .collect())
+    }
+
+    async fn unregister_all_user_publishers(&self, user_id: &str) -> Result<()> {
+        let mut publishers = self.publishers.lock().await;
+        publishers.retain(|_, info| info.user_id != user_id);
+        Ok(())
     }
 }
 
@@ -241,11 +278,11 @@ mod tests {
         let registry = MockStreamRegistry::new();
 
         // First try_register should succeed
-        let result = registry.try_register_publisher("room123", "media456", "node1").await.unwrap();
+        let result = registry.try_register_publisher("room123", "media456", "node1", "user1").await.unwrap();
         assert!(result);
 
         // Second try_register should return false (already exists)
-        let result = registry.try_register_publisher("room123", "media456", "node2").await.unwrap();
+        let result = registry.try_register_publisher("room123", "media456", "node2", "user2").await.unwrap();
         assert!(!result);
     }
 
@@ -307,6 +344,7 @@ mod tests {
             PublisherInfo {
                 node_id: "node1".to_string(),
                 app_name: "live".to_string(),
+                user_id: String::new(),
                 started_at: Utc::now(),
             }
         );

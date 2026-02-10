@@ -11,6 +11,9 @@ pub struct PublisherInfo {
     pub node_id: String,
     /// RTMP app name
     pub app_name: String,
+    /// User ID of the publisher (for reverse-index lookups)
+    #[serde(default)]
+    pub user_id: String,
     /// When the stream started
     pub started_at: DateTime<Utc>,
 }
@@ -37,10 +40,24 @@ impl StreamRegistry {
         node_id: &str,
         app_name: &str,
     ) -> anyhow::Result<bool> {
+        self.register_publisher_with_user(room_id, media_id, node_id, app_name, "").await
+    }
+
+    /// Register a publisher with user_id for a media in a room (atomic operation)
+    /// Returns true if registered successfully, false if already exists
+    pub async fn register_publisher_with_user(
+        &mut self,
+        room_id: &str,
+        media_id: &str,
+        node_id: &str,
+        app_name: &str,
+        user_id: &str,
+    ) -> anyhow::Result<bool> {
         let key = format!("stream:publisher:{room_id}:{media_id}");
         let info = PublisherInfo {
             node_id: node_id.to_string(),
             app_name: app_name.to_string(),
+            user_id: user_id.to_string(),
             started_at: Utc::now(),
         };
 
@@ -54,6 +71,14 @@ impl StreamRegistry {
         if registered {
             // Set TTL of 300 seconds (5 minutes)
             let _: () = self.redis.expire(&key, 300).await?;
+
+            // Add to user reverse index if user_id is provided
+            if !user_id.is_empty() {
+                let user_key = format!("stream:user_publishers:{user_id}");
+                let member = format!("{room_id}:{media_id}");
+                let _: () = self.redis.sadd(&user_key, &member).await?;
+                let _: () = self.redis.expire(&user_key, 300).await?;
+            }
         }
 
         Ok(registered)
@@ -67,6 +92,18 @@ impl StreamRegistry {
         media_id: &str,
         node_id: &str,
     ) -> anyhow::Result<bool> {
+        self.try_register_publisher_with_user(room_id, media_id, node_id, "").await
+    }
+
+    /// Try to register as publisher with user_id
+    /// Returns true if registered successfully, false if already exists
+    pub async fn try_register_publisher_with_user(
+        &self,
+        room_id: &str,
+        media_id: &str,
+        node_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<bool> {
         let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
@@ -74,6 +111,7 @@ impl StreamRegistry {
         let info = PublisherInfo {
             node_id: node_id.to_string(),
             app_name: "live".to_string(),
+            user_id: user_id.to_string(),
             started_at: Utc::now(),
         };
         let info_json = serde_json::to_string(&info)?;
@@ -95,6 +133,24 @@ impl StreamRegistry {
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| anyhow!(e.to_string()))?;
+
+            // Add to user reverse index if user_id is provided
+            if !user_id.is_empty() {
+                let user_key = format!("stream:user_publishers:{user_id}");
+                let member = format!("{room_id}:{media_id}");
+                let _: () = redis::cmd("SADD")
+                    .arg(&user_key)
+                    .arg(&member)
+                    .query_async(&mut conn)
+                    .await
+                    .map_err(|e| anyhow!(e.to_string()))?;
+                let _: () = redis::cmd("EXPIRE")
+                    .arg(&user_key)
+                    .arg(300)
+                    .query_async(&mut conn)
+                    .await
+                    .map_err(|e| anyhow!(e.to_string()))?;
+            }
         }
 
         Ok(registered)
@@ -102,16 +158,32 @@ impl StreamRegistry {
 
     /// Refresh TTL for a publisher (called by heartbeat)
     pub async fn refresh_publisher_ttl(&self, room_id: &str, media_id: &str) -> Result<()> {
+        self.refresh_publisher_ttl_with_user(room_id, media_id, "").await
+    }
+
+    /// Refresh TTL for a publisher and its user reverse-index (called by heartbeat)
+    pub async fn refresh_publisher_ttl_with_user(&self, room_id: &str, media_id: &str, user_id: &str) -> Result<()> {
         let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
-        // Refresh TTL to 300 seconds
+        // Refresh publisher key TTL to 300 seconds
         let _: () = redis::cmd("EXPIRE")
             .arg(&key)
             .arg(300)
             .query_async(&mut conn)
             .await
             .map_err(|e| anyhow!(e.to_string()))?;
+
+        // Also refresh user reverse-index TTL if user_id is provided
+        if !user_id.is_empty() {
+            let user_key = format!("stream:user_publishers:{user_id}");
+            let _: () = redis::cmd("EXPIRE")
+                .arg(&user_key)
+                .arg(300)
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| anyhow!(e.to_string()))?;
+        }
 
         Ok(())
     }
@@ -128,6 +200,29 @@ impl StreamRegistry {
         let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
+        // Get publisher info first to clean up reverse index
+        let info_json: Option<String> = redis::cmd("HGET")
+            .arg(&key)
+            .arg("publisher")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))?;
+
+        if let Some(json) = info_json {
+            if let Ok(info) = serde_json::from_str::<PublisherInfo>(&json) {
+                if !info.user_id.is_empty() {
+                    let user_key = format!("stream:user_publishers:{}", info.user_id);
+                    let member = format!("{room_id}:{media_id}");
+                    let _: () = redis::cmd("SREM")
+                        .arg(&user_key)
+                        .arg(&member)
+                        .query_async(&mut conn)
+                        .await
+                        .map_err(|e| anyhow!(e.to_string()))?;
+                }
+            }
+        }
+
         let _: () = redis::cmd("HDEL")
             .arg(&key)
             .arg("publisher")
@@ -135,6 +230,36 @@ impl StreamRegistry {
             .await
             .map_err(|e| anyhow!(e.to_string()))?;
 
+        Ok(())
+    }
+
+    /// Get all active publishers for a user (via reverse index)
+    /// Returns list of (room_id, media_id) pairs
+    pub async fn get_user_publishers(&self, user_id: &str) -> Result<Vec<(String, String)>> {
+        let user_key = format!("stream:user_publishers:{user_id}");
+        let mut conn = self.redis.clone();
+
+        let members: Vec<String> = redis::cmd("SMEMBERS")
+            .arg(&user_key)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))?;
+
+        Ok(members
+            .into_iter()
+            .filter_map(|m| {
+                m.split_once(':')
+                    .map(|(r, m)| (r.to_string(), m.to_string()))
+            })
+            .collect())
+    }
+
+    /// Remove all publisher entries for a user (via reverse index)
+    pub async fn unregister_all_user_publishers(&self, user_id: &str) -> Result<()> {
+        let publishers = self.get_user_publishers(user_id).await?;
+        for (room_id, media_id) in publishers {
+            self.unregister_publisher_immut(&room_id, &media_id).await?;
+        }
         Ok(())
     }
 

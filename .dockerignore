@@ -5,14 +5,7 @@ target/
 # IDE files
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# Documentation
-*.md
-!README.md
-docs/
+.claude/
 
 # Git
 .git/
@@ -23,12 +16,6 @@ docs/
 .github/
 .gitlab-ci.yml
 
-# Test files
-tests/
-**/tests/
-benches/
-**/benches/
-
 # Development files
 .env
 .env.*
@@ -38,16 +25,5 @@ benches/
 # Logs
 *.log
 
-# Keys (should be mounted at runtime)
-keys/
-*.pem
-
-# SBOM outputs
-target/sbom/
-
 # macOS
 .DS_Store
-
-# Temporary files
-tmp/
-temp/

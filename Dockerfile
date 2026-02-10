@@ -1,11 +1,17 @@
 # Stage 1: Build
-FROM rust:slim as builder
+FROM rust:slim AS builder
 
 # Install build dependencies
+# build-essential, perl, cmake needed for vendored builds (xiu/opus dependencies)
+# curl needed for utoipa-swagger-ui to download assets
 RUN apt-get update && apt-get install -y \
     protobuf-compiler \
-    pkg-config && \
-    rm -rf /var/lib/apt/lists/*
+    pkg-config \
+    build-essential \
+    cmake \
+    curl \
+    perl \
+    perl-modules-5.40 && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
@@ -14,34 +20,35 @@ WORKDIR /app
 COPY . .
 
 # Build with cache mounts for cargo registry, git deps, and target directory
-# This provides fast incremental builds without complex dummy file tricks
+# Copy binary out of cache mount before RUN completes
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo build --release --bin synctv &&
-    cp /app/target/release/synctv /app/synctv &&
-    strip /app/synctv
+    cargo build --release --bin synctv && \
+    cp /app/target/release/synctv /tmp/synctv
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
-    ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Create synctv for running the application
 RUN useradd -m -u 1000 synctv
 
 # Create necessary directories
-RUN mkdir -p /app /app/keys /app/config &&
-    chown -R synctv:synctv /app
+RUN mkdir -p /app /app/keys /app/config
+
+RUN chown -R synctv:synctv /app
 
 # Set working directory
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder --chown=synctv:synctv /app/synctv /app/synctv
+COPY --from=builder \
+    --chown=synctv:synctv \
+    /tmp/synctv /app/synctv
 
 # Switch to non-root user
 USER synctv

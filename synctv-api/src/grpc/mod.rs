@@ -60,6 +60,7 @@ pub struct GrpcServerConfig<'a> {
     pub email_service: Option<Arc<EmailService>>,
     pub email_token_service: Option<Arc<EmailTokenService>>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+    pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
 }
 
 /// Build and start the gRPC server
@@ -86,6 +87,7 @@ pub async fn serve(
     email_service: Option<Arc<EmailService>>,
     email_token_service: Option<Arc<EmailTokenService>>,
     sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+    live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
 
@@ -140,6 +142,7 @@ pub async fn serve(
         settings_service.clone(),
         settings_registry,
         email_service_for_admin,
+        live_streaming_infrastructure,
     );
 
     // Create server builder
@@ -286,6 +289,7 @@ pub async fn serve_from_config(config: GrpcServerConfig<'_>) -> anyhow::Result<(
         config.email_service,
         config.email_token_service,
         config.sfu_manager,
+        config.live_streaming_infrastructure,
     )
     .await
 }

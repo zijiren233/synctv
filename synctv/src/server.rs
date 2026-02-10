@@ -18,6 +18,7 @@ use synctv_core::{
     provider::{AlistProvider, BilibiliProvider, EmbyProvider},
     Config,
 };
+use synctv_cluster::sync::ClusterEvent;
 use synctv_livestream::StreamRegistry;
 
 /// Livestream server state (held for health checks and graceful shutdown).
@@ -126,6 +127,37 @@ impl SyncTvServer {
         // Start HTTP server with graceful shutdown
         let http_handle = self.start_http_server(shutdown_rx.clone()).await?;
         self.http_handle = Some(http_handle);
+
+        // Spawn streaming event listener for cluster-wide kicks
+        if let (Some(cluster_mgr), Some(infra)) = (&self.services.cluster_manager, &self.services.live_streaming_infrastructure) {
+            let mut admin_rx = cluster_mgr.subscribe_admin_events();
+            let infra = infra.clone();
+            tokio::spawn(async move {
+                loop {
+                    match admin_rx.recv().await {
+                        Ok(event) => {
+                            if let ClusterEvent::KickPublisher { ref room_id, ref media_id, ref reason, .. } = event {
+                                info!(
+                                    room_id = %room_id.as_str(),
+                                    media_id = %media_id.as_str(),
+                                    reason = %reason,
+                                    "Received cluster-wide kick event"
+                                );
+                                let _ = infra.kick_publisher(room_id.as_str(), media_id.as_str());
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("Admin event listener lagged by {} events", n);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            info!("Admin event channel closed, stopping listener");
+                            break;
+                        }
+                    }
+                }
+            });
+            info!("Admin event listener spawned for cluster-wide stream kicks");
+        }
 
         info!("All servers started successfully");
 
@@ -251,6 +283,7 @@ impl SyncTvServer {
         let email_service = self.services.email_service.clone();
         let email_token_service = self.services.email_token_service.clone();
         let sfu_manager = self.services.sfu_manager.clone();
+        let live_streaming_infrastructure = self.services.live_streaming_infrastructure.clone();
 
         let handle = tokio::spawn(async move {
             info!("Starting gRPC server on {}...", config.grpc_address());
@@ -274,6 +307,7 @@ impl SyncTvServer {
                 email_service,
                 email_token_service,
                 sfu_manager,
+                live_streaming_infrastructure,
             )
             .await
             {

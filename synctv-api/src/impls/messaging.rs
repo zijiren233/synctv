@@ -826,6 +826,11 @@ fn cluster_event_to_server_message(
                 })),
             })
         }
+        ClusterEvent::KickPublisher { .. } => {
+            // KickPublisher events are handled by the admin event channel,
+            // not forwarded to WebSocket clients
+            None
+        }
     }
 }
 
