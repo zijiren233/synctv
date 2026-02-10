@@ -526,6 +526,9 @@ impl AdminApiImpl {
         user.deleted_at = Some(chrono::Utc::now());
         self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;
 
+        // Force disconnect all user connections (WebSocket and streaming)
+        self.connection_manager.disconnect_user(&uid);
+
         Ok(crate::proto::admin::DeleteUserResponse { success: true })
     }
 
