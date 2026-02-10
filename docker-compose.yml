@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # PostgreSQL database
@@ -47,7 +47,7 @@ services:
       dockerfile: Dockerfile
     container_name: synctv-app
     ports:
-      - "8080:8080"   # HTTP/REST API
+      - "8080:8080" # HTTP/REST API
       - "50051:50051" # gRPC
     environment:
       DATABASE_URL: postgresql://synctv:${POSTGRES_PASSWORD:-synctv}@postgres:5432/synctv
@@ -76,56 +76,6 @@ services:
       timeout: 3s
       start_period: 40s
       retries: 3
-
-  # API server (optional - for production deployment)
-  # synctv-api:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #     target: synctv-api
-  #   container_name: synctv-api
-  #   ports:
-  #     - "8080:8080"   # HTTP/REST API
-  #     - "50051:50051" # gRPC
-  #   environment:
-  #     DATABASE_URL: postgresql://synctv:synctv@postgres:5432/synctv
-  #     REDIS_URL: redis://redis:6379
-  #     API_HOST: 0.0.0.0
-  #     API_PORT: 8080
-  #     GRPC_PORT: 50051
-  #     RUST_LOG: info,synctv=debug
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #   networks:
-  #     - synctv
-
-  # Stream server (optional - for production deployment)
-  # synctv-stream:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #     target: synctv-stream
-  #   container_name: synctv-stream
-  #   ports:
-  #     - "1935:1935"   # RTMP
-  #     - "50052:50052" # gRPC stream relay
-  #   environment:
-  #     REDIS_URL: redis://redis:6379
-  #     RTMP_ADDR: 0.0.0.0:1935
-  #     GRPC_ADDR: 0.0.0.0:50052
-  #     MAX_STREAMS: 50
-  #     ENABLE_GOP_CACHE: "true"
-  #     MAX_GOPS: 2
-  #     MAX_GOP_CACHE_SIZE_MB: 100
-  #     RUST_LOG: info,synctv=debug
-  #   depends_on:
-  #     redis:
-  #       condition: service_healthy
-  #   networks:
-  #     - synctv
 
 volumes:
   postgres_data:

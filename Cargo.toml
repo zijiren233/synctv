@@ -24,7 +24,7 @@ tokio-util = { version = "0.7", features = ["full"] }
 tokio-stream = "0.1"
 
 # gRPC & Protobuf
-tonic = { version = "0.12", features = ["transport", "tls", "tls-roots"] }
+tonic = { version = "0.12", features = ["transport", "tls-rustls"] }
 tonic-web = "0.12"
 tonic-reflection = "0.12"
 tonic-health = "0.12"
@@ -42,7 +42,7 @@ tower-http = { version = "0.5", features = [
     "limit",
 ] }
 hyper = { version = "1.0", features = ["full"] }
-reqwest = { version = "0.12", features = ["json", "cookies"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "rustls-tls"] }
 
 # Database
 sqlx = { version = "0.8", features = [
@@ -56,11 +56,12 @@ sqlx = { version = "0.8", features = [
 ] }
 
 # Redis
-redis = { version = "0.26", features = [
+redis = { version = "0.26", default-features = false, features = [
     "tokio-comp",
     "connection-manager",
     "streams",
     "cluster",
+    "tokio-rustls-comp",
 ] }
 
 # Security
