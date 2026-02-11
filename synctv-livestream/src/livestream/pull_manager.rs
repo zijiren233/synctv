@@ -23,6 +23,8 @@ use anyhow::Result;
 pub struct PullStreamManager {
     // stream_key -> PullStream
     streams: Arc<DashMap<String, Arc<PullStream>>>,
+    // Per-key creation locks to prevent concurrent creation of the same stream
+    creation_locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     registry: Arc<dyn StreamRegistryTrait>,
     local_node_id: String,
     stream_hub_event_sender: StreamHubEventSender,
@@ -48,6 +50,7 @@ impl PullStreamManager {
     ) -> Self {
         Self {
             streams: Arc::new(DashMap::new()),
+            creation_locks: Arc::new(DashMap::new()),
             registry,
             local_node_id,
             stream_hub_event_sender,
@@ -57,6 +60,9 @@ impl PullStreamManager {
     }
 
     /// Lazy-load: Get or create pull stream (only triggered by client FLV request)
+    ///
+    /// Uses double-checked locking to prevent duplicate pull streams for the same key
+    /// when multiple viewers request the same stream concurrently.
     pub async fn get_or_create_pull_stream(
         &self,
         room_id: &str,
@@ -64,7 +70,7 @@ impl PullStreamManager {
     ) -> StreamResult<Arc<PullStream>> {
         let stream_key = format!("{room_id}:{media_id}");
 
-        // Check if healthy pull stream already exists
+        // Fast path: Check if healthy pull stream already exists (no lock needed)
         if let Some(stream) = self.streams.get(&stream_key) {
             if stream.is_healthy().await {
                 log::debug!(
@@ -78,6 +84,30 @@ impl PullStreamManager {
                 return Ok(stream.clone());
             }
             // Remove unhealthy stream
+            drop(stream);
+            self.streams.remove(&stream_key);
+        }
+
+        // Acquire per-key creation lock to prevent concurrent creation for the same stream
+        let lock = self.creation_locks
+            .entry(stream_key.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+
+        // Re-check after acquiring lock (another task may have created it while we waited)
+        if let Some(stream) = self.streams.get(&stream_key) {
+            if stream.is_healthy().await {
+                log::debug!(
+                    "Reusing pull stream created by concurrent request for {}/{}",
+                    room_id,
+                    media_id,
+                );
+                stream.increment_subscriber_count();
+                stream.update_last_active_time().await;
+                return Ok(stream.clone());
+            }
+            drop(stream);
             self.streams.remove(&stream_key);
         }
 
@@ -117,6 +147,9 @@ impl PullStreamManager {
         // Initial subscriber
         pull_stream.increment_subscriber_count();
 
+        // Store in manager BEFORE registering cleanup (so cleanup can find it)
+        self.streams.insert(stream_key.clone(), Arc::clone(&pull_stream));
+
         // Register auto-cleanup task
         Self::register_cleanup_task(
             stream_key.clone(),
@@ -125,9 +158,6 @@ impl PullStreamManager {
             self.cleanup_check_interval,
             self.idle_timeout,
         );
-
-        // Store in manager
-        self.streams.insert(stream_key.clone(), Arc::clone(&pull_stream));
 
         Ok(pull_stream)
     }

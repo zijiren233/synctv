@@ -40,19 +40,19 @@ struct WebSocketStream {
 #[async_trait::async_trait]
 impl StreamMessage for WebSocketStream {
     async fn recv(&mut self) -> Option<Result<ClientMessage, String>> {
-        match self.receiver.next().await {
-            Some(Ok(axum::extract::ws::Message::Binary(bytes))) => {
-                Some(ProtoCodec::decode_client_message(&bytes))
-            }
-            Some(Ok(axum::extract::ws::Message::Close(_))) => {
-                None // Graceful close
-            }
-            Some(Err(e)) => Some(Err(format!("WebSocket error: {e}"))),
-            None => None, // Stream ended
-            Some(Ok(_)) => {
-                // Ignore non-binary messages (text, ping, pong)
-                // Continue waiting for next message - recursively call recv
-                self.recv().await
+        loop {
+            match self.receiver.next().await {
+                Some(Ok(axum::extract::ws::Message::Binary(bytes))) => {
+                    return Some(ProtoCodec::decode_client_message(&bytes));
+                }
+                Some(Ok(axum::extract::ws::Message::Close(_))) => {
+                    return None; // Graceful close
+                }
+                Some(Err(e)) => return Some(Err(format!("WebSocket error: {e}"))),
+                None => return None, // Stream ended
+                Some(Ok(_)) => {
+                    // Ignore non-binary messages (text, ping, pong) and continue loop
+                }
             }
         }
     }

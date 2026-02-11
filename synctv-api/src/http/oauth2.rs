@@ -131,8 +131,11 @@ async fn handle_oauth2_callback(
         user_info.provider.as_str()
     );
 
+    // Use bind_user_id from OAuth state if present, or fall back to expected_user_id parameter
+    let effective_user_id = oauth_state.bind_user_id.clone().or(expected_user_id);
+
     // Find or create user
-    let user_id = match expected_user_id {
+    let user_id = match effective_user_id {
         // Binding to existing user
         Some(uid) => uid,
         // Login flow - find or create user
@@ -218,6 +221,15 @@ async fn handle_oauth2_callback(
         }));
     }
 
+    // Check if user is banned
+    if user.status == synctv_core::models::UserStatus::Banned {
+        return Ok(Json(OAuth2CallbackJsonResponse {
+            token: None,
+            redirect: oauth_state.redirect_url,
+            message: Some("Account is suspended".to_string()),
+        }));
+    }
+
     // Generate tokens
     let (access_token, _refresh_token) = generate_tokens(&state.jwt_service, &user).await?;
 
@@ -237,7 +249,11 @@ async fn handle_oauth2_callback(
 /// Bind `OAuth2` provider to authenticated user
 ///
 /// POST /api/oauth2/:instance/bind
+///
+/// Requires authentication. The authenticated user's ID is stored in the OAuth state
+/// so the callback can associate the provider with the correct user.
 pub async fn bind_provider(
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(instance_name): Path<String>,
     Json(req): Json<OAuth2AuthQuery>,
@@ -247,9 +263,9 @@ pub async fn bind_provider(
         super::AppError::bad_request("OAuth2 is not configured on this server")
     })?;
 
-    // Get authorization URL
+    // Get authorization URL (bind flow stores user_id in state for the callback)
     let (url, state_token) = oauth2_service
-        .get_authorization_url(&instance_name, req.redirect)
+        .get_authorization_url_with_user(&instance_name, req.redirect, Some(auth.user_id.clone()))
         .await
         .map_err(|e| {
             error!("Failed to get authorization URL: {}", e);
@@ -257,8 +273,9 @@ pub async fn bind_provider(
         })?;
 
     debug!(
-        "Generated OAuth2 bind URL for {}",
-        instance_name
+        "Generated OAuth2 bind URL for {} (user: {})",
+        instance_name,
+        auth.user_id.as_str(),
     );
 
     Ok(Json(AuthUrlResponse { url, state: state_token }))

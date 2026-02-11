@@ -111,6 +111,14 @@ impl UserService {
             return Err(Error::Authentication("Invalid username or password".to_string()));
         }
 
+        // Check if user is banned or soft-deleted
+        if user.status == crate::models::UserStatus::Banned {
+            return Err(Error::Authentication("Account is suspended".to_string()));
+        }
+        if user.deleted_at.is_some() {
+            return Err(Error::Authentication("Account has been deleted".to_string()));
+        }
+
         // Generate JWT tokens (role will be fetched from DB on each request)
         let access_token = self
             .jwt_service
@@ -127,13 +135,21 @@ impl UserService {
         // Verify refresh token
         let claims = self.jwt_service.verify_refresh_token(&refresh_token)?;
 
-        // Get user to ensure they still exist
+        // Get user to ensure they still exist and are active
         let user_id = UserId::from_string(claims.sub);
         let user = self
             .repository
             .get_by_id(&user_id)
             .await?
             .ok_or_else(|| Error::Authentication("User not found".to_string()))?;
+
+        // Reject banned or soft-deleted users
+        if user.status == crate::models::UserStatus::Banned {
+            return Err(Error::Authentication("Account is suspended".to_string()));
+        }
+        if user.deleted_at.is_some() {
+            return Err(Error::Authentication("Account has been deleted".to_string()));
+        }
 
         // Generate new tokens (role will be fetched from DB on each request)
         let new_access_token = self

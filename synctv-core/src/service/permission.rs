@@ -167,7 +167,7 @@ impl PermissionService {
     ) -> Result<()> {
         let permissions = self.get_user_permissions(room_id, user_id).await?;
 
-        if !permissions.has(permission) {
+        if !permissions.has_all(permission) {
             return Err(Error::Authorization("Permission denied".to_string()));
         }
 
@@ -220,6 +220,14 @@ impl PermissionService {
     pub async fn invalidate_cache(&self, room_id: &RoomId, user_id: &UserId) {
         let cache_key = Self::cache_key(room_id, user_id);
         self.cache.invalidate(&cache_key).await;
+    }
+
+    /// Invalidate permission cache for all users in a room.
+    /// Called when room-level permission settings change (e.g., admin/member/guest
+    /// added/removed permissions), since these affect all members' effective permissions.
+    pub async fn invalidate_room_cache(&self, room_id: &RoomId) {
+        let prefix = format!("{}:", room_id.0);
+        let _ = self.cache.invalidate_entries_if(move |key, _| key.starts_with(&prefix));
     }
 
     /// Clear all permission cache

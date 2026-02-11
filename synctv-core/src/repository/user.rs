@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use chrono::Utc;
 use sqlx::{postgres::PgRow, PgPool, Row};
 
@@ -194,61 +195,93 @@ impl UserRepository {
     pub async fn list(&self, query: &UserListQuery) -> Result<(Vec<User>, i64)> {
         let offset = (query.page - 1) * query.page_size;
 
-        // Build search condition
-        let (search_condition, search_param) = if let Some(search) = &query.search {
-            (
-                "AND (username ILIKE $3 OR email ILIKE $3)",
-                Some(format!("%{search}%")),
-            )
-        } else {
-            ("", None)
-        };
+        // Build dynamic filter conditions and params
+        // We build conditions with sequential $N parameters
+        let search_param = query.search.as_ref().map(|search| format!("%{search}%"));
 
-        // Get total count
-        let count_query = format!(
-            r"
-            SELECT COUNT(*) as count
-            FROM users
-            WHERE deleted_at IS NULL {search_condition}
-            "
+        // --- Count query (params start at $1) ---
+        let mut count_conditions = Vec::new();
+        let mut count_param_idx = 1u32;
+
+        if search_param.is_some() {
+            count_conditions.push(format!("AND (username ILIKE ${count_param_idx} OR email ILIKE ${count_param_idx})"));
+            count_param_idx += 1;
+        }
+        if query.status.is_some() {
+            count_conditions.push(format!("AND status = ${count_param_idx}"));
+            count_param_idx += 1;
+        }
+        if query.role.is_some() {
+            count_conditions.push(format!("AND role = ${count_param_idx}"));
+            let _ = count_param_idx; // suppress unused warning
+        }
+
+        let count_where = count_conditions.join(" ");
+        let count_sql = format!(
+            "SELECT COUNT(*) as count FROM users WHERE deleted_at IS NULL {count_where}"
         );
 
-        let count: i64 = if let Some(ref search) = search_param {
-            sqlx::query_scalar(&count_query)
-                .bind(search)
-                .fetch_one(&self.pool)
-                .await?
-        } else {
-            sqlx::query_scalar(&count_query)
-                .fetch_one(&self.pool)
-                .await?
-        };
+        let mut count_qb = sqlx::query_scalar::<_, i64>(&count_sql);
+        if let Some(ref search) = search_param {
+            count_qb = count_qb.bind(search.clone());
+        }
+        if let Some(ref status) = query.status {
+            let status_enum = crate::models::UserStatus::from_str(status)
+                .map_err(|e| crate::Error::InvalidInput(e))?;
+            count_qb = count_qb.bind(status_enum);
+        }
+        if let Some(ref role) = query.role {
+            let role_enum = crate::models::UserRole::from_str(role)
+                .map_err(|e| crate::Error::InvalidInput(e))?;
+            count_qb = count_qb.bind(role_enum);
+        }
+        let count: i64 = count_qb.fetch_one(&self.pool).await?;
 
-        // Get users
-        let list_query = format!(
+        // --- List query (params: $1=LIMIT, $2=OFFSET, then $3... for filters) ---
+        let mut list_conditions = Vec::new();
+        let mut list_param_idx = 3u32;
+
+        if search_param.is_some() {
+            list_conditions.push(format!("AND (username ILIKE ${list_param_idx} OR email ILIKE ${list_param_idx})"));
+            list_param_idx += 1;
+        }
+        if query.status.is_some() {
+            list_conditions.push(format!("AND status = ${list_param_idx}"));
+            list_param_idx += 1;
+        }
+        if query.role.is_some() {
+            list_conditions.push(format!("AND role = ${list_param_idx}"));
+            let _ = list_param_idx;
+        }
+
+        let list_where = list_conditions.join(" ");
+        let list_sql = format!(
             r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
-            WHERE deleted_at IS NULL {search_condition}
+            WHERE deleted_at IS NULL {list_where}
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
             "
         );
 
-        let rows = if let Some(ref search) = search_param {
-            sqlx::query(&list_query)
-                .bind(query.page_size)
-                .bind(offset)
-                .bind(search)
-                .fetch_all(&self.pool)
-                .await?
-        } else {
-            sqlx::query(&list_query)
-                .bind(query.page_size)
-                .bind(offset)
-                .fetch_all(&self.pool)
-                .await?
-        };
+        let mut list_qb = sqlx::query(&list_sql)
+            .bind(query.page_size)
+            .bind(offset);
+        if let Some(ref search) = search_param {
+            list_qb = list_qb.bind(search.clone());
+        }
+        if let Some(ref status) = query.status {
+            let status_enum = crate::models::UserStatus::from_str(status)
+                .map_err(|e| crate::Error::InvalidInput(e))?;
+            list_qb = list_qb.bind(status_enum);
+        }
+        if let Some(ref role) = query.role {
+            let role_enum = crate::models::UserRole::from_str(role)
+                .map_err(|e| crate::Error::InvalidInput(e))?;
+            list_qb = list_qb.bind(role_enum);
+        }
+        let rows = list_qb.fetch_all(&self.pool).await?;
 
         let users: Result<Vec<User>> = rows.into_iter().map(|row| self.row_to_user(row)).collect();
 
@@ -292,7 +325,7 @@ impl UserRepository {
         let signup_method_str: Option<String> = row.try_get("signup_method")?;
         let signup_method = signup_method_str.map(|s| SignupMethod::from_str_name(&s));
 
-        let email_verified = row.try_get::<bool, _>("email_verified").unwrap_or_default();
+        let email_verified: bool = row.try_get("email_verified")?;
 
         let role: UserRole = row.try_get("role")?;
         let status: UserStatus = row.try_get("status")?;

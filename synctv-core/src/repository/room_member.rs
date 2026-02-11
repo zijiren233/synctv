@@ -396,6 +396,64 @@ impl RoomMemberRepository {
         self.row_to_member(row)
     }
 
+    /// Atomically grant permission bits (bitwise OR in SQL to avoid read-modify-write TOCTOU)
+    pub async fn grant_permission_atomic(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        permission: u64,
+    ) -> Result<RoomMember> {
+        let row = sqlx::query(
+            "UPDATE room_members
+             SET
+                added_permissions = added_permissions | $3,
+                version = version + 1
+             WHERE room_id = $1 AND user_id = $2
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
+        .bind(permission as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_member(row)
+    }
+
+    /// Atomically revoke permission bits (bitwise OR on removed_permissions in SQL)
+    pub async fn revoke_permission_atomic(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        permission: u64,
+    ) -> Result<RoomMember> {
+        let row = sqlx::query(
+            "UPDATE room_members
+             SET
+                removed_permissions = removed_permissions | $3,
+                version = version + 1
+             WHERE room_id = $1 AND user_id = $2
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
+        .bind(permission as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_member(row)
+    }
+
     /// Reset member permissions to role default (clear added/removed)
     pub async fn reset_permissions(
         &self,
@@ -626,13 +684,9 @@ impl RoomMemberRepository {
         let results: Result<Vec<(crate::models::Room, RoomRole, MemberStatus, i32)>> = rows
             .into_iter()
             .map(|row| {
-                let status_str: String = row.try_get("status")?;
-                let status = match status_str.as_str() {
-                    "active" => crate::models::RoomStatus::Active,
-                    "pending" => crate::models::RoomStatus::Pending,
-                    "banned" => crate::models::RoomStatus::Banned,
-                    _ => crate::models::RoomStatus::Active,
-                };
+                // RoomStatus, RoomRole, MemberStatus are stored as SMALLINT (i16) in PostgreSQL
+                // and have sqlx::Decode impls — read them directly as the correct types
+                let status: crate::models::RoomStatus = row.try_get("status")?;
 
                 let room = crate::models::Room {
                     id: RoomId::from_string(row.try_get("id")?),
@@ -645,23 +699,8 @@ impl RoomMemberRepository {
                     deleted_at: row.try_get("deleted_at")?,
                 };
 
-                let role_str: String = row.try_get("user_role")?;
-                let role = match role_str.as_str() {
-                    "creator" => RoomRole::Creator,
-                    "admin" => RoomRole::Admin,
-                    "member" => RoomRole::Member,
-                    "guest" => RoomRole::Guest,
-                    _ => RoomRole::Member,
-                };
-
-                let member_status_str: String = row.try_get("user_status")?;
-                let member_status = match member_status_str.as_str() {
-                    "active" => MemberStatus::Active,
-                    "pending" => MemberStatus::Pending,
-                    "banned" => MemberStatus::Banned,
-                    _ => MemberStatus::Active,
-                };
-
+                let role: RoomRole = row.try_get("user_role")?;
+                let member_status: MemberStatus = row.try_get("user_status")?;
                 let member_count: i32 = row.try_get("member_count")?;
 
                 Ok((room, role, member_status, member_count))
@@ -677,7 +716,9 @@ impl RoomMemberRepository {
             "SELECT
                 rm.room_id, rm.user_id, rm.role, rm.status,
                 rm.added_permissions, rm.removed_permissions,
+                rm.admin_added_permissions, rm.admin_removed_permissions,
                 rm.joined_at, rm.banned_at, rm.banned_reason,
+                rm.banned_by, rm.left_at, rm.version,
                 u.username,
                 CASE WHEN rm.left_at IS NULL THEN true ELSE false END as is_active
              FROM room_members rm

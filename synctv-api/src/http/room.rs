@@ -982,13 +982,21 @@ pub async fn list_or_get_rooms(
 
 /// Unified handler for updating room settings via PATCH
 /// PATCH /`api/rooms/:room_id/settings`
+///
+/// PATCH semantics: only specified fields are updated; unspecified fields retain
+/// their current values. Current settings are fetched first, then merged.
 pub async fn update_room_settings(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Json(req): Json<serde_json::Value>,
 ) -> AppResult<Json<serde_json::Value>> {
-    // Parse settings from request body
+    // Fetch current settings to use as baseline (PATCH: only update what's provided)
+    let rid = synctv_core::models::RoomId::from_string(room_id.clone());
+    let current = state.room_service.get_room_settings(&rid).await
+        .map_err(|e| super::AppError::internal_server_error(format!("Failed to get current settings: {e}")))?;
+
+    // Parse optional fields from request body
     let password = req.get("password").and_then(|v| v.as_str()).map(String::from);
     let max_members = req.get("max_members").and_then(serde_json::Value::as_i64).map(|v| v.clamp(0, 10000) as i32);
     let allow_guest_join = req.get("allow_guest_join").and_then(serde_json::Value::as_bool);
@@ -998,16 +1006,20 @@ pub async fn update_room_settings(
     let chat_enabled = req.get("chat_enabled").and_then(serde_json::Value::as_bool);
     let danmaku_enabled = req.get("danmaku_enabled").and_then(serde_json::Value::as_bool);
 
-    let settings_bytes = build_room_settings_bytes(
-        &password,
-        max_members,
-        allow_guest_join,
-        auto_play_next,
-        loop_playlist,
-        shuffle_playlist,
-        chat_enabled,
-        danmaku_enabled,
-    ).map_err(super::AppError::bad_request)?;
+    // Merge: use provided value if present, otherwise keep current setting
+    let settings = serde_json::json!({
+        "require_password": password.as_ref().map_or(current.require_password.0, |_| true),
+        "max_members": max_members.unwrap_or(current.max_members.0 as i32),
+        "allow_guest_join": allow_guest_join.unwrap_or(current.allow_guest_join.0),
+        "auto_play_next": auto_play_next.unwrap_or(current.auto_play_next.0),
+        "loop_playlist": loop_playlist.unwrap_or(current.loop_playlist.0),
+        "shuffle_playlist": shuffle_playlist.unwrap_or(current.shuffle_playlist.0),
+        "chat_enabled": chat_enabled.unwrap_or(current.chat_enabled.0),
+        "danmaku_enabled": danmaku_enabled.unwrap_or(current.danmaku_enabled.0),
+    });
+
+    let settings_bytes = serde_json::to_vec(&settings)
+        .map_err(|e| super::AppError::bad_request(format!("Failed to serialize settings: {e}")))?;
 
     let proto_req = UpdateRoomSettingsRequest {
         room_id: room_id.clone(),

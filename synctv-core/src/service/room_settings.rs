@@ -315,9 +315,17 @@ impl RoomSettingsService {
             .await;
     }
 
-    /// Get or create semaphore for single-flight pattern
+    /// Get or create semaphore for single-flight pattern.
+    /// Cleans up entries with no external references to prevent unbounded memory growth.
     async fn get_or_create_semaphore(&self, room_id: &RoomId) -> Arc<tokio::sync::Semaphore> {
         let mut map = self.single_flight.lock().await;
+
+        // Periodically clean up semaphores that are no longer in use (strong_count == 1
+        // means only the map itself holds a reference, so no one is waiting on it)
+        if map.len() > 1000 {
+            map.retain(|_, sem| Arc::strong_count(sem) > 1);
+        }
+
         map.entry(room_id.clone())
             .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(1)))
             .clone()

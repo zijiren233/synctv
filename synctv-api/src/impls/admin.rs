@@ -81,10 +81,23 @@ impl AdminApiImpl {
         let page = if req.page > 0 { req.page } else { 1 };
         let page_size = if req.page_size > 0 { req.page_size } else { 50 };
 
+        // Parse status filter (None = show all statuses for admin)
+        let status = if req.status.is_empty() {
+            None
+        } else {
+            Some(match req.status.as_str() {
+                "active" => synctv_core::models::RoomStatus::Active,
+                "pending" => synctv_core::models::RoomStatus::Pending,
+                "banned" => synctv_core::models::RoomStatus::Banned,
+                _ => synctv_core::models::RoomStatus::Active,
+            })
+        };
+
         let query = synctv_core::models::RoomListQuery {
             page,
             page_size,
-            ..Default::default()
+            status,
+            search: if req.search.is_empty() { None } else { Some(req.search) },
         };
 
         let (rooms, total) = self.room_service.list_rooms(&query).await
@@ -222,6 +235,7 @@ impl AdminApiImpl {
     pub async fn update_user_role(
         &self,
         req: crate::proto::admin::UpdateUserRoleRequest,
+        caller_role: synctv_core::models::UserRole,
     ) -> Result<crate::proto::admin::UpdateUserRoleResponse, String> {
         let uid = UserId::from_string(req.user_id);
         let user = self.user_service.get_user(&uid).await
@@ -229,6 +243,11 @@ impl AdminApiImpl {
 
         // Parse role from string
         let new_role = synctv_core::models::UserRole::from_str(&req.role)?;
+
+        // Only root can promote to root
+        if new_role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
+            return Err("Only root users can promote to root".to_string());
+        }
 
         let updated_user = synctv_core::models::User {
             role: new_role,
@@ -532,6 +551,7 @@ impl AdminApiImpl {
     pub async fn create_user(
         &self,
         req: crate::proto::admin::CreateUserRequest,
+        caller_role: synctv_core::models::UserRole,
     ) -> Result<crate::proto::admin::CreateUserResponse, String> {
         if req.username.is_empty() || req.password.is_empty() || req.email.is_empty() {
             return Err("Username, password, and email are required".to_string());
@@ -545,6 +565,12 @@ impl AdminApiImpl {
         // Set role if specified
         let user = if !req.role.is_empty() && req.role != "user" {
             let new_role = UserRole::from_str(&req.role)?;
+
+            // Only root can create root users
+            if new_role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
+                return Err("Only root users can create root users".to_string());
+            }
+
             let updated = synctv_core::models::User { role: new_role, ..user };
             self.user_service.update_user(&updated).await.map_err(|e| e.to_string())?;
             updated
@@ -1061,7 +1087,7 @@ fn admin_room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) 
         user_id: member.user_id.to_string(),
         username: member.username.clone(),
         role: role_str.to_string(),
-        permissions: member.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
+        permissions: member.effective_permissions(member.role.permissions()).0,
         added_permissions: member.added_permissions,
         removed_permissions: member.removed_permissions,
         admin_added_permissions: member.admin_added_permissions,

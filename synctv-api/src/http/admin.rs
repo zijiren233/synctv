@@ -25,6 +25,7 @@ use crate::proto::admin;
 #[derive(Debug, Clone)]
 pub struct AuthAdmin {
     pub user_id: UserId,
+    pub role: synctv_core::models::UserRole,
 }
 
 #[async_trait]
@@ -63,7 +64,7 @@ where
             return Err(AppError::forbidden("Admin role required"));
         }
 
-        Ok(Self { user_id })
+        Ok(Self { user_id, role: user.role })
     }
 }
 
@@ -283,12 +284,12 @@ async fn get_user(
 }
 
 async fn create_user(
-    _auth: AuthAdmin,
+    auth: AuthAdmin,
     State(state): State<AppState>,
     Json(req): Json<admin::CreateUserRequest>,
 ) -> AppResult<Json<admin::CreateUserResponse>> {
     let api = require_admin_api(&state)?;
-    let resp = api.create_user(req).await.map_err(AppError::internal)?;
+    let resp = api.create_user(req, auth.role).await.map_err(AppError::internal)?;
     Ok(Json(resp))
 }
 
@@ -306,7 +307,7 @@ async fn delete_user(
 }
 
 async fn set_user_role(
-    _auth: AuthAdmin,
+    auth: AuthAdmin,
     State(state): State<AppState>,
     Path(user_id): Path<String>,
     Json(req): Json<serde_json::Value>,
@@ -319,7 +320,7 @@ async fn set_user_role(
 
     let api = require_admin_api(&state)?;
     let resp = api
-        .update_user_role(admin::UpdateUserRoleRequest { user_id, role })
+        .update_user_role(admin::UpdateUserRoleRequest { user_id, role }, auth.role)
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))

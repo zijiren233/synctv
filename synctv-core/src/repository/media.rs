@@ -283,19 +283,19 @@ impl MediaRepository {
 
     /// Swap positions of two media
     pub async fn swap_positions(&self, media_id1: &MediaId, media_id2: &MediaId) -> Result<()> {
-        // Get current positions
-        let pos1: i32 = sqlx::query_scalar("SELECT position FROM media WHERE id = $1")
-            .bind(media_id1.as_str())
-            .fetch_one(&self.pool)
-            .await?;
-
-        let pos2: i32 = sqlx::query_scalar("SELECT position FROM media WHERE id = $1")
-            .bind(media_id2.as_str())
-            .fetch_one(&self.pool)
-            .await?;
-
-        // Swap positions in a transaction
+        // All reads and writes inside a single transaction with FOR UPDATE locks
+        // to prevent TOCTOU race conditions with concurrent swaps
         let mut tx = self.pool.begin().await?;
+
+        let pos1: i32 = sqlx::query_scalar("SELECT position FROM media WHERE id = $1 FOR UPDATE")
+            .bind(media_id1.as_str())
+            .fetch_one(&mut *tx)
+            .await?;
+
+        let pos2: i32 = sqlx::query_scalar("SELECT position FROM media WHERE id = $1 FOR UPDATE")
+            .bind(media_id2.as_str())
+            .fetch_one(&mut *tx)
+            .await?;
 
         sqlx::query("UPDATE media SET position = $2 WHERE id = $1")
             .bind(media_id1.as_str())

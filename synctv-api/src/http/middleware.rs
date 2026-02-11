@@ -9,7 +9,7 @@ use axum::{
 };
 use std::sync::Arc;
 use synctv_core::{
-    models::id::UserId,
+    models::{id::UserId, UserStatus},
     service::auth::JwtValidator,
     service::rate_limit::RateLimitError,
 };
@@ -59,6 +59,17 @@ where
         let user_id = validator
             .validate_http_extract_user_id(auth_str)
             .map_err(|e| AppError::unauthorized(format!("{e}")))?;
+
+        // Check if user is banned or deleted (defense-in-depth: catches banned
+        // users even if they hold a valid JWT issued before the ban)
+        let user = app_state.user_service.get_user(&user_id).await
+            .map_err(|_| AppError::unauthorized("User not found"))?;
+        if user.is_deleted() {
+            return Err(AppError::unauthorized("Account is deleted"));
+        }
+        if user.status == UserStatus::Banned {
+            return Err(AppError::forbidden("Account is suspended"));
+        }
 
         Ok(Self { user_id })
     }

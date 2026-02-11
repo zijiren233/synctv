@@ -143,13 +143,7 @@ impl RoomSettingsRepository {
         let json_value = serde_json::to_string(settings)
             .map_err(|e| Error::Internal(format!("Failed to serialize room settings: {e}")))?;
 
-        // Delete old settings
-        sqlx::query("DELETE FROM room_settings WHERE room_id = $1 AND key = '_settings'")
-            .bind(room_id_str)
-            .execute(&self.pool)
-            .await?;
-
-        // Insert new settings as single JSON value
+        // Upsert settings as single JSON value (ON CONFLICT handles existing rows)
         sqlx::query(
             r"
             INSERT INTO room_settings (room_id, key, value)

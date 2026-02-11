@@ -10,6 +10,17 @@ use crate::{
     Error, Result,
 };
 
+/// Role hierarchy level for authorization checks (higher = more authority)
+/// Creator > Admin > Member > Guest
+const fn role_level(role: &RoomRole) -> u8 {
+    match role {
+        RoomRole::Creator => 3,
+        RoomRole::Admin => 2,
+        RoomRole::Member => 1,
+        RoomRole::Guest => 0,
+    }
+}
+
 /// Options for adding a member to a room
 ///
 /// # Examples
@@ -220,9 +231,13 @@ impl MemberService {
             return Err(Error::InvalidInput("Cannot kick yourself".to_string()));
         }
 
-        // Verify target is a member
-        if !self.member_repo.is_member(&room_id, &target_user_id).await? {
-            return Err(Error::NotFound("User is not a member of this room".to_string()));
+        // Prevent kicking users with equal or higher role
+        let kicker_member = self.member_repo.get(&room_id, &kicker_id).await?
+            .ok_or_else(|| Error::NotFound("Kicker is not a member".to_string()))?;
+        let target_member = self.member_repo.get(&room_id, &target_user_id).await?
+            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
+        if role_level(&target_member.role) >= role_level(&kicker_member.role) {
+            return Err(Error::Authorization("Cannot kick a member with equal or higher role".to_string()));
         }
 
         // Remove member
@@ -279,6 +294,8 @@ impl MemberService {
     }
 
     /// Grant a specific permission to a member (Allow pattern)
+    ///
+    /// Uses atomic SQL bitwise OR to avoid TOCTOU race conditions.
     pub async fn grant_permission(
         &self,
         room_id: RoomId,
@@ -286,22 +303,28 @@ impl MemberService {
         target_user_id: UserId,
         permission: u64,
     ) -> Result<RoomMember> {
-        // Get current member
-        let member = self
+        // Check if granter has permission to modify permissions
+        self.permission_service
+            .check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
+            .await?;
+
+        // Atomic grant in SQL (added_permissions |= permission)
+        let updated_member = self
             .member_repo
-            .get(&room_id, &target_user_id)
-            .await?
-            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
+            .grant_permission_atomic(&room_id, &target_user_id, permission)
+            .await?;
 
-        // Add to existing added_permissions
-        let new_added = member.added_permissions | permission;
+        // Invalidate permission cache for target user
+        self.permission_service
+            .invalidate_cache(&room_id, &target_user_id)
+            .await;
 
-        // Update
-        self.set_member_permissions(room_id, granter_id, target_user_id, new_added, member.removed_permissions)
-            .await
+        Ok(updated_member)
     }
 
     /// Revoke a specific permission from a member (Deny pattern)
+    ///
+    /// Uses atomic SQL bitwise OR to avoid TOCTOU race conditions.
     pub async fn revoke_permission(
         &self,
         room_id: RoomId,
@@ -309,19 +332,23 @@ impl MemberService {
         target_user_id: UserId,
         permission: u64,
     ) -> Result<RoomMember> {
-        // Get current member
-        let member = self
+        // Check if granter has permission to modify permissions
+        self.permission_service
+            .check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
+            .await?;
+
+        // Atomic revoke in SQL (removed_permissions |= permission)
+        let updated_member = self
             .member_repo
-            .get(&room_id, &target_user_id)
-            .await?
-            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
+            .revoke_permission_atomic(&room_id, &target_user_id, permission)
+            .await?;
 
-        // Add to existing removed_permissions
-        let new_removed = member.removed_permissions | permission;
+        // Invalidate permission cache for target user
+        self.permission_service
+            .invalidate_cache(&room_id, &target_user_id)
+            .await;
 
-        // Update
-        self.set_member_permissions(room_id, granter_id, target_user_id, member.added_permissions, new_removed)
-            .await
+        Ok(updated_member)
     }
 
     /// Reset member permissions to role default (clear Allow/Deny)
@@ -416,10 +443,19 @@ impl MemberService {
         target_user_id: UserId,
         reason: Option<String>,
     ) -> Result<()> {
-        // Check admin permission
+        // Check admin permission (BAN_MEMBER, not KICK_USER)
         self.permission_service
-            .check_permission(&room_id.clone(), &admin_id, PermissionBits::KICK_USER)
+            .check_permission(&room_id.clone(), &admin_id, PermissionBits::BAN_MEMBER)
             .await?;
+
+        // Prevent banning users with equal or higher role (Creator > Admin > Member > Guest)
+        let admin_member = self.member_repo.get(&room_id, &admin_id).await?
+            .ok_or_else(|| Error::NotFound("Admin is not a member".to_string()))?;
+        let target_member = self.member_repo.get(&room_id, &target_user_id).await?
+            .ok_or_else(|| Error::NotFound("Target user is not a member".to_string()))?;
+        if role_level(&target_member.role) >= role_level(&admin_member.role) {
+            return Err(Error::Authorization("Cannot ban a member with equal or higher role".to_string()));
+        }
 
         // Ban member
         self.member_repo
@@ -441,9 +477,9 @@ impl MemberService {
         admin_id: UserId,
         target_user_id: UserId,
     ) -> Result<()> {
-        // Check admin permission
+        // Check admin permission (BAN_MEMBER, not KICK_USER)
         self.permission_service
-            .check_permission(&room_id.clone(), &admin_id, PermissionBits::KICK_USER)
+            .check_permission(&room_id.clone(), &admin_id, PermissionBits::BAN_MEMBER)
             .await?;
 
         // Unban member
@@ -509,9 +545,9 @@ impl MemberService {
         target_user_id: UserId,
         status: MemberStatus,
     ) -> Result<RoomMember> {
-        // Check admin permission
+        // Check admin permission (use BAN_MEMBER for status changes)
         self.permission_service
-            .check_permission(&room_id.clone(), &admin_id, PermissionBits::KICK_USER)
+            .check_permission(&room_id.clone(), &admin_id, PermissionBits::BAN_MEMBER)
             .await?;
 
         // Get current member

@@ -21,6 +21,8 @@ pub struct OAuth2State {
     pub instance_name: String,
     pub redirect_url: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// User ID for bind flow (None for login flow)
+    pub bind_user_id: Option<UserId>,
 }
 
 /// `OAuth2` user info from provider (service layer)
@@ -117,6 +119,7 @@ impl OAuth2Service {
             instance_name: instance_name.to_string(),
             redirect_url,
             created_at: chrono::Utc::now(),
+            bind_user_id: None,
         };
 
         let mut states = self.states.write().await;
@@ -126,6 +129,43 @@ impl OAuth2Service {
             "Generated OAuth2 authorization URL for provider {}",
             instance_name
         );
+
+        Ok((auth_url, state_token))
+    }
+
+    /// Generate authorization URL for bind flow (associates with an authenticated user)
+    pub async fn get_authorization_url_with_user(
+        &self,
+        instance_name: &str,
+        redirect_url: Option<String>,
+        user_id: Option<UserId>,
+    ) -> Result<(String, String)> {
+        // Validate redirect URL if provided
+        if let Some(ref url) = redirect_url {
+            Self::validate_redirect_url(url)?;
+        }
+
+        let providers = self.providers.read().await;
+        let provider = providers.get(instance_name)
+            .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {instance_name}")))?;
+
+        // Generate state token
+        let state_token = nanoid::nanoid!(32);
+
+        // Generate authorization URL using provider
+        let auth_url = provider.new_auth_url(&state_token).await
+            .map_err(|e| Error::Internal(format!("Failed to generate authorization URL: {e}")))?;
+
+        // Store state with user_id for bind flow
+        let oauth_state = OAuth2State {
+            instance_name: instance_name.to_string(),
+            redirect_url,
+            created_at: chrono::Utc::now(),
+            bind_user_id: user_id,
+        };
+
+        let mut states = self.states.write().await;
+        states.insert(state_token.clone(), oauth_state);
 
         Ok((auth_url, state_token))
     }

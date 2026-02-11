@@ -243,9 +243,12 @@ impl PlaylistService {
         playlist_id: PlaylistId,
     ) -> Result<()> {
         // Check permission (admin or creator)
-        self.permission_service
+        if !self.permission_service
             .is_admin_or_creator(&room_id, &user_id)
-            .await?;
+            .await?
+        {
+            return Err(Error::Authorization("Only admins or creators can delete playlists".to_string()));
+        }
 
         // Get playlist to verify ownership
         let playlist = self

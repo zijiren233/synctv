@@ -689,7 +689,7 @@ impl AdminService for AdminServiceImpl {
         self.check_admin(&request).await?;
         let req = request.into_inner();
 
-        // Build query
+        // Build query with filters applied at DB level for correct pagination
         let query = synctv_core::models::UserListQuery {
             page: if req.page == 0 { 1 } else { req.page },
             page_size: if req.page_size == 0 {
@@ -702,11 +702,11 @@ impl AdminService for AdminServiceImpl {
             } else {
                 Some(req.search)
             },
-            status: None,
-            role: None,
+            status: if req.status.is_empty() { None } else { Some(req.status) },
+            role: if req.role.is_empty() { None } else { Some(req.role) },
         };
 
-        // Get users
+        // Get users (filters applied in SQL for correct total count and pagination)
         let (users, total) = self
             .user_service
             .list_users(&query)
@@ -716,27 +716,6 @@ impl AdminService for AdminServiceImpl {
         // Convert to AdminUser proto
         let admin_users = users
             .into_iter()
-            .filter(|u| {
-                // Filter by status if specified
-                if !req.status.is_empty() {
-                    let user_status = if u.deleted_at.is_some() {
-                        "banned"
-                    } else {
-                        u.status.as_str()
-                    };
-                    if user_status != req.status {
-                        return false;
-                    }
-                }
-
-                // Filter by role if specified
-                if !req.role.is_empty()
-                    && u.role.as_str() != req.role {
-                        return false;
-                    }
-
-                true
-            })
             .map(|u| {
                 let role = u.role.to_string();
 

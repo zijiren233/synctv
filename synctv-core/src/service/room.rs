@@ -437,6 +437,10 @@ impl RoomService {
         // Save settings to room_settings table
         self.room_settings_repo.set_settings(&room_id, &settings).await?;
 
+        // Invalidate permission cache for all room members (room-level permission
+        // settings like admin/member/guest added/removed affect everyone)
+        self.permission_service.invalidate_room_cache(&room_id).await;
+
         // Notify room members
         let settings_json = serde_json::to_value(&settings)?;
         let _ = self.notification_service.notify_settings_updated(&room_id, settings_json).await;
@@ -478,8 +482,12 @@ impl RoomService {
         self.room_settings_repo.get(room_id).await
     }
 
-    /// Update single room setting
-    pub async fn update_room_setting(&self, room_id: &RoomId, key: &str, value: &serde_json::Value) -> Result<String> {
+    /// Update single room setting (requires UPDATE_ROOM_SETTINGS permission)
+    pub async fn update_room_setting(&self, room_id: &RoomId, user_id: &UserId, key: &str, value: &serde_json::Value) -> Result<String> {
+        // Check permission (defense-in-depth, same as set_settings)
+        self.permission_service
+            .check_permission(room_id, user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
+            .await?;
         use crate::models::{AutoPlaySettings, PlayMode, room_settings::{ChatEnabled, DanmakuEnabled, AutoPlay, AllowGuestJoin, RequirePassword, MaxMembers, AutoPlayNext, LoopPlaylist, ShufflePlaylist}};
         use crate::service::notification::GuestKickReason;
 
@@ -520,12 +528,18 @@ impl RoomService {
             }
             "require_password" => {
                 if let Some(bool_val) = value.as_bool() {
-                    settings.require_password = RequirePassword(bool_val);
-                    // If password is now required, kick all guests (guests cannot access password-protected rooms)
+                    // Prevent enabling require_password when no password is set
                     if bool_val {
+                        let has_password = self.room_settings_repo.get_password_hash(room_id).await?.is_some();
+                        if !has_password {
+                            return Err(Error::InvalidInput(
+                                "Cannot require password when no password is set. Set a password first.".to_string()
+                            ));
+                        }
                         should_kick_guests = true;
                         kick_reason = GuestKickReason::RoomPasswordAdded;
                     }
+                    settings.require_password = RequirePassword(bool_val);
                 }
             }
             "max_members" => {
@@ -555,6 +569,9 @@ impl RoomService {
 
         // Save the updated settings
         self.room_settings_repo.set_settings(room_id, &settings).await?;
+
+        // Invalidate permission cache for all room members
+        self.permission_service.invalidate_room_cache(room_id).await;
 
         // Kick guests if needed
         if should_kick_guests {
@@ -598,6 +615,13 @@ impl RoomService {
         if let Some(pwd_hash) = password_hash {
             self.room_settings_repo.set(room_id, "password", &pwd_hash).await?;
 
+            // Sync require_password setting to true when password is set
+            let mut settings = self.get_room_settings(room_id).await?;
+            if !settings.require_password.0 {
+                settings.require_password = crate::models::room_settings::RequirePassword(true);
+                self.room_settings_repo.set_settings(room_id, &settings).await?;
+            }
+
             // Kick all guests when password is added (guests cannot access password-protected rooms)
             if let Err(e) = self.notification_service.kick_all_guests(
                 room_id,
@@ -607,6 +631,13 @@ impl RoomService {
             }
         } else {
             self.room_settings_repo.delete(room_id, "password").await?;
+
+            // Sync require_password setting to false when password is removed
+            let mut settings = self.get_room_settings(room_id).await?;
+            if settings.require_password.0 {
+                settings.require_password = crate::models::room_settings::RequirePassword(false);
+                self.room_settings_repo.set_settings(room_id, &settings).await?;
+            }
         }
         Ok(())
     }
