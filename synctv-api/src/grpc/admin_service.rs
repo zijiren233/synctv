@@ -1758,8 +1758,7 @@ impl AdminService for AdminServiceImpl {
             .provider_manager
             .get_all_instances()
             .await
-            .map(|instances| instances.len() as i64)
-            .unwrap_or(0);
+            .map_or(0, |instances| instances.len() as i64);
 
         // Additional statistics can be added here
         let additional_stats = vec![];

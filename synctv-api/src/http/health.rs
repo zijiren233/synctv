@@ -84,7 +84,7 @@ pub async fn readiness_check(State(state): State<AppState>) -> impl IntoResponse
     let db_status = match check_database_health(&state).await {
         Ok(()) => "healthy".to_string(),
         Err(e) => {
-            error_messages.push(format!("Database: {}", e));
+            error_messages.push(format!("Database: {e}"));
             is_healthy = false;
             error!("Database health check failed: {}", e);
             "unhealthy".to_string()
@@ -95,7 +95,7 @@ pub async fn readiness_check(State(state): State<AppState>) -> impl IntoResponse
     let redis_status = match check_redis_health(&state).await {
         Ok(()) => "healthy".to_string(),
         Err(e) => {
-            error_messages.push(format!("Redis: {}", e));
+            error_messages.push(format!("Redis: {e}"));
             is_healthy = false;
             error!("Redis health check failed: {}", e);
             "unhealthy".to_string()
@@ -132,7 +132,7 @@ async fn check_database_health(state: &AppState) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(e) => {
             warn!("Database health check failed: {}", e);
-            Err(format!("Database connection failed: {}", e))
+            Err(format!("Database connection failed: {e}"))
         }
     }
 }

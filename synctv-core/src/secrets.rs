@@ -77,12 +77,12 @@ impl SecretLoader {
             SecretSource::File(path) => {
                 debug!(secret_name = name, source = "file", path = path, "Loading secret from file");
                 let content = fs::read_to_string(path)
-                    .with_context(|| format!("Failed to read secret '{}' from file '{}'", name, path))?;
+                    .with_context(|| format!("Failed to read secret '{name}' from file '{path}'"))?;
 
                 let trimmed = content.trim().to_string();
 
                 if trimmed.is_empty() {
-                    anyhow::bail!("Secret '{}' from file '{}' is empty", name, path);
+                    anyhow::bail!("Secret '{name}' from file '{path}' is empty");
                 }
 
                 debug!(secret_name = name, secret_len = trimmed.len(), "Secret loaded successfully from file");
@@ -97,10 +97,10 @@ impl SecretLoader {
                 );
 
                 let value = std::env::var(env_var)
-                    .with_context(|| format!("Failed to read secret '{}' from environment variable '{}'", name, env_var))?;
+                    .with_context(|| format!("Failed to read secret '{name}' from environment variable '{env_var}'"))?;
 
                 if value.is_empty() {
-                    anyhow::bail!("Secret '{}' from environment variable '{}' is empty", name, env_var);
+                    anyhow::bail!("Secret '{name}' from environment variable '{env_var}' is empty");
                 }
 
                 debug!(secret_name = name, secret_len = value.len(), "Secret loaded successfully from environment");
@@ -124,7 +124,7 @@ impl SecretLoader {
     /// # Returns
     /// The secret value, or an error if not found in either source
     pub fn load_with_fallback(name: &str, primary: SecretSource, fallback: SecretSource) -> Result<String> {
-        match Self::load(name, primary.clone()) {
+        match Self::load(name, primary) {
             Ok(secret) => Ok(secret),
             Err(primary_err) => {
                 debug!(
@@ -135,8 +135,7 @@ impl SecretLoader {
 
                 Self::load(name, fallback)
                     .with_context(|| format!(
-                        "Failed to load secret '{}' from both primary and fallback sources. Primary error: {}",
-                        name, primary_err
+                        "Failed to load secret '{name}' from both primary and fallback sources. Primary error: {primary_err}"
                     ))
             }
         }
@@ -172,6 +171,7 @@ impl SecretLoader {
     ///
     /// # Returns
     /// true if the file exists and is readable, false otherwise
+    #[must_use] 
     pub fn secret_file_exists(path: &str) -> bool {
         Path::new(path).exists()
     }
@@ -187,6 +187,7 @@ impl SecretLoader {
 /// let password = "super_secret_123";
 /// println!("Password loaded: {}", mask_secret(password)); // "Password loaded: [SECRET:16 chars]"
 /// ```
+#[must_use] 
 pub fn mask_secret(secret: &str) -> String {
     format!("[SECRET:{} chars]", secret.len())
 }

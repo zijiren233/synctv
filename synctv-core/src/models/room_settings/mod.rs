@@ -63,7 +63,7 @@ pub struct RoomSettingsRegistry;
 impl RoomSettingsRegistry {
     /// Register a setting type (called automatically by ctor)
     pub fn register(key: &'static str, provider: Arc<dyn RoomSettingProvider>) {
-        let mut registry = REGISTRY.write().unwrap_or_else(|e| e.into_inner());
+        let mut registry = REGISTRY.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         registry.insert(key.to_string(), provider);
     }
 

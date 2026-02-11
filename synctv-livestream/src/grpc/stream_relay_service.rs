@@ -1,6 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
-use streamhub::{
+use synctv_xiu::streamhub::{
     define::{NotifyInfo, StreamHubEvent, StreamHubEventSender, SubscribeType, SubscriberInfo},
     stream::StreamIdentifier,
     utils::{RandomDigitCount, Uuid},
@@ -18,8 +18,8 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<RtmpPacket, Status>> + Se
 /// `StreamRelayService` implementation
 /// Publisher nodes use this to serve RTMP packets to Puller nodes via subscription
 ///
-/// GOP cache is handled by xiu's StreamHub internally — when a new subscriber
-/// joins, StreamHub automatically sends cached GOP frames via `send_prior_data`.
+/// GOP cache is handled by xiu's `StreamHub` internally — when a new subscriber
+/// joins, `StreamHub` automatically sends cached GOP frames via `send_prior_data`.
 pub struct StreamRelayServiceImpl {
     registry: Arc<StreamRegistry>,
     node_id: String,
@@ -44,7 +44,7 @@ impl StreamRelayServiceImpl {
 #[tonic::async_trait]
 impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl {
     /// Pull RTMP stream from publisher node (server streaming)
-    /// Subscribe to StreamHub and forward data — GOP is sent automatically by StreamHub.
+    /// Subscribe to `StreamHub` and forward data — GOP is sent automatically by `StreamHub`.
     type PullRtmpStreamStream = ResponseStream;
 
     async fn pull_rtmp_stream(
@@ -78,7 +78,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         let sub_info = SubscriberInfo {
             id: subscriber_id,
             sub_type: SubscribeType::RtmpPull,
-            sub_data_type: streamhub::define::SubDataType::Frame,
+            sub_data_type: synctv_xiu::streamhub::define::SubDataType::Frame,
             notify_info: NotifyInfo {
                 request_url: String::new(),
                 remote_addr: String::new(),
@@ -130,13 +130,13 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
             while let Some(frame_data) = frame_receiver.recv().await {
                 // Extract data, timestamp, and frame_type from FrameData enum
                 let (data, timestamp, frame_type) = match frame_data {
-                    streamhub::define::FrameData::Video { data, timestamp } => {
+                    synctv_xiu::streamhub::define::FrameData::Video { data, timestamp } => {
                         (data, timestamp, FrameType::Video as i32)
                     }
-                    streamhub::define::FrameData::Audio { data, timestamp } => {
+                    synctv_xiu::streamhub::define::FrameData::Audio { data, timestamp } => {
                         (data, timestamp, FrameType::Audio as i32)
                     }
-                    streamhub::define::FrameData::MetaData { data, timestamp } => {
+                    synctv_xiu::streamhub::define::FrameData::MetaData { data, timestamp } => {
                         (data, timestamp, FrameType::Metadata as i32)
                     }
                     _ => continue,
@@ -175,7 +175,7 @@ impl StreamRelayServiceImpl {
         let sub_info = SubscriberInfo {
             id: subscriber_id,
             sub_type: SubscribeType::RtmpPull,
-            sub_data_type: streamhub::define::SubDataType::Frame,
+            sub_data_type: synctv_xiu::streamhub::define::SubDataType::Frame,
             notify_info: NotifyInfo {
                 request_url: String::new(),
                 remote_addr: String::new(),
@@ -205,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_creation() {
-        let (_event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
+        let (_event_sender, _) = tokio::sync::mpsc::unbounded_channel::<synctv_xiu::streamhub::define::StreamHubEvent>();
         let node_id = "test_node".to_string();
 
         // Verify the node_id is correct

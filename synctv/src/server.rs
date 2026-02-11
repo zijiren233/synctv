@@ -83,7 +83,7 @@ impl Services {
 
 impl SyncTvServer {
     /// Create a new server instance
-    pub fn new(
+    pub const fn new(
         config: Config,
         services: Services,
         livestream_state: Option<LivestreamState>,
@@ -174,7 +174,7 @@ impl SyncTvServer {
             _ = http_handle => {
                 error!("HTTP server stopped unexpectedly");
             }
-            _ = shutdown_signal() => {
+            () = shutdown_signal() => {
                 info!("Shutdown signal received, starting graceful shutdown...");
             }
         }

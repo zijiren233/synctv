@@ -10,14 +10,14 @@ use axum::{
     Extension, Router,
 };
 use std::sync::Arc;
-use streamhub::define::StreamHubEventSender;
+use synctv_xiu::streamhub::define::StreamHubEventSender;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::relay::StreamRegistry;
 
 // Re-export HttpFlvSession from xiu-httpflv
-pub use xiu_httpflv::HttpFlvSession;
+pub use synctv_xiu::httpflv::HttpFlvSession;
 
 #[derive(Clone)]
 pub struct HttpFlvState {

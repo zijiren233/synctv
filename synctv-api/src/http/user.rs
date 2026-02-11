@@ -68,9 +68,7 @@ pub async fn update_user(
             .map_err(super::AppError::internal_server_error)?;
 
         // Extract username from user object
-        let new_username = response.user.as_ref()
-            .map(|u| u.username.clone())
-            .unwrap_or_else(|| username.to_string());
+        let new_username = response.user.as_ref().map_or_else(|| username.to_string(), |u| u.username.clone());
 
         return Ok(Json(serde_json::json!({
             "message": "Username updated successfully",

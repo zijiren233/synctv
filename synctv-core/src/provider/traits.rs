@@ -122,7 +122,7 @@ pub struct DashAudioStream {
     pub segment_base: DashSegmentBase,
 }
 
-/// SegmentBase for DASH byte-range addressing
+/// `SegmentBase` for DASH byte-range addressing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashSegmentBase {
     /// Initialization byte range (e.g. "0-926")

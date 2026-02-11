@@ -124,12 +124,14 @@ impl ClusterManager {
     }
 
     /// Subscribe to admin events (kick, etc.) received from cluster
+    #[must_use] 
     pub fn subscribe_admin_events(&self) -> broadcast::Receiver<ClusterEvent> {
         self.admin_event_tx.subscribe()
     }
 
     /// Get the admin event sender (for local kick events)
-    pub fn admin_event_tx(&self) -> &broadcast::Sender<ClusterEvent> {
+    #[must_use] 
+    pub const fn admin_event_tx(&self) -> &broadcast::Sender<ClusterEvent> {
         &self.admin_event_tx
     }
 

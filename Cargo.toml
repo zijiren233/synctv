@@ -9,16 +9,8 @@ members = [
     "synctv-cluster",
     "synctv-media-providers",
     "synctv", "synctv-sfu",
-    # xiu crates (maintained locally)
-    "xiu/library/bytesio",
-    "xiu/library/codec/h264",
-    "xiu/library/container/flv",
-    "xiu/library/container/mpegts",
-    "xiu/library/streamhub",
-    "xiu/protocol/rtmp",
-    "xiu/library/storage",
-    "xiu/protocol/hls",
-    "xiu/protocol/httpflv",
+    # xiu consolidated crate
+    "synctv-xiu",
 ]
 resolver = "2"
 
@@ -101,14 +93,8 @@ md5 = "0.7"
 humantime = "2.1"
 hex = "0.4"
 
-# Streaming (xiu crates maintained locally)
-rtmp = { path = "xiu/protocol/rtmp" }
-streamhub = { path = "xiu/library/streamhub" }
-xflv = { path = "xiu/library/container/flv" }
-xmpegts = { path = "xiu/library/container/mpegts" }
-xiu-storage = { path = "xiu/library/storage" }
-xiu-hls = { path = "xiu/protocol/hls" }
-xiu-httpflv = { path = "xiu/protocol/httpflv" }
+# Streaming (consolidated xiu crate)
+synctv-xiu = { path = "synctv-xiu" }
 
 # Object Storage
 opendal = { version = "0.49", features = ["services-s3"] }

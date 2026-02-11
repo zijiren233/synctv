@@ -8,7 +8,7 @@ use crate::{
     error::StreamResult,
     grpc::GrpcStreamPuller,
 };
-use streamhub::define::StreamHubEventSender;
+use synctv_xiu::streamhub::define::StreamHubEventSender;
 use tracing as log;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -118,7 +118,7 @@ impl PullStreamManager {
         streams: Arc<DashMap<String, Arc<PullStream>>>,
     ) {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            let mut interval = tokio::time::interval(Duration::from_mins(1));
 
             loop {
                 interval.tick().await;
@@ -127,7 +127,7 @@ impl PullStreamManager {
                     let idle_time = pull_stream.last_active_time().elapsed();
 
                     // No subscribers for 5 minutes - stop pull stream
-                    if idle_time > Duration::from_secs(300) {
+                    if idle_time > Duration::from_mins(5) {
                         log::info!(
                             "Auto cleanup: Stopping pull stream {} (idle for {:?})",
                             stream_key,
@@ -149,8 +149,8 @@ impl PullStreamManager {
 
 /// Pull stream instance (pulls RTMP from publisher via gRPC, serves FLV to local clients)
 ///
-/// GOP cache is handled by xiu's StreamHub — when the gRPC puller publishes
-/// frames to the local StreamHub, and a new subscriber joins, StreamHub
+/// GOP cache is handled by xiu's `StreamHub` — when the gRPC puller publishes
+/// frames to the local `StreamHub`, and a new subscriber joins, `StreamHub`
 /// automatically sends cached GOP frames via `send_prior_data`.
 pub struct PullStream {
     room_id: String,

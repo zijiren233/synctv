@@ -179,7 +179,7 @@ pub mod circuit_breaker {
             Self {
                 failure_threshold: 5,
                 success_threshold: 2,
-                timeout: Duration::from_secs(60),
+                timeout: Duration::from_mins(1),
             }
         }
     }
@@ -219,7 +219,7 @@ pub mod circuit_breaker {
         /// Check if request is allowed
         #[must_use] 
         pub fn allow_request(&self) -> bool {
-            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
             match state.state {
                 CircuitState::Closed => true,
@@ -243,7 +243,7 @@ pub mod circuit_breaker {
 
         /// Record successful request
         pub fn record_success(&self) {
-            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
             match state.state {
                 CircuitState::HalfOpen => {
@@ -264,7 +264,7 @@ pub mod circuit_breaker {
 
         /// Record failed request
         pub fn record_failure(&self) {
-            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
             match state.state {
                 CircuitState::Closed | CircuitState::HalfOpen => {
@@ -286,7 +286,7 @@ pub mod circuit_breaker {
         /// Get current state
         #[must_use] 
         pub fn state(&self) -> CircuitState {
-            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             state.state
         }
     }

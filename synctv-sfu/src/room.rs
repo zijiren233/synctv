@@ -548,6 +548,7 @@ impl SfuRoom {
     }
 
     /// Get network quality stats for all peers in the room
+    #[must_use] 
     pub fn get_network_quality_stats(&self) -> Vec<(String, crate::network_monitor::NetworkStats)> {
         self.network_monitor.get_all_stats()
     }

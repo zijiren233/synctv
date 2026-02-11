@@ -209,7 +209,7 @@ impl EmailService {
             if tld.len() < 2 {
                 return Err(Error::InvalidInput("Email domain TLD must be at least 2 characters".to_string()));
             }
-            if !tld.chars().all(|c| c.is_alphabetic()) {
+            if !tld.chars().all(char::is_alphabetic) {
                 return Err(Error::InvalidInput("Email domain TLD must be alphabetic".to_string()));
             }
         }

@@ -59,7 +59,7 @@ impl Claims {
 /// Format: `guest:{room_id}:{session_id}`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuestClaims {
-    /// Guest subject (format: "guest:{room_id}:{session_id}")
+    /// Guest subject (format: "`guest:{room_id}:{session_id`}")
     pub sub: String,
     /// Room ID
     pub room_id: String,
@@ -282,6 +282,7 @@ impl JwtService {
     ///
     /// # Returns
     /// * `true` if token is a valid guest token, `false` otherwise
+    #[must_use] 
     pub fn is_guest_token(&self, token: &str) -> bool {
         self.verify_guest_token(token).is_ok()
     }

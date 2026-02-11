@@ -27,11 +27,7 @@ prost-types.workspace = true
 tokio-stream.workspace = true
 
 # Streaming
-rtmp.workspace = true
-streamhub.workspace = true
-xiu-storage = { workspace = true, features = ["oss"] }
-xiu-hls.workspace = true
-xiu-httpflv.workspace = true
+synctv-xiu = { workspace = true, features = ["oss"] }
 
 # Redis
 redis.workspace = true

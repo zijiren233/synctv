@@ -17,11 +17,11 @@ use crate::{
     protocols::hls::HlsServer,
     error::StreamResult,
 };
-use rtmp::auth::AuthCallback;
+use synctv_xiu::rtmp::auth::AuthCallback;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing as log;
-use streamhub::StreamsHub;
+use synctv_xiu::streamhub::StreamsHub;
 
 pub struct LivestreamServer {
     // Configuration
@@ -109,7 +109,7 @@ impl LivestreamServer {
         // Create segment manager with default cleanup config
         let cleanup_config = CleanupConfig {
             interval: std::time::Duration::from_secs(10),
-            retention: std::time::Duration::from_secs(60),
+            retention: std::time::Duration::from_mins(1),
         };
         let segment_manager = Arc::new(SegmentManager::new(storage, cleanup_config));
 
@@ -153,10 +153,10 @@ impl LivestreamServer {
 
     async fn start_rtmp_server(
         &self,
-        event_sender: streamhub::define::StreamHubEventSender,
+        event_sender: synctv_xiu::streamhub::define::StreamHubEventSender,
     ) -> StreamResult<()> {
         let auth = self.auth.clone();
-        let mut xiu_rtmp_server = rtmp::rtmp::RtmpServer::new(
+        let mut xiu_rtmp_server = synctv_xiu::rtmp::rtmp::RtmpServer::new(
             self.rtmp_address.clone(),
             event_sender,
             2, // gop_num

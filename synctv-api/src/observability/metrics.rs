@@ -1,16 +1,15 @@
-//! Prometheus metrics for SyncTV
+//! Prometheus metrics for `SyncTV`
 //!
 //! Provides HTTP request metrics, WebSocket connection tracking,
 //! room/user counts, and other operational metrics.
 
-use once_cell::sync::Lazy;
 use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry,
     TextEncoder,
 };
 
 /// Global metrics registry
-static REGISTRY: Lazy<Registry> = Lazy::new(|| {
+static REGISTRY: std::sync::LazyLock<Registry> = std::sync::LazyLock::new(|| {
     let registry = Registry::new();
     if let Err(e) = register_metrics_safe(&registry) {
         tracing::error!("Failed to register metrics: {}. Metrics will be unavailable.", e);
@@ -21,7 +20,7 @@ static REGISTRY: Lazy<Registry> = Lazy::new(|| {
 // --- HTTP Metrics ---
 
 /// Total HTTP requests, labeled by method, path, and status code.
-pub static HTTP_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+pub static HTTP_REQUESTS_TOTAL: std::sync::LazyLock<IntCounterVec> = std::sync::LazyLock::new(|| {
     IntCounterVec::new(
         Opts::new("http_requests_total", "Total number of HTTP requests"),
         &["method", "path", "status"],
@@ -38,7 +37,7 @@ pub static HTTP_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 });
 
 /// HTTP request duration in seconds, labeled by method and path.
-pub static HTTP_REQUEST_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+pub static HTTP_REQUEST_DURATION_SECONDS: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
     HistogramVec::new(
         HistogramOpts::new(
             "http_request_duration_seconds",
@@ -58,7 +57,7 @@ pub static HTTP_REQUEST_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
 });
 
 /// Number of in-flight HTTP requests.
-pub static HTTP_REQUESTS_IN_FLIGHT: Lazy<IntGauge> = Lazy::new(|| {
+pub static HTTP_REQUESTS_IN_FLIGHT: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
     IntGauge::new(
         "http_requests_in_flight",
         "Number of HTTP requests currently being processed",
@@ -72,8 +71,8 @@ pub static HTTP_REQUESTS_IN_FLIGHT: Lazy<IntGauge> = Lazy::new(|| {
 
 // --- WebSocket Metrics ---
 
-/// Active WebSocket connections, labeled by room_id.
-pub static WEBSOCKET_CONNECTIONS_ACTIVE: Lazy<IntGaugeVec> = Lazy::new(|| {
+/// Active WebSocket connections, labeled by `room_id`.
+pub static WEBSOCKET_CONNECTIONS_ACTIVE: std::sync::LazyLock<IntGaugeVec> = std::sync::LazyLock::new(|| {
     IntGaugeVec::new(
         Opts::new(
             "websocket_connections_active",
@@ -92,7 +91,7 @@ pub static WEBSOCKET_CONNECTIONS_ACTIVE: Lazy<IntGaugeVec> = Lazy::new(|| {
 });
 
 /// Total WebSocket connections opened.
-pub static WEBSOCKET_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+pub static WEBSOCKET_CONNECTIONS_TOTAL: std::sync::LazyLock<IntCounterVec> = std::sync::LazyLock::new(|| {
     IntCounterVec::new(
         Opts::new(
             "websocket_connections_total",
@@ -113,7 +112,7 @@ pub static WEBSOCKET_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 // --- Room Metrics ---
 
 /// Number of active rooms.
-pub static ROOMS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
+pub static ROOMS_ACTIVE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
     IntGauge::new("rooms_active", "Number of currently active rooms")
         .unwrap_or_else(|e| {
             tracing::error!("Failed to create rooms_active metric: {}", e);
@@ -125,7 +124,7 @@ pub static ROOMS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
 // --- User Metrics ---
 
 /// Number of online users.
-pub static USERS_ONLINE: Lazy<IntGauge> = Lazy::new(|| {
+pub static USERS_ONLINE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
     IntGauge::new("users_online", "Number of currently online users")
         .unwrap_or_else(|e| {
             tracing::error!("Failed to create users_online metric: {}", e);
@@ -137,7 +136,7 @@ pub static USERS_ONLINE: Lazy<IntGauge> = Lazy::new(|| {
 // --- Streaming Metrics ---
 
 /// Number of active live streams.
-pub static STREAMS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
+pub static STREAMS_ACTIVE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
     IntGauge::new("streams_active", "Number of active live streams")
         .unwrap_or_else(|e| {
             tracing::error!("Failed to create streams_active metric: {}", e);
@@ -149,7 +148,7 @@ pub static STREAMS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
 // --- WebRTC Metrics ---
 
 /// Number of active WebRTC peer connections.
-pub static WEBRTC_PEERS_ACTIVE: Lazy<IntGauge> = Lazy::new(|| {
+pub static WEBRTC_PEERS_ACTIVE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
     IntGauge::new(
         "webrtc_peers_active",
         "Number of active WebRTC peer connections",
@@ -198,6 +197,7 @@ pub fn gather_metrics() -> String {
 ///
 /// Replaces path parameters (UUIDs, numeric IDs, nanoids) with placeholders
 /// to avoid high-cardinality labels.
+#[must_use] 
 pub fn normalize_path(path: &str) -> String {
     let segments: Vec<&str> = path.split('/').collect();
     let mut result = Vec::with_capacity(segments.len());
@@ -211,7 +211,7 @@ pub fn normalize_path(path: &str) -> String {
         // Replace segments that look like IDs (UUIDs, numeric, nanoid-style alphanumeric)
         let prev = if i > 0 { segments.get(i - 1) } else { None };
         let is_id = match prev {
-            Some(&"rooms") | Some(&"media") | Some(&"chat") | Some(&"playlists") => true,
+            Some(&"rooms" | &"media" | &"chat" | &"playlists") => true,
             _ => false,
         };
 

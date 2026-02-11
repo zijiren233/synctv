@@ -159,8 +159,7 @@ impl OAuth2Service {
                 let scheme = parsed_url.scheme();
                 if scheme != "http" && scheme != "https" {
                     return Err(Error::InvalidInput(format!(
-                        "Invalid URL scheme: {}. Only http and https are allowed",
-                        scheme
+                        "Invalid URL scheme: {scheme}. Only http and https are allowed"
                     )));
                 }
 
@@ -182,8 +181,7 @@ impl OAuth2Service {
             }
             Err(_) => {
                 Err(Error::InvalidInput(format!(
-                    "Invalid redirect URL format: {}",
-                    url
+                    "Invalid redirect URL format: {url}"
                 )))
             }
         }
@@ -279,8 +277,8 @@ impl OAuth2Service {
 
     /// List all configured `OAuth2` provider instances
     ///
-    /// Returns a list of (instance_name, provider_type) pairs for all registered providers.
-    /// This is used by the HTTP API to tell clients which OAuth2 login options are available.
+    /// Returns a list of (`instance_name`, `provider_type`) pairs for all registered providers.
+    /// This is used by the HTTP API to tell clients which `OAuth2` login options are available.
     /// Returns an empty vector if no providers are configured. Order is not guaranteed.
     pub async fn list_available_instances(&self) -> Vec<(String, OAuth2Provider)> {
         let provider_types = self.provider_types.read().await;
@@ -311,11 +309,10 @@ impl OAuth2Service {
         let mappings = self.repository.find_by_user(user_id).await?;
         let mut deleted = false;
         for mapping in mappings {
-            if mapping.provider_enum().as_ref() == Some(provider) {
-                if self.repository.delete(user_id, provider, &mapping.provider_user_id).await? {
+            if mapping.provider_enum().as_ref() == Some(provider)
+                && self.repository.delete(user_id, provider, &mapping.provider_user_id).await? {
                     deleted = true;
                 }
-            }
         }
         Ok(deleted)
     }

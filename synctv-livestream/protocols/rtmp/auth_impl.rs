@@ -10,7 +10,7 @@
 // - Publisher: rtmp://host/room_id/JWT_TOKEN  or  rtmp://host/room_id/media_id?token=JWT
 // - Player:   rtmp://host/room_id/media_id
 
-use rtmp::auth::AuthCallback;
+use synctv_xiu::rtmp::auth::AuthCallback;
 use async_trait::async_trait;
 use std::sync::Arc;
 use synctv_core::service::PublishKeyService;

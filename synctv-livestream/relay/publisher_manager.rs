@@ -9,7 +9,7 @@
 
 use super::registry_trait::StreamRegistryTrait;
 use anyhow::anyhow;
-use streamhub::{
+use synctv_xiu::streamhub::{
     define::BroadcastEventReceiver,
     stream::StreamIdentifier,
 };
@@ -65,12 +65,12 @@ impl PublisherManager {
     }
 
     /// Handle `StreamHub` broadcast events
-    async fn handle_broadcast_event(&self, event: streamhub::define::BroadcastEvent) -> anyhow::Result<()> {
+    async fn handle_broadcast_event(&self, event: synctv_xiu::streamhub::define::BroadcastEvent) -> anyhow::Result<()> {
         match event {
-            streamhub::define::BroadcastEvent::Publish { identifier } => {
+            synctv_xiu::streamhub::define::BroadcastEvent::Publish { identifier } => {
                 self.handle_publish(identifier).await?;
             }
-            streamhub::define::BroadcastEvent::UnPublish { identifier } => {
+            synctv_xiu::streamhub::define::BroadcastEvent::UnPublish { identifier } => {
                 self.handle_unpublish(identifier).await?;
             }
         }
@@ -166,7 +166,7 @@ impl PublisherManager {
 
     /// Maintain heartbeat for all active publishers
     async fn maintain_heartbeats(&self) {
-        let mut heartbeat_interval = interval(Duration::from_secs(60));
+        let mut heartbeat_interval = interval(Duration::from_mins(1));
 
         loop {
             heartbeat_interval.tick().await;
@@ -209,7 +209,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_active_publishers_map() {
-        let (_event_sender, _) = tokio::sync::mpsc::unbounded_channel::<streamhub::define::StreamHubEvent>();
+        let (_event_sender, _) = tokio::sync::mpsc::unbounded_channel::<synctv_xiu::streamhub::define::StreamHubEvent>();
 
         let registry = Arc::new(MockStreamRegistry::new());
         let manager = PublisherManager::new(registry, "test-node".to_string());

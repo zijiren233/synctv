@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use bytes::BytesMut;
-use streamhub::{
+use synctv_xiu::streamhub::{
     define::{
         FrameData, FrameDataSender, NotifyInfo, PublishType, PublisherInfo, StreamHubEvent,
         StreamHubEventSender
@@ -11,7 +11,7 @@ use streamhub::{
 use tokio::sync::oneshot;
 use tonic::Request;
 use tracing::{error, info, warn};
-use rtmp::session::common::RtmpStreamHandler;
+use synctv_xiu::rtmp::session::common::RtmpStreamHandler;
 
 use super::proto::{stream_relay_service_client::StreamRelayServiceClient, PullRtmpStreamRequest};
 use crate::relay::StreamRegistryTrait;
@@ -118,7 +118,7 @@ impl GrpcStreamPuller {
         let publisher_info = PublisherInfo {
             id: publisher_id,
             pub_type: PublishType::RtmpRelay,  // Using RtmpRelay for inter-node streaming
-            pub_data_type: streamhub::define::PubDataType::Frame,
+            pub_data_type: synctv_xiu::streamhub::define::PubDataType::Frame,
             notify_info: NotifyInfo {
                 request_url: format!("grpc://{}/{}/{}", self.publisher_node_addr, self.room_id, self.media_id),
                 remote_addr: self.publisher_node_addr.clone(),

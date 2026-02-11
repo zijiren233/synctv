@@ -78,7 +78,7 @@ async fn resolve_emby_playback(
     Ok((url.clone(), playback_info.headers.clone()))
 }
 
-/// GET /proxy/:room_id/:media_id - Proxy Emby video stream
+/// GET /`proxy/:room_id/:media_id` - Proxy Emby video stream
 async fn proxy_stream(
     auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,
@@ -104,7 +104,7 @@ async fn proxy_stream(
         .map_err(Into::into)
 }
 
-/// GET /proxy/:room_id/:media_id/m3u8 - Proxy Emby M3U8
+/// GET /`proxy/:room_id/:media_id/m3u8` - Proxy Emby M3U8
 async fn proxy_m3u8(
     auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,

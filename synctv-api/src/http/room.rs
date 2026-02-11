@@ -125,7 +125,7 @@ pub async fn create_room(
             super::AppError::internal_server_error(e)
         })?;
 
-    let room_id = response.room.as_ref().map(|r| r.id.as_str()).unwrap_or("unknown");
+    let room_id = response.room.as_ref().map_or("unknown", |r| r.id.as_str());
     tracing::info!(user_id = %auth.user_id, room_id = %room_id, "Room created successfully");
     Ok(Json(response))
 }
@@ -419,7 +419,7 @@ pub async fn reorder_media_batch(
             .to_string();
 
         let position = update.get("position")
-            .and_then(|v| v.as_i64())
+            .and_then(serde_json::Value::as_i64)
             .ok_or_else(|| super::AppError::bad_request("Missing or invalid position in update"))?
             as i32;
 
@@ -950,7 +950,7 @@ pub async fn clear_playlist(
     })))
 }
 
-/// GET /api/rooms/:room_id/movie/:media_id - Get movie playback info
+/// GET /`api/rooms/:room_id/movie/:media_id` - Get movie playback info
 pub async fn get_movie_info(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -983,12 +983,12 @@ pub async fn list_or_get_rooms(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<ListRoomsResponse>> {
     // List rooms with optional filtering
-    let search = params.get("search").map(|s| s.to_string()).unwrap_or_default();
+    let search = params.get("search").cloned().unwrap_or_default();
     let limit = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
     let offset = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
 
     let request = ListRoomsRequest {
-        page: (offset / limit) as i32 + 1,
+        page: (offset / limit) + 1,
         page_size: limit,
         search,
     };
@@ -1003,7 +1003,7 @@ pub async fn list_or_get_rooms(
 }
 
 /// Unified handler for updating room settings via PATCH
-/// PATCH /api/rooms/:room_id/settings
+/// PATCH /`api/rooms/:room_id/settings`
 pub async fn update_room_settings(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -1012,13 +1012,13 @@ pub async fn update_room_settings(
 ) -> AppResult<Json<serde_json::Value>> {
     // Parse settings from request body
     let password = req.get("password").and_then(|v| v.as_str()).map(String::from);
-    let max_members = req.get("max_members").and_then(|v| v.as_i64()).map(|v| v as i32);
-    let allow_guest_join = req.get("allow_guest_join").and_then(|v| v.as_bool());
-    let auto_play_next = req.get("auto_play_next").and_then(|v| v.as_bool());
-    let loop_playlist = req.get("loop_playlist").and_then(|v| v.as_bool());
-    let shuffle_playlist = req.get("shuffle_playlist").and_then(|v| v.as_bool());
-    let chat_enabled = req.get("chat_enabled").and_then(|v| v.as_bool());
-    let danmaku_enabled = req.get("danmaku_enabled").and_then(|v| v.as_bool());
+    let max_members = req.get("max_members").and_then(serde_json::Value::as_i64).map(|v| v as i32);
+    let allow_guest_join = req.get("allow_guest_join").and_then(serde_json::Value::as_bool);
+    let auto_play_next = req.get("auto_play_next").and_then(serde_json::Value::as_bool);
+    let loop_playlist = req.get("loop_playlist").and_then(serde_json::Value::as_bool);
+    let shuffle_playlist = req.get("shuffle_playlist").and_then(serde_json::Value::as_bool);
+    let chat_enabled = req.get("chat_enabled").and_then(serde_json::Value::as_bool);
+    let danmaku_enabled = req.get("danmaku_enabled").and_then(serde_json::Value::as_bool);
 
     let settings_bytes = build_room_settings_bytes(
         &password,
@@ -1049,8 +1049,8 @@ pub async fn update_room_settings(
 }
 
 /// Unified handler for updating playback state via PATCH
-/// PATCH /api/rooms/:room_id/playback
-/// Supports: state (play/pause), position (seek), speed, media_id (switch)
+/// PATCH /`api/rooms/:room_id/playback`
+/// Supports: state (play/pause), position (seek), speed, `media_id` (switch)
 pub async fn update_playback(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -1092,7 +1092,7 @@ pub async fn update_playback(
     }
 
     // Handle position change (seek)
-    if let Some(position) = req.get("position").and_then(|v| v.as_f64()) {
+    if let Some(position) = req.get("position").and_then(serde_json::Value::as_f64) {
         let request = SeekRequest {
             position,
         };
@@ -1110,7 +1110,7 @@ pub async fn update_playback(
     }
 
     // Handle speed change
-    if let Some(speed) = req.get("speed").and_then(|v| v.as_f64()) {
+    if let Some(speed) = req.get("speed").and_then(serde_json::Value::as_f64) {
         use crate::proto::client::SetPlaybackSpeedRequest;
         let request = SetPlaybackSpeedRequest {
             speed,
@@ -1154,7 +1154,7 @@ pub async fn update_playback(
 }
 
 /// Unified handler for media batch operations via PATCH
-/// PATCH /api/rooms/:room_id/media
+/// PATCH /`api/rooms/:room_id/media`
 /// Supports: reorder, swap operations
 pub async fn update_media_batch(
     auth: AuthUser,
@@ -1172,7 +1172,7 @@ pub async fn update_media_batch(
                 .to_string();
 
             let position = update.get("position")
-                .and_then(|v| v.as_i64())
+                .and_then(serde_json::Value::as_i64)
                 .ok_or_else(|| super::AppError::bad_request("Missing or invalid position in reorder update"))?
                 as i32;
 

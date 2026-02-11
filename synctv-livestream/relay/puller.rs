@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use tracing::{info, warn};
 use crate::relay::{StreamRegistryTrait, PublisherInfo};
 use crate::grpc::GrpcStreamPuller;
-use streamhub::define::StreamHubEventSender;
+use synctv_xiu::streamhub::define::StreamHubEventSender;
 use std::sync::Arc;
 
 /// Puller node - pulls stream from Publisher and serves to local viewers

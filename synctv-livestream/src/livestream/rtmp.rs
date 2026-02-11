@@ -9,11 +9,11 @@ use crate::{
     relay::{registry_trait::StreamRegistryTrait, publisher_manager::PublisherManager},
     error::{StreamResult, StreamError},
 };
-use rtmp::auth::AuthCallback;
+use synctv_xiu::rtmp::auth::AuthCallback;
 use std::sync::Arc;
 use tracing as log;
-use streamhub::StreamsHub;
-use streamhub::define::StreamHubEventSender;
+use synctv_xiu::streamhub::StreamsHub;
+use synctv_xiu::streamhub::define::StreamHubEventSender;
 use tokio::sync::{mpsc, Mutex};
 
 pub struct RtmpServer {
@@ -44,7 +44,7 @@ impl RtmpServer {
             node_id,
             gop_num,
             auth,
-            event_sender: event_sender.clone(),
+            event_sender: event_sender,
             stream_hub: Arc::new(Mutex::new(stream_hub)),
         }
     }
@@ -52,7 +52,7 @@ impl RtmpServer {
     pub async fn start(&mut self) -> StreamResult<()> {
         let socket_addr: std::net::SocketAddr = self.address
             .parse()
-            .map_err(|e| StreamError::InvalidAddress(format!("Invalid RTMP address: {}", e)))?;
+            .map_err(|e| StreamError::InvalidAddress(format!("Invalid RTMP address: {e}")))?;
 
         log::info!("RTMP server listening on rtmp://{}", socket_addr);
 
@@ -85,7 +85,7 @@ impl RtmpServer {
         let event_sender = self.event_sender.clone();
         let gop_num = self.gop_num;
         let auth = self.auth.clone();
-        let mut xiu_rtmp_server = rtmp::rtmp::RtmpServer::new(
+        let mut xiu_rtmp_server = synctv_xiu::rtmp::rtmp::RtmpServer::new(
             self.address.clone(),
             event_sender,
             gop_num,

@@ -27,7 +27,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::Arc;
-use streamhub::define::StreamHubEventSender;
+use synctv_xiu::streamhub::define::StreamHubEventSender;
 use tokio::sync::mpsc;
 
 /// Legacy type alias — prefer `StreamTracker` for new code.
@@ -49,19 +49,26 @@ pub type UserStreamTracker = Arc<StreamTracker>;
 /// All mutations atomically update all indexes.
 /// A single user may publish to multiple rooms/media simultaneously.
 pub struct StreamTracker {
-    /// user_id → Set of "room_id:media_id" composite keys
+    /// `user_id` → Set of "`room_id:media_id`" composite keys
     by_user: DashMap<String, dashmap::DashSet<String>>,
-    /// room_id → Set<media_id>
+    /// `room_id` → Set<`media_id`>
     by_room: DashMap<String, dashmap::DashSet<String>>,
-    /// "room_id:media_id" → user_id
+    /// "`room_id:media_id`" → `user_id`
     by_stream: DashMap<String, String>,
-    /// "app_name\0stream_name" → "room_id:media_id" (RTMP→logical)
+    /// "`app_name\0stream_name`" → "`room_id:media_id`" (RTMP→logical)
     by_rtmp: DashMap<String, String>,
-    /// "room_id:media_id" → "app_name\0stream_name" (logical→RTMP, for cleanup)
+    /// "`room_id:media_id`" → "`app_name\0stream_name`" (logical→RTMP, for cleanup)
     rtmp_reverse: DashMap<String, String>,
 }
 
+impl Default for StreamTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamTracker {
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             by_user: DashMap::new(),
@@ -122,12 +129,12 @@ impl StreamTracker {
 
         self.by_user
             .entry(user_id.clone())
-            .or_insert_with(dashmap::DashSet::new)
+            .or_default()
             .insert(sk.clone());
 
         self.by_room
             .entry(room_id)
-            .or_insert_with(dashmap::DashSet::new)
+            .or_default()
             .insert(media_id);
 
         self.by_stream.insert(sk.clone(), user_id);
@@ -136,6 +143,7 @@ impl StreamTracker {
     }
 
     /// Remove ALL tracking entries for a user. Returns list of `(room_id, media_id)`.
+    #[must_use] 
     pub fn remove_user(&self, user_id: &str) -> Vec<(String, String)> {
         let mut removed = Vec::new();
         if let Some((_, keys)) = self.by_user.remove(user_id) {
@@ -160,7 +168,8 @@ impl StreamTracker {
         removed
     }
 
-    /// Remove tracking by (room_id, media_id). Returns the `user_id` if present.
+    /// Remove tracking by (`room_id`, `media_id`). Returns the `user_id` if present.
+    #[must_use] 
     pub fn remove_stream(&self, room_id: &str, media_id: &str) -> Option<String> {
         let sk = Self::stream_key(room_id, media_id);
         if let Some((_, user_id)) = self.by_stream.remove(&sk) {
@@ -188,7 +197,7 @@ impl StreamTracker {
         }
     }
 
-    /// Remove by RTMP identifiers (app_name, stream_name) — used by `on_unpublish`.
+    /// Remove by RTMP identifiers (`app_name`, `stream_name`) — used by `on_unpublish`.
     ///
     /// Uses the RTMP→logical mapping to resolve `(room_id, media_id)` from the
     /// RTMP identifiers, then removes all tracking entries.
@@ -252,7 +261,8 @@ impl StreamTracker {
         }
     }
 
-    /// Get all (room_id, media_id) pairs for a user.
+    /// Get all (`room_id`, `media_id`) pairs for a user.
+    #[must_use] 
     pub fn get_user_streams(&self, user_id: &str) -> Vec<(String, String)> {
         self.by_user
             .get(user_id)
@@ -264,7 +274,8 @@ impl StreamTracker {
             .unwrap_or_default()
     }
 
-    /// Get all media_ids currently publishing in a room.
+    /// Get all `media_ids` currently publishing in a room.
+    #[must_use] 
     pub fn get_room_streams(&self, room_id: &str) -> Vec<String> {
         self.by_room
             .get(room_id)
@@ -272,7 +283,8 @@ impl StreamTracker {
             .unwrap_or_default()
     }
 
-    /// Get user_id publishing a specific (room_id, media_id).
+    /// Get `user_id` publishing a specific (`room_id`, `media_id`).
+    #[must_use] 
     pub fn get_stream_user(&self, room_id: &str, media_id: &str) -> Option<String> {
         self.by_stream.get(&Self::stream_key(room_id, media_id)).map(|e| e.value().clone())
     }
@@ -303,7 +315,7 @@ pub struct LiveStreamingInfrastructure {
     pub segment_manager: Option<Arc<SegmentManager>>,
     /// HLS stream registry for M3U8 generation
     pub hls_stream_registry: Option<HlsStreamRegistry>,
-    /// Tracks active RTMP publishers by user_id for kick-on-ban
+    /// Tracks active RTMP publishers by `user_id` for kick-on-ban
     pub user_stream_tracker: UserStreamTracker,
 }
 
@@ -341,12 +353,12 @@ impl LiveStreamingInfrastructure {
 
     /// Kick an active RTMP publisher, forcing their session to disconnect.
     ///
-    /// Sends an UnPublish event through StreamHub which terminates the transceiver's data pipeline.
-    /// The RTMP session naturally terminates when its data_sender channel closes.
+    /// Sends an `UnPublish` event through `StreamHub` which terminates the transceiver's data pipeline.
+    /// The RTMP session naturally terminates when its `data_sender` channel closes.
     ///
     /// Returns Ok(()) if the event was sent. The actual disconnection is asynchronous.
     pub fn kick_publisher(&self, room_id: &str, media_id: &str) -> Result<()> {
-        use streamhub::stream::StreamIdentifier;
+        use synctv_xiu::streamhub::stream::StreamIdentifier;
 
         let identifier = StreamIdentifier::Rtmp {
             app_name: room_id.to_string(),
@@ -354,7 +366,7 @@ impl LiveStreamingInfrastructure {
         };
 
         self.stream_hub_event_sender
-            .send(streamhub::define::StreamHubEvent::UnPublish { identifier })
+            .send(synctv_xiu::streamhub::define::StreamHubEvent::UnPublish { identifier })
             .map_err(|_| anyhow::anyhow!("Failed to send unpublish event (StreamHub not running)"))?;
 
         Ok(())
@@ -362,7 +374,7 @@ impl LiveStreamingInfrastructure {
 
     /// Kick all active RTMP publishers for a given user.
     ///
-    /// Looks up all of the user's active streams from the tracker and sends UnPublish events.
+    /// Looks up all of the user's active streams from the tracker and sends `UnPublish` events.
     /// Used when banning or deleting a user to terminate all their RTMP publish sessions.
     pub fn kick_user_publishers(&self, user_id: &str) {
         let streams = self.user_stream_tracker.remove_user(user_id);

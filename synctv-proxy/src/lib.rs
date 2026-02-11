@@ -258,6 +258,7 @@ fn rewrite_uri_attribute(line: &str, base: Option<&url::Url>, proxy_base: &str) 
 }
 
 /// Minimal percent-encoding for URL query parameter values.
+#[must_use] 
 pub fn percent_encode(input: &str) -> String {
     use std::fmt::Write;
     let mut result = String::with_capacity(input.len() * 2);

@@ -50,7 +50,7 @@ pub trait StreamRegistryTrait: Send + Sync {
     async fn list_active_streams(&self) -> Result<Vec<(String, String)>>;
 
     /// Get all active publishers for a user (via reverse index)
-    /// Returns list of (room_id, media_id) pairs
+    /// Returns list of (`room_id`, `media_id`) pairs
     async fn get_user_publishers(&self, user_id: &str) -> Result<Vec<(String, String)>>;
 
     /// Remove all publisher entries for a user

@@ -7,7 +7,7 @@ use synctv_core::provider::DashManifestData;
 
 /// Options for MPD generation
 pub struct MpdOptions<'a> {
-    /// If set, rewrite BaseURLs to proxy paths relative to this base.
+    /// If set, rewrite `BaseURLs` to proxy paths relative to this base.
     /// Streams are indexed: video[0..N], then audio[N..M].
     pub proxy_base_url: Option<&'a str>,
     /// JWT token appended to proxy URLs for auth.
@@ -15,6 +15,7 @@ pub struct MpdOptions<'a> {
 }
 
 /// Generate MPEG-DASH MPD XML from structured DASH data.
+#[must_use] 
 pub fn generate_mpd(data: &DashManifestData, opts: &MpdOptions<'_>) -> String {
     let mut xml = String::with_capacity(4096);
 
@@ -25,13 +26,13 @@ pub fn generate_mpd(data: &DashManifestData, opts: &MpdOptions<'_>) -> String {
     let duration_str = format_duration(data.duration);
     let min_buf_str = format_duration(data.min_buffer_time.max(1.5));
 
-    let _ = write!(
+    let _ = writeln!(
         xml,
         "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" \
          profiles=\"urn:mpeg:dash:profile:isoff-on-demand:2011\" \
          type=\"static\" \
          mediaPresentationDuration=\"{duration_str}\" \
-         minBufferTime=\"{min_buf_str}\">\n"
+         minBufferTime=\"{min_buf_str}\">"
     );
 
     // Period
@@ -42,10 +43,10 @@ pub fn generate_mpd(data: &DashManifestData, opts: &MpdOptions<'_>) -> String {
         xml.push_str("    <AdaptationSet mimeType=\"video/mp4\" segmentAlignment=\"true\" startWithSAP=\"1\">\n");
 
         for (idx, v) in data.video_streams.iter().enumerate() {
-            let _ = write!(
+            let _ = writeln!(
                 xml,
                 "      <Representation id=\"{}\" codecs=\"{}\" width=\"{}\" height=\"{}\" \
-                 frameRate=\"{}\" bandwidth=\"{}\" sar=\"{}\" startWithSAP=\"{}\">\n",
+                 frameRate=\"{}\" bandwidth=\"{}\" sar=\"{}\" startWithSAP=\"{}\">",
                 xml_escape(&v.id),
                 xml_escape(&v.codecs),
                 v.width,
@@ -72,10 +73,10 @@ pub fn generate_mpd(data: &DashManifestData, opts: &MpdOptions<'_>) -> String {
         let video_count = data.video_streams.len();
         for (idx, a) in data.audio_streams.iter().enumerate() {
             let stream_idx = video_count + idx;
-            let _ = write!(
+            let _ = writeln!(
                 xml,
                 "      <Representation id=\"{}\" codecs=\"{}\" bandwidth=\"{}\" \
-                 audioSamplingRate=\"{}\" startWithSAP=\"{}\">\n",
+                 audioSamplingRate=\"{}\" startWithSAP=\"{}\">",
                 xml_escape(&a.id),
                 xml_escape(&a.codecs),
                 a.bandwidth,
@@ -105,9 +106,9 @@ fn write_base_url(xml: &mut String, stream_idx: usize, cdn_url: &str, opts: &Mpd
         if let Some(token) = opts.token {
             let _ = write!(url, "?token={token}");
         }
-        let _ = write!(xml, "        <BaseURL>{}</BaseURL>\n", xml_escape(&url));
+        let _ = writeln!(xml, "        <BaseURL>{}</BaseURL>", xml_escape(&url));
     } else {
-        let _ = write!(xml, "        <BaseURL>{}</BaseURL>\n", xml_escape(cdn_url));
+        let _ = writeln!(xml, "        <BaseURL>{}</BaseURL>", xml_escape(cdn_url));
     }
 }
 

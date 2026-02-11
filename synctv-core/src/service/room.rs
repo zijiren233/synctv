@@ -307,8 +307,8 @@ impl RoomService {
     /// Check if guests are allowed to access a room
     ///
     /// Validates guest access based on:
-    /// 1. Global enable_guest setting
-    /// 2. Room allow_guest_join setting
+    /// 1. Global `enable_guest` setting
+    /// 2. Room `allow_guest_join` setting
     /// 3. Room password requirement (guests blocked if password required)
     ///
     /// # Arguments

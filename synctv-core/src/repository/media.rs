@@ -262,7 +262,7 @@ impl MediaRepository {
             return Ok(0);
         }
 
-        let id_strs: Vec<&str> = media_ids.iter().map(|id| id.as_str()).collect();
+        let id_strs: Vec<&str> = media_ids.iter().map(super::super::models::id::MediaId::as_str).collect();
         let now = chrono::Utc::now();
 
         // Build query with ANY array parameter
@@ -315,7 +315,7 @@ impl MediaRepository {
     }
 
     /// Bulk reorder media items with new positions
-    /// Takes a list of (media_id, new_position) tuples and updates them in a transaction
+    /// Takes a list of (`media_id`, `new_position`) tuples and updates them in a transaction
     pub async fn reorder_batch(&self, updates: &[(MediaId, i32)]) -> Result<()> {
         if updates.is_empty() {
             return Ok(());

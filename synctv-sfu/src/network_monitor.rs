@@ -108,6 +108,7 @@ pub struct NetworkQualityMonitor {
 
 impl NetworkQualityMonitor {
     /// Create a new network quality monitor
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             peers: DashMap::new(),
@@ -115,7 +116,7 @@ impl NetworkQualityMonitor {
         }
     }
 
-    /// Update stats for a peer from SFU PeerStats and bandwidth estimate
+    /// Update stats for a peer from SFU `PeerStats` and bandwidth estimate
     pub fn update_peer_stats(
         &self,
         peer_id: &PeerId,
@@ -144,7 +145,7 @@ impl NetworkQualityMonitor {
         entry.loss_samples.push((now, loss_rate));
 
         // Prune old samples outside the window
-        let cutoff = now - self.window_duration;
+        let cutoff = now.checked_sub(self.window_duration).unwrap();
         entry.rtt_samples.retain(|(t, _)| *t >= cutoff);
         entry.loss_samples.retain(|(t, _)| *t >= cutoff);
 
@@ -165,12 +166,12 @@ impl NetworkQualityMonitor {
 
         // Calculate jitter from RTT variance
         let jitter = if entry.rtt_samples.len() > 1 {
-            let mean = avg_rtt as f64;
+            let mean = f64::from(avg_rtt);
             let variance: f64 = entry
                 .rtt_samples
                 .iter()
                 .map(|(_, v)| {
-                    let diff = *v as f64 - mean;
+                    let diff = f64::from(*v) - mean;
                     diff * diff
                 })
                 .sum::<f64>()
@@ -211,16 +212,18 @@ impl NetworkQualityMonitor {
         entry.rtt_samples.push((now, rtt_ms));
 
         // Prune old samples
-        let cutoff = now - self.window_duration;
+        let cutoff = now.checked_sub(self.window_duration).unwrap();
         entry.rtt_samples.retain(|(t, _)| *t >= cutoff);
     }
 
     /// Get network stats for a specific peer
+    #[must_use] 
     pub fn get_peer_stats(&self, peer_id: &PeerId) -> Option<NetworkStats> {
         self.peers.get(peer_id).map(|entry| entry.stats.clone())
     }
 
     /// Get network stats for all peers
+    #[must_use] 
     pub fn get_all_stats(&self) -> Vec<(String, NetworkStats)> {
         self.peers
             .iter()
@@ -234,6 +237,7 @@ impl NetworkQualityMonitor {
     }
 
     /// Get the number of monitored peers
+    #[must_use] 
     pub fn peer_count(&self) -> usize {
         self.peers.len()
     }

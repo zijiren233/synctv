@@ -1592,16 +1592,13 @@ impl RoomService for ClientServiceImpl {
             .map_err(|e| Status::permission_denied(format!("Not a member of the room: {e}")))?;
 
         // Get network quality stats from SFU manager if available
-        let sfu_manager = match &self.sfu_manager {
-            Some(mgr) => mgr,
-            None => {
-                tracing::debug!(
-                    room_id = %room_id,
-                    user_id = %_user_id,
-                    "Network quality requested but SFU manager not enabled"
-                );
-                return Ok(Response::new(GetNetworkQualityResponse { peers: vec![] }));
-            }
+        let sfu_manager = if let Some(mgr) = &self.sfu_manager { mgr } else {
+            tracing::debug!(
+                room_id = %room_id,
+                user_id = %_user_id,
+                "Network quality requested but SFU manager not enabled"
+            );
+            return Ok(Response::new(GetNetworkQualityResponse { peers: vec![] }));
         };
 
         let stats = sfu_manager
@@ -2349,41 +2346,7 @@ impl MediaService for ClientServiceImpl {
         }
 
         // If a specific media_id is provided, switch to it
-        let playing_media = if !req.media_id.is_empty() {
-            let media_id = MediaId::from_string(req.media_id);
-            self.room_service
-                .set_playing_media(room_id, user_id, media_id.clone())
-                .await
-                .map_err(|e| match e {
-                    synctv_core::Error::Authorization(msg) | synctv_core::Error::PermissionDenied(msg) => {
-                        Status::permission_denied(msg)
-                    }
-                    synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-                    _ => Status::internal("Failed to set playing media"),
-                })?;
-
-            // Get the media details
-            let media = self
-                .room_service
-                .media_service()
-                .get_media(&media_id)
-                .await
-                .map_err(|_| Status::internal("Failed to get media"))?;
-
-            media.map(|m| Media {
-                id: m.id.as_str().to_string(),
-                room_id: m.room_id.as_str().to_string(),
-                url: String::new(),
-                provider: m.source_provider.clone(),
-                title: m.name.clone(),
-                metadata: Vec::new(),
-                position: m.position,
-                added_at: m.added_at.timestamp(),
-                added_by: m.creator_id.as_str().to_string(),
-                provider_instance_name: m.provider_instance_name.unwrap_or_default(),
-                source_config: serde_json::to_vec(&m.source_config).unwrap_or_default(),
-            })
-        } else {
+        let playing_media = if req.media_id.is_empty() {
             // No specific media, just get the first media in playlist
             let (media_list, _total) = self
                 .room_service
@@ -2422,6 +2385,40 @@ impl MediaService for ClientServiceImpl {
             } else {
                 None
             }
+        } else {
+            let media_id = MediaId::from_string(req.media_id);
+            self.room_service
+                .set_playing_media(room_id, user_id, media_id.clone())
+                .await
+                .map_err(|e| match e {
+                    synctv_core::Error::Authorization(msg) | synctv_core::Error::PermissionDenied(msg) => {
+                        Status::permission_denied(msg)
+                    }
+                    synctv_core::Error::NotFound(msg) => Status::not_found(msg),
+                    _ => Status::internal("Failed to set playing media"),
+                })?;
+
+            // Get the media details
+            let media = self
+                .room_service
+                .media_service()
+                .get_media(&media_id)
+                .await
+                .map_err(|_| Status::internal("Failed to get media"))?;
+
+            media.map(|m| Media {
+                id: m.id.as_str().to_string(),
+                room_id: m.room_id.as_str().to_string(),
+                url: String::new(),
+                provider: m.source_provider.clone(),
+                title: m.name.clone(),
+                metadata: Vec::new(),
+                position: m.position,
+                added_at: m.added_at.timestamp(),
+                added_by: m.creator_id.as_str().to_string(),
+                provider_instance_name: m.provider_instance_name.unwrap_or_default(),
+                source_config: serde_json::to_vec(&m.source_config).unwrap_or_default(),
+            })
         };
 
         let item_count = self
@@ -2489,7 +2486,7 @@ impl MediaService for ClientServiceImpl {
                     duration: playback
                         .metadata
                         .get("duration")
-                        .and_then(|v| v.as_f64())
+                        .and_then(serde_json::Value::as_f64)
                         .unwrap_or(0.0),
                 }),
             }));
@@ -2510,7 +2507,7 @@ impl MediaService for ClientServiceImpl {
             .get(instance_name)
             .await
             .ok_or_else(|| {
-                Status::not_found(format!("Provider instance '{}' not found", instance_name))
+                Status::not_found(format!("Provider instance '{instance_name}' not found"))
             })?;
 
         let ctx = synctv_core::provider::ProviderContext::new("synctv")
@@ -2526,8 +2523,7 @@ impl MediaService for ClientServiceImpl {
         let movie_proxy = self
             .settings_registry
             .as_ref()
-            .map(|r| r.to_public_settings().movie_proxy)
-            .unwrap_or(true);
+            .map_or(true, |r| r.to_public_settings().movie_proxy);
 
         let room_id_str = room_id.as_str();
         let media_id_str = media_id.as_str();
@@ -2536,12 +2532,12 @@ impl MediaService for ClientServiceImpl {
         let is_live = result
             .metadata
             .get("is_live")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let duration = result
             .metadata
             .get("duration")
-            .and_then(|v| v.as_f64())
+            .and_then(serde_json::Value::as_f64)
             .unwrap_or(0.0);
 
         // Collect subtitles from all playback modes

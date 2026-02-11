@@ -82,8 +82,8 @@ impl Default for ConnectionLimits {
             max_per_user: 5,
             max_per_room: 200,
             max_total: 10000,
-            idle_timeout: Duration::from_secs(300), // 5 minutes
-            max_duration: Duration::from_secs(86400), // 24 hours
+            idle_timeout: Duration::from_mins(5), // 5 minutes
+            max_duration: Duration::from_hours(24), // 24 hours
         }
     }
 }

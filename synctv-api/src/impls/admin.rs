@@ -27,7 +27,7 @@ pub struct AdminApiImpl {
 
 impl AdminApiImpl {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         room_service: Arc<RoomService>,
         user_service: Arc<UserService>,
         settings_service: Arc<SettingsService>,
@@ -942,8 +942,7 @@ impl AdminApiImpl {
 
         let provider_count = self.provider_instance_manager
             .get_all_instances().await
-            .map(|i| i.len() as i32)
-            .unwrap_or(0);
+            .map_or(0, |i| i.len() as i32);
 
         Ok(crate::proto::admin::GetSystemStatsResponse {
             total_users: total_users as i32,

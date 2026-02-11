@@ -292,7 +292,7 @@ impl SfuManager {
 
     /// Background task for periodic cleanup
     async fn cleanup_task(self: Arc<Self>) {
-        let mut ticker = interval(Duration::from_secs(60));
+        let mut ticker = interval(Duration::from_mins(1));
         info!("Starting cleanup task (interval: 60s)");
 
         loop {

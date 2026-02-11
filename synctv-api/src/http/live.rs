@@ -99,7 +99,7 @@ async fn handle_flv_stream(
     let user_id = if let Some(token) = &params.token {
         // Validate token and extract user_id
         let validator = synctv_core::service::auth::JwtValidator::new(Arc::new(state.jwt_service.clone()));
-        let bearer_token = format!("Bearer {}", token);
+        let bearer_token = format!("Bearer {token}");
         validator
             .validate_http_extract_user_id(&bearer_token)
             .ok()
@@ -134,17 +134,14 @@ async fn handle_flv_stream(
             tokio::select! {
                 // Forward FLV data from source
                 data = rx.recv() => {
-                    match data {
-                        Some(chunk) => {
-                            if tx.send(chunk).is_err() {
-                                debug!("FLV client disconnected");
-                                break;
-                            }
-                        }
-                        None => {
-                            debug!("FLV source ended");
+                    if let Some(chunk) = data {
+                        if tx.send(chunk).is_err() {
+                            debug!("FLV client disconnected");
                             break;
                         }
+                    } else {
+                        debug!("FLV source ended");
+                        break;
                     }
                 }
 

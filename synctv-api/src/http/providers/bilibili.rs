@@ -60,7 +60,7 @@ struct MpdQuery {
     /// If "hevc", serve the HEVC DASH variant
     #[serde(default)]
     codec: Option<String>,
-    /// If "1", generate MPD with direct CDN BaseURLs
+    /// If "1", generate MPD with direct CDN `BaseURLs`
     #[serde(default)]
     direct: Option<String>,
     /// JWT token for stream proxy auth
@@ -97,7 +97,7 @@ async fn resolve_bilibili_playback_result(
         .map_err(|e| anyhow::anyhow!("Bilibili generate_playback failed: {e}").into())
 }
 
-/// GET /proxy/:room_id/:media_id/mpd - Serve MPEG-DASH MPD manifest
+/// GET /`proxy/:room_id/:media_id/mpd` - Serve MPEG-DASH MPD manifest
 async fn serve_mpd(
     auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,
@@ -154,7 +154,7 @@ async fn serve_mpd(
         .into_response())
 }
 
-/// GET /proxy/:room_id/:media_id/stream/:stream_id - Proxy a single DASH stream segment
+/// GET /`proxy/:room_id/:media_id/stream/:stream_id` - Proxy a single DASH stream segment
 async fn proxy_stream(
     auth: AuthUser,
     Path((room_id, media_id, stream_id)): Path<(String, String, String)>,
@@ -205,7 +205,7 @@ async fn proxy_stream(
         .map_err(Into::into)
 }
 
-/// GET /proxy/:room_id/:media_id/subtitle/:name - Proxy subtitle
+/// GET /`proxy/:room_id/:media_id/subtitle/:name` - Proxy subtitle
 async fn proxy_subtitle(
     auth: AuthUser,
     Path((room_id, media_id, name)): Path<(String, String, String)>,
@@ -241,7 +241,7 @@ async fn proxy_subtitle(
         .map_err(Into::into)
 }
 
-/// GET /proxy/:room_id/:media_id/m3u8 - Proxy Bilibili M3U8 (for live streams)
+/// GET /`proxy/:room_id/:media_id/m3u8` - Proxy Bilibili M3U8 (for live streams)
 async fn proxy_m3u8(
     auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,
@@ -271,7 +271,7 @@ async fn proxy_m3u8(
         .map_err(Into::into)
 }
 
-/// GET /proxy/:room_id/:media_id/danmu - Bilibili danmaku SSE
+/// GET /`proxy/:room_id/:media_id/danmu` - Bilibili danmaku SSE
 ///
 /// Returns danmaku server connection info as SSE events.
 /// The client uses this info to connect to Bilibili's WebSocket danmu servers directly.

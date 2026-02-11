@@ -157,7 +157,7 @@ pub async fn init_services(
     let settings_service = SettingsService::new(settings_repo, pool.clone());
     settings_service.initialize().await?;
     info!("Settings service initialized with {} groups", {
-        settings_service.get_all().await.map(|g| g.len()).unwrap_or(0)
+        settings_service.get_all().await.map_or(0, |g| g.len())
     });
 
     // Start PostgreSQL LISTEN for hot reload
@@ -311,7 +311,7 @@ async fn init_oauth2_service(
     // This prevents memory leaks from expired authorization flows
     let oauth2_service_clone = oauth2_service.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Run every hour
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_hours(1)); // Run every hour
         loop {
             interval.tick().await;
             match oauth2_service_clone.cleanup_expired_states(7200).await {

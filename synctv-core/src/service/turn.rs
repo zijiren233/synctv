@@ -46,7 +46,7 @@ impl Default for TurnConfig {
         Self {
             server_url: String::new(),
             static_secret: String::new(),
-            credential_ttl: Duration::from_secs(86400), // 24 hours
+            credential_ttl: Duration::from_hours(24), // 24 hours
             use_tls: false,
         }
     }

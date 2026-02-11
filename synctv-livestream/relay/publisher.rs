@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 use bytes::Bytes;
 use tokio::sync::mpsc;
-use streamhub::define::StreamHubEventSender;
+use synctv_xiu::streamhub::define::StreamHubEventSender;
 use crate::relay::StreamRegistryTrait;
 use crate::grpc::{FrameType, RtmpPacket, PullRtmpStreamRequest, StreamRelayService};
 use tonic::{Request, Response, Status};
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 ///
 /// Note: In the xiu architecture, frame data distribution to local subscribers
 /// (including GOP cache for fast startup) is handled automatically by the
-/// StreamHub + RTMP cache when a session publishes.
+/// `StreamHub` + RTMP cache when a session publishes.
 /// The Publisher here primarily handles:
 /// 1. Broadcasting to gRPC relay clients (Puller nodes on other servers)
 pub struct Publisher {

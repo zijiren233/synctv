@@ -1,4 +1,4 @@
-//! DirectURL Provider HTTP Proxy Routes
+//! `DirectURL` Provider HTTP Proxy Routes
 //!
 //! Proxies direct URL media that has playback info stored in `source_config`.
 
@@ -14,7 +14,7 @@ use axum::{
 use crate::http::{AppState, error::AppResult, middleware::AuthUser};
 use synctv_core::models::{MediaId, RoomId};
 
-/// Build DirectURL HTTP routes (proxy only, no provider API)
+/// Build `DirectURL` HTTP routes (proxy only, no provider API)
 pub fn direct_url_routes() -> Router<AppState> {
     Router::new()
         .route(
@@ -63,7 +63,7 @@ async fn resolve_direct_playback(
     Ok((playback_url.url.clone(), playback_url.headers.clone()))
 }
 
-/// GET /proxy/:room_id/:media_id - Proxy direct URL video stream
+/// GET /`proxy/:room_id/:media_id` - Proxy direct URL video stream
 async fn proxy_stream(
     _auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,
@@ -89,7 +89,7 @@ async fn proxy_stream(
         .map_err(Into::into)
 }
 
-/// GET /proxy/:room_id/:media_id/m3u8 - Proxy direct URL M3U8
+/// GET /`proxy/:room_id/:media_id/m3u8` - Proxy direct URL M3U8
 async fn proxy_m3u8(
     _auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,

@@ -1,7 +1,7 @@
-//! RTMP authentication implementation for SyncTV
+//! RTMP authentication implementation for `SyncTV`
 //!
 //! This module provides the RTMP authentication callback that integrates
-//! with SyncTV's user and room management.
+//! with `SyncTV`'s user and room management.
 //!
 //! On successful publish auth:
 //! 1. Atomically registers the publisher in Redis (single-publisher-per-media enforcement)
@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use rtmp::auth::AuthCallback;
+use synctv_xiu::rtmp::auth::AuthCallback;
 use synctv_livestream::api::UserStreamTracker;
 use synctv_livestream::relay::StreamRegistryTrait;
 use tokio::task::AbortHandle;
@@ -27,15 +27,15 @@ use synctv_core::{
     service::{PublishKeyService, RoomService, SettingsRegistry, UserService},
 };
 
-/// RTMP authentication implementation for SyncTV
+/// RTMP authentication implementation for `SyncTV`
 ///
 /// Validates RTMP publish/play requests against:
 /// - Room existence and status (not banned/pending)
-/// - JWT publish keys for publishers (validates room_id match)
+/// - JWT publish keys for publishers (validates `room_id` match)
 /// - User status (not banned/deleted)
 /// - Authorization (global admin, room admin/creator, or media creator)
 /// - Single-publisher-per-media (atomic Redis registration)
-/// - Global rtmp_player setting for viewers
+/// - Global `rtmp_player` setting for viewers
 ///
 /// On successful publish auth, registers the publisher in Redis and
 /// spawns a TTL renewal task. On unpublish, cleans up Redis and tracker state.
@@ -49,7 +49,7 @@ pub struct SyncTvRtmpAuth {
     registry: Arc<dyn StreamRegistryTrait>,
     /// This node's unique identifier for publisher registration
     node_id: String,
-    /// Active TTL renewal tasks: "room_id:media_id" → AbortHandle
+    /// Active TTL renewal tasks: "`room_id:media_id`" → `AbortHandle`
     ttl_handles: DashMap<String, AbortHandle>,
 }
 
@@ -144,7 +144,9 @@ impl AuthCallback for SyncTvRtmpAuth {
         // Authorization check: user must be global admin, room admin/creator, or media creator
         let is_global_admin = user.role.is_admin_or_above();
 
-        let is_room_admin_or_creator = if !is_global_admin {
+        let is_room_admin_or_creator = if is_global_admin {
+            false
+        } else {
             let room_id = synctv_core::models::RoomId::from_string(app_name.to_string());
             match self.room_service.member_service().get_member(&room_id, &user_id).await {
                 Ok(Some(member)) => matches!(
@@ -153,8 +155,6 @@ impl AuthCallback for SyncTvRtmpAuth {
                 ),
                 _ => false,
             }
-        } else {
-            false
         };
 
         let is_media_creator = if !is_global_admin && !is_room_admin_or_creator {
@@ -219,7 +219,7 @@ impl AuthCallback for SyncTvRtmpAuth {
         let media_id = claims.media_id.clone();
         let ttl_user_id = claims.user_id.clone();
         let ttl_task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut interval = tokio::time::interval(std::time::Duration::from_mins(1));
             // Skip the first immediate tick
             interval.tick().await;
             loop {

@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
                         ));
 
                         // Create RTMP authentication callback
-                        let rtmp_auth: Arc<dyn ::rtmp::auth::AuthCallback> =
+                        let rtmp_auth: Arc<dyn synctv_xiu::rtmp::auth::AuthCallback> =
                             Arc::new(rtmp_auth::SyncTvRtmpAuth::new(
                                 synctv_services.room_service.clone(),
                                 synctv_services.user_service.clone(),
@@ -226,12 +226,12 @@ async fn main() -> Result<()> {
                                 Some(synctv_services.settings_registry.clone()),
                                 user_stream_tracker,
                                 publisher_registry.clone(),
-                                node_id.clone(),
+                                node_id,
                             ));
 
                         // Create and start RTMP server with auth integration
                         let rtmp_listen_addr = format!("{}:{}", config.server.host, config.livestream.rtmp_port);
-                        let mut rtmp_server = ::rtmp::rtmp::RtmpServer::new(
+                        let mut rtmp_server = synctv_xiu::rtmp::rtmp::RtmpServer::new(
                             rtmp_listen_addr.clone(),
                             rtmp_event_sender,
                             2, // gop_num

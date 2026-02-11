@@ -161,7 +161,7 @@ pub async fn set_member_permissions(
 }
 
 /// Ban a member from a room
-/// POST /api/rooms/:room_id/bans with body: {user_id, reason}
+/// POST /`api/rooms/:room_id/bans` with body: {`user_id`, reason}
 pub async fn ban_member(
     auth: AuthUser,
     State(state): State<AppState>,

@@ -45,7 +45,7 @@ impl RateLimiter {
     /// This is a convenience constructor that never fails, useful as a fallback
     /// when `RateLimiter::new` cannot be used with `?`.
     #[must_use]
-    pub fn disabled(key_prefix: String) -> Self {
+    pub const fn disabled(key_prefix: String) -> Self {
         Self {
             redis_client: None,
             key_prefix,

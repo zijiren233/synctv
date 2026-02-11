@@ -43,7 +43,7 @@ impl StreamRegistry {
         self.register_publisher_with_user(room_id, media_id, node_id, app_name, "").await
     }
 
-    /// Register a publisher with user_id for a media in a room (atomic operation)
+    /// Register a publisher with `user_id` for a media in a room (atomic operation)
     /// Returns true if registered successfully, false if already exists
     pub async fn register_publisher_with_user(
         &mut self,
@@ -95,7 +95,7 @@ impl StreamRegistry {
         self.try_register_publisher_with_user(room_id, media_id, node_id, "").await
     }
 
-    /// Try to register as publisher with user_id
+    /// Try to register as publisher with `user_id`
     /// Returns true if registered successfully, false if already exists
     pub async fn try_register_publisher_with_user(
         &self,
@@ -234,7 +234,7 @@ impl StreamRegistry {
     }
 
     /// Get all active publishers for a user (via reverse index)
-    /// Returns list of (room_id, media_id) pairs
+    /// Returns list of (`room_id`, `media_id`) pairs
     pub async fn get_user_publishers(&self, user_id: &str) -> Result<Vec<(String, String)>> {
         let user_key = format!("stream:user_publishers:{user_id}");
         let mut conn = self.redis.clone();

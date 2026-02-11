@@ -171,7 +171,7 @@ pub async fn rate_limit_middleware(
                     ("X-RateLimit-Limit", max_requests.to_string()),
                     ("X-RateLimit-Reset", retry_after_seconds.to_string()),
                 ],
-                format!("Rate limit exceeded. Try again in {} seconds", retry_after_seconds),
+                format!("Rate limit exceeded. Try again in {retry_after_seconds} seconds"),
             )
                 .into_response();
 

@@ -309,11 +309,11 @@ pub async fn unbind_provider(
 ///
 /// GET /api/oauth2/providers
 ///
-/// Returns the configured OAuth2 provider instances that clients can use
+/// Returns the configured `OAuth2` provider instances that clients can use
 /// for login or account binding. No authentication required.
 ///
 /// Response: JSON array of objects, each with:
-/// - `name`: Instance name (e.g., "github", "logto1") used in OAuth2 URLs
+/// - `name`: Instance name (e.g., "github", "logto1") used in `OAuth2` URLs
 /// - `type`: Provider type (e.g., "github", "google", "logto", "oidc")
 pub async fn list_providers(
     State(state): State<AppState>,

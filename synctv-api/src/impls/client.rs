@@ -1221,19 +1221,18 @@ impl ClientApiImpl {
 
         // 4. Check movie_proxy setting
         let movie_proxy = settings_registry
-            .map(|r| r.to_public_settings().movie_proxy)
-            .unwrap_or(true);
+            .is_none_or(|r| r.to_public_settings().movie_proxy);
 
         // 5. Build MovieInfo
         let is_live = result
             .metadata
             .get("is_live")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let duration = result
             .metadata
             .get("duration")
-            .and_then(|v| v.as_f64())
+            .and_then(serde_json::Value::as_f64)
             .unwrap_or(0.0);
 
         let subtitles: Vec<crate::proto::client::MovieSubtitle> = result
@@ -1594,16 +1593,13 @@ impl ClientApiImpl {
     ) -> Result<crate::proto::client::GetNetworkQualityResponse, anyhow::Error> {
         use crate::proto::client::GetNetworkQualityResponse;
 
-        let sfu_manager = match &self.sfu_manager {
-            Some(mgr) => mgr,
-            None => {
-                tracing::debug!(
-                    room_id = %room_id,
-                    user_id = %user_id,
-                    "Network quality requested but SFU manager not enabled"
-                );
-                return Ok(GetNetworkQualityResponse { peers: vec![] });
-            }
+        let sfu_manager = if let Some(mgr) = &self.sfu_manager { mgr } else {
+            tracing::debug!(
+                room_id = %room_id,
+                user_id = %user_id,
+                "Network quality requested but SFU manager not enabled"
+            );
+            return Ok(GetNetworkQualityResponse { peers: vec![] });
         };
 
         let stats = sfu_manager.get_room_network_quality(
@@ -1620,6 +1616,7 @@ impl ClientApiImpl {
 }
 
 /// Convert SFU `NetworkStats` to proto `PeerNetworkQuality`
+#[must_use] 
 pub fn network_stats_to_proto(
     peer_id: String,
     ns: synctv_sfu::NetworkStats,
