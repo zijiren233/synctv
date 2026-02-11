@@ -189,21 +189,16 @@ pub async fn delete_all_read(
 pub fn create_notification_router() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/api/notifications", axum::routing::get(list_notifications))
-        .route("/api/notifications/:id", axum::routing::get(get_notification))
+        .route(
+            "/api/notifications/:id",
+            axum::routing::get(get_notification).delete(delete_notification),
+        )
         .route(
             "/api/notifications/read",
-            axum::routing::post(mark_as_read),
+            axum::routing::post(mark_as_read).delete(delete_all_read),
         )
         .route(
             "/api/notifications/read-all",
             axum::routing::post(mark_all_as_read),
-        )
-        .route(
-            "/api/notifications/:id",
-            axum::routing::delete(delete_notification),
-        )
-        .route(
-            "/api/notifications/read",
-            axum::routing::delete(delete_all_read),
         )
 }

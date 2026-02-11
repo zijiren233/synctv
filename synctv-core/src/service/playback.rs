@@ -64,7 +64,7 @@ impl PlaybackService {
         self.update_state(room_id, |state| {
             state.is_playing = playing;
             state.updated_at = chrono::Utc::now();
-            state.version += 1;
+            // version is incremented by the SQL UPDATE, not here
         })
         .await
     }
@@ -83,7 +83,7 @@ impl PlaybackService {
         self.update_state(room_id, |state| {
             state.position = position;
             state.updated_at = chrono::Utc::now();
-            state.version += 1;
+            // version is incremented by the SQL UPDATE, not here
         })
         .await
     }
@@ -107,7 +107,7 @@ impl PlaybackService {
         self.update_state(room_id, |state| {
             state.speed = speed;
             state.updated_at = chrono::Utc::now();
-            state.version += 1;
+            // version is incremented by the SQL UPDATE, not here
         })
         .await
     }
@@ -139,7 +139,7 @@ impl PlaybackService {
             state.position = 0.0;
             state.is_playing = true;
             state.updated_at = chrono::Utc::now();
-            state.version += 1;
+            // version is incremented by the SQL UPDATE, not here
         })
         .await
     }
@@ -261,7 +261,7 @@ impl PlaybackService {
                 state.position = 0.0;
                 state.is_playing = true;
                 state.updated_at = chrono::Utc::now();
-                state.version += 1;
+                // version is incremented by the SQL UPDATE, not here
             }).await?;
 
             tracing::info!(
@@ -372,7 +372,7 @@ impl PlaybackService {
             state.speed = 1.0;
             state.playing_media_id = None;
             state.updated_at = chrono::Utc::now();
-            state.version += 1;
+            // version is incremented by the SQL UPDATE, not here
         })
         .await
     }
@@ -459,7 +459,7 @@ impl PlaybackService {
                 state.playing_media_id = Some(mid);
             }
             state.updated_at = chrono::Utc::now();
-            state.version += 1;
+            // version is incremented by the SQL UPDATE, not here
         })
         .await
     }

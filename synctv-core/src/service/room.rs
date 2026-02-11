@@ -274,6 +274,12 @@ impl RoomService {
             return Err(Error::InvalidInput("Room is closed".to_string()));
         }
 
+        // Check if user is banned from this room
+        if self.member_service.is_banned(&room_id, &user_id).await? {
+            tracing::warn!(room_id = %room_id, user_id = %user_id, "Banned user attempted to join room");
+            return Err(Error::Authorization("You are banned from this room".to_string()));
+        }
+
         // Check password if required
         // Load settings to check if password is required
         let room_settings = self.room_settings_repo.get(&room_id).await?;
@@ -1202,9 +1208,57 @@ impl RoomService {
 
     // ========== Admin Operations ==========
 
+    /// Update room status (admin use, bypasses permission checks)
+    pub async fn update_room_status(&self, room_id: &RoomId, status: crate::models::RoomStatus) -> Result<Room> {
+        self.room_repo.update_status(room_id, status).await
+    }
+
     /// Update room directly (admin use, bypasses permission checks)
     pub async fn admin_update_room(&self, room: &Room) -> Result<Room> {
         self.room_repo.update(room).await
+    }
+
+    /// Delete room (admin use, bypasses permission checks)
+    pub async fn admin_delete_room(&self, room_id: &RoomId) -> Result<()> {
+        let _ = self.notification_service.notify_room_deleted(room_id).await;
+        self.room_repo.delete(room_id).await?;
+        Ok(())
+    }
+
+    /// Set room password (admin use, bypasses permission checks)
+    pub async fn admin_set_room_password(
+        &self,
+        request: UpdateRoomPasswordRequest,
+    ) -> Result<UpdateRoomPasswordResponse> {
+        let room_id = RoomId::from_string(request.room_id);
+
+        // Verify room exists
+        let _room = self
+            .room_repo
+            .get_by_id(&room_id)
+            .await?
+            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+
+        // Hash new password if provided
+        let hashed_password = if request.new_password.is_empty() {
+            None
+        } else {
+            Some(hash_password(&request.new_password).await?)
+        };
+
+        // Load current settings
+        let mut settings = self.room_settings_repo.get(&room_id).await?;
+        settings.require_password = crate::models::room_settings::RequirePassword(hashed_password.is_some());
+
+        if let Some(pwd_hash) = &hashed_password {
+            self.room_settings_repo.set(&room_id, "password", pwd_hash).await?;
+        } else {
+            self.room_settings_repo.delete(&room_id, "password").await?;
+        }
+
+        self.room_settings_repo.set_settings(&room_id, &settings).await?;
+
+        Ok(UpdateRoomPasswordResponse { success: true })
     }
 
     // ========== Service Accessors ==========

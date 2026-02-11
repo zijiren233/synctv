@@ -164,7 +164,22 @@ impl UserService {
         self.repository.update(user).await
     }
 
-    /// Set user password
+    /// Change user password (requires old password verification)
+    pub async fn change_password(&self, user_id: &UserId, old_password: &str, new_password: &str) -> Result<User> {
+        // Get user to verify old password
+        let user = self.get_user(user_id).await?;
+
+        // Verify old password
+        let is_valid = verify_password(old_password, &user.password_hash).await?;
+        if !is_valid {
+            return Err(Error::Authentication("Invalid current password".to_string()));
+        }
+
+        // Delegate to set_password for the actual update
+        self.set_password(user_id, new_password).await
+    }
+
+    /// Set user password (admin use, no old password required)
     pub async fn set_password(&self, user_id: &UserId, new_password: &str) -> Result<User> {
         // Validate new password
         self.validate_password(new_password)?;

@@ -171,7 +171,9 @@ impl ClientApiImpl {
         req: crate::proto::client::SetPasswordRequest,
     ) -> Result<crate::proto::client::SetPasswordResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
-        self.user_service.set_password(&uid, &req.new_password).await
+
+        // Verify old password before allowing change
+        self.user_service.change_password(&uid, &req.old_password, &req.new_password).await
             .map_err(|e| e.to_string())?;
 
         Ok(crate::proto::client::SetPasswordResponse {
@@ -530,8 +532,12 @@ impl ClientApiImpl {
             "url": req.url
         });
 
-        // Extract title from URL or use default
-        let title = req.url.split('/').next_back().unwrap_or("Unknown").to_string();
+        // Use provided title, fall back to extracting from URL
+        let title = if !req.title.is_empty() {
+            req.title
+        } else {
+            req.url.split('/').next_back().unwrap_or("Unknown").to_string()
+        };
 
         // For direct URL, provider_instance_name is empty
         let provider_instance_name = String::new();

@@ -92,8 +92,8 @@ impl RoomRepository {
     pub async fn list(&self, query: &RoomListQuery) -> Result<(Vec<Room>, i64)> {
         let offset = (query.page - 1) * query.page_size;
 
-        // Build WHERE conditions
-        let mut where_conditions = vec!["r.deleted_at IS NULL"];
+        // Build WHERE conditions - use $1 for search in count query, $3 in list query
+        let mut base_conditions = vec!["r.deleted_at IS NULL"];
 
         let status_filter = match &query.status {
             Some(RoomStatus::Pending) => "r.status = 2",
@@ -102,18 +102,18 @@ impl RoomRepository {
             None => "",
         };
         if !status_filter.is_empty() {
-            where_conditions.push(status_filter);
+            base_conditions.push(status_filter);
         }
 
         let has_search = query.search.is_some();
+
+        // Count query: search param is $1
+        let mut count_conditions = base_conditions.clone();
         if has_search {
-            where_conditions.push("(r.name ILIKE $3 OR r.description ILIKE $3)");
+            count_conditions.push("(r.name ILIKE $1 OR r.description ILIKE $1)");
         }
-
-        let where_clause = where_conditions.join(" AND ");
-
-        // Get total count
-        let count_query = format!("SELECT COUNT(*) as count FROM rooms r WHERE {where_clause}");
+        let count_where = count_conditions.join(" AND ");
+        let count_query = format!("SELECT COUNT(*) as count FROM rooms r WHERE {count_where}");
 
         let count: i64 = if let Some(ref search) = query.search {
             let search_pattern = format!("%{search}%");
@@ -127,11 +127,16 @@ impl RoomRepository {
                 .await?
         };
 
-        // Get rooms
+        // List query: $1=limit, $2=offset, $3=search
+        let mut list_conditions = base_conditions;
+        if has_search {
+            list_conditions.push("(r.name ILIKE $3 OR r.description ILIKE $3)");
+        }
+        let list_where = list_conditions.join(" AND ");
         let list_query = format!(
             "SELECT r.id, r.name, r.description, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
              FROM rooms r
-             WHERE {where_clause}
+             WHERE {list_where}
              ORDER BY r.created_at DESC
              LIMIT $1 OFFSET $2"
         );
@@ -162,9 +167,8 @@ impl RoomRepository {
         let offset = (query.page - 1) * query.page_size;
 
         // Build WHERE conditions
-        let mut where_conditions = vec!["r.deleted_at IS NULL"];
+        let mut base_conditions = vec!["r.deleted_at IS NULL"];
 
-        // Dynamic query building for status filter
         let status_filter = match &query.status {
             Some(RoomStatus::Pending) => "r.status = 2",
             Some(RoomStatus::Active) => "r.status = 1",
@@ -172,20 +176,19 @@ impl RoomRepository {
             None => "",
         };
         if !status_filter.is_empty() {
-            where_conditions.push(status_filter);
+            base_conditions.push(status_filter);
         }
 
-        // Search filter
         let has_search = query.search.is_some();
+
+        // Count query: search param is $1
+        let mut count_conditions = base_conditions.clone();
         if has_search {
-            where_conditions.push("(r.name ILIKE $3 OR r.description ILIKE $3)");
+            count_conditions.push("(r.name ILIKE $1 OR r.description ILIKE $1)");
         }
-
-        let where_clause = where_conditions.join(" AND ");
-
-        // Get total count
+        let count_where = count_conditions.join(" AND ");
         let count_query = format!(
-            "SELECT COUNT(DISTINCT r.id) FROM rooms r WHERE {where_clause}"
+            "SELECT COUNT(DISTINCT r.id) FROM rooms r WHERE {count_where}"
         );
 
         let count: i64 = if let Some(ref search) = query.search {
@@ -200,7 +203,12 @@ impl RoomRepository {
                 .await?
         };
 
-        // Get rooms with member count using LEFT JOIN
+        // List query: $1=limit, $2=offset, $3=search
+        let mut list_conditions = base_conditions;
+        if has_search {
+            list_conditions.push("(r.name ILIKE $3 OR r.description ILIKE $3)");
+        }
+        let list_where = list_conditions.join(" AND ");
         let list_query = format!(
             r"
             SELECT
@@ -209,7 +217,7 @@ impl RoomRepository {
                 COALESCE(COUNT(rm.user_id) FILTER (WHERE rm.left_at IS NULL), 0)::int as member_count
             FROM rooms r
             LEFT JOIN room_members rm ON r.id = rm.room_id
-            WHERE {where_clause}
+            WHERE {list_where}
             GROUP BY r.id, r.name, r.description, r.created_by, r.status, r.created_at, r.updated_at, r.deleted_at
             ORDER BY r.created_at DESC
             LIMIT $1 OFFSET $2

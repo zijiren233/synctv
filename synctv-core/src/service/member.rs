@@ -372,6 +372,11 @@ impl MemberService {
         self.member_repo.is_member(room_id, user_id).await
     }
 
+    /// Check if a user is banned from a room
+    pub async fn is_banned(&self, room_id: &RoomId, user_id: &UserId) -> Result<bool> {
+        self.member_repo.is_banned(room_id, user_id).await
+    }
+
     /// Get a specific member
     pub async fn get_member(
         &self,

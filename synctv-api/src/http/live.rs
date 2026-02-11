@@ -37,6 +37,7 @@ pub struct LiveQuery {
     token: Option<String>,
 }
 
+
 /// Create live streaming router
 ///
 /// Uses `AppState` for state (`live_streaming_infrastructure` must be configured)
@@ -65,7 +66,13 @@ pub fn create_live_router() -> Router<AppState> {
 
 /// Handle HLS segment request with automatic extension detection
 ///
-/// Handles both regular .ts segments and disguised .png segments
+/// Handles both regular .ts segments and disguised .png segments.
+///
+/// NOTE: TS segment endpoints are intentionally unauthenticated.
+/// Authentication is enforced at the M3U8 playlist level. Segments themselves
+/// must be served without auth tokens so they can be cached by CDN edge nodes.
+/// Segment filenames contain random hashes, making them unguessable without
+/// first obtaining the authenticated playlist.
 async fn handle_hls_segment_with_disguise(
     Path((room_id, media_id, segment)): Path<(String, String, String)>,
     State(state): State<AppState>,
@@ -251,6 +258,11 @@ async fn handle_hls_playlist(
 
     // Build segment URL base following synctv-go pattern
     // TS segments are at: /api/room/movie/live/hls/data/{roomId}/{movieId}/
+    //
+    // NOTE: Segment URLs intentionally do NOT include auth tokens.
+    // Authentication is enforced only at this M3U8 playlist endpoint.
+    // Segments must be cacheable by CDN, and their filenames contain random
+    // hashes making them unguessable without the authenticated playlist.
     let segment_url_base = format!("/api/room/movie/live/hls/data/{room_id}/{media_id}/");
 
     // Generate HLS playlist with simple URL format
@@ -284,6 +296,10 @@ async fn handle_hls_playlist(
 /// GET /`api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts`
 ///
 /// Serves individual HLS TS segments.
+///
+/// NOTE: Intentionally unauthenticated — auth is at the M3U8 playlist level.
+/// Segments must be CDN-cacheable; their random-hash filenames are unguessable
+/// without the authenticated playlist. Do NOT add token validation here.
 ///
 /// # Response
 /// Returns TS segment data with `video/mp2t` content type.
@@ -343,6 +359,9 @@ async fn handle_hls_segment(
 ///
 /// Serves TS segments disguised as PNG images (`TSDisguisedAsPng` feature).
 /// Adds a PNG header to TS data to bypass certain filters.
+///
+/// NOTE: Intentionally unauthenticated — same as `handle_hls_segment`.
+/// See that handler's doc comment for rationale. Do NOT add token validation here.
 ///
 /// # Response
 /// Returns TS segment data with PNG header, `image/png` content type.

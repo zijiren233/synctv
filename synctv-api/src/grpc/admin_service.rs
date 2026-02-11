@@ -967,13 +967,13 @@ impl AdminService for AdminServiceImpl {
             .await
             .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
-        // Check if already banned
-        if user.deleted_at.is_some() {
+        // Check if already banned (use status, not deleted_at)
+        if user.status == synctv_core::models::UserStatus::Banned {
             return Err(Status::invalid_argument("User is already banned"));
         }
 
-        // Ban user by setting deleted_at
-        user.deleted_at = Some(chrono::Utc::now());
+        // Ban user by setting status
+        user.status = synctv_core::models::UserStatus::Banned;
 
         let updated_user = self
             .user_service
@@ -994,7 +994,7 @@ impl AdminService for AdminServiceImpl {
             username: updated_user.username,
             email: updated_user.email.unwrap_or_default(),
             role: updated_user.role.to_string(),
-            status: "banned".to_string(),
+            status: updated_user.status.as_str().to_string(),
             created_at: updated_user.created_at.timestamp(),
             updated_at: updated_user.updated_at.timestamp(),
         };
@@ -1020,13 +1020,13 @@ impl AdminService for AdminServiceImpl {
             .await
             .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
-        // Check if already active
-        if user.deleted_at.is_none() {
+        // Check if actually banned (use status, not deleted_at)
+        if user.status != synctv_core::models::UserStatus::Banned {
             return Err(Status::invalid_argument("User is not banned"));
         }
 
-        // Unban user by clearing deleted_at
-        user.deleted_at = None;
+        // Unban user by setting status back to Active
+        user.status = synctv_core::models::UserStatus::Active;
 
         let updated_user = self
             .user_service
@@ -1042,7 +1042,7 @@ impl AdminService for AdminServiceImpl {
             username: updated_user.username,
             email: updated_user.email.unwrap_or_default(),
             role: updated_user.role.to_string(),
-            status: "active".to_string(),
+            status: updated_user.status.as_str().to_string(),
             created_at: updated_user.created_at.timestamp(),
             updated_at: updated_user.updated_at.timestamp(),
         };
@@ -1157,31 +1157,31 @@ impl AdminService for AdminServiceImpl {
         let user_id = UserId::from_string(req.user_id);
 
         // Get user
-        let user = self
+        let mut user = self
             .user_service
             .get_user(&user_id)
             .await
             .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
 
-        // Note: The current implementation doesn't have a "pending" status
-        // This method could be used to approve users pending verification
-        // For now, it's a no-op that confirms the user exists and is active
-
-        if user.deleted_at.is_some() {
-            return Err(Status::invalid_argument("Cannot approve a banned user"));
+        if user.status != synctv_core::models::UserStatus::Pending {
+            return Err(Status::invalid_argument("User is not pending approval"));
         }
+
+        // Actually approve the user by changing status
+        user.status = synctv_core::models::UserStatus::Active;
+        let updated = self.user_service.update_user(&user).await
+            .map_err(|e| internal_err("Failed to approve user", e))?;
 
         tracing::info!("User {} approved by admin", user_id.as_str());
 
-        // Convert to AdminUser proto
         let admin_user = AdminUser {
-            id: user.id.to_string(),
-            username: user.username,
-            email: user.email.unwrap_or_default(),
-            role: user.role.to_string(),
-            status: user.status.as_str().to_string(),
-            created_at: user.created_at.timestamp(),
-            updated_at: user.updated_at.timestamp(),
+            id: updated.id.to_string(),
+            username: updated.username,
+            email: updated.email.unwrap_or_default(),
+            role: updated.role.to_string(),
+            status: updated.status.as_str().to_string(),
+            created_at: updated.created_at.timestamp(),
+            updated_at: updated.updated_at.timestamp(),
         };
 
         Ok(Response::new(ApproveUserResponse {

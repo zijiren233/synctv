@@ -473,7 +473,7 @@ impl RoomMemberRepository {
         let row = sqlx::query(
             "UPDATE room_members
              SET
-                status = 'active',
+                status = $3,
                 banned_at = NULL,
                 banned_by = NULL,
                 banned_reason = NULL,
@@ -488,21 +488,39 @@ impl RoomMemberRepository {
         )
         .bind(room_id.as_str())
         .bind(user_id.as_str())
+        .bind(MemberStatus::Active)
         .fetch_one(&self.pool)
         .await?;
 
         self.row_to_member(row)
     }
 
-    /// Check if user is member of room
+    /// Check if user is an active member of room (excludes banned members)
     pub async fn is_member(&self, room_id: &RoomId, user_id: &UserId) -> Result<bool> {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) as count
              FROM room_members
-             WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL"
+             WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL AND status = $3"
         )
         .bind(room_id.as_str())
         .bind(user_id.as_str())
+        .bind(MemberStatus::Active)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(count > 0)
+    }
+
+    /// Check if user is banned from room
+    pub async fn is_banned(&self, room_id: &RoomId, user_id: &UserId) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) as count
+             FROM room_members
+             WHERE room_id = $1 AND user_id = $2 AND status = $3"
+        )
+        .bind(room_id.as_str())
+        .bind(user_id.as_str())
+        .bind(MemberStatus::Banned)
         .fetch_one(&self.pool)
         .await?;
 

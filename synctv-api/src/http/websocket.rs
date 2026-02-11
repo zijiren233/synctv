@@ -120,8 +120,23 @@ pub async fn websocket_handler(
         .validate_and_extract_user_id(&token)
         .map_err(|e| AppError::unauthorized(format!("Invalid token: {e}")))?;
 
-    // Token is valid, upgrade to WebSocket
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state, room_id, user_id)))
+    // Check room membership before upgrading
+    let rid = synctv_core::models::RoomId::from_string(room_id.clone());
+    let is_member = state
+        .room_service
+        .member_service()
+        .is_member(&rid, &user_id)
+        .await
+        .map_err(|e| AppError::internal_server_error(format!("Failed to check membership: {e}")))?;
+
+    if !is_member {
+        return Err(AppError::forbidden("Not a member of this room"));
+    }
+
+    // Token is valid and user is a member, upgrade to WebSocket
+    // Limit max message size to 64KB (default is 64MB which is excessive for signaling)
+    Ok(ws.max_message_size(64 * 1024)
+        .on_upgrade(move |socket| handle_socket(socket, state, room_id, user_id)))
 }
 
 async fn handle_socket(

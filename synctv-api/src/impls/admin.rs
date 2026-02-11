@@ -134,10 +134,8 @@ impl AdminApiImpl {
         req: crate::proto::admin::DeleteRoomRequest,
     ) -> Result<crate::proto::admin::DeleteRoomResponse, String> {
         let rid = RoomId::from_string(req.room_id);
-        // Use a system admin user for admin operations
-        let admin_uid = UserId::from_string("system".to_string());
 
-        self.room_service.delete_room(rid.clone(), admin_uid).await
+        self.room_service.admin_delete_room(&rid).await
             .map_err(|e| e.to_string())?;
 
         // Force disconnect all connections in the deleted room
@@ -163,16 +161,8 @@ impl AdminApiImpl {
         &self,
         req: crate::proto::admin::UpdateRoomPasswordRequest,
     ) -> Result<crate::proto::admin::UpdateRoomPasswordResponse, String> {
-        // For admin operations, use a system user ID (in real implementation, you'd get this from auth context)
-        use synctv_core::models::UserId;
-        let admin_user_id = UserId::new(); // System user
-
-        self.room_service.set_room_password(req, &admin_user_id).await
-            .map_err(|e| e.to_string())?;
-
-        Ok(crate::proto::admin::UpdateRoomPasswordResponse {
-            success: true,
-        })
+        self.room_service.admin_set_room_password(req).await
+            .map_err(|e| e.to_string())
     }
 
     pub async fn get_room_members(
@@ -418,13 +408,12 @@ impl AdminApiImpl {
         if !req.timeout.is_empty() {
             instance.timeout = req.timeout;
         }
-        instance.tls = req.tls;
-        instance.insecure_tls = req.insecure_tls;
         if !req.providers.is_empty() {
             instance.providers = req.providers;
         }
 
-        // Parse config if provided
+        // Parse config if provided (tls/insecure_tls are also updated via config
+        // to avoid proto3 default-false semantics silently resetting them)
         if !req.config.is_empty() {
             let config: serde_json::Value = serde_json::from_slice(&req.config)
                 .map_err(|e| format!("Invalid config JSON: {e}"))?;
@@ -433,6 +422,22 @@ impl AdminApiImpl {
             }
             if let Some(custom_ca) = config.get("custom_ca").and_then(|v| v.as_str()) {
                 instance.custom_ca = Some(custom_ca.to_string());
+            }
+            if let Some(tls) = config.get("tls").and_then(|v| v.as_bool()) {
+                instance.tls = tls;
+            }
+            if let Some(insecure_tls) = config.get("insecure_tls").and_then(|v| v.as_bool()) {
+                instance.insecure_tls = insecure_tls;
+            }
+        } else {
+            // When config is not provided, still allow explicit tls/insecure_tls proto fields
+            // but only if they differ from current values (proto3 defaults to false)
+            // This preserves existing values when fields are not explicitly set
+            if req.tls != instance.tls {
+                instance.tls = req.tls;
+            }
+            if req.insecure_tls != instance.insecure_tls {
+                instance.insecure_tls = req.insecure_tls;
             }
         }
 
@@ -720,14 +725,14 @@ impl AdminApiImpl {
         req: crate::proto::admin::BanRoomRequest,
     ) -> Result<crate::proto::admin::BanRoomResponse, String> {
         let rid = RoomId::from_string(req.room_id);
-        let mut room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
+        let room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
 
-        if room.deleted_at.is_some() {
+        if matches!(room.status, synctv_core::models::RoomStatus::Banned) {
             return Err("Room is already banned".to_string());
         }
 
-        room.deleted_at = Some(chrono::Utc::now());
-        let updated = self.room_service.admin_update_room(&room).await.map_err(|e| e.to_string())?;
+        let updated = self.room_service.update_room_status(&rid, synctv_core::models::RoomStatus::Banned).await
+            .map_err(|e| e.to_string())?;
 
         // Force disconnect all connections in the banned room
         self.connection_manager.disconnect_room(&rid);
@@ -756,14 +761,14 @@ impl AdminApiImpl {
         req: crate::proto::admin::UnbanRoomRequest,
     ) -> Result<crate::proto::admin::UnbanRoomResponse, String> {
         let rid = RoomId::from_string(req.room_id);
-        let mut room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
+        let room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
 
-        if room.deleted_at.is_none() {
+        if !matches!(room.status, synctv_core::models::RoomStatus::Banned) {
             return Err("Room is not banned".to_string());
         }
 
-        room.deleted_at = None;
-        let updated = self.room_service.admin_update_room(&room).await.map_err(|e| e.to_string())?;
+        let updated = self.room_service.update_room_status(&rid, synctv_core::models::RoomStatus::Active).await
+            .map_err(|e| e.to_string())?;
 
         Ok(crate::proto::admin::UnbanRoomResponse {
             room: Some(admin_room_to_proto(
