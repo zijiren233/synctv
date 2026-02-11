@@ -25,7 +25,7 @@ pub struct ClientApiImpl {
 
 impl ClientApiImpl {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         user_service: Arc<UserService>,
         room_service: Arc<RoomService>,
         connection_manager: Arc<ConnectionManager>,
@@ -533,10 +533,10 @@ impl ClientApiImpl {
         });
 
         // Use provided title, fall back to extracting from URL
-        let title = if !req.title.is_empty() {
-            req.title
-        } else {
+        let title = if req.title.is_empty() {
             req.url.split('/').next_back().unwrap_or("Unknown").to_string()
+        } else {
+            req.title
         };
 
         // For direct URL, provider_instance_name is empty
@@ -998,12 +998,13 @@ impl ClientApiImpl {
     }
 
     /// Get a reference to the live streaming infrastructure, if configured.
-    pub fn live_infrastructure(&self) -> Option<&Arc<synctv_livestream::api::LiveStreamingInfrastructure>> {
+    #[must_use] 
+    pub const fn live_infrastructure(&self) -> Option<&Arc<synctv_livestream::api::LiveStreamingInfrastructure>> {
         self.live_streaming_infrastructure.as_ref()
     }
 
-    /// Get the external source URL for a LiveProxy media item.
-    /// Returns None if the media is not a live_proxy type, has no URL,
+    /// Get the external source URL for a `LiveProxy` media item.
+    /// Returns None if the media is not a `live_proxy` type, has no URL,
     /// or does not belong to the specified room.
     pub async fn get_live_proxy_source_url(&self, room_id: &str, media_id: &str) -> Option<String> {
         let mid = synctv_core::models::MediaId::from_string(media_id.to_string());

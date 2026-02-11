@@ -44,7 +44,7 @@ impl RtmpServer {
             node_id,
             gop_num,
             auth,
-            event_sender: event_sender,
+            event_sender,
             stream_hub: Arc::new(Mutex::new(stream_hub)),
         }
     }

@@ -110,7 +110,7 @@ async fn handle_flv_stream(
     let token = params.token.as_deref()
         .ok_or_else(|| AppError::unauthorized("token query parameter is required"))?;
     let user_id = state.client_api.validate_live_token(token, &room_id_str).await
-        .map_err(|e| AppError::unauthorized(e))?;
+        .map_err(AppError::unauthorized)?;
 
     // Get live streaming infrastructure via ClientApiImpl
     let infrastructure = state.client_api.live_infrastructure()
@@ -248,7 +248,7 @@ async fn handle_hls_playlist(
     let token = params.token.as_deref()
         .ok_or_else(|| AppError::unauthorized("token query parameter is required"))?;
     let _user_id = state.client_api.validate_live_token(token, &room_id).await
-        .map_err(|e| AppError::unauthorized(e))?;
+        .map_err(AppError::unauthorized)?;
 
     let infrastructure = state.client_api.live_infrastructure()
         .ok_or_else(|| AppError::internal_server_error("Live streaming not configured"))?;
@@ -452,10 +452,10 @@ async fn handle_stream_info(
     let token = params.token.as_deref()
         .ok_or_else(|| AppError::unauthorized("token query parameter is required"))?;
     let _user_id = state.client_api.validate_live_token(token, &room_id).await
-        .map_err(|e| AppError::unauthorized(e))?;
+        .map_err(AppError::unauthorized)?;
 
     let resp = state.client_api.get_stream_info(&room_id, &media_id).await
-        .map_err(|e| AppError::internal_server_error(e))?;
+        .map_err(AppError::internal_server_error)?;
 
     Ok(Json(resp))
 }
@@ -478,10 +478,10 @@ async fn handle_room_streams(
     let token = params.token.as_deref()
         .ok_or_else(|| AppError::unauthorized("token query parameter is required"))?;
     let _user_id = state.client_api.validate_live_token(token, &room_id).await
-        .map_err(|e| AppError::unauthorized(e))?;
+        .map_err(AppError::unauthorized)?;
 
     let resp = state.client_api.list_room_streams(&room_id).await
-        .map_err(|e| AppError::internal_server_error(e))?;
+        .map_err(AppError::internal_server_error)?;
 
     Ok(Json(resp))
 }

@@ -482,7 +482,7 @@ impl RoomService {
         self.room_settings_repo.get(room_id).await
     }
 
-    /// Update single room setting (requires UPDATE_ROOM_SETTINGS permission)
+    /// Update single room setting (requires `UPDATE_ROOM_SETTINGS` permission)
     pub async fn update_room_setting(&self, room_id: &RoomId, user_id: &UserId, key: &str, value: &serde_json::Value) -> Result<String> {
         // Check permission (defense-in-depth, same as set_settings)
         self.permission_service

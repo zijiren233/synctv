@@ -425,7 +425,7 @@ impl RoomMemberRepository {
         self.row_to_member(row)
     }
 
-    /// Atomically revoke permission bits (bitwise OR on removed_permissions in SQL)
+    /// Atomically revoke permission bits (bitwise OR on `removed_permissions` in SQL)
     pub async fn revoke_permission_atomic(
         &self,
         room_id: &RoomId,

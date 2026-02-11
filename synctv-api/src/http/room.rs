@@ -434,7 +434,7 @@ pub async fn reorder_media_batch(
         let position_raw = update.get("position")
             .and_then(serde_json::Value::as_i64)
             .ok_or_else(|| super::AppError::bad_request("Missing or invalid position in update"))?;
-        if position_raw < 0 || position_raw > i32::MAX as i64 {
+        if position_raw < 0 || position_raw > i64::from(i32::MAX) {
             return Err(super::AppError::bad_request("Position must be a non-negative integer within i32 range"));
         }
         let position = position_raw as i32;

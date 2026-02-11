@@ -66,7 +66,7 @@ pub struct PublicSettings {
 impl PublicSettings {
     /// Default settings when the settings registry is not configured.
     #[must_use]
-    pub fn defaults() -> Self {
+    pub const fn defaults() -> Self {
         Self {
             signup_enabled: true,
             allow_room_creation: true,
@@ -226,7 +226,7 @@ impl SettingsRegistry {
 
             // Email settings
             email_whitelist_enabled: setting!(bool, "email.whitelist_enabled", storage.clone(), false),
-            email_whitelist: setting!(String, "email.whitelist", storage.clone(), String::new()),
+            email_whitelist: setting!(String, "email.whitelist", storage, String::new()),
         }
     }
 

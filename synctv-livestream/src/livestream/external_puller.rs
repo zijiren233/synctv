@@ -1,17 +1,17 @@
 //! External Stream Puller
 //!
 //! Pulls live streams from external RTMP or HTTP-FLV URLs and publishes them
-//! to the local StreamHub under the local stream identity (`live/{room_id}/{media_id}`).
+//! to the local `StreamHub` under the local stream identity (`live/{room_id}/{media_id}`).
 //!
 //! Supports:
 //! - **RTMP**: Connects as an RTMP client via xiu's `ClientSession` in Pull mode.
 //!   Uses a bridge channel pattern to remap the remote stream identity to our local
-//!   `live/{room_id}/{media_id}` identity. The bridge intercepts the ClientSession's
-//!   Publish event and returns our local StreamHub's `FrameDataSender`, so all frames
+//!   `live/{room_id}/{media_id}` identity. The bridge intercepts the `ClientSession`'s
+//!   Publish event and returns our local `StreamHub`'s `FrameDataSender`, so all frames
 //!   flow directly into the correct stream.
 //! - **HTTP-FLV**: Streams FLV data via HTTP GET using reqwest, parses FLV tags
 //!   (header + audio/video/metadata tags) in a streaming fashion, and forwards
-//!   frames to the local StreamHub.
+//!   frames to the local `StreamHub`.
 //!
 //! Both modes include retry logic with exponential backoff (matching `GrpcStreamPuller`).
 
@@ -50,14 +50,15 @@ const FLV_TAG_SCRIPT_DATA: u8 = 18;
 /// Source type for external streams
 #[derive(Debug, Clone)]
 pub enum ExternalSourceType {
-    /// RTMP URL (e.g., rtmp://live.example.com/app/stream)
+    /// RTMP URL (e.g., <rtmp://live.example.com/app/stream>)
     Rtmp,
-    /// HTTP-FLV URL (e.g., http://live.example.com/app/stream.flv)
+    /// HTTP-FLV URL (e.g., <http://live.example.com/app/stream.flv>)
     HttpFlv,
 }
 
 impl ExternalSourceType {
     /// Detect source type from URL
+    #[must_use] 
     pub fn from_url(url: &str) -> Option<Self> {
         if url.starts_with("rtmp://") {
             Some(Self::Rtmp)
@@ -72,7 +73,7 @@ impl ExternalSourceType {
 /// External Stream Puller
 ///
 /// Connects to a remote streaming source and publishes frames to the local
-/// StreamHub under the local stream identity (`live/{room_id}/{media_id}`).
+/// `StreamHub` under the local stream identity (`live/{room_id}/{media_id}`).
 pub struct ExternalStreamPuller {
     room_id: String,
     media_id: String,
@@ -90,8 +91,7 @@ impl ExternalStreamPuller {
     ) -> Result<Self> {
         let source_type = ExternalSourceType::from_url(&source_url)
             .ok_or_else(|| anyhow::anyhow!(
-                "Unsupported source URL format: {}. Expected rtmp:// or *.flv",
-                source_url
+                "Unsupported source URL format: {source_url}. Expected rtmp:// or *.flv"
             ))?;
 
         Ok(Self {
@@ -186,14 +186,14 @@ impl ExternalStreamPuller {
         }
     }
 
-    /// Connect to remote RTMP server, play the stream, and bridge frames to local StreamHub.
+    /// Connect to remote RTMP server, play the stream, and bridge frames to local `StreamHub`.
     ///
     /// Uses xiu's `ClientSession` in Pull mode with a bridge channel pattern:
-    /// 1. A bridge channel replaces the real StreamHub event sender for `ClientSession`
+    /// 1. A bridge channel replaces the real `StreamHub` event sender for `ClientSession`
     /// 2. When `ClientSession` sends a `Publish` event (on play start), the bridge
     ///    responds with our local `FrameDataSender` instead of creating a new stream
     /// 3. `ClientSession` then sends all received audio/video/metadata frames directly
-    ///    through our `FrameDataSender` into the local StreamHub under `live/{room_id}/{media_id}`
+    ///    through our `FrameDataSender` into the local `StreamHub` under `live/{room_id}/{media_id}`
     async fn connect_and_stream_rtmp(&self, data_sender: &FrameDataSender) -> Result<()> {
         // Parse RTMP URL to extract host, port, app_name, stream_name
         let mut parser = RtmpUrlParser::new(self.source_url.clone());
@@ -276,12 +276,12 @@ impl ExternalStreamPuller {
         result.map_err(|e| anyhow::anyhow!("RTMP client session error: {e}"))
     }
 
-    /// Connect to remote HTTP-FLV source and stream frames to local StreamHub.
+    /// Connect to remote HTTP-FLV source and stream frames to local `StreamHub`.
     ///
     /// Performs HTTP GET on the FLV URL, reads the response body in chunks, and
     /// parses FLV tags in a streaming fashion:
-    /// 1. FLV header (9 bytes) + PreviousTagSize0 (4 bytes)
-    /// 2. Repeating: tag header (11 bytes) + tag data + PreviousTagSize (4 bytes)
+    /// 1. FLV header (9 bytes) + `PreviousTagSize0` (4 bytes)
+    /// 2. Repeating: tag header (11 bytes) + tag data + `PreviousTagSize` (4 bytes)
     ///
     /// Each parsed tag is converted to a `FrameData` and sent through `data_sender`.
     async fn connect_and_stream_flv(&self, data_sender: &FrameDataSender) -> Result<()> {
@@ -367,8 +367,7 @@ impl ExternalStreamPuller {
                 const MAX_FLV_TAG_SIZE: usize = 10 * 1024 * 1024;
                 if data_size > MAX_FLV_TAG_SIZE {
                     anyhow::bail!(
-                        "FLV tag data_size too large: {} bytes (max {}), likely corrupted stream",
-                        data_size, MAX_FLV_TAG_SIZE
+                        "FLV tag data_size too large: {data_size} bytes (max {MAX_FLV_TAG_SIZE}), likely corrupted stream"
                     );
                 }
 
@@ -378,10 +377,10 @@ impl ExternalStreamPuller {
                 }
 
                 // Parse timestamp: [7] is upper 8 bits, [4..7] is lower 24 bits
-                let timestamp = ((buffer[7] as u32) << 24)
-                    | ((buffer[4] as u32) << 16)
-                    | ((buffer[5] as u32) << 8)
-                    | (buffer[6] as u32);
+                let timestamp = (u32::from(buffer[7]) << 24)
+                    | (u32::from(buffer[4]) << 16)
+                    | (u32::from(buffer[5]) << 8)
+                    | u32::from(buffer[6]);
 
                 // Extract tag body data (bytes after the 11-byte header)
                 let tag_data = BytesMut::from(
@@ -422,18 +421,18 @@ impl ExternalStreamPuller {
         let capped = base.min(MAX_BACKOFF_MS);
         // Add jitter: ±25%
         let jitter = capped / 4;
-        let random_offset = (std::time::SystemTime::now()
+        let random_offset = u64::from(std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .subsec_nanos() as u64)
+            .subsec_nanos())
             % (jitter * 2 + 1);
         let delay = (capped.saturating_sub(jitter) + random_offset).min(MAX_BACKOFF_MS);
         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
     }
 
-    /// Publish to local StreamHub under `live/{room_id}/{media_id}`.
+    /// Publish to local `StreamHub` under `live/{room_id}/{media_id}`.
     ///
-    /// Sends a `StreamHubEvent::Publish` to register this stream in the local StreamHub,
+    /// Sends a `StreamHubEvent::Publish` to register this stream in the local `StreamHub`,
     /// then receives back a `FrameDataSender` that can be used to push frames into the stream.
     async fn publish_to_local_stream_hub(&mut self) -> Result<FrameDataSender> {
         let publisher_id = Uuid::new(RandomDigitCount::Four);
@@ -481,7 +480,7 @@ impl ExternalStreamPuller {
         Ok(data_sender)
     }
 
-    /// Unpublish from local StreamHub.
+    /// Unpublish from local `StreamHub`.
     async fn unpublish_from_local_stream_hub(&mut self) -> Result<()> {
         let stream_name = format!("{}/{}", self.room_id, self.media_id);
         let identifier = StreamIdentifier::Rtmp {

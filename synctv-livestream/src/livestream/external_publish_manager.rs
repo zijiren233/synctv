@@ -214,7 +214,7 @@ impl ExternalPublishManager {
 /// A single external publish stream instance.
 ///
 /// Pulls from an external RTMP or HTTP-FLV source and publishes frames into
-/// the local StreamHub under `live/{room_id}/{media_id}`.
+/// the local `StreamHub` under `live/{room_id}/{media_id}`.
 pub struct ExternalPublishStream {
     room_id: String,
     media_id: String,
@@ -227,6 +227,7 @@ pub struct ExternalPublishStream {
 }
 
 impl ExternalPublishStream {
+    #[must_use] 
     pub fn new(
         room_id: String,
         media_id: String,

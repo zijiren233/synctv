@@ -481,6 +481,7 @@ impl ConnectionManager {
     /// and sends disconnect signals for them.
     ///
     /// The task runs every `interval` and continues until the returned `JoinHandle` is aborted.
+    #[must_use] 
     pub fn spawn_cleanup_task(&self, interval: Duration) -> tokio::task::JoinHandle<()> {
         let manager = self.clone();
         tokio::spawn(async move {

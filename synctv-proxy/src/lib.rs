@@ -25,7 +25,7 @@ const MAX_MANIFEST_SIZE: usize = 10 * 1024 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Overall request timeout for outbound proxy requests.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// Configuration for a single proxy fetch.
 pub struct ProxyConfig<'a> {
@@ -365,7 +365,7 @@ fn validate_proxy_url(raw: &str) -> Result<(), anyhow::Error> {
 }
 
 /// Check if an IP address is in a private/reserved range.
-fn is_private_ip(ip: IpAddr) -> bool {
+const fn is_private_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_loopback()           // 127.0.0.0/8

@@ -1,4 +1,4 @@
-//! LiveProxy `MediaProvider`
+//! `LiveProxy` `MediaProvider`
 //!
 //! Provides playback URLs for live streams sourced from external URLs.
 //! The external source URL is stored in `source_config`, and playback URLs
@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-/// LiveProxy `MediaProvider`
+/// `LiveProxy` `MediaProvider`
 ///
 /// Generates playback URLs for live streams from external sources.
 /// The external URL is stored in `source_config.url` and validated on creation.

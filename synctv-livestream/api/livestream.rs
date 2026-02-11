@@ -454,9 +454,9 @@ impl LiveStreamingInfrastructure {
         }
     }
 
-    /// Kick a specific stream by room_id and media_id.
+    /// Kick a specific stream by `room_id` and `media_id`.
     ///
-    /// Removes the publisher from Redis and sends an UnPublish event.
+    /// Removes the publisher from Redis and sends an `UnPublish` event.
     pub async fn kick_stream(&self, room_id: &str, media_id: &str) -> Result<()> {
         // Remove from Redis registry
         self.registry
@@ -517,6 +517,7 @@ impl LiveStreamingInfrastructure {
     }
 
     /// Get the registry (for admin queries)
+    #[must_use] 
     pub fn registry(&self) -> &Arc<dyn StreamRegistryTrait> {
         &self.registry
     }

@@ -433,22 +433,7 @@ impl AdminApiImpl {
 
         // Parse config if provided (tls/insecure_tls are also updated via config
         // to avoid proto3 default-false semantics silently resetting them)
-        if !req.config.is_empty() {
-            let config: serde_json::Value = serde_json::from_slice(&req.config)
-                .map_err(|e| format!("Invalid config JSON: {e}"))?;
-            if let Some(jwt_secret) = config.get("jwt_secret").and_then(|v| v.as_str()) {
-                instance.jwt_secret = Some(jwt_secret.to_string());
-            }
-            if let Some(custom_ca) = config.get("custom_ca").and_then(|v| v.as_str()) {
-                instance.custom_ca = Some(custom_ca.to_string());
-            }
-            if let Some(tls) = config.get("tls").and_then(|v| v.as_bool()) {
-                instance.tls = tls;
-            }
-            if let Some(insecure_tls) = config.get("insecure_tls").and_then(|v| v.as_bool()) {
-                instance.insecure_tls = insecure_tls;
-            }
-        } else {
+        if req.config.is_empty() {
             // When config is not provided, still allow explicit tls/insecure_tls proto fields
             // but only if they differ from current values (proto3 defaults to false)
             // This preserves existing values when fields are not explicitly set
@@ -457,6 +442,21 @@ impl AdminApiImpl {
             }
             if req.insecure_tls != instance.insecure_tls {
                 instance.insecure_tls = req.insecure_tls;
+            }
+        } else {
+            let config: serde_json::Value = serde_json::from_slice(&req.config)
+                .map_err(|e| format!("Invalid config JSON: {e}"))?;
+            if let Some(jwt_secret) = config.get("jwt_secret").and_then(|v| v.as_str()) {
+                instance.jwt_secret = Some(jwt_secret.to_string());
+            }
+            if let Some(custom_ca) = config.get("custom_ca").and_then(|v| v.as_str()) {
+                instance.custom_ca = Some(custom_ca.to_string());
+            }
+            if let Some(tls) = config.get("tls").and_then(serde_json::Value::as_bool) {
+                instance.tls = tls;
+            }
+            if let Some(insecure_tls) = config.get("insecure_tls").and_then(serde_json::Value::as_bool) {
+                instance.insecure_tls = insecure_tls;
             }
         }
 
@@ -992,7 +992,7 @@ impl AdminApiImpl {
     // Livestream Management
     // =========================
 
-    /// List all active streams, optionally filtered by room_id
+    /// List all active streams, optionally filtered by `room_id`
     pub async fn list_active_streams(
         &self,
         room_id: Option<&str>,

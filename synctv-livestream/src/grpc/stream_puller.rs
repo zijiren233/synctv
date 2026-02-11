@@ -184,10 +184,10 @@ impl GrpcStreamPuller {
         let capped = base.min(max_ms);
         // Add jitter: ±25%
         let jitter = capped / 4;
-        let random_offset = (std::time::SystemTime::now()
+        let random_offset = u64::from(std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .subsec_nanos() as u64)
+            .subsec_nanos())
             % (jitter * 2 + 1);
         let delay = capped.saturating_sub(jitter) + random_offset;
         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;

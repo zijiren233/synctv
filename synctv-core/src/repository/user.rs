@@ -227,12 +227,12 @@ impl UserRepository {
         }
         if let Some(ref status) = query.status {
             let status_enum = crate::models::UserStatus::from_str(status)
-                .map_err(|e| crate::Error::InvalidInput(e))?;
+                .map_err(crate::Error::InvalidInput)?;
             count_qb = count_qb.bind(status_enum);
         }
         if let Some(ref role) = query.role {
             let role_enum = crate::models::UserRole::from_str(role)
-                .map_err(|e| crate::Error::InvalidInput(e))?;
+                .map_err(crate::Error::InvalidInput)?;
             count_qb = count_qb.bind(role_enum);
         }
         let count: i64 = count_qb.fetch_one(&self.pool).await?;
@@ -273,12 +273,12 @@ impl UserRepository {
         }
         if let Some(ref status) = query.status {
             let status_enum = crate::models::UserStatus::from_str(status)
-                .map_err(|e| crate::Error::InvalidInput(e))?;
+                .map_err(crate::Error::InvalidInput)?;
             list_qb = list_qb.bind(status_enum);
         }
         if let Some(ref role) = query.role {
             let role_enum = crate::models::UserRole::from_str(role)
-                .map_err(|e| crate::Error::InvalidInput(e))?;
+                .map_err(crate::Error::InvalidInput)?;
             list_qb = list_qb.bind(role_enum);
         }
         let rows = list_qb.fetch_all(&self.pool).await?;
