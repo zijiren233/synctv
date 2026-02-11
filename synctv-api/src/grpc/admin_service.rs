@@ -695,7 +695,7 @@ impl AdminService for AdminServiceImpl {
             page_size: if req.page_size == 0 {
                 20
             } else {
-                req.page_size
+                req.page_size.min(100)
             },
             search: if req.search.is_empty() {
                 None
@@ -1061,84 +1061,87 @@ impl AdminService for AdminServiceImpl {
 
         let user_id = UserId::from_string(req.user_id);
 
-        // Get rooms created by user
+        // Get rooms created by user (with member count via JOIN)
         let (created_rooms, _) = self
             .room_service
-            .list_rooms_by_creator(&user_id, 1, 100) // Get first 100 created rooms
+            .list_rooms_by_creator_with_count(&user_id, 1, 100)
             .await
             .map_err(|e| internal_err("Failed to get created rooms", e))?;
 
-        // Get rooms where user is a member
-        let (joined_room_ids, _) = self
+        // Get rooms where user is a member (with full details via JOIN)
+        let (joined_rooms, _) = self
             .room_service
-            .list_joined_rooms(&user_id, 1, 100) // Get first 100 joined rooms
+            .list_joined_rooms_with_details(&user_id, 1, 100)
             .await
             .map_err(|e| internal_err("Failed to get joined rooms", e))?;
 
-        // Convert created rooms to AdminRoom proto
+        // Collect all room IDs for batch settings fetch
+        let mut all_room_ids: Vec<&str> = created_rooms.iter()
+            .map(|r| r.room.id.as_str())
+            .collect();
+        for (room, _, _, _) in &joined_rooms {
+            if !all_room_ids.contains(&room.id.as_str()) {
+                all_room_ids.push(room.id.as_str());
+            }
+        }
+
+        // Batch fetch settings
+        let settings_map = self.room_service
+            .get_room_settings_batch(&all_room_ids)
+            .await
+            .unwrap_or_default();
+
+        let room_status_str = |status: &synctv_core::models::RoomStatus| -> String {
+            match status {
+                synctv_core::models::RoomStatus::Pending => "pending".to_string(),
+                synctv_core::models::RoomStatus::Active => "active".to_string(),
+                synctv_core::models::RoomStatus::Banned => "banned".to_string(),
+            }
+        };
+
+        // Convert created rooms
         let mut admin_rooms: Vec<AdminRoom> = Vec::new();
-        for r in created_rooms {
-            let member_count = 0; // Can be fetched if needed
-
-            // Load room settings
-            let settings = self.room_service
-                .get_room_settings(&r.id)
-                .await
+        let mut seen_ids = std::collections::HashSet::new();
+        for rwc in &created_rooms {
+            let r = &rwc.room;
+            seen_ids.insert(r.id.to_string());
+            let settings = settings_map.get(r.id.as_str())
+                .cloned()
                 .unwrap_or_default();
-
             admin_rooms.push(AdminRoom {
                 id: r.id.to_string(),
-                name: r.name,
-                description: r.description,
+                name: r.name.clone(),
+                description: r.description.clone(),
                 creator_id: r.created_by.to_string(),
-                creator_username: String::new(), // Can be fetched if needed
-                status: match r.status {
-                    synctv_core::models::RoomStatus::Pending => "pending".to_string(),
-
-                    synctv_core::models::RoomStatus::Active => "active".to_string(),
-                    synctv_core::models::RoomStatus::Banned => "banned".to_string(),
-                },
+                creator_username: String::new(),
+                status: room_status_str(&r.status),
                 settings: serde_json::to_vec(&settings).unwrap_or_default(),
-                member_count,
+                member_count: rwc.member_count,
                 created_at: r.created_at.timestamp(),
                 updated_at: r.updated_at.timestamp(),
             });
         }
 
-        // Add joined rooms
-        for room_id in joined_room_ids {
-            if let Ok(room) = self.room_service.get_room(&room_id).await {
-                // Skip if already in list (creator)
-                if admin_rooms.iter().any(|r| r.id == room.id.to_string()) {
-                    continue;
-                }
-
-                let member_count = 0; // Can be fetched if needed
-
-                // Load room settings
-                let settings = self.room_service
-                    .get_room_settings(&room.id)
-                    .await
-                    .unwrap_or_default();
-
-                admin_rooms.push(AdminRoom {
-                    id: room.id.to_string(),
-                    name: room.name,
-                    description: room.description,
-                    creator_id: room.created_by.to_string(),
-                    creator_username: String::new(), // Can be fetched if needed
-                    status: match room.status {
-                        synctv_core::models::RoomStatus::Pending => "pending".to_string(),
-
-                        synctv_core::models::RoomStatus::Active => "active".to_string(),
-                        synctv_core::models::RoomStatus::Banned => "banned".to_string(),
-                    },
-                    settings: serde_json::to_vec(&settings).unwrap_or_default(),
-                    member_count,
-                    created_at: room.created_at.timestamp(),
-                    updated_at: room.updated_at.timestamp(),
-                });
+        // Add joined rooms (skip already-seen created rooms)
+        for (room, _role, _status, member_count) in &joined_rooms {
+            if seen_ids.contains(&room.id.to_string()) {
+                continue;
             }
+            let settings = settings_map.get(room.id.as_str())
+                .cloned()
+                .unwrap_or_default();
+            admin_rooms.push(AdminRoom {
+                id: room.id.to_string(),
+                name: room.name.clone(),
+                description: room.description.clone(),
+                creator_id: room.created_by.to_string(),
+                creator_username: String::new(),
+                status: room_status_str(&room.status),
+                settings: serde_json::to_vec(&settings).unwrap_or_default(),
+                member_count: *member_count,
+                created_at: room.created_at.timestamp(),
+                updated_at: room.updated_at.timestamp(),
+            });
         }
 
         Ok(Response::new(GetUserRoomsResponse { rooms: admin_rooms }))

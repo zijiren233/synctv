@@ -6,12 +6,26 @@
 pub mod mpd;
 
 use std::collections::HashMap;
+use std::net::IpAddr;
+use std::time::Duration;
 
 use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+
+/// Maximum response body size for proxied media (256 MB).
+const MAX_PROXY_BODY_SIZE: usize = 256 * 1024 * 1024;
+
+/// Maximum response body size for M3U8/MPD manifests (10 MB).
+const MAX_MANIFEST_SIZE: usize = 10 * 1024 * 1024;
+
+/// Connection timeout for outbound proxy requests.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Overall request timeout for outbound proxy requests.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Configuration for a single proxy fetch.
 pub struct ProxyConfig<'a> {
@@ -23,9 +37,14 @@ pub struct ProxyConfig<'a> {
     pub client_headers: &'a HeaderMap,
 }
 
-/// Fetch a remote URL and return the response with CORS headers.
+/// Fetch a remote URL and return the response.
 pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, anyhow::Error> {
+    validate_proxy_url(cfg.url)?;
+
     let client = reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
 
@@ -78,10 +97,26 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
     let status = proxy_response.status();
     let response_headers = proxy_response.headers().clone();
 
+    // Check Content-Length hint before reading (not authoritative, but catches obvious cases)
+    if let Some(cl) = proxy_response.content_length() {
+        if cl as usize > MAX_PROXY_BODY_SIZE {
+            return Err(anyhow::anyhow!(
+                "Response too large ({cl} bytes, max {MAX_PROXY_BODY_SIZE})"
+            ));
+        }
+    }
+
     let body_bytes = proxy_response
         .bytes()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to read response body: {e}"))?;
+
+    if body_bytes.len() > MAX_PROXY_BODY_SIZE {
+        return Err(anyhow::anyhow!(
+            "Response too large ({} bytes, max {MAX_PROXY_BODY_SIZE})",
+            body_bytes.len()
+        ));
+    }
 
     let mut builder = Response::builder().status(status);
 
@@ -112,7 +147,12 @@ pub async fn proxy_m3u8_and_rewrite(
     provider_headers: &HashMap<String, String>,
     proxy_base: &str,
 ) -> Result<Response, anyhow::Error> {
+    validate_proxy_url(url)?;
+
     let client = reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
 
@@ -153,10 +193,25 @@ pub async fn proxy_m3u8_and_rewrite(
         ));
     }
 
+    if let Some(cl) = proxy_response.content_length() {
+        if cl as usize > MAX_MANIFEST_SIZE {
+            return Err(anyhow::anyhow!(
+                "M3U8 too large ({cl} bytes, max {MAX_MANIFEST_SIZE})"
+            ));
+        }
+    }
+
     let m3u8_text = proxy_response
         .text()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to read M3U8 body: {e}"))?;
+
+    if m3u8_text.len() > MAX_MANIFEST_SIZE {
+        return Err(anyhow::anyhow!(
+            "M3U8 too large ({} bytes, max {MAX_MANIFEST_SIZE})",
+            m3u8_text.len()
+        ));
+    }
 
     let rewritten = rewrite_m3u8(&m3u8_text, url, proxy_base);
 
@@ -259,6 +314,75 @@ pub fn percent_encode(input: &str) -> String {
         }
     }
     result
+}
+
+// ------------------------------------------------------------------
+// SSRF protection
+// ------------------------------------------------------------------
+
+/// Validate that a URL is safe to proxy (not targeting internal services).
+fn validate_proxy_url(raw: &str) -> Result<(), anyhow::Error> {
+    let parsed = url::Url::parse(raw)
+        .map_err(|_| anyhow::anyhow!("Invalid proxy URL"))?;
+
+    // Only allow HTTP(S) schemes
+    match parsed.scheme() {
+        "http" | "https" => {}
+        s => return Err(anyhow::anyhow!("Disallowed URL scheme: {s}")),
+    }
+
+    let host = parsed.host_str()
+        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
+
+    // Block well-known internal hostnames
+    if matches!(
+        host,
+        "localhost" | "metadata.google.internal" | "instance-data"
+    ) {
+        return Err(anyhow::anyhow!("Proxy to internal hosts is not allowed"));
+    }
+
+    // Parse and check IP address
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_ip(ip) {
+            return Err(anyhow::anyhow!("Proxy to private IP addresses is not allowed"));
+        }
+    }
+
+    // Also check hostnames that are raw IPv6 in brackets (url crate strips brackets)
+    if let Some(url::Host::Ipv4(ip)) = parsed.host() {
+        if is_private_ip(IpAddr::V4(ip)) {
+            return Err(anyhow::anyhow!("Proxy to private IP addresses is not allowed"));
+        }
+    }
+    if let Some(url::Host::Ipv6(ip)) = parsed.host() {
+        if is_private_ip(IpAddr::V6(ip)) {
+            return Err(anyhow::anyhow!("Proxy to private IP addresses is not allowed"));
+        }
+    }
+
+    Ok(())
+}
+
+/// Check if an IP address is in a private/reserved range.
+fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()           // 127.0.0.0/8
+            || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+            || v4.is_link_local()      // 169.254.0.0/16
+            || v4.is_unspecified()     // 0.0.0.0
+            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64  // 100.64.0.0/10 (CGNAT)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()           // ::1
+            || v6.is_unspecified()     // ::
+            // fe80::/10 (link-local)
+            || (v6.segments()[0] & 0xffc0) == 0xfe80
+            // fc00::/7 (unique local)
+            || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
 }
 
 // ------------------------------------------------------------------

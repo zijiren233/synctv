@@ -912,24 +912,18 @@ pub async fn clear_playlist(
 ) -> AppResult<Json<serde_json::Value>> {
     let room_id_obj = RoomId::from_string(room_id);
 
-    // Check permission
+    // Check CLEAR_PLAYLIST permission
     state
         .room_service
-        .check_permission(&room_id_obj, &auth.user_id, PermissionBits::ADD_MEDIA)
+        .check_permission(&room_id_obj, &auth.user_id, PermissionBits::CLEAR_PLAYLIST)
         .await?;
 
-    // Get current playlist
-    let media_list = state.room_service.get_playlist(&room_id_obj).await
-        .map_err(|e| super::AppError::internal_server_error(format!("Failed to get playlist: {e}")))?;
-
-    // Remove all media
-    for media in media_list {
-        state.room_service.remove_media(room_id_obj.clone(), auth.user_id.clone(), media.id.clone()).await
-            .map_err(|e| super::AppError::internal_server_error(format!("Failed to remove media: {e}")))?;
-    }
+    let deleted_count = state.room_service.clear_playlist(room_id_obj, auth.user_id).await
+        .map_err(|e| super::AppError::internal_server_error(format!("Failed to clear playlist: {e}")))?;
 
     Ok(Json(serde_json::json!({
         "success": true,
+        "deleted_count": deleted_count,
         "message": "Playlist cleared successfully"
     })))
 }
@@ -968,8 +962,8 @@ pub async fn list_or_get_rooms(
 ) -> AppResult<Json<ListRoomsResponse>> {
     // List rooms with optional filtering
     let search = params.get("search").cloned().unwrap_or_default();
-    let limit = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
-    let offset = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let limit: i32 = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).clamp(1, 100);
+    let offset: i32 = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0).max(0);
 
     let request = ListRoomsRequest {
         page: (offset / limit) + 1,

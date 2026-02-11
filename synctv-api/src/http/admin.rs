@@ -258,8 +258,8 @@ async fn list_users(
     let api = require_admin_api(&state)?;
     let resp = api
         .list_users(admin::ListUsersRequest {
-            page: q.page.unwrap_or(1),
-            page_size: q.page_size.unwrap_or(20),
+            page: q.page.unwrap_or(1).max(1),
+            page_size: q.page_size.unwrap_or(20).clamp(1, 100),
             status: q.status.unwrap_or_default(),
             role: q.role.unwrap_or_default(),
             search: q.search.unwrap_or_default(),
@@ -451,8 +451,8 @@ async fn list_rooms(
     let api = require_admin_api(&state)?;
     let resp = api
         .list_rooms(admin::ListRoomsRequest {
-            page: q.page.unwrap_or(1),
-            page_size: q.page_size.unwrap_or(20),
+            page: q.page.unwrap_or(1).max(1),
+            page_size: q.page_size.unwrap_or(20).clamp(1, 100),
             status: q.status.unwrap_or_default(),
             search: q.search.unwrap_or_default(),
             creator_id: q.creator_id.unwrap_or_default(),

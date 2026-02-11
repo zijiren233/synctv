@@ -253,11 +253,6 @@ impl MediaService {
         user_id: UserId,
         request: EditMediaRequest,
     ) -> Result<Media> {
-        // Check permission (use ADD_MEDIA for editing)
-        self.permission_service
-            .check_permission(&room_id, &user_id, PermissionBits::ADD_MEDIA)
-            .await?;
-
         // Get existing media
         let mut media = self
             .media_repo
@@ -269,6 +264,16 @@ impl MediaService {
         if media.room_id != room_id {
             return Err(Error::Authorization("Media does not belong to this room".to_string()));
         }
+
+        // Check permission: EDIT_MOVIE_SELF if user owns the media, EDIT_MOVIE_ANY otherwise
+        let required_permission = if media.creator_id == user_id {
+            PermissionBits::EDIT_MOVIE_SELF
+        } else {
+            PermissionBits::EDIT_MOVIE_ANY
+        };
+        self.permission_service
+            .check_permission(&room_id, &user_id, required_permission)
+            .await?;
 
         // Update fields
         if let Some(name) = request.name {
@@ -296,11 +301,6 @@ impl MediaService {
         user_id: UserId,
         media_id: MediaId,
     ) -> Result<()> {
-        // Check permission
-        self.permission_service
-            .check_permission(&room_id, &user_id, PermissionBits::REMOVE_MEDIA)
-            .await?;
-
         // Get existing media to verify ownership
         let media = self
             .media_repo
@@ -312,6 +312,16 @@ impl MediaService {
         if media.room_id != room_id {
             return Err(Error::Authorization("Media does not belong to this room".to_string()));
         }
+
+        // Check permission: DELETE_MOVIE_SELF if user owns the media, DELETE_MOVIE_ANY otherwise
+        let required_permission = if media.creator_id == user_id {
+            PermissionBits::DELETE_MOVIE_SELF
+        } else {
+            PermissionBits::DELETE_MOVIE_ANY
+        };
+        self.permission_service
+            .check_permission(&room_id, &user_id, required_permission)
+            .await?;
 
         // Soft delete
         self.media_repo.delete(&media_id).await?;
@@ -397,16 +407,12 @@ impl MediaService {
         user_id: UserId,
         media_ids: Vec<MediaId>,
     ) -> Result<usize> {
-        // Check permission
-        self.permission_service
-            .check_permission(&room_id, &user_id, PermissionBits::REMOVE_MEDIA)
-            .await?;
-
         if media_ids.is_empty() {
             return Ok(0);
         }
 
-        // Verify all media belong to the room
+        // Verify all media belong to the room and check ownership
+        let mut all_owned_by_user = true;
         for media_id in &media_ids {
             let media = self
                 .media_repo
@@ -417,7 +423,20 @@ impl MediaService {
             if media.room_id != room_id {
                 return Err(Error::Authorization("Media does not belong to this room".to_string()));
             }
+            if media.creator_id != user_id {
+                all_owned_by_user = false;
+            }
         }
+
+        // Check permission: DELETE_MOVIE_SELF if user owns all items, DELETE_MOVIE_ANY otherwise
+        let required_permission = if all_owned_by_user {
+            PermissionBits::DELETE_MOVIE_SELF
+        } else {
+            PermissionBits::DELETE_MOVIE_ANY
+        };
+        self.permission_service
+            .check_permission(&room_id, &user_id, required_permission)
+            .await?;
 
         // Bulk delete
         let deleted_count = self.media_repo.delete_batch(&media_ids).await?;
@@ -477,6 +496,11 @@ impl MediaService {
     /// Count media items in a playlist
     pub async fn count_playlist_media(&self, playlist_id: &PlaylistId) -> Result<i64> {
         self.media_repo.count_by_playlist(playlist_id).await
+    }
+
+    /// Batch count media items across multiple playlists
+    pub async fn count_playlist_media_batch(&self, playlist_ids: &[&str]) -> Result<std::collections::HashMap<String, i64>> {
+        self.media_repo.count_by_playlists_batch(playlist_ids).await
     }
 
     /// List dynamic playlist items

@@ -57,8 +57,8 @@ impl ClientApiImpl {
         if req.username.is_empty() {
             return Err("Username cannot be empty".to_string());
         }
-        if req.password.len() < 6 {
-            return Err("Password must be at least 6 characters".to_string());
+        if req.password.len() < 8 {
+            return Err("Password must be at least 8 characters".to_string());
         }
 
         let email = if req.email.is_empty() {

@@ -537,9 +537,9 @@ impl UserService for ClientServiceImpl {
             return Err(Status::invalid_argument("New password cannot be empty"));
         }
 
-        if req.new_password.len() < 6 {
+        if req.new_password.len() < 8 {
             return Err(Status::invalid_argument(
-                "Password must be at least 6 characters",
+                "Password must be at least 8 characters",
             ));
         }
 
@@ -2296,16 +2296,19 @@ impl MediaService for ClientServiceImpl {
                 })?
         };
 
-        let mut proto_playlists = Vec::with_capacity(playlists.len());
-        for pl in &playlists {
-            let item_count = self
-                .room_service
-                .media_service()
-                .count_playlist_media(&pl.id)
-                .await
-                .unwrap_or(0) as i32;
-            proto_playlists.push(self.playlist_to_proto(pl, item_count));
-        }
+        // Batch fetch media counts for all playlists
+        let playlist_ids: Vec<&str> = playlists.iter().map(|pl| pl.id.as_str()).collect();
+        let counts = self
+            .room_service
+            .media_service()
+            .count_playlist_media_batch(&playlist_ids)
+            .await
+            .unwrap_or_default();
+
+        let proto_playlists: Vec<_> = playlists.iter().map(|pl| {
+            let item_count = counts.get(pl.id.as_str()).copied().unwrap_or(0) as i32;
+            self.playlist_to_proto(pl, item_count)
+        }).collect();
 
         Ok(Response::new(ListPlaylistsResponse {
             playlists: proto_playlists,

@@ -364,6 +364,30 @@ impl MediaRepository {
         Ok(count)
     }
 
+    /// Batch count media items across multiple playlists
+    pub async fn count_by_playlists_batch(&self, playlist_ids: &[&str]) -> Result<std::collections::HashMap<String, i64>> {
+        use sqlx::Row;
+        let rows = sqlx::query(
+            r"
+            SELECT playlist_id, COUNT(*) as cnt
+            FROM media
+            WHERE playlist_id = ANY($1) AND deleted_at IS NULL
+            GROUP BY playlist_id
+            "
+        )
+        .bind(playlist_ids)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut result = std::collections::HashMap::new();
+        for row in rows {
+            let pid: String = row.try_get("playlist_id")?;
+            let cnt: i64 = row.try_get("cnt")?;
+            result.insert(pid, cnt);
+        }
+        Ok(result)
+    }
+
     /// Convert database row to Media
     fn row_to_media(&self, row: PgRow) -> Result<Media> {
         Ok(Media {

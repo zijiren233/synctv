@@ -277,9 +277,13 @@ pub async fn serve(
         ));
     }
 
-    // Start server
+    // Start server with graceful shutdown support
     router
-        .serve(addr)
+        .serve_with_shutdown(addr, async {
+            // This future resolves on tokio runtime drop or Ctrl+C,
+            // allowing tonic to finish in-flight requests gracefully.
+            tokio::signal::ctrl_c().await.ok();
+        })
         .await
         .map_err(|e| anyhow::anyhow!("gRPC server error: {e}"))?;
 

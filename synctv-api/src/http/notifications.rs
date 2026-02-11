@@ -58,8 +58,8 @@ pub async fn list_notifications(
         .and_then(|t| t.parse().ok());
 
     let query = NotificationListQuery {
-        page: query.page,
-        page_size: query.page_size,
+        page: query.page.map(|p| p.max(1)),
+        page_size: query.page_size.map(|s| s.clamp(1, 100)),
         is_read: query.is_read,
         notification_type,
     };

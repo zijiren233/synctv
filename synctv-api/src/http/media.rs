@@ -45,8 +45,8 @@ pub async fn get_playlist(
 ) -> AppResult<impl IntoResponse> {
     let room_id = RoomId::from_string(room_id);
 
-    let page = params.page.unwrap_or(1);
-    let page_size = params.page_size.unwrap_or(50);
+    let page = params.page.unwrap_or(1).max(1);
+    let page_size = params.page_size.unwrap_or(50).clamp(1, 100);
 
     // Get root playlist info
     let root_playlist = state
@@ -99,8 +99,8 @@ pub async fn list_playlist_items(
         room_id: room_id.clone(),
         playlist_id: playlist_id.clone(),
         relative_path: params.relative_path.unwrap_or_default(),
-        page: params.page.unwrap_or(0),
-        page_size: params.page_size.unwrap_or(50),
+        page: params.page.unwrap_or(0).max(0),
+        page_size: params.page_size.unwrap_or(50).clamp(1, 100),
     };
 
     let response = state
