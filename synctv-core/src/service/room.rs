@@ -428,6 +428,11 @@ impl RoomService {
         self.room_settings_repo.get(room_id).await
     }
 
+    /// Get settings for multiple rooms in a single query (avoids N+1)
+    pub async fn get_room_settings_batch(&self, room_ids: &[&str]) -> Result<std::collections::HashMap<String, RoomSettings>> {
+        self.room_settings_repo.get_batch(room_ids).await
+    }
+
     /// Set room settings (replace entire settings object)
     pub async fn set_room_settings(&self, room_id: &RoomId, settings: &RoomSettings) -> Result<RoomSettings> {
         self.room_settings_repo.set_settings(room_id, settings).await?;

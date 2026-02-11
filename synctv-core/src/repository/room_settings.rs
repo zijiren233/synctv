@@ -80,6 +80,34 @@ impl RoomSettingsRepository {
         Ok(())
     }
 
+    /// Get settings for multiple rooms in a single query
+    pub async fn get_batch(&self, room_ids: &[&str]) -> Result<std::collections::HashMap<String, RoomSettings>> {
+        if room_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let rows = sqlx::query(
+            r"
+            SELECT room_id, value
+            FROM room_settings
+            WHERE room_id = ANY($1) AND key = '_settings'
+            "
+        )
+        .bind(room_ids)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut result = std::collections::HashMap::new();
+        for row in rows {
+            let rid: String = row.try_get("room_id")?;
+            let value: String = row.try_get("value")?;
+            if let Ok(settings) = serde_json::from_str::<RoomSettings>(&value) {
+                result.insert(rid, settings);
+            }
+        }
+        Ok(result)
+    }
+
     /// Get a specific setting value for a room
     pub async fn get_value(&self, room_id: &RoomId, key: &str) -> Result<Option<String>> {
         let room_id_str = room_id.as_str();

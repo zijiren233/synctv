@@ -125,18 +125,24 @@ pub async fn rate_limit_middleware(
     // Extract user ID from authorization header if present
     let user_id = extract_user_id_from_header(&request, &state);
 
-    // Use IP address as fallback if no user ID (for public endpoints)
+    // Use IP address as fallback if no user ID (for public endpoints).
+    // Only the first IP from X-Forwarded-For is used (client IP set by a
+    // trusted reverse proxy). If no proxy is in front, these headers can be
+    // spoofed — deploy behind a proxy that strips/overwrites them, or rely on
+    // authenticated user_id-based rate limiting for stronger guarantees.
     let rate_limit_key = user_id.unwrap_or_else(|| {
-        // Extract IP from headers (X-Forwarded-For or X-Real-IP) or connection
         request
             .headers()
             .get("X-Forwarded-For")
             .and_then(|h| h.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .map(str::trim)
             .or_else(|| {
                 request
                     .headers()
                     .get("X-Real-IP")
                     .and_then(|h| h.to_str().ok())
+                    .map(str::trim)
             })
             .unwrap_or("unknown")
             .to_string()

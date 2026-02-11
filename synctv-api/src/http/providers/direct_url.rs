@@ -30,10 +30,15 @@ pub fn direct_url_routes() -> Router<AppState> {
 
 /// Resolve playback URL from a direct-URL media item's `source_config`.
 async fn resolve_direct_playback(
+    auth: &AuthUser,
     room_id: &RoomId,
     media_id: &MediaId,
     state: &AppState,
 ) -> Result<(String, HashMap<String, String>), crate::http::AppError> {
+    // Verify user is a member of this room
+    state.room_service.check_membership(room_id, &auth.user_id).await
+        .map_err(|_| crate::http::AppError::forbidden("Not a member of this room"))?;
+
     let playlist = state
         .room_service
         .get_playlist(room_id)
@@ -65,7 +70,7 @@ async fn resolve_direct_playback(
 
 /// GET /`proxy/:room_id/:media_id` - Proxy direct URL video stream
 async fn proxy_stream(
-    _auth: AuthUser,
+    auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -74,7 +79,7 @@ async fn proxy_stream(
     let media_id = MediaId::from_string(media_id);
 
     let (url, provider_headers) =
-        resolve_direct_playback(&room_id, &media_id, &state).await?;
+        resolve_direct_playback(&auth, &room_id, &media_id, &state).await?;
 
     tracing::info!("Proxying direct URL media: {}", url);
 
@@ -91,7 +96,7 @@ async fn proxy_stream(
 
 /// GET /`proxy/:room_id/:media_id/m3u8` - Proxy direct URL M3U8
 async fn proxy_m3u8(
-    _auth: AuthUser,
+    auth: AuthUser,
     Path((room_id, media_id)): Path<(String, String)>,
     State(state): State<AppState>,
 ) -> AppResult<axum::response::Response> {
@@ -99,7 +104,7 @@ async fn proxy_m3u8(
     let media_id_parsed = MediaId::from_string(media_id.clone());
 
     let (url, provider_headers) =
-        resolve_direct_playback(&room_id_parsed, &media_id_parsed, &state).await?;
+        resolve_direct_playback(&auth, &room_id_parsed, &media_id_parsed, &state).await?;
 
     let proxy_base = format!("/api/providers/direct_url/proxy/{room_id}/{media_id}");
 

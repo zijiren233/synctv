@@ -75,6 +75,10 @@ async fn resolve_bilibili_playback_result(
     media_id: &MediaId,
     state: &AppState,
 ) -> Result<PlaybackResult, crate::http::AppError> {
+    // Verify user is a member of this room
+    state.room_service.check_membership(room_id, &auth.user_id).await
+        .map_err(|_| crate::http::AppError::forbidden("Not a member of this room"))?;
+
     let playlist = state
         .room_service
         .get_playlist(room_id)
@@ -313,11 +317,15 @@ async fn danmu_sse(
 ///
 /// Note: `auth` is validated by the `AuthUser` extractor in the calling handler.
 async fn resolve_danmu_info(
-    _auth: &AuthUser,
+    auth: &AuthUser,
     room_id: &RoomId,
     media_id: &MediaId,
     state: &AppState,
 ) -> Result<Event, anyhow::Error> {
+    // Verify user is a member of this room
+    state.room_service.check_membership(room_id, &auth.user_id).await
+        .map_err(|e| anyhow::anyhow!("Not a member of this room: {e}"))?;
+
     let playlist = state
         .room_service
         .get_playlist(room_id)

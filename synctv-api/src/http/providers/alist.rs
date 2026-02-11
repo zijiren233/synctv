@@ -43,6 +43,10 @@ async fn resolve_alist_playback(
     media_id: &MediaId,
     state: &AppState,
 ) -> Result<(String, HashMap<String, String>), crate::http::AppError> {
+    // Verify user is a member of this room
+    state.room_service.check_membership(room_id, &auth.user_id).await
+        .map_err(|_| crate::http::AppError::forbidden("Not a member of this room"))?;
+
     let playlist = state
         .room_service
         .get_playlist(room_id)

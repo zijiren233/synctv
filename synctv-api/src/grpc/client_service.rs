@@ -599,23 +599,24 @@ impl UserService for ClientServiceImpl {
             .await
             .map_err(|e| internal_err("Failed to get rooms", e))?;
 
-        // Convert to proto format
-        let mut room_protos: Vec<Room> = Vec::new();
-        for rwc in rooms_with_count {
-            // Load room settings
-            let settings = self.room_service
-                .get_room_settings(&rwc.room.id)
-                .await
-                .unwrap_or_default();
+        // Batch-fetch settings for all rooms (avoids N+1)
+        let room_ids: Vec<&str> = rooms_with_count.iter().map(|rwc| rwc.room.id.as_str()).collect();
+        let settings_map = self.room_service
+            .get_room_settings_batch(&room_ids)
+            .await
+            .unwrap_or_default();
 
-            room_protos.push(Room {
+        let room_protos: Vec<Room> = rooms_with_count.into_iter().map(|rwc| {
+            let settings = settings_map.get(rwc.room.id.as_str())
+                .cloned()
+                .unwrap_or_default();
+            Room {
                 id: rwc.room.id.to_string(),
                 name: rwc.room.name,
                 description: rwc.room.description,
                 created_by: rwc.room.created_by.to_string(),
                 status: match rwc.room.status {
                     RoomStatus::Pending => "pending".to_string(),
-
                     RoomStatus::Active => "active".to_string(),
                     RoomStatus::Banned => "banned".to_string(),
                 },
@@ -623,8 +624,8 @@ impl UserService for ClientServiceImpl {
                 created_at: rwc.room.created_at.timestamp(),
                 member_count: rwc.member_count,
                 updated_at: rwc.room.updated_at.timestamp(),
-            });
-        }
+            }
+        }).collect();
 
         Ok(Response::new(ListCreatedRoomsResponse {
             rooms: room_protos,
@@ -653,13 +654,18 @@ impl UserService for ClientServiceImpl {
             .await
             .map_err(|e| internal_err("Failed to get joined rooms", e))?;
 
+        // Batch-fetch settings for all rooms (avoids N+1)
+        let room_ids: Vec<&str> = rooms_with_details.iter().map(|(room, _, _, _)| room.id.as_str()).collect();
+        let settings_map = self.room_service
+            .get_room_settings_batch(&room_ids)
+            .await
+            .unwrap_or_default();
+
         // Convert to proto format
         let mut room_with_roles: Vec<RoomWithRole> = Vec::new();
         for (room, role, _status, member_count) in rooms_with_details {
-            // Load room settings
-            let settings = self.room_service
-                .get_room_settings(&room.id)
-                .await
+            let settings = settings_map.get(room.id.as_str())
+                .cloned()
                 .unwrap_or_default();
 
             // Convert RoomRole to string
@@ -677,7 +683,6 @@ impl UserService for ClientServiceImpl {
                 created_by: room.created_by.to_string(),
                 status: match room.status {
                     RoomStatus::Pending => "pending".to_string(),
-
                     RoomStatus::Active => "active".to_string(),
                     RoomStatus::Banned => "banned".to_string(),
                 },
@@ -2694,41 +2699,37 @@ impl PublicService for ClientServiceImpl {
 
         let (rooms, total) = self
             .room_service
-            .list_rooms(&query)
+            .list_rooms_with_count(&query)
             .await
             .map_err(|e| internal_err("Failed to list rooms", e))?;
 
-        let mut proto_rooms = Vec::new();
-        for room in rooms {
-            let member_count = self
-                .room_service
-                .get_member_count(&room.id)
-                .await
-                .unwrap_or(0);
+        // Batch-fetch settings for all rooms (avoids N+1)
+        let room_ids: Vec<&str> = rooms.iter().map(|r| r.room.id.as_str()).collect();
+        let settings_map = self.room_service
+            .get_room_settings_batch(&room_ids)
+            .await
+            .unwrap_or_default();
 
-            // Load room settings
-            let settings = self.room_service
-                .get_room_settings(&room.id)
-                .await
+        let proto_rooms: Vec<Room> = rooms.into_iter().map(|rwc| {
+            let settings = settings_map.get(rwc.room.id.as_str())
+                .cloned()
                 .unwrap_or_default();
-
-            proto_rooms.push(Room {
-                id: room.id.to_string(),
-                name: room.name,
-                description: room.description,
-                created_by: room.created_by.to_string(),
-                status: match room.status {
+            Room {
+                id: rwc.room.id.to_string(),
+                name: rwc.room.name,
+                description: rwc.room.description,
+                created_by: rwc.room.created_by.to_string(),
+                status: match rwc.room.status {
                     RoomStatus::Pending => "pending".to_string(),
-
                     RoomStatus::Active => "active".to_string(),
                     RoomStatus::Banned => "banned".to_string(),
                 },
                 settings: serde_json::to_vec(&settings).unwrap_or_default(),
-                created_at: room.created_at.timestamp(),
-                member_count,
-                updated_at: room.updated_at.timestamp(),
-            });
-        }
+                created_at: rwc.room.created_at.timestamp(),
+                member_count: rwc.member_count,
+                updated_at: rwc.room.updated_at.timestamp(),
+            }
+        }).collect();
 
         Ok(Response::new(ListRoomsResponse {
             rooms: proto_rooms,
@@ -2756,55 +2757,53 @@ impl PublicService for ClientServiceImpl {
 
         let (rooms, _total) = self
             .room_service
-            .list_rooms(&query)
+            .list_rooms_with_count(&query)
             .await
             .map_err(|e| internal_err("Failed to list rooms", e))?;
 
-        let mut room_stats: Vec<(synctv_core::models::Room, i32, i32)> = Vec::new();
-        for room in rooms {
-            let online_count = self.connection_manager.room_connection_count(&room.id);
-            let member_count = self
-                .room_service
-                .get_member_count(&room.id)
-                .await
-                .unwrap_or(0);
-
-            room_stats.push((room, online_count as i32, member_count));
-        }
+        let mut room_stats: Vec<(synctv_core::models::RoomWithCount, i32)> = rooms
+            .into_iter()
+            .map(|rwc| {
+                let online_count = self.connection_manager.room_connection_count(&rwc.room.id);
+                (rwc, online_count as i32)
+            })
+            .collect();
 
         room_stats.sort_by(|a, b| b.1.cmp(&a.1));
+        room_stats.truncate(limit as usize);
 
-        let mut hot_rooms: Vec<RoomWithStats> = Vec::new();
-        for (room, online_count, member_count) in room_stats.into_iter().take(limit as usize) {
-            // Load room settings
-            let settings = self.room_service
-                .get_room_settings(&room.id)
-                .await
+        // Batch-fetch settings for all rooms (avoids N+1)
+        let room_ids: Vec<&str> = room_stats.iter().map(|(rwc, _)| rwc.room.id.as_str()).collect();
+        let settings_map = self.room_service
+            .get_room_settings_batch(&room_ids)
+            .await
+            .unwrap_or_default();
+
+        let hot_rooms: Vec<RoomWithStats> = room_stats.into_iter().map(|(rwc, online_count)| {
+            let settings = settings_map.get(rwc.room.id.as_str())
+                .cloned()
                 .unwrap_or_default();
-
             let room_proto = Room {
-                id: room.id.to_string(),
-                name: room.name,
-                description: room.description,
-                created_by: room.created_by.to_string(),
-                status: match room.status {
+                id: rwc.room.id.to_string(),
+                name: rwc.room.name,
+                description: rwc.room.description,
+                created_by: rwc.room.created_by.to_string(),
+                status: match rwc.room.status {
                     RoomStatus::Pending => "pending".to_string(),
-
                     RoomStatus::Active => "active".to_string(),
                     RoomStatus::Banned => "banned".to_string(),
                 },
                 settings: serde_json::to_vec(&settings).unwrap_or_default(),
-                created_at: room.created_at.timestamp(),
-                member_count,
-                updated_at: room.updated_at.timestamp(),
+                created_at: rwc.room.created_at.timestamp(),
+                member_count: rwc.member_count,
+                updated_at: rwc.room.updated_at.timestamp(),
             };
-
-            hot_rooms.push(RoomWithStats {
+            RoomWithStats {
                 room: Some(room_proto),
                 online_count,
-                total_members: member_count,
-            });
-        }
+                total_members: rwc.member_count,
+            }
+        }).collect();
 
         Ok(Response::new(GetHotRoomsResponse { rooms: hot_rooms }))
     }

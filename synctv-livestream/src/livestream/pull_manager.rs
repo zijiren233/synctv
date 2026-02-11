@@ -173,10 +173,18 @@ impl PullStreamManager {
                         idle_time
                     );
 
+                    // Mark as not running FIRST so concurrent viewers see it as unhealthy
+                    // and fall through to create a fresh stream instead of subscribing
+                    // to one that's about to be stopped.
+                    pull_stream.mark_stopping();
+
+                    // Remove from map so new lookups won't find this stream
+                    streams.remove(stream_key);
+
+                    // Now stop the puller task (expensive, involves abort + await)
                     if let Err(e) = pull_stream.stop().await {
                         log::error!("Failed to stop pull stream {}: {}", stream_key, e);
                     }
-                    streams.remove(stream_key);
                     break;
                 }
             } else {
@@ -279,6 +287,11 @@ impl PullStream {
 
         log::info!("Pull stream stopped for room {} / media {}", self.room_id, self.media_id);
         Ok(())
+    }
+
+    /// Mark the stream as stopping (prevents new subscribers from seeing it as healthy)
+    pub fn mark_stopping(&self) {
+        self.is_running.store(false, Ordering::SeqCst);
     }
 
     /// Check if the pull stream is healthy (running and receiving data)
