@@ -18,14 +18,14 @@ use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Router,
+    Json, Router,
 };
 use serde::Deserialize;
-use std::sync::Arc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, info, warn};
 
 use crate::http::{AppError, AppResult, AppState};
+use synctv_core::models::id::RoomId;
 use synctv_livestream::api::{FlvStreamingApi, HlsStreamingApi};
 
 /// Query parameters for live streaming endpoints
@@ -33,8 +33,7 @@ use synctv_livestream::api::{FlvStreamingApi, HlsStreamingApi};
 pub struct LiveQuery {
     /// Room ID (required for most endpoints)
     room_id: Option<String>,
-    /// Authentication token (deserialized from query params, used for future auth)
-    #[allow(dead_code)]
+    /// Authentication token
     token: Option<String>,
 }
 
@@ -46,6 +45,8 @@ pub struct LiveQuery {
 /// - /`api/room/movie/live/flv/:media_id`
 /// - /`api/room/movie/live/hls/list/:media_id`
 /// - /`api/room/movie/live/hls/data/:room_id/:media_id/:segment.ts`
+/// - /`api/room/movie/live/info/:media_id`
+/// - /`api/room/movie/live/streams`
 pub fn create_live_router() -> Router<AppState> {
     Router::new()
         // FLV streaming endpoint
@@ -57,6 +58,9 @@ pub fn create_live_router() -> Router<AppState> {
             "/hls/data/:room_id/:media_id/*segment",
             get(handle_hls_segment_with_disguise),
         )
+        // Stream info endpoints
+        .route("/info/:media_id", get(handle_stream_info))
+        .route("/streams", get(handle_room_streams))
 }
 
 /// Handle HLS segment request with automatic extension detection
@@ -95,22 +99,14 @@ async fn handle_flv_stream(
 
     info!(room_id = %room_id_str, media_id = %media_id, "FLV streaming request");
 
-    // Extract user_id from token if provided
-    let user_id = if let Some(token) = &params.token {
-        // Validate token and extract user_id
-        let validator = synctv_core::service::auth::JwtValidator::new(Arc::new(state.jwt_service.clone()));
-        let bearer_token = format!("Bearer {token}");
-        validator
-            .validate_http_extract_user_id(&bearer_token)
-            .ok()
-    } else {
-        None
-    };
+    // Auth via ClientApiImpl
+    let token = params.token.as_deref()
+        .ok_or_else(|| AppError::unauthorized("token query parameter is required"))?;
+    let user_id = state.client_api.validate_live_token(token, &room_id_str).await
+        .map_err(|e| AppError::unauthorized(e))?;
 
-    // Get live streaming infrastructure
-    let infrastructure = state
-        .live_streaming_infrastructure
-        .as_ref()
+    // Get live streaming infrastructure via ClientApiImpl
+    let infrastructure = state.client_api.live_infrastructure()
         .ok_or_else(|| AppError::internal_server_error("Live streaming not configured"))?;
 
     // Create FLV streaming session with lazy-load pull
@@ -118,9 +114,9 @@ async fn handle_flv_stream(
         .await
         .map_err(|e| AppError::internal_server_error(format!("Failed to create FLV session: {e}")))?;
 
-    // Subscribe to disconnect signals if we have a user_id
+    // Subscribe to disconnect signals
     let mut disconnect_rx = state.connection_manager.subscribe_disconnect();
-    let room_id = synctv_core::models::id::RoomId::from_string(room_id_str.clone());
+    let room_id = RoomId::from_string(room_id_str.clone());
 
     // Create channel wrapper that monitors disconnect signals
     let (tx, rx_wrapped) = tokio::sync::mpsc::unbounded_channel();
@@ -149,14 +145,12 @@ async fn handle_flv_stream(
                 signal = disconnect_rx.recv() => {
                     match signal {
                         Ok(synctv_cluster::sync::DisconnectSignal::User(uid)) => {
-                            if let Some(ref user_id) = user_id_clone {
-                                if uid == *user_id {
-                                    info!(
-                                        user_id = %user_id.as_str(),
-                                        "FLV stream terminated: user disconnected (ban/delete)"
-                                    );
-                                    break;
-                                }
+                            if uid == user_id_clone {
+                                info!(
+                                    user_id = %user_id_clone.as_str(),
+                                    "FLV stream terminated: user disconnected (ban/delete)"
+                                );
+                                break;
                             }
                         }
                         Ok(synctv_cluster::sync::DisconnectSignal::Room(rid)) => {
@@ -169,15 +163,13 @@ async fn handle_flv_stream(
                             }
                         }
                         Ok(synctv_cluster::sync::DisconnectSignal::UserFromRoom { user_id: uid, room_id: rid }) => {
-                            if let Some(ref user_id) = user_id_clone {
-                                if uid == *user_id && rid == room_id_clone {
-                                    info!(
-                                        user_id = %user_id.as_str(),
-                                        room_id = %room_id_clone.as_str(),
-                                        "FLV stream terminated: user kicked from room"
-                                    );
-                                    break;
-                                }
+                            if uid == user_id_clone && rid == room_id_clone {
+                                info!(
+                                    user_id = %user_id_clone.as_str(),
+                                    room_id = %room_id_clone.as_str(),
+                                    "FLV stream terminated: user kicked from room"
+                                );
+                                break;
                             }
                         }
                         Ok(synctv_cluster::sync::DisconnectSignal::Connection(_)) => {
@@ -202,7 +194,7 @@ async fn handle_flv_stream(
     info!(
         room_id = %room_id.as_str(),
         media_id = %media_id,
-        authenticated = %user_id.is_some(),
+        user_id = %user_id.as_str(),
         "FLV streaming started"
     );
 
@@ -237,9 +229,13 @@ async fn handle_hls_playlist(
 
     info!(room_id = %room_id, media_id = %media_id, "HLS playlist request");
 
-    let infrastructure = state
-        .live_streaming_infrastructure
-        .as_ref()
+    // Auth via ClientApiImpl
+    let token = params.token.as_deref()
+        .ok_or_else(|| AppError::unauthorized("token query parameter is required"))?;
+    let _user_id = state.client_api.validate_live_token(token, &room_id).await
+        .map_err(|e| AppError::unauthorized(e))?;
+
+    let infrastructure = state.client_api.live_infrastructure()
         .ok_or_else(|| AppError::internal_server_error("Live streaming not configured"))?;
 
     // Build segment URL base following synctv-go pattern
@@ -293,9 +289,7 @@ async fn handle_hls_segment(
         "HLS segment request"
     );
 
-    let infrastructure = state
-        .live_streaming_infrastructure
-        .as_ref()
+    let infrastructure = state.client_api.live_infrastructure()
         .ok_or_else(|| AppError::internal_server_error("Live streaming not configured"))?;
 
     // Get segment data
@@ -354,9 +348,7 @@ async fn handle_hls_segment_disguised(
         "HLS segment request (disguised as PNG)"
     );
 
-    let infrastructure = state
-        .live_streaming_infrastructure
-        .as_ref()
+    let infrastructure = state.client_api.live_infrastructure()
         .ok_or_else(|| AppError::internal_server_error("Live streaming not configured"))?;
 
     // Get segment data
@@ -408,6 +400,59 @@ async fn handle_hls_segment_disguised(
             Err(AppError::not_found("HLS segment not found"))
         }
     }
+}
+
+/// Handle stream info request
+///
+/// GET /`api/room/movie/live/info/:media_id?room_id=:room_id&token=:token`
+///
+/// Returns whether a stream is active and publisher information.
+/// Requires valid JWT auth + room membership.
+async fn handle_stream_info(
+    Path(media_id): Path<String>,
+    Query(params): Query<LiveQuery>,
+    State(state): State<AppState>,
+) -> AppResult<Json<crate::proto::client::GetStreamInfoResponse>> {
+    let room_id = params
+        .room_id
+        .ok_or_else(|| AppError::bad_request("room_id query parameter is required"))?;
+
+    // Auth via ClientApiImpl
+    let token = params.token.as_deref()
+        .ok_or_else(|| AppError::unauthorized("token query parameter is required"))?;
+    let _user_id = state.client_api.validate_live_token(token, &room_id).await
+        .map_err(|e| AppError::unauthorized(e))?;
+
+    let resp = state.client_api.get_stream_info(&room_id, &media_id).await
+        .map_err(|e| AppError::internal_server_error(e))?;
+
+    Ok(Json(resp))
+}
+
+/// Handle room streams request
+///
+/// GET /`api/room/movie/live/streams?room_id=:room_id&token=:token`
+///
+/// Returns all active streams in a room.
+/// Requires valid JWT auth + room membership.
+async fn handle_room_streams(
+    Query(params): Query<LiveQuery>,
+    State(state): State<AppState>,
+) -> AppResult<Json<crate::proto::client::ListRoomStreamsResponse>> {
+    let room_id = params
+        .room_id
+        .ok_or_else(|| AppError::bad_request("room_id query parameter is required"))?;
+
+    // Auth via ClientApiImpl
+    let token = params.token.as_deref()
+        .ok_or_else(|| AppError::unauthorized("token query parameter is required"))?;
+    let _user_id = state.client_api.validate_live_token(token, &room_id).await
+        .map_err(|e| AppError::unauthorized(e))?;
+
+    let resp = state.client_api.list_room_streams(&room_id).await
+        .map_err(|e| AppError::internal_server_error(e))?;
+
+    Ok(Json(resp))
 }
 
 #[cfg(test)]
@@ -576,4 +621,3 @@ mod tests {
         assert_eq!("image/png", "image/png");
     }
 }
-

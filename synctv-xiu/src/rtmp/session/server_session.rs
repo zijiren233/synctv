@@ -225,6 +225,14 @@ impl ServerSession {
         match self.common.send_channel_data().await {
             Ok(()) => {}
             Err(err) => {
+                if let Some(auth) = &self.auth {
+                    auth.on_unplay(
+                        &self.app_name,
+                        &self.stream_name,
+                        self.query.as_deref(),
+                    )
+                    .await;
+                }
                 self.common
                     .unsubscribe_from_stream_hub(self.app_name.clone(), self.stream_name.clone())
                     .await?;

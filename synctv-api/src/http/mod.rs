@@ -154,6 +154,8 @@ pub fn create_router(
         config,
         sfu_manager,
         publish_key_service.clone(),
+        jwt_service.clone(),
+        live_streaming_infrastructure.clone(),
     ));
 
     // AdminApi requires SettingsService and EmailService

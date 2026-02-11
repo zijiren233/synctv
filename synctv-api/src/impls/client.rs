@@ -19,17 +19,21 @@ pub struct ClientApiImpl {
     pub config: Arc<synctv_core::Config>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
+    pub jwt_service: synctv_core::service::JwtService,
+    pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
 }
 
 impl ClientApiImpl {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         user_service: Arc<UserService>,
         room_service: Arc<RoomService>,
         connection_manager: Arc<ConnectionManager>,
         config: Arc<synctv_core::Config>,
         sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
         publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
+        jwt_service: synctv_core::service::JwtService,
+        live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     ) -> Self {
         Self {
             user_service,
@@ -38,6 +42,8 @@ impl ClientApiImpl {
             config,
             sfu_manager,
             publish_key_service,
+            jwt_service,
+            live_streaming_infrastructure,
         }
     }
 
@@ -897,6 +903,92 @@ impl ClientApiImpl {
             stream_key,
             expires_at: publish_key.expires_at,
         })
+    }
+
+    /// Validate a live streaming token and verify room membership.
+    /// Returns the authenticated `UserId` on success.
+    pub async fn validate_live_token(
+        &self,
+        token: &str,
+        room_id: &str,
+    ) -> Result<UserId, String> {
+        let validator =
+            synctv_core::service::auth::JwtValidator::new(Arc::new(self.jwt_service.clone()));
+        let bearer_token = format!("Bearer {token}");
+        let user_id = validator
+            .validate_http_extract_user_id(&bearer_token)
+            .map_err(|e| format!("Invalid token: {e}"))?;
+
+        // Verify room membership
+        let rid = RoomId::from_string(room_id.to_string());
+        let is_member = self
+            .room_service
+            .member_service()
+            .is_member(&rid, &user_id)
+            .await
+            .map_err(|e| format!("Failed to check membership: {e}"))?;
+
+        if !is_member {
+            return Err("Not a member of this room".to_string());
+        }
+
+        Ok(user_id)
+    }
+
+    /// Get stream info for a specific media in a room.
+    pub async fn get_stream_info(
+        &self,
+        room_id: &str,
+        media_id: &str,
+    ) -> Result<crate::proto::client::GetStreamInfoResponse, String> {
+        let infrastructure = self.live_streaming_infrastructure.as_ref()
+            .ok_or_else(|| "Live streaming not configured".to_string())?;
+
+        match infrastructure.registry.get_publisher(room_id, media_id).await {
+            Ok(Some(pub_info)) => Ok(crate::proto::client::GetStreamInfoResponse {
+                active: true,
+                publisher: Some(crate::proto::client::StreamPublisherInfo {
+                    user_id: pub_info.user_id,
+                    started_at: pub_info.started_at.to_rfc3339(),
+                }),
+            }),
+            Ok(None) => Ok(crate::proto::client::GetStreamInfoResponse {
+                active: false,
+                publisher: None,
+            }),
+            Err(e) => Err(format!("Failed to query stream info: {e}")),
+        }
+    }
+
+    /// List all active streams in a room.
+    pub async fn list_room_streams(
+        &self,
+        room_id: &str,
+    ) -> Result<crate::proto::client::ListRoomStreamsResponse, String> {
+        let infrastructure = self.live_streaming_infrastructure.as_ref()
+            .ok_or_else(|| "Live streaming not configured".to_string())?;
+
+        let all_streams = infrastructure
+            .registry
+            .list_active_streams()
+            .await
+            .map_err(|e| format!("Failed to list streams: {e}"))?;
+
+        let streams = all_streams
+            .into_iter()
+            .filter(|(rid, _)| rid == room_id)
+            .map(|(_, media_id)| crate::proto::client::StreamEntry {
+                media_id,
+                active: true,
+            })
+            .collect();
+
+        Ok(crate::proto::client::ListRoomStreamsResponse { streams })
+    }
+
+    /// Get a reference to the live streaming infrastructure, if configured.
+    pub fn live_infrastructure(&self) -> Option<&Arc<synctv_livestream::api::LiveStreamingInfrastructure>> {
+        self.live_streaming_infrastructure.as_ref()
     }
 
     // === Playlist Operations ===

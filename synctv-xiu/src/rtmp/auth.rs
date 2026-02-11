@@ -49,4 +49,22 @@ pub trait AuthCallback: Send + Sync {
     ) {
         // Default: no-op
     }
+
+    /// Called when a player (subscriber) stops watching (disconnect, error, or deleteStream).
+    ///
+    /// This is a fire-and-forget callback — errors are logged, not propagated.
+    /// Used for cleanup of viewer tracking state.
+    ///
+    /// # Arguments
+    /// * `app_name` - RTMP application name (e.g. `room_id`)
+    /// * `stream_name` - Stream name (e.g. `media_id`)
+    /// * `query` - Optional query string from the RTMP URL
+    async fn on_unplay(
+        &self,
+        _app_name: &str,
+        _stream_name: &str,
+        _query: Option<&str>,
+    ) {
+        // Default: no-op
+    }
 }

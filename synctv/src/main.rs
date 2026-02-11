@@ -223,7 +223,6 @@ async fn main() -> Result<()> {
                                 synctv_services.room_service.clone(),
                                 synctv_services.user_service.clone(),
                                 synctv_services.publish_key_service.clone(),
-                                Some(synctv_services.settings_registry.clone()),
                                 user_stream_tracker,
                                 publisher_registry.clone(),
                                 node_id,

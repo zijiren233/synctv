@@ -20,6 +20,8 @@ use crate::proto::client::{
     media_service_server::MediaService, public_service_server::PublicService,
     room_service_server::RoomService, user_service_server::UserService, ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom, RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged, RegisterRequest, RegisterResponse, User, LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse, GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse, SetPasswordRequest, SetPasswordResponse, ListCreatedRoomsRequest, ListCreatedRoomsResponse, Room, ListParticipatedRoomsRequest, ListParticipatedRoomsResponse, RoomWithRole, CreateRoomRequest, CreateRoomResponse, GetRoomRequest, GetRoomResponse, JoinRoomRequest, JoinRoomResponse, LeaveRoomRequest, LeaveRoomResponse, DeleteRoomRequest, DeleteRoomResponse, UpdateRoomSettingsRequest, UpdateRoomSettingsResponse, GetRoomMembersRequest, GetRoomMembersResponse, UpdateMemberPermissionsRequest, UpdateMemberPermissionsResponse, KickMemberRequest, KickMemberResponse, BanMemberRequest, BanMemberResponse, UnbanMemberRequest, UnbanMemberResponse, GetRoomSettingsRequest, GetRoomSettingsResponse, ResetRoomSettingsRequest, ResetRoomSettingsResponse, ClientMessage, GetChatHistoryRequest, GetChatHistoryResponse, AddMediaRequest, AddMediaResponse, Media, RemoveMediaRequest, RemoveMediaResponse, ListPlaylistRequest, ListPlaylistResponse, ListPlaylistItemsRequest, ListPlaylistItemsResponse, Playlist, SwapMediaRequest, SwapMediaResponse, PlayRequest, PlayResponse, PauseRequest, PauseResponse, SeekRequest, SeekResponse, SetPlaybackSpeedRequest, SetPlaybackSpeedResponse, GetPlaybackStateRequest, GetPlaybackStateResponse, CreatePublishKeyRequest, CreatePublishKeyResponse, CreatePlaylistRequest, CreatePlaylistResponse, UpdatePlaylistRequest, UpdatePlaylistResponse, DeletePlaylistRequest, DeletePlaylistResponse, ListPlaylistsRequest, ListPlaylistsResponse, SetCurrentMediaRequest, SetCurrentMediaResponse, CheckRoomRequest, CheckRoomResponse, ListRoomsRequest, ListRoomsResponse, GetHotRoomsRequest, GetHotRoomsResponse, RoomWithStats, GetPublicSettingsRequest, GetPublicSettingsResponse, SendVerificationEmailRequest, SendVerificationEmailResponse, ConfirmEmailRequest, ConfirmEmailResponse, RequestPasswordResetRequest, RequestPasswordResetResponse, ConfirmPasswordResetRequest, ConfirmPasswordResetResponse, GetIceServersRequest, GetIceServersResponse, IceServer, GetNetworkQualityRequest, GetNetworkQualityResponse,
     GetMovieInfoRequest, GetMovieInfoResponse,
+    GetStreamInfoRequest, GetStreamInfoResponse,
+    ListRoomStreamsRequest, ListRoomStreamsResponse,
 };
 
 /// Configuration for `ClientService`
@@ -38,6 +40,7 @@ pub struct ClientServiceConfig {
     pub providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     pub config: Arc<synctv_core::Config>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+    pub client_api: Arc<crate::impls::ClientApiImpl>,
 }
 
 /// `ClientService` implementation
@@ -56,6 +59,7 @@ pub struct ClientServiceImpl {
     providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     config: Arc<synctv_core::Config>,
     sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+    client_api: Arc<crate::impls::ClientApiImpl>,
 }
 
 impl ClientServiceImpl {
@@ -75,6 +79,7 @@ impl ClientServiceImpl {
         providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
         config: Arc<synctv_core::Config>,
         sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+        client_api: Arc<crate::impls::ClientApiImpl>,
     ) -> Self {
         Self {
             user_service: Arc::new(user_service),
@@ -90,6 +95,7 @@ impl ClientServiceImpl {
             providers_manager,
             config,
             sfu_manager,
+            client_api,
         }
     }
 
@@ -110,6 +116,7 @@ impl ClientServiceImpl {
             providers_manager: config.providers_manager,
             config: config.config,
             sfu_manager: config.sfu_manager,
+            client_api: config.client_api,
         }
     }
 
@@ -2081,76 +2088,41 @@ impl MediaService for ClientServiceImpl {
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
 
-        if req.id.is_empty() {
-            return Err(Status::invalid_argument("Media ID is required"));
-        }
-
-        let _media_id = MediaId::from_string(req.id.clone());
-
-        let _room = self
-            .room_service
-            .get_room(&room_id)
+        self.client_api
+            .create_publish_key(user_id.as_str(), room_id.as_str(), req)
             .await
-            .map_err(|e| match e {
-                synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-                _ => Status::internal("Failed to get room"),
-            })?;
+            .map(Response::new)
+            .map_err(|e| Status::internal(e))
+    }
 
-        self.room_service
-            .check_permission(&room_id, &user_id, PermissionBits::ADD_MEDIA)
+    async fn get_stream_info(
+        &self,
+        request: Request<GetStreamInfoRequest>,
+    ) -> Result<Response<GetStreamInfoResponse>, Status> {
+        let _user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let req = request.into_inner();
+
+        self.client_api
+            .get_stream_info(room_id.as_str(), &req.media_id)
             .await
-            .map_err(|e| {
-                Status::permission_denied(format!(
-                    "User does not have permission to publish streams in this room: {e}"
-                ))
-            })?;
+            .map(Response::new)
+            .map_err(|e| Status::internal(e))
+    }
 
-        let expiration_duration = chrono::Duration::hours(24);
-        let now = chrono::Utc::now();
-        let expires_at = now + expiration_duration;
+    async fn list_room_streams(
+        &self,
+        request: Request<ListRoomStreamsRequest>,
+    ) -> Result<Response<ListRoomStreamsResponse>, Status> {
+        let _user_id = self.get_user_id(&request)?;
+        let room_id = self.get_room_id(&request)?;
+        let _req = request.into_inner();
 
-        #[derive(serde::Serialize, serde::Deserialize)]
-        struct PublishKeyClaims {
-            room_id: String,
-            media_id: String,
-            user_id: String,
-            iat: i64,
-            exp: i64,
-        }
-
-        let _claims = PublishKeyClaims {
-            room_id: room_id.as_str().to_string(),
-            media_id: req.id.clone(),
-            user_id: user_id.as_str().to_string(),
-            iat: now.timestamp(),
-            exp: expires_at.timestamp(),
-        };
-
-        let publish_key = format!(
-            "{}:{}:{}:{}",
-            room_id.as_str(),
-            req.id,
-            user_id.as_str(),
-            expires_at.timestamp()
-        );
-
-        let rtmp_url = "rtmp://localhost:1935/live".to_string();
-        let stream_key = format!("{}/{}", room_id.as_str(), req.id);
-
-        tracing::info!(
-            room_id = %room_id.as_str(),
-            media_id = %req.id,
-            user_id = %user_id.as_str(),
-            expires_at = %expires_at,
-            "Generated publish key for live streaming"
-        );
-
-        Ok(Response::new(CreatePublishKeyResponse {
-            publish_key,
-            rtmp_url,
-            stream_key,
-            expires_at: expires_at.timestamp(),
-        }))
+        self.client_api
+            .list_room_streams(room_id.as_str())
+            .await
+            .map(Response::new)
+            .map_err(|e| Status::internal(e))
     }
 
     // Playlist Management
@@ -2846,11 +2818,9 @@ impl PublicService for ClientServiceImpl {
             enable_guest: s.enable_guest,
             movie_proxy: s.movie_proxy,
             live_proxy: s.live_proxy,
-            rtmp_player: s.rtmp_player,
             ts_disguised_as_png: s.ts_disguised_as_png,
             custom_publish_host: s.custom_publish_host,
             email_whitelist_enabled: s.email_whitelist_enabled,
-            p2p_zone: s.p2p_zone,
         }))
     }
 }

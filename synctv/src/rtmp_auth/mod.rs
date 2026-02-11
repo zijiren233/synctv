@@ -24,7 +24,7 @@ use tokio::task::AbortHandle;
 
 use synctv_core::{
     models::{RoomStatus, UserStatus, MediaId, UserId},
-    service::{PublishKeyService, RoomService, SettingsRegistry, UserService},
+    service::{PublishKeyService, RoomService, UserService},
 };
 
 /// RTMP authentication implementation for `SyncTV`
@@ -35,7 +35,7 @@ use synctv_core::{
 /// - User status (not banned/deleted)
 /// - Authorization (global admin, room admin/creator, or media creator)
 /// - Single-publisher-per-media (atomic Redis registration)
-/// - Global `rtmp_player` setting for viewers
+/// - RTMP pull (play) is unconditionally rejected — viewers must use HTTP-FLV or HLS
 ///
 /// On successful publish auth, registers the publisher in Redis and
 /// spawns a TTL renewal task. On unpublish, cleans up Redis and tracker state.
@@ -43,7 +43,6 @@ pub struct SyncTvRtmpAuth {
     room_service: Arc<RoomService>,
     user_service: Arc<UserService>,
     publish_key_service: Arc<PublishKeyService>,
-    settings_registry: Option<Arc<SettingsRegistry>>,
     user_stream_tracker: UserStreamTracker,
     /// Publisher registry (Redis) for single-publisher-per-media enforcement
     registry: Arc<dyn StreamRegistryTrait>,
@@ -58,7 +57,6 @@ impl SyncTvRtmpAuth {
         room_service: Arc<RoomService>,
         user_service: Arc<UserService>,
         publish_key_service: Arc<PublishKeyService>,
-        settings_registry: Option<Arc<SettingsRegistry>>,
         user_stream_tracker: UserStreamTracker,
         registry: Arc<dyn StreamRegistryTrait>,
         node_id: String,
@@ -67,7 +65,6 @@ impl SyncTvRtmpAuth {
             room_service,
             user_service,
             publish_key_service,
-            settings_registry,
             user_stream_tracker,
             registry,
             node_id,
@@ -245,39 +242,35 @@ impl AuthCallback for SyncTvRtmpAuth {
         Ok(())
     }
 
+    /// RTMP pull (play) is unconditionally rejected.
+    ///
+    /// All viewer access must go through HTTP-FLV (`/api/room/movie/live/flv/`) or
+    /// HLS (`/api/room/movie/live/hls/`) endpoints, which enforce JWT + room membership auth.
     async fn on_play(
         &self,
         app_name: &str,
         stream_name: &str,
         _query: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // app_name = room_id, stream_name = media_id
-
-        // Validate room
-        let room = self
-            .room_service
-            .get_room(&synctv_core::models::RoomId::from_string(app_name.to_string()))
-            .await
-            .map_err(|e| format!("Failed to load room: {e}"))?;
-
-        if room.status == RoomStatus::Banned {
-            return Err(format!("Room {app_name} is banned").into());
-        }
-
-        // Check global rtmp_player setting
-        if let Some(reg) = &self.settings_registry {
-            if !reg.rtmp_player.get().unwrap_or(false) {
-                return Err("RTMP player is disabled by administrator".into());
-            }
-        }
-
-        tracing::info!(
-            "Player authenticated for room {}, stream {}",
-            app_name,
-            stream_name,
+        tracing::warn!(
+            room_id = %app_name,
+            media_id = %stream_name,
+            "RTMP play rejected: direct RTMP pull is disabled, use HTTP-FLV or HLS"
         );
+        Err("RTMP pull is disabled. Use HTTP-FLV or HLS endpoints for playback.".into())
+    }
 
-        Ok(())
+    async fn on_unplay(
+        &self,
+        app_name: &str,
+        stream_name: &str,
+        _query: Option<&str>,
+    ) {
+        tracing::info!(
+            room_id = %app_name,
+            media_id = %stream_name,
+            "RTMP player disconnected"
+        );
     }
 
     async fn on_unpublish(

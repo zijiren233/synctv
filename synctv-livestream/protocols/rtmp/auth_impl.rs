@@ -81,12 +81,25 @@ impl AuthCallback for RtmpAuthCallbackImpl {
         stream_name: &str,
         _query: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        tracing::info!(
-            "RTMP player accepted: room_id={}, media_id={}",
+        tracing::warn!(
+            "RTMP play rejected: room_id={}, media_id={} — use HTTP-FLV or HLS",
             app_name,
             stream_name
         );
-        Ok(())
+        Err("RTMP pull is disabled. Use HTTP-FLV or HLS endpoints for playback.".into())
+    }
+
+    async fn on_unplay(
+        &self,
+        app_name: &str,
+        stream_name: &str,
+        _query: Option<&str>,
+    ) {
+        tracing::info!(
+            "RTMP player disconnected: room_id={}, media_id={}",
+            app_name,
+            stream_name
+        );
     }
 }
 

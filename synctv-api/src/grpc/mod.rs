@@ -61,6 +61,7 @@ pub struct GrpcServerConfig<'a> {
     pub email_token_service: Option<Arc<EmailTokenService>>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
+    pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
 }
 
 /// Build and start the gRPC server
@@ -88,6 +89,7 @@ pub async fn serve(
     email_token_service: Option<Arc<EmailTokenService>>,
     sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
+    publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
 
@@ -119,6 +121,18 @@ pub async fn serve(
     let email_service_for_admin = email_service.clone();
     let providers_manager_for_client = providers_manager.clone();
 
+    // Build the shared ClientApiImpl for gRPC handlers
+    let client_api = Arc::new(crate::impls::ClientApiImpl::new(
+        user_service.clone(),
+        room_service.clone(),
+        Arc::new(connection_manager.clone()),
+        Arc::new(config.clone()),
+        sfu_manager.clone(),
+        publish_key_service,
+        jwt_service.clone(),
+        live_streaming_infrastructure.clone(),
+    ));
+
     let client_service = ClientServiceImpl::new(
         user_service_clone,
         room_service_clone,
@@ -133,6 +147,7 @@ pub async fn serve(
         providers_manager_for_client,
         Arc::new(config.clone()),
         sfu_manager.clone(),
+        client_api.clone(),
     );
 
     let admin_service = AdminServiceImpl::new(
@@ -222,7 +237,7 @@ pub async fn serve(
             cluster_manager: None, // gRPC doesn't expose cluster_manager to HTTP
             connection_manager: Arc::new(connection_manager_for_provider.clone()),
             message_hub: message_hub_from_cluster,
-            jwt_service: jwt_service_for_provider,
+            jwt_service: jwt_service_for_provider.clone(),
             redis_publish_tx: redis_publish_tx.clone(),
             oauth2_service: None,
             settings_service: Some(settings_service.clone()),
@@ -238,6 +253,8 @@ pub async fn serve(
                 Arc::new(config.clone()),
                 sfu_manager,
                 None, // No publish_key_service for provider gRPC
+                jwt_service_for_provider.clone(),
+                None, // No live_streaming_infrastructure for provider gRPC
             )),
             admin_api: None,
         });
@@ -290,6 +307,7 @@ pub async fn serve_from_config(config: GrpcServerConfig<'_>) -> anyhow::Result<(
         config.email_token_service,
         config.sfu_manager,
         config.live_streaming_infrastructure,
+        config.publish_key_service,
     )
     .await
 }

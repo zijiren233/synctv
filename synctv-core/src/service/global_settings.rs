@@ -55,16 +55,12 @@ pub struct PublicSettings {
     pub live_proxy: bool,
 
     // RTMP settings
-    pub rtmp_player: bool,
     pub ts_disguised_as_png: bool,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub custom_publish_host: String,
 
     // Email settings
     pub email_whitelist_enabled: bool,
-
-    // Server settings
-    pub p2p_zone: String,
 }
 
 impl PublicSettings {
@@ -85,11 +81,9 @@ impl PublicSettings {
             enable_guest: true,
             movie_proxy: true,
             live_proxy: true,
-            rtmp_player: false,
             ts_disguised_as_png: true,
             custom_publish_host: String::new(),
             email_whitelist_enabled: false,
-            p2p_zone: "hk".to_string(),
         }
     }
 }
@@ -134,16 +128,12 @@ pub struct SettingsRegistry {
     pub proxy_cache_enable: Setting<bool>,
 
     // RTMP settings
-    pub rtmp_player: Setting<bool>,
     pub custom_publish_host: Setting<String>,
     pub ts_disguised_as_png: Setting<bool>,
 
     // Email settings
     pub email_whitelist_enabled: Setting<bool>,
     pub email_whitelist: Setting<String>,
-
-    // Server/network settings
-    pub p2p_zone: Setting<String>,
 }
 
 impl std::fmt::Debug for SettingsRegistry {
@@ -231,16 +221,12 @@ impl SettingsRegistry {
             proxy_cache_enable: setting!(bool, "proxy.proxy_cache_enable", storage.clone(), false),
 
             // RTMP settings
-            rtmp_player: setting!(bool, "rtmp.rtmp_player", storage.clone(), false),
             custom_publish_host: setting!(String, "rtmp.custom_publish_host", storage.clone(), String::new()),
             ts_disguised_as_png: setting!(bool, "rtmp.ts_disguised_as_png", storage.clone(), true),
 
             // Email settings
             email_whitelist_enabled: setting!(bool, "email.whitelist_enabled", storage.clone(), false),
             email_whitelist: setting!(String, "email.whitelist", storage.clone(), String::new()),
-
-            // Server/network settings
-            p2p_zone: setting!(String, "server.p2p_zone", storage, "hk".to_string()),
         }
     }
 
@@ -269,11 +255,9 @@ impl SettingsRegistry {
             enable_guest: self.enable_guest.get().unwrap_or(true),
             movie_proxy: self.movie_proxy.get().unwrap_or(true),
             live_proxy: self.live_proxy.get().unwrap_or(true),
-            rtmp_player: self.rtmp_player.get().unwrap_or(false),
             ts_disguised_as_png: self.ts_disguised_as_png.get().unwrap_or(true),
             custom_publish_host: self.custom_publish_host.get().unwrap_or_default(),
             email_whitelist_enabled: self.email_whitelist_enabled.get().unwrap_or(false),
-            p2p_zone: self.p2p_zone.get().unwrap_or_else(|_| "hk".to_string()),
         }
     }
 }

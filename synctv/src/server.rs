@@ -284,6 +284,7 @@ impl SyncTvServer {
         let email_token_service = self.services.email_token_service.clone();
         let sfu_manager = self.services.sfu_manager.clone();
         let live_streaming_infrastructure = self.services.live_streaming_infrastructure.clone();
+        let publish_key_service = self.services.publish_key_service.clone();
 
         let handle = tokio::spawn(async move {
             info!("Starting gRPC server on {}...", config.grpc_address());
@@ -308,6 +309,7 @@ impl SyncTvServer {
                 email_token_service,
                 sfu_manager,
                 live_streaming_infrastructure,
+                Some(publish_key_service),
             )
             .await
             {
