@@ -11,7 +11,7 @@ use std::sync::Arc;
 use synctv_core::{
     models::id::UserId,
     service::auth::JwtValidator,
-    service::rate_limit::{RateLimiter, RateLimitError},
+    service::rate_limit::RateLimitError,
 };
 
 use super::{AppError, AppState};
@@ -142,9 +142,8 @@ pub async fn rate_limit_middleware(
             .to_string()
     });
 
-    // Get rate limiter from app state (if configured)
-    // For now, we'll create a disabled rate limiter if Redis is not configured
-    let rate_limiter = RateLimiter::disabled("synctv:rate_limit:".to_string());
+    // Get rate limiter from app state
+    let rate_limiter = state.rate_limiter.clone();
     let config = RateLimitConfig::default();
 
     // Determine rate limit parameters based on category

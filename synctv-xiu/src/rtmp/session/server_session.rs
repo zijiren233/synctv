@@ -59,6 +59,8 @@ pub struct ServerSession {
     /*configure how many gops will be cached.*/
     gop_num: usize,
     auth: Option<Arc<dyn AuthCallback>>,
+    /// Whether this session has successfully published (vs playing)
+    is_publishing: bool,
 }
 
 impl ServerSession {
@@ -98,6 +100,7 @@ impl ServerSession {
             connect_properties: ConnectProperties::default(),
             gop_num,
             auth,
+            is_publishing: false,
         }
     }
 
@@ -161,17 +164,31 @@ impl ServerSession {
                     self.bytesio_data = data;
                 }
                 Err(err) => {
-                    if let Some(auth) = &self.auth {
-                        auth.on_unpublish(
-                            &self.app_name,
-                            &self.stream_name,
-                            self.query.as_deref(),
-                        )
-                        .await;
+                    if self.is_publishing {
+                        if let Some(auth) = &self.auth {
+                            auth.on_unpublish(
+                                &self.app_name,
+                                &self.stream_name,
+                                self.query.as_deref(),
+                            )
+                            .await;
+                        }
+                        self.common
+                            .unpublish_to_stream_hub(self.app_name.clone(), self.stream_name.clone())
+                            .await?;
+                    } else {
+                        if let Some(auth) = &self.auth {
+                            auth.on_unplay(
+                                &self.app_name,
+                                &self.stream_name,
+                                self.query.as_deref(),
+                            )
+                            .await;
+                        }
+                        self.common
+                            .unsubscribe_from_stream_hub(self.app_name.clone(), self.stream_name.clone())
+                            .await?;
                     }
-                    self.common
-                        .unpublish_to_stream_hub(self.app_name.clone(), self.stream_name.clone())
-                        .await?;
 
                     return Err(SessionError {
                         value: SessionErrorValue::BytesIOError(err),
@@ -201,17 +218,31 @@ impl ServerSession {
                 }
                 Err(err) => {
                     if matches!(err.value, UnpackErrorValue::CannotParse) {
-                        if let Some(auth) = &self.auth {
-                            auth.on_unpublish(
-                                &self.app_name,
-                                &self.stream_name,
-                                self.query.as_deref(),
-                            )
-                            .await;
+                        if self.is_publishing {
+                            if let Some(auth) = &self.auth {
+                                auth.on_unpublish(
+                                    &self.app_name,
+                                    &self.stream_name,
+                                    self.query.as_deref(),
+                                )
+                                .await;
+                            }
+                            self.common
+                                .unpublish_to_stream_hub(self.app_name.clone(), self.stream_name.clone())
+                                .await?;
+                        } else {
+                            if let Some(auth) = &self.auth {
+                                auth.on_unplay(
+                                    &self.app_name,
+                                    &self.stream_name,
+                                    self.query.as_deref(),
+                                )
+                                .await;
+                            }
+                            self.common
+                                .unsubscribe_from_stream_hub(self.app_name.clone(), self.stream_name.clone())
+                                .await?;
                         }
-                        self.common
-                            .unpublish_to_stream_hub(self.app_name.clone(), self.stream_name.clone())
-                            .await?;
                         return Err(err)?;
                     }
                     break;
@@ -510,17 +541,32 @@ impl ServerSession {
         transaction_id: &f64,
         stream_id: &f64,
     ) -> Result<(), SessionError> {
-        self.common
-            .unpublish_to_stream_hub(self.app_name.clone(), self.stream_name.clone())
-            .await?;
+        if self.is_publishing {
+            self.common
+                .unpublish_to_stream_hub(self.app_name.clone(), self.stream_name.clone())
+                .await?;
 
-        if let Some(auth) = &self.auth {
-            auth.on_unpublish(
-                &self.app_name,
-                &self.stream_name,
-                self.query.as_deref(),
-            )
-            .await;
+            if let Some(auth) = &self.auth {
+                auth.on_unpublish(
+                    &self.app_name,
+                    &self.stream_name,
+                    self.query.as_deref(),
+                )
+                .await;
+            }
+        } else {
+            self.common
+                .unsubscribe_from_stream_hub(self.app_name.clone(), self.stream_name.clone())
+                .await?;
+
+            if let Some(auth) = &self.auth {
+                auth.on_unplay(
+                    &self.app_name,
+                    &self.stream_name,
+                    self.query.as_deref(),
+                )
+                .await;
+            }
         }
 
         let mut netstream = NetStreamWriter::new(Arc::clone(&self.io));
@@ -803,6 +849,8 @@ impl ServerSession {
                 self.gop_num,
             )
             .await?;
+
+        self.is_publishing = true;
 
         Ok(())
     }

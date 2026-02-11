@@ -40,7 +40,6 @@ use synctv_core::repository::UserProviderCredentialRepository;
 use synctv_core::service::{RemoteProviderManager, RoomService, UserService};
 use synctv_livestream::api::LiveStreamingInfrastructure;
 use tokio::sync::mpsc;
-use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub use error::{AppError, AppResult};
@@ -69,6 +68,7 @@ pub struct RouterConfig {
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+    pub rate_limiter: synctv_core::service::rate_limit::RateLimiter,
 }
 
 /// Shared application state
@@ -93,6 +93,7 @@ pub struct AppState {
     pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
+    pub rate_limiter: synctv_core::service::rate_limit::RateLimiter,
     // Unified API implementation layer
     pub client_api: Arc<crate::impls::ClientApiImpl>,
     pub admin_api: Option<Arc<crate::impls::AdminApiImpl>>,
@@ -104,12 +105,14 @@ pub struct AppState {
 pub(crate) fn kick_stream_cluster(state: &AppState, room_id: &str, media_id: &str, reason: &str) {
     // 1. Local kick (no-op if stream not on this node)
     if let Some(infra) = &state.live_streaming_infrastructure {
-        let _ = infra.kick_publisher(room_id, media_id);
+        if let Err(e) = infra.kick_publisher(room_id, media_id) {
+            tracing::warn!(room_id, media_id, error = %e, "Failed to kick local publisher");
+        }
     }
 
     // 2. Cluster-wide via Redis
     if let Some(tx) = &state.redis_publish_tx {
-        let _ = tx.send(PublishRequest {
+        if tx.send(PublishRequest {
             room_id: RoomId::from_string(room_id.to_string()),
             event: ClusterEvent::KickPublisher {
                 room_id: RoomId::from_string(room_id.to_string()),
@@ -117,7 +120,9 @@ pub(crate) fn kick_stream_cluster(state: &AppState, room_id: &str, media_id: &st
                 reason: reason.to_string(),
                 timestamp: chrono::Utc::now(),
             },
-        });
+        }).is_err() {
+            tracing::warn!(room_id, media_id, "Failed to send cluster-wide kick event (Redis channel closed)");
+        }
     }
 }
 
@@ -145,6 +150,7 @@ pub fn create_router(
     notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
     sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+    rate_limiter: synctv_core::service::rate_limit::RateLimiter,
 ) -> axum::Router {
     // Create the unified API implementation layer
     let client_api = Arc::new(crate::impls::ClientApiImpl::new(
@@ -197,6 +203,7 @@ pub fn create_router(
         publish_key_service,
         notification_service,
         live_streaming_infrastructure,
+        rate_limiter,
         client_api,
         admin_api,
     };
@@ -351,12 +358,6 @@ pub fn create_router(
         .layer(axum_middleware::from_fn(
             crate::observability::metrics_middleware::metrics_layer,
         ))
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
         .layer(TraceLayer::new_for_http());
 
     // Apply state to all routes (must be last)
@@ -387,5 +388,6 @@ pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
         config.notification_service,
         config.live_streaming_infrastructure,
         config.sfu_manager,
+        config.rate_limiter,
     )
 }

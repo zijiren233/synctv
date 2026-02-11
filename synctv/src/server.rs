@@ -364,6 +364,7 @@ impl SyncTvServer {
             notification_service,
             live_streaming_infrastructure,
             sfu_manager,
+            self.services.rate_limiter.clone(),
         );
 
         let handle = tokio::spawn(async move {

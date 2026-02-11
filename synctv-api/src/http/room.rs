@@ -12,7 +12,7 @@ use synctv_core::models::{
 };
 
 use super::{middleware::AuthUser, AppResult, AppState};
-use crate::proto::client::{CreateRoomResponse, CreateRoomRequest, GetRoomResponse, JoinRoomResponse, JoinRoomRequest, LeaveRoomResponse, LeaveRoomRequest, DeleteRoomResponse, DeleteRoomRequest, AddMediaResponse, AddMediaRequest, RemoveMediaResponse, RemoveMediaRequest, ListPlaylistResponse, SwapMediaResponse, SwapMediaRequest, PlayResponse, PlayRequest, PauseResponse, SeekResponse, SeekRequest, GetPlaybackStateResponse, GetPlaybackStateRequest, GetRoomMembersResponse, CheckRoomResponse, ListRoomsResponse, ListRoomsRequest, UpdateRoomSettingsResponse, UpdateRoomSettingsRequest};
+use crate::proto::client::{CreateRoomResponse, CreateRoomRequest, GetRoomResponse, JoinRoomResponse, JoinRoomRequest, LeaveRoomResponse, LeaveRoomRequest, DeleteRoomResponse, DeleteRoomRequest, AddMediaResponse, AddMediaRequest, RemoveMediaResponse, RemoveMediaRequest, ListPlaylistResponse, SwapMediaResponse, SwapMediaRequest, PlayResponse, PlayRequest, PauseResponse, SeekResponse, SeekRequest, GetPlaybackStateResponse, GetPlaybackStateRequest, GetRoomMembersResponse, CheckRoomResponse, ListRoomsResponse, ListRoomsRequest, UpdateRoomSettingsRequest};
 
 /// Room settings for HTTP requests
 #[derive(Debug, Clone, Default)]
@@ -74,6 +74,9 @@ pub async fn create_room(
     if name.is_empty() {
         return Err(super::AppError::bad_request("Room name cannot be empty"));
     }
+    if name.len() > 100 {
+        return Err(super::AppError::bad_request("Room name too long (max 100 characters)"));
+    }
 
     tracing::info!(user_id = %auth.user_id, room_name = %name, "Creating new room");
 
@@ -87,7 +90,7 @@ pub async fn create_room(
         .unwrap_or("")
         .to_string();
 
-    let max_members = req.get("max_members").and_then(serde_json::Value::as_i64).map(|v| v as i32);
+    let max_members = req.get("max_members").and_then(serde_json::Value::as_i64).map(|v| v.clamp(0, 10000) as i32);
     let allow_guest_join = req.get("allow_guest_join").and_then(serde_json::Value::as_bool);
     let auto_play_next = req.get("auto_play_next").and_then(serde_json::Value::as_bool);
     let loop_playlist = req.get("loop_playlist").and_then(serde_json::Value::as_bool);
@@ -132,10 +135,16 @@ pub async fn create_room(
 
 /// Get room information
 pub async fn get_room(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<GetRoomResponse>> {
+    let room_id_obj = RoomId::from_string(room_id.clone());
+    state.room_service
+        .check_membership(&room_id_obj, &auth.user_id)
+        .await
+        .map_err(|e| super::AppError::forbidden(e.to_string()))?;
+
     let response = state
         .client_api
         .get_room(&room_id)
@@ -224,6 +233,10 @@ pub async fn add_media(
         .ok_or_else(|| super::AppError::bad_request("Missing url field"))?
         .to_string();
 
+    if url.len() > 2048 {
+        return Err(super::AppError::bad_request("URL too long (max 2048 characters)"));
+    }
+
     let provider = req.get("provider")
         .and_then(|v| v.as_str())
         .unwrap_or("")
@@ -233,7 +246,7 @@ pub async fn add_media(
         .and_then(|v| v.as_str()).map_or_else(|| {
             // Extract title from URL
             url.split('/').next_back().unwrap_or("Unknown").to_string()
-        }, std::string::ToString::to_string);
+        }, |t| t.chars().take(500).collect::<String>());
 
     // Build source config JSON
     let source_config = serde_json::json!({"url": url});
@@ -418,10 +431,13 @@ pub async fn reorder_media_batch(
             .ok_or_else(|| super::AppError::bad_request("Missing media_id in update"))?
             .to_string();
 
-        let position = update.get("position")
+        let position_raw = update.get("position")
             .and_then(serde_json::Value::as_i64)
-            .ok_or_else(|| super::AppError::bad_request("Missing or invalid position in update"))?
-            as i32;
+            .ok_or_else(|| super::AppError::bad_request("Missing or invalid position in update"))?;
+        if position_raw < 0 || position_raw > i32::MAX as i64 {
+            return Err(super::AppError::bad_request("Position must be a non-negative integer within i32 range"));
+        }
+        let position = position_raw as i32;
 
         updates_vec.push((media_id, position));
     }
@@ -464,10 +480,16 @@ pub async fn reorder_media_batch(
 
 /// Get playlist
 pub async fn get_playlist(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<ListPlaylistResponse>> {
+    let room_id_obj = RoomId::from_string(room_id.clone());
+    state.room_service
+        .check_membership(&room_id_obj, &auth.user_id)
+        .await
+        .map_err(|e| super::AppError::forbidden(e.to_string()))?;
+
     let response = state
         .client_api
         .get_playlist(&room_id)
@@ -565,10 +587,16 @@ pub async fn seek(
 
 /// Get playback state
 pub async fn get_playback_state(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<GetPlaybackStateResponse>> {
+    let room_id_obj = RoomId::from_string(room_id.clone());
+    state.room_service
+        .check_membership(&room_id_obj, &auth.user_id)
+        .await
+        .map_err(|e| super::AppError::forbidden(e.to_string()))?;
+
     let proto_req = GetPlaybackStateRequest {};
     let response = state
         .client_api
@@ -583,10 +611,16 @@ pub async fn get_playback_state(
 
 /// Get room members
 pub async fn get_room_members(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<GetRoomMembersResponse>> {
+    let room_id_obj = RoomId::from_string(room_id.clone());
+    state.room_service
+        .check_membership(&room_id_obj, &auth.user_id)
+        .await
+        .map_err(|e| super::AppError::forbidden(e.to_string()))?;
+
     let response = state
         .client_api
         .get_room_members(&room_id)
@@ -608,7 +642,7 @@ pub async fn check_room(
     let (exists, requires_password, name) = match state.room_service.get_room(&room_id_obj).await {
         Ok(room) => {
             let settings = state.room_service.get_room_settings(&room_id_obj).await
-                .unwrap_or_default();
+                .map_err(|e| super::AppError::internal_server_error(format!("Failed to get room settings: {e}")))?;
             (true, settings.require_password.0, room.name.clone())
         }
         Err(_) => (false, false, String::new()),
@@ -626,8 +660,8 @@ pub async fn list_rooms(
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<ListRoomsResponse>> {
-    let page = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
-    let page_size = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(50);
+    let page: i32 = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+    let page_size: i32 = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(50).clamp(1, 100);
     let search = params.get("search").cloned().unwrap_or_default();
 
     let proto_req = ListRoomsRequest {
@@ -644,58 +678,7 @@ pub async fn list_rooms(
     Ok(Json(response))
 }
 
-/// Get hot rooms (sorted by activity)
-pub async fn hot_rooms(
-    State(state): State<AppState>,
-) -> AppResult<Json<ListRoomsResponse>> {
-    let proto_req = ListRoomsRequest {
-        page: 1,
-        page_size: 100,
-        search: String::new(),
-    };
-    let mut response = state
-        .client_api
-        .list_rooms(proto_req)
-        .await
-        .map_err(super::AppError::internal_server_error)?;
-
-    // Sort by member count (hot rooms)
-    response.rooms.sort_by(|a, b| b.member_count.cmp(&a.member_count));
-
-    // Return top 20
-    response.rooms = response.rooms.into_iter().take(20).collect();
-    response.total = response.rooms.len() as i32;
-
-    Ok(Json(response))
-}
-
 // ==================== Room Settings Endpoints ====================
-
-/// Update room settings
-pub async fn set_room_settings_admin(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<UpdateRoomSettingsResponse>> {
-    // Build settings JSON from request fields
-    let settings_json = req.clone();
-    let settings_bytes = serde_json::to_vec(&settings_json)
-        .map_err(|e| super::AppError::bad_request(format!("Invalid settings JSON: {e}")))?;
-
-    let proto_req = UpdateRoomSettingsRequest {
-        room_id: room_id.clone(),
-        settings: settings_bytes,
-    };
-
-    let response = state
-        .client_api
-        .update_room_settings(&auth.user_id.to_string(), &room_id, proto_req)
-        .await
-        .map_err(super::AppError::internal_server_error)?;
-
-    Ok(Json(response))
-}
 
 /// Set room password
 pub async fn set_room_password(
@@ -740,8 +723,9 @@ pub async fn set_room_password(
     })))
 }
 
-/// Check room password
+/// Check room password (requires authentication to prevent brute force)
 pub async fn check_password(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Json(req): Json<serde_json::Value>,
@@ -1012,7 +996,7 @@ pub async fn update_room_settings(
 ) -> AppResult<Json<serde_json::Value>> {
     // Parse settings from request body
     let password = req.get("password").and_then(|v| v.as_str()).map(String::from);
-    let max_members = req.get("max_members").and_then(serde_json::Value::as_i64).map(|v| v as i32);
+    let max_members = req.get("max_members").and_then(serde_json::Value::as_i64).map(|v| v.clamp(0, 10000) as i32);
     let allow_guest_join = req.get("allow_guest_join").and_then(serde_json::Value::as_bool);
     let auto_play_next = req.get("auto_play_next").and_then(serde_json::Value::as_bool);
     let loop_playlist = req.get("loop_playlist").and_then(serde_json::Value::as_bool);

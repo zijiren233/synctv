@@ -189,21 +189,40 @@ async fn main() -> Result<()> {
                         // 2. Publisher registry for Redis (used by PullStreamManager)
                         let publisher_registry = Arc::new(synctv_livestream::relay::StreamRegistry::new(redis_conn)) as Arc<dyn synctv_livestream::relay::StreamRegistryTrait>;
 
-                        // Create dummy StreamHub event sender (events not currently handled)
-                        // TODO: Implement event handling via PublisherManager if needed
-                        let (stream_hub_event_sender, _) =
+                        // Create StreamHub event channel and spawn the hub event loop
+                        let (stream_hub_event_sender, stream_hub_event_receiver) =
                             tokio::sync::mpsc::unbounded_channel();
+                        let mut streams_hub = synctv_xiu::streamhub::StreamsHub::new(
+                            stream_hub_event_sender.clone(),
+                            stream_hub_event_receiver,
+                        );
+                        tokio::spawn(async move {
+                            streams_hub.run().await;
+                        });
 
                         // Create PullStreamManager (uses publisher_registry for Redis)
                         let node_id = generate_node_id();
-                        let pull_manager = Arc::new(synctv_livestream::livestream::PullStreamManager::new(
+                        let pull_manager = Arc::new(synctv_livestream::livestream::PullStreamManager::with_timeouts(
                             publisher_registry.clone(),
                             node_id.clone(),
                             stream_hub_event_sender.clone(),
+                            config.livestream.cleanup_check_interval_seconds,
+                            config.livestream.stream_timeout_seconds,
                         ));
 
                         // Clone resources for RTMP server
                         let rtmp_event_sender = stream_hub_event_sender.clone();
+
+                        // Create ExternalPublishManager (manages external pull-to-publish streams)
+                        let external_publish_manager = Arc::new(
+                            synctv_livestream::livestream::ExternalPublishManager::with_timeouts(
+                                publisher_registry.clone(),
+                                node_id.clone(),
+                                stream_hub_event_sender.clone(),
+                                config.livestream.cleanup_check_interval_seconds,
+                                config.livestream.stream_timeout_seconds,
+                            ),
+                        );
 
                         // Shared tracker for user→stream mapping (kick-on-ban)
                         let user_stream_tracker: synctv_livestream::api::UserStreamTracker =
@@ -214,8 +233,37 @@ async fn main() -> Result<()> {
                             publisher_registry.clone(),
                             stream_hub_event_sender,
                             pull_manager.clone(),
+                            external_publish_manager,
                             user_stream_tracker.clone(),
                         ));
+
+                        // Create stream lifecycle event channel
+                        let (stream_lifecycle_tx, mut stream_lifecycle_rx) =
+                            tokio::sync::broadcast::channel::<rtmp_auth::StreamLifecycleEvent>(64);
+
+                        // Spawn consumer that logs stream lifecycle events
+                        tokio::spawn(async move {
+                            while let Ok(event) = stream_lifecycle_rx.recv().await {
+                                match event {
+                                    rtmp_auth::StreamLifecycleEvent::Started { room_id, media_id, user_id } => {
+                                        info!(
+                                            room_id = %room_id,
+                                            media_id = %media_id,
+                                            user_id = %user_id,
+                                            "Stream started"
+                                        );
+                                    }
+                                    rtmp_auth::StreamLifecycleEvent::Stopped { room_id, media_id, user_id } => {
+                                        info!(
+                                            room_id = %room_id,
+                                            media_id = %media_id,
+                                            user_id = %user_id,
+                                            "Stream stopped"
+                                        );
+                                    }
+                                }
+                            }
+                        });
 
                         // Create RTMP authentication callback
                         let rtmp_auth: Arc<dyn synctv_xiu::rtmp::auth::AuthCallback> =
@@ -226,6 +274,7 @@ async fn main() -> Result<()> {
                                 user_stream_tracker,
                                 publisher_registry.clone(),
                                 node_id,
+                                Some(stream_lifecycle_tx),
                             ));
 
                         // Create and start RTMP server with auth integration
@@ -233,7 +282,7 @@ async fn main() -> Result<()> {
                         let mut rtmp_server = synctv_xiu::rtmp::rtmp::RtmpServer::new(
                             rtmp_listen_addr.clone(),
                             rtmp_event_sender,
-                            2, // gop_num
+                            config.livestream.gop_cache_size as usize,
                             Some(rtmp_auth),
                         );
 
@@ -270,7 +319,7 @@ async fn main() -> Result<()> {
         info!("Starting built-in STUN server...");
         let stun_config = synctv_core::service::StunServerConfig {
             bind_addr: format!("{}:{}", config.webrtc.builtin_stun_host, config.webrtc.builtin_stun_port),
-            max_packet_size: 1500,
+            max_packet_size: config.webrtc.stun_max_packet_size,
         };
         match synctv_core::service::StunServer::start(stun_config).await {
             Ok(server) => {
@@ -299,15 +348,20 @@ async fn main() -> Result<()> {
                     relay_min_port: config.webrtc.builtin_turn_min_port,
                     relay_max_port: config.webrtc.builtin_turn_max_port,
                     max_allocations: config.webrtc.builtin_turn_max_allocations,
-                    default_lifetime: 600,
-                    max_lifetime: 3600,
+                    default_lifetime: config.webrtc.builtin_turn_default_lifetime,
+                    max_lifetime: config.webrtc.builtin_turn_max_lifetime,
                     static_secret: config.webrtc.external_turn_static_secret
                         .clone()
                         .unwrap_or_else(|| {
-                            warn!("No TURN static_secret configured, using default (INSECURE!)");
-                            "insecure_default_secret".to_string()
+                            error!("No TURN static_secret configured! Please set webrtc.external_turn_static_secret in config. Using ephemeral secret (will change on restart).");
+                            format!("synctv-ephemeral-{}", std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_nanos())
                         }),
-                    realm: "synctv.local".to_string(),
+                    realm: config.webrtc.turn_realm
+                        .clone()
+                        .unwrap_or_else(|| "synctv.local".to_string()),
                 };
                 match synctv_core::service::TurnServer::start(turn_config).await {
                     Ok(server) => {

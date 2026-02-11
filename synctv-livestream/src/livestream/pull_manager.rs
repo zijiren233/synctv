@@ -2,6 +2,9 @@
 //
 // Key feature: Create pull streams only when clients request FLV (not on publisher events)
 // GOP cache is handled by xiu's StreamHub internally.
+//
+// NOTE: This manager handles **gRPC relay** pull streams only.
+// External pull-to-publish streams are managed by `ExternalPublishManager`.
 
 use crate::{
     relay::registry_trait::StreamRegistryTrait,
@@ -9,11 +12,12 @@ use crate::{
     grpc::GrpcStreamPuller,
 };
 use synctv_xiu::streamhub::define::StreamHubEventSender;
-use tracing as log;
+use tracing::{self as log, Instrument};
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use anyhow::Result;
 
 pub struct PullStreamManager {
@@ -22,6 +26,8 @@ pub struct PullStreamManager {
     registry: Arc<dyn StreamRegistryTrait>,
     local_node_id: String,
     stream_hub_event_sender: StreamHubEventSender,
+    cleanup_check_interval: Duration,
+    idle_timeout: Duration,
 }
 
 impl PullStreamManager {
@@ -30,11 +36,23 @@ impl PullStreamManager {
         local_node_id: String,
         stream_hub_event_sender: StreamHubEventSender,
     ) -> Self {
+        Self::with_timeouts(registry, local_node_id, stream_hub_event_sender, 60, 300)
+    }
+
+    pub fn with_timeouts(
+        registry: Arc<dyn StreamRegistryTrait>,
+        local_node_id: String,
+        stream_hub_event_sender: StreamHubEventSender,
+        cleanup_check_interval_secs: u64,
+        idle_timeout_secs: u64,
+    ) -> Self {
         Self {
             streams: Arc::new(DashMap::new()),
             registry,
             local_node_id,
             stream_hub_event_sender,
+            cleanup_check_interval: Duration::from_secs(cleanup_check_interval_secs),
+            idle_timeout: Duration::from_secs(idle_timeout_secs),
         }
     }
 
@@ -56,6 +74,7 @@ impl PullStreamManager {
                     stream.subscriber_count()
                 );
                 stream.increment_subscriber_count();
+                stream.update_last_active_time().await;
                 return Ok(stream.clone());
             }
             // Remove unhealthy stream
@@ -98,11 +117,13 @@ impl PullStreamManager {
         // Initial subscriber
         pull_stream.increment_subscriber_count();
 
-        // Register auto-cleanup task (stop after 5 min with no subscribers)
+        // Register auto-cleanup task
         Self::register_cleanup_task(
             stream_key.clone(),
             Arc::clone(&pull_stream),
             Arc::clone(&self.streams),
+            self.cleanup_check_interval,
+            self.idle_timeout,
         );
 
         // Store in manager
@@ -111,39 +132,58 @@ impl PullStreamManager {
         Ok(pull_stream)
     }
 
-    /// Register automatic cleanup task (stops pull stream when idle for 5 minutes)
+    /// Register automatic cleanup task (stops pull stream when idle)
     fn register_cleanup_task(
         stream_key: String,
         pull_stream: Arc<PullStream>,
         streams: Arc<DashMap<String, Arc<PullStream>>>,
+        check_interval: Duration,
+        idle_timeout: Duration,
     ) {
+        let span = tracing::info_span!("pull_cleanup", stream_key = %stream_key);
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_mins(1));
-
-            loop {
-                interval.tick().await;
-
-                if pull_stream.subscriber_count() == 0 {
-                    let idle_time = pull_stream.last_active_time().elapsed();
-
-                    // No subscribers for 5 minutes - stop pull stream
-                    if idle_time > Duration::from_mins(5) {
-                        log::info!(
-                            "Auto cleanup: Stopping pull stream {} (idle for {:?})",
-                            stream_key,
-                            idle_time
-                        );
-
-                        pull_stream.stop().await.ok();
-                        streams.remove(&stream_key);
-                        break;
-                    }
-                } else {
-                    // Has subscribers - update last active time
-                    pull_stream.update_last_active_time();
-                }
+            let result = Self::cleanup_loop(&stream_key, &pull_stream, &streams, check_interval, idle_timeout).await;
+            if let Err(e) = result {
+                log::error!("Cleanup task panicked for {}: {}", stream_key, e);
+                pull_stream.stop().await.ok();
+                streams.remove(&stream_key);
             }
-        });
+        }.instrument(span));
+    }
+
+    async fn cleanup_loop(
+        stream_key: &str,
+        pull_stream: &Arc<PullStream>,
+        streams: &Arc<DashMap<String, Arc<PullStream>>>,
+        check_interval: Duration,
+        idle_timeout: Duration,
+    ) -> Result<()> {
+        let mut interval = tokio::time::interval(check_interval);
+
+        loop {
+            interval.tick().await;
+
+            if pull_stream.subscriber_count() == 0 {
+                let idle_time = pull_stream.last_active_time().await.elapsed();
+
+                if idle_time > idle_timeout {
+                    log::info!(
+                        "Auto cleanup: Stopping pull stream {} (idle for {:?})",
+                        stream_key,
+                        idle_time
+                    );
+
+                    if let Err(e) = pull_stream.stop().await {
+                        log::error!("Failed to stop pull stream {}: {}", stream_key, e);
+                    }
+                    streams.remove(stream_key);
+                    break;
+                }
+            } else {
+                pull_stream.update_last_active_time().await;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -159,10 +199,10 @@ pub struct PullStream {
     local_node_id: String,
     registry: Arc<dyn StreamRegistryTrait>,
     stream_hub_event_sender: StreamHubEventSender,
-    subscriber_count: Arc<RwLock<usize>>,
-    last_active: Arc<RwLock<Instant>>,
-    is_running: Arc<RwLock<bool>>,
-    puller_handle: Arc<Mutex<Option<tokio::task::JoinHandle<Result<()>>>>>,
+    subscriber_count: AtomicUsize,
+    last_active: Mutex<Instant>,
+    is_running: AtomicBool,
+    puller_handle: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
 }
 
 impl PullStream {
@@ -181,17 +221,17 @@ impl PullStream {
             local_node_id,
             registry,
             stream_hub_event_sender,
-            subscriber_count: Arc::new(RwLock::new(0)),
-            last_active: Arc::new(RwLock::new(Instant::now())),
-            is_running: Arc::new(RwLock::new(false)),
-            puller_handle: Arc::new(Mutex::new(None)),
+            subscriber_count: AtomicUsize::new(0),
+            last_active: Mutex::new(Instant::now()),
+            is_running: AtomicBool::new(false),
+            puller_handle: Mutex::new(None),
         }
     }
 
     /// Start the pull stream - connects to publisher via gRPC
     pub async fn start(&self) -> StreamResult<()> {
-        *self.is_running.write().await = true;
-        self.update_last_active_time();
+        self.is_running.store(true, Ordering::SeqCst);
+        self.update_last_active_time().await;
 
         // Clone values before moving into async block
         let room_id = self.room_id.clone();
@@ -227,12 +267,13 @@ impl PullStream {
 
     /// Stop the pull stream
     pub async fn stop(&self) -> StreamResult<()> {
-        *self.is_running.write().await = false;
+        self.is_running.store(false, Ordering::SeqCst);
 
-        // Abort the gRPC puller task
+        // Abort the gRPC puller task and await to ensure cleanup
         let mut puller_handle = self.puller_handle.lock().await;
         if let Some(handle) = puller_handle.take() {
             handle.abort();
+            let _ = handle.await;
             log::info!("Aborted gRPC puller task for {} / {}", self.room_id, self.media_id);
         }
 
@@ -242,51 +283,36 @@ impl PullStream {
 
     /// Check if the pull stream is healthy (running and receiving data)
     pub async fn is_healthy(&self) -> bool {
-        *self.is_running.read().await
+        self.is_running.load(Ordering::SeqCst)
     }
 
     /// Get the current subscriber count
     #[must_use]
     pub fn subscriber_count(&self) -> usize {
-        // Use try_read for non-blocking access
-        if let Ok(count) = self.subscriber_count.try_read() {
-            *count
-        } else {
-            0
-        }
+        self.subscriber_count.load(Ordering::SeqCst)
     }
 
     /// Increment subscriber count
     pub fn increment_subscriber_count(&self) {
-        if let Ok(mut count) = self.subscriber_count.try_write() {
-            *count += 1;
-        }
+        self.subscriber_count.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Decrement subscriber count
     pub fn decrement_subscriber_count(&self) {
-        if let Ok(mut count) = self.subscriber_count.try_write() {
-            if *count > 0 {
-                *count -= 1;
-            }
-        }
+        // Use fetch_update to avoid underflow
+        let _ = self.subscriber_count.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+            if v > 0 { Some(v - 1) } else { None }
+        });
     }
 
     /// Get the last active time
-    #[must_use]
-    pub fn last_active_time(&self) -> Instant {
-        if let Ok(time) = self.last_active.try_read() {
-            *time
-        } else {
-            Instant::now()
-        }
+    pub async fn last_active_time(&self) -> Instant {
+        *self.last_active.lock().await
     }
 
     /// Update the last active time
-    pub fn update_last_active_time(&self) {
-        if let Ok(mut time) = self.last_active.try_write() {
-            *time = Instant::now();
-        }
+    pub async fn update_last_active_time(&self) {
+        *self.last_active.lock().await = Instant::now();
     }
 
     /// Get the stream key for this pull stream

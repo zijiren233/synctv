@@ -36,6 +36,9 @@ redis.workspace = true
 moka.workspace = true
 dashmap.workspace = true
 
+# HTTP Client (for HTTP-FLV pulling)
+reqwest.workspace = true
+
 # Utilities
 anyhow.workspace = true
 thiserror.workspace = true

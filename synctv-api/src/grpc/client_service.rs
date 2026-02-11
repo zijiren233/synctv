@@ -24,6 +24,12 @@ use crate::proto::client::{
     ListRoomStreamsRequest, ListRoomStreamsResponse,
 };
 
+/// Log an internal error and return a generic gRPC status to avoid leaking details.
+fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
+    tracing::error!("{context}: {err}");
+    Status::internal(context)
+}
+
 /// Configuration for `ClientService`
 #[derive(Clone)]
 pub struct ClientServiceConfig {
@@ -436,7 +442,7 @@ impl UserService for ClientServiceImpl {
         self.user_service
             .logout(token)
             .await
-            .map_err(|e| Status::internal(format!("Failed to logout: {e}")))?;
+            .map_err(|e| internal_err("Failed to logout", e))?;
 
         Ok(Response::new(LogoutResponse { success: true }))
     }
@@ -453,7 +459,7 @@ impl UserService for ClientServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get user: {e}")))?;
+            .map_err(|e| internal_err("Failed to get user", e))?;
 
         Ok(Response::new(GetProfileResponse {
             user: Some(User {
@@ -491,7 +497,7 @@ impl UserService for ClientServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get user: {e}")))?;
+            .map_err(|e| internal_err("Failed to get user", e))?;
 
         // Update username
         user.username = req.new_username;
@@ -501,7 +507,7 @@ impl UserService for ClientServiceImpl {
             .user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update username: {e}")))?;
+            .map_err(|e| internal_err("Failed to update username", e))?;
 
         // Convert to proto format
         let proto_user = User {
@@ -542,7 +548,7 @@ impl UserService for ClientServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get user: {e}")))?;
+            .map_err(|e| internal_err("Failed to get user", e))?;
 
         // Verify old password
         if !synctv_core::service::auth::password::verify_password(
@@ -550,7 +556,7 @@ impl UserService for ClientServiceImpl {
             &user.password_hash,
         )
         .await
-        .map_err(|e| Status::internal(format!("Failed to verify password: {e}")))?
+        .map_err(|e| internal_err("Failed to verify password", e))?
         {
             return Err(Status::permission_denied("Invalid old password"));
         }
@@ -558,7 +564,7 @@ impl UserService for ClientServiceImpl {
         // Hash new password
         let new_hash = synctv_core::service::auth::password::hash_password(&req.new_password)
             .await
-            .map_err(|e| Status::internal(format!("Failed to hash password: {e}")))?;
+            .map_err(|e| internal_err("Failed to hash password", e))?;
 
         // Update password
         user.password_hash = new_hash;
@@ -567,7 +573,7 @@ impl UserService for ClientServiceImpl {
         self.user_service
             .update_user(&user)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update password: {e}")))?;
+            .map_err(|e| internal_err("Failed to update password", e))?;
 
         Ok(Response::new(SetPasswordResponse { success: true }))
     }
@@ -591,7 +597,7 @@ impl UserService for ClientServiceImpl {
             .room_service
             .list_rooms_by_creator_with_count(&user_id, page, page_size)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get rooms: {e}")))?;
+            .map_err(|e| internal_err("Failed to get rooms", e))?;
 
         // Convert to proto format
         let mut room_protos: Vec<Room> = Vec::new();
@@ -645,7 +651,7 @@ impl UserService for ClientServiceImpl {
             .room_service
             .list_joined_rooms_with_details(&user_id, page, page_size)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get joined rooms: {e}")))?;
+            .map_err(|e| internal_err("Failed to get joined rooms", e))?;
 
         // Convert to proto format
         let mut room_with_roles: Vec<RoomWithRole> = Vec::new();
@@ -1045,7 +1051,7 @@ impl RoomService for ClientServiceImpl {
             .room_service
             .get_room_members(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room members: {e}")))?;
+            .map_err(|e| internal_err("Failed to get room members", e))?;
 
         // Convert to response
         let member_list = members
@@ -1195,7 +1201,7 @@ impl RoomService for ClientServiceImpl {
             .map_err(|e| match e {
                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
                 synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-                _ => Status::internal(format!("Failed to ban member: {e}")),
+                _ => internal_err("Failed to ban member", e),
             })?;
 
         Ok(Response::new(BanMemberResponse { success: true }))
@@ -1217,7 +1223,7 @@ impl RoomService for ClientServiceImpl {
             .map_err(|e| match e {
                 synctv_core::Error::Authorization(msg) => Status::permission_denied(msg),
                 synctv_core::Error::NotFound(msg) => Status::not_found(msg),
-                _ => Status::internal(format!("Failed to unban member: {e}")),
+                _ => internal_err("Failed to unban member", e),
             })?;
 
         Ok(Response::new(UnbanMemberResponse { success: true }))
@@ -1234,11 +1240,11 @@ impl RoomService for ClientServiceImpl {
             .room_service
             .get_room_settings(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get room settings: {e}")))?;
+            .map_err(|e| internal_err("Failed to get room settings", e))?;
 
         // Serialize settings to JSON bytes
         let settings_json = serde_json::to_vec(&settings)
-            .map_err(|e| Status::internal(format!("Failed to serialize settings: {e}")))?;
+            .map_err(|e| internal_err("Failed to serialize settings", e))?;
 
         Ok(Response::new(GetRoomSettingsResponse {
             settings: settings_json,
@@ -1256,7 +1262,7 @@ impl RoomService for ClientServiceImpl {
             .room_service
             .reset_room_settings(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to reset room settings: {e}")))?;
+            .map_err(|e| internal_err("Failed to reset room settings", e))?;
 
         Ok(Response::new(ResetRoomSettingsResponse {
             settings: settings_json.into_bytes(),
@@ -1285,8 +1291,14 @@ impl RoomService for ClientServiceImpl {
             .user_service
             .get_user(&user_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get user: {e}")))?;
+            .map_err(|e| internal_err("Failed to get user", e))?;
         let username = user.username;
+
+        // Check room membership before establishing stream
+        self.room_service
+            .check_membership(&room_id, &user_id)
+            .await
+            .map_err(|e| Status::permission_denied(format!("Not a member of the room: {e}")))?;
 
         // Generate unique connection ID
         let connection_id = nanoid!(16);
@@ -1311,11 +1323,12 @@ impl RoomService for ClientServiceImpl {
             return Err(Status::resource_exhausted(e));
         }
 
-        // Register with room
+        // Register with room (rollback global registration on failure)
         if let Err(e) = self
             .connection_manager
             .join_room(&connection_id, room_id.clone())
         {
+            self.connection_manager.unregister(&connection_id);
             return Err(Status::resource_exhausted(format!(
                 "Cannot join room: {e}"
             )));
@@ -1427,7 +1440,7 @@ impl RoomService for ClientServiceImpl {
             .room_service
             .get_chat_history(&room_id, before, limit)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get chat history: {e}")))?;
+            .map_err(|e| internal_err("Failed to get chat history", e))?;
 
         // Collect unique user IDs to batch fetch usernames
         let user_ids: Vec<UserId> = messages
@@ -1537,7 +1550,7 @@ impl RoomService for ClientServiceImpl {
                         // Generate time-limited credentials
                         let credential = turn_service
                             .generate_credential(_user_id.as_str())
-                            .map_err(|e| Status::internal(format!("Failed to generate TURN credentials: {e}")))?;
+                            .map_err(|e| internal_err("Failed to generate TURN credentials", e))?;
 
                         servers.push(IceServer {
                             urls: vec![turn_url],
@@ -1564,7 +1577,7 @@ impl RoomService for ClientServiceImpl {
                     // Generate time-limited credentials
                     let credential = turn_service
                         .generate_credential(_user_id.as_str())
-                        .map_err(|e| Status::internal(format!("Failed to generate TURN credentials: {e}")))?;
+                        .map_err(|e| internal_err("Failed to generate TURN credentials", e))?;
 
                     // Get all TURN URLs (including TLS variant if enabled)
                     let urls = turn_service.get_urls();
@@ -1612,7 +1625,7 @@ impl RoomService for ClientServiceImpl {
             .get_room_network_quality(
                 &synctv_sfu::RoomId::from(room_id.as_str()),
             )
-            .map_err(|e| Status::internal(format!("Failed to get network quality: {e}")))?;
+            .map_err(|e| internal_err("Failed to get network quality", e))?;
 
         let peers = stats
             .into_iter()
@@ -2421,7 +2434,7 @@ impl MediaService for ClientServiceImpl {
             .room_service
             .get_playlist(&room_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get playlist: {e}")))?;
+            .map_err(|e| internal_err("Failed to get playlist", e))?;
 
         let media = playlist
             .iter()
@@ -2489,7 +2502,7 @@ impl MediaService for ClientServiceImpl {
         let result = provider
             .generate_playback(&ctx, &media.source_config)
             .await
-            .map_err(|e| Status::internal(format!("generate_playback failed: {e}")))?;
+            .map_err(|e| internal_err("generate_playback failed", e))?;
 
         // 4. Check movie_proxy setting
         let movie_proxy = self
@@ -2683,7 +2696,7 @@ impl PublicService for ClientServiceImpl {
             .room_service
             .list_rooms(&query)
             .await
-            .map_err(|e| Status::internal(format!("Failed to list rooms: {e}")))?;
+            .map_err(|e| internal_err("Failed to list rooms", e))?;
 
         let mut proto_rooms = Vec::new();
         for room in rooms {
@@ -2745,7 +2758,7 @@ impl PublicService for ClientServiceImpl {
             .room_service
             .list_rooms(&query)
             .await
-            .map_err(|e| Status::internal(format!("Failed to list rooms: {e}")))?;
+            .map_err(|e| internal_err("Failed to list rooms", e))?;
 
         let mut room_stats: Vec<(synctv_core::models::Room, i32, i32)> = Vec::new();
         for room in rooms {
@@ -2844,7 +2857,7 @@ impl EmailService for ClientServiceImpl {
             .user_service
             .get_by_email(&req.email)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {e}")))?;
+            .map_err(|e| internal_err("Database error", e))?;
 
         let user = match user {
             Some(u) => u,
@@ -2859,7 +2872,7 @@ impl EmailService for ClientServiceImpl {
         let _token = email_service
             .send_verification_email(&req.email, email_token_service, &user.id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to send email: {e}")))?;
+            .map_err(|e| internal_err("Failed to send email", e))?;
 
         tracing::info!("Sent verification email to {}", req.email);
 
@@ -2882,7 +2895,7 @@ impl EmailService for ClientServiceImpl {
             .user_service
             .get_by_email(&req.email)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {e}")))?
+            .map_err(|e| internal_err("Database error", e))?
             .ok_or_else(|| Status::not_found("User not found"))?;
 
         // Validate token
@@ -2900,7 +2913,7 @@ impl EmailService for ClientServiceImpl {
         self.user_service
             .set_email_verified(&user.id, true)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update email verification: {e}")))?;
+            .map_err(|e| internal_err("Failed to update email verification", e))?;
 
         tracing::info!("Email verified for user {}", user.id.as_str());
 
@@ -2926,7 +2939,7 @@ impl EmailService for ClientServiceImpl {
             .user_service
             .get_by_email(&req.email)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {e}")))?;
+            .map_err(|e| internal_err("Database error", e))?;
 
         let Some(user) = user else {
             // Don't reveal whether email exists
@@ -2939,7 +2952,7 @@ impl EmailService for ClientServiceImpl {
         let _token = email_service
             .send_password_reset_email(&req.email, email_token_service, &user.id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to send email: {e}")))?;
+            .map_err(|e| internal_err("Failed to send email", e))?;
 
         tracing::info!("Password reset requested for user {}", user.id.as_str());
 
@@ -2962,7 +2975,7 @@ impl EmailService for ClientServiceImpl {
             .user_service
             .get_by_email(&req.email)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {e}")))?
+            .map_err(|e| internal_err("Database error", e))?
             .ok_or_else(|| Status::not_found("User not found"))?;
 
         // Validate token
@@ -2985,7 +2998,7 @@ impl EmailService for ClientServiceImpl {
         self.user_service
             .set_password(&user.id, &req.new_password)
             .await
-            .map_err(|e| Status::internal(format!("Failed to update password: {e}")))?;
+            .map_err(|e| internal_err("Failed to update password", e))?;
 
         tracing::info!("Password reset completed for user {}", user.id.as_str());
 

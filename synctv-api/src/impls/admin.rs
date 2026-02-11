@@ -956,6 +956,69 @@ impl AdminApiImpl {
             additional_stats: vec![],
         })
     }
+
+    // =========================
+    // Livestream Management
+    // =========================
+
+    /// List all active streams, optionally filtered by room_id
+    pub async fn list_active_streams(
+        &self,
+        room_id: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::proto::admin::ActiveStreamInfo>> {
+        let infrastructure = self
+            .live_streaming_infrastructure
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Live streaming not configured"))?;
+
+        let registry = infrastructure.registry();
+        let active_pairs = registry.list_active_streams().await?;
+
+        let mut streams = Vec::new();
+        for (rid, mid) in active_pairs {
+            if let Some(filter_room) = room_id {
+                if rid != filter_room {
+                    continue;
+                }
+            }
+
+            let (user_id, node_id, started_at) = match registry.get_publisher(&rid, &mid).await {
+                Ok(Some(info)) => (
+                    info.user_id,
+                    info.node_id,
+                    info.started_at.to_rfc3339(),
+                ),
+                _ => (String::new(), String::new(), String::new()),
+            };
+
+            streams.push(crate::proto::admin::ActiveStreamInfo {
+                room_id: rid,
+                media_id: mid,
+                user_id,
+                node_id,
+                started_at,
+            });
+        }
+
+        Ok(streams)
+    }
+
+    /// Kick an active stream
+    pub async fn kick_stream(&self, room_id: &str, media_id: &str, reason: &str) -> anyhow::Result<()> {
+        let infrastructure = self
+            .live_streaming_infrastructure
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Live streaming not configured"))?;
+
+        tracing::info!(
+            room_id = %room_id,
+            media_id = %media_id,
+            reason = %reason,
+            "Admin kicking stream"
+        );
+
+        infrastructure.kick_stream(room_id, media_id).await
+    }
 }
 
 // === Helper Functions ===

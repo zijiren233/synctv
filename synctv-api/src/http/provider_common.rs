@@ -23,7 +23,7 @@ pub fn register_common_routes() -> Router<AppState> {
 }
 
 /// List all available provider instances
-async fn list_instances(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_instances(_auth: AuthUser, State(state): State<AppState>) -> impl IntoResponse {
     let instances = state.provider_instance_manager.list().await;
 
     Json(json!({

@@ -30,6 +30,7 @@ pub mod bilibili;
 pub mod direct_url;
 pub mod emby;
 pub mod rtmp;
+pub mod live_proxy;
 
 pub use config::*;
 pub use context::*;
@@ -43,3 +44,4 @@ pub use bilibili::BilibiliProvider;
 pub use direct_url::DirectUrlProvider;
 pub use emby::EmbyProvider;
 pub use rtmp::RtmpProvider;
+pub use live_proxy::LiveProxyProvider;

@@ -77,6 +77,17 @@ impl MediaProvider for DirectUrlProvider {
     ) -> Result<PlaybackResult, ProviderError> {
         let config = DirectUrlSourceConfig::try_from(source_config)?;
 
+        // Validate URL scheme: only allow http(s) and rtmp(s)
+        if !config.url.starts_with("http://")
+            && !config.url.starts_with("https://")
+            && !config.url.starts_with("rtmp://")
+            && !config.url.starts_with("rtmps://")
+        {
+            return Err(ProviderError::InvalidConfig(
+                "URL must use http, https, rtmp, or rtmps scheme".to_string(),
+            ));
+        }
+
         let format = Self::detect_format(&config.url);
 
         let mut playback_infos = HashMap::new();

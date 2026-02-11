@@ -1,8 +1,7 @@
 //! Shared media proxy utilities
 //!
-//! Provides reusable functions for proxying media streams, rewriting M3U8
-//! playlists, and handling CORS preflight requests.  Used by per-provider
-//! proxy routes in `synctv-api`.
+//! Provides reusable functions for proxying media streams and rewriting M3U8
+//! playlists.  Used by per-provider proxy routes in `synctv-api`.
 
 pub mod mpd;
 
@@ -98,7 +97,6 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
         }
     }
 
-    builder = apply_cors(builder);
     builder = builder.header("Cache-Control", "no-cache");
     builder = builder.header("Pragma", "no-cache");
 
@@ -165,27 +163,15 @@ pub async fn proxy_m3u8_and_rewrite(
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/vnd.apple.mpegurl")
-        .header("Access-Control-Allow-Origin", "*")
-        .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-        .header("Access-Control-Allow-Headers", "*")
-        .header("Access-Control-Expose-Headers", "*")
         .header("Cache-Control", "no-cache")
         .body(Body::from(rewritten))
         .map_err(|e| anyhow::anyhow!("Failed to build M3U8 response: {e}"))
 }
 
-/// CORS preflight handler suitable for `OPTIONS` routes.
+/// Preflight handler suitable for `OPTIONS` routes.
 #[allow(clippy::unused_async)]
 pub async fn proxy_options_preflight() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [
-            ("Access-Control-Allow-Origin", "*"),
-            ("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS"),
-            ("Access-Control-Allow-Headers", "*"),
-            ("Access-Control-Max-Age", "86400"),
-        ],
-    )
+    StatusCode::NO_CONTENT
 }
 
 // ------------------------------------------------------------------
@@ -279,10 +265,3 @@ pub fn percent_encode(input: &str) -> String {
 // Internal helpers
 // ------------------------------------------------------------------
 
-fn apply_cors(builder: axum::http::response::Builder) -> axum::http::response::Builder {
-    builder
-        .header("Access-Control-Allow-Origin", "*")
-        .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-        .header("Access-Control-Allow-Headers", "*")
-        .header("Access-Control-Expose-Headers", "*")
-}

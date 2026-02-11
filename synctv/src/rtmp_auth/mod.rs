@@ -27,6 +27,23 @@ use synctv_core::{
     service::{PublishKeyService, RoomService, UserService},
 };
 
+/// Stream lifecycle event emitted on publish/unpublish
+#[derive(Debug, Clone)]
+pub enum StreamLifecycleEvent {
+    /// A publisher successfully started streaming
+    Started {
+        room_id: String,
+        media_id: String,
+        user_id: String,
+    },
+    /// A publisher stopped streaming
+    Stopped {
+        room_id: String,
+        media_id: String,
+        user_id: String,
+    },
+}
+
 /// RTMP authentication implementation for `SyncTV`
 ///
 /// Validates RTMP publish/play requests against:
@@ -48,6 +65,8 @@ pub struct SyncTvRtmpAuth {
     registry: Arc<dyn StreamRegistryTrait>,
     /// This node's unique identifier for publisher registration
     node_id: String,
+    /// Broadcast channel for stream lifecycle events (StreamStarted/StreamStopped)
+    stream_event_tx: Option<tokio::sync::broadcast::Sender<StreamLifecycleEvent>>,
     /// Active TTL renewal tasks: "`room_id:media_id`" → `AbortHandle`
     ttl_handles: DashMap<String, AbortHandle>,
 }
@@ -60,6 +79,7 @@ impl SyncTvRtmpAuth {
         user_stream_tracker: UserStreamTracker,
         registry: Arc<dyn StreamRegistryTrait>,
         node_id: String,
+        stream_event_tx: Option<tokio::sync::broadcast::Sender<StreamLifecycleEvent>>,
     ) -> Self {
         Self {
             room_service,
@@ -68,6 +88,7 @@ impl SyncTvRtmpAuth {
             user_stream_tracker,
             registry,
             node_id,
+            stream_event_tx,
             ttl_handles: DashMap::new(),
         }
     }
@@ -154,12 +175,21 @@ impl AuthCallback for SyncTvRtmpAuth {
             }
         };
 
+        // Verify media belongs to this room
+        let media_id = MediaId::from_string(claims.media_id.clone());
+        let room_id_obj = synctv_core::models::RoomId::from_string(app_name.to_string());
+        let media = self.room_service.media_service().get_media(&media_id).await
+            .map_err(|e| format!("Failed to load media: {e}"))?
+            .ok_or_else(|| format!("Media {} not found", claims.media_id))?;
+        if media.room_id != room_id_obj {
+            return Err(format!(
+                "Media {} does not belong to room {}",
+                claims.media_id, app_name
+            ).into());
+        }
+
         let is_media_creator = if !is_global_admin && !is_room_admin_or_creator {
-            let media_id = MediaId::from_string(claims.media_id.clone());
-            match self.room_service.media_service().get_media(&media_id).await {
-                Ok(Some(media)) => media.creator_id == user_id,
-                _ => false,
-            }
+            media.creator_id == user_id
         } else {
             false
         };
@@ -208,6 +238,15 @@ impl AuthCallback for SyncTvRtmpAuth {
             app_name,
             stream_name,
         );
+
+        // Emit stream lifecycle event
+        if let Some(ref tx) = self.stream_event_tx {
+            let _ = tx.send(StreamLifecycleEvent::Started {
+                room_id: claims.room_id.clone(),
+                media_id: claims.media_id.clone(),
+                user_id: claims.user_id.clone(),
+            });
+        }
 
         // Spawn TTL renewal task (refreshes Redis registration every 60 seconds)
         let ttl_key = format!("{}:{}", claims.room_id, claims.media_id);
@@ -304,6 +343,15 @@ impl AuthCallback for SyncTvRtmpAuth {
                     "Failed to unregister publisher from Redis: {}",
                     e
                 );
+            }
+
+            // Emit stream lifecycle event
+            if let Some(ref tx) = self.stream_event_tx {
+                let _ = tx.send(StreamLifecycleEvent::Stopped {
+                    room_id: room_id.clone(),
+                    media_id: media_id.clone(),
+                    user_id: user_id.clone(),
+                });
             }
         } else {
             tracing::warn!(

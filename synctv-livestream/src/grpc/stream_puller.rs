@@ -180,7 +180,7 @@ impl GrpcStreamPuller {
 
     /// Exponential backoff with jitter.
     async fn backoff(attempt: u32, initial_ms: u64, max_ms: u64) {
-        let base = initial_ms.saturating_mul(1u64 << attempt.min(16) - 1);
+        let base = initial_ms.saturating_mul(1u64 << attempt.min(16).saturating_sub(1));
         let capped = base.min(max_ms);
         // Add jitter: ±25%
         let jitter = capped / 4;

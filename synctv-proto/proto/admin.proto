@@ -64,6 +64,12 @@ service AdminService {
     // System Statistics
     // =========================
     rpc GetSystemStats(GetSystemStatsRequest) returns (GetSystemStatsResponse);
+
+    // =========================
+    // Livestream Management
+    // =========================
+    rpc ListActiveStreams(ListActiveStreamsRequest) returns (ListActiveStreamsResponse);
+    rpc KickStream(KickStreamRequest) returns (KickStreamResponse);
 }
 
 // =========================
@@ -490,3 +496,31 @@ message GetSystemStatsResponse {
     int32 provider_instances = 8; // Total media provider instances
     bytes additional_stats = 9; // JSON for extensibility
 }
+
+// =========================
+// Livestream Management
+// =========================
+
+message ListActiveStreamsRequest {
+    string room_id = 1; // optional filter by room
+}
+
+message ActiveStreamInfo {
+    string room_id = 1;
+    string media_id = 2;
+    string user_id = 3;
+    string node_id = 4;
+    string started_at = 5;
+}
+
+message ListActiveStreamsResponse {
+    repeated ActiveStreamInfo streams = 1;
+}
+
+message KickStreamRequest {
+    string room_id = 1;
+    string media_id = 2;
+    string reason = 3;
+}
+
+message KickStreamResponse {}

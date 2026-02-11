@@ -101,8 +101,14 @@ fn create_test_infrastructure() -> LiveStreamingInfrastructure {
         event_sender.clone(),
     ));
 
+    let external_publish_manager = Arc::new(synctv_livestream::livestream::ExternalPublishManager::new(
+        registry.clone(),
+        "test-node".to_string(),
+        event_sender.clone(),
+    ));
+
     let user_stream_tracker = Arc::new(synctv_livestream::api::StreamTracker::new());
-    LiveStreamingInfrastructure::new(registry, event_sender, pull_manager, user_stream_tracker)
+    LiveStreamingInfrastructure::new(registry, event_sender, pull_manager, external_publish_manager, user_stream_tracker)
         .with_segment_manager(segment_manager)
         .with_hls_stream_registry(hls_registry)
 }

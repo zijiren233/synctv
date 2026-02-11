@@ -13,6 +13,8 @@ pub enum ProviderType {
     Bilibili,
     Alist,
     Emby,
+    Rtmp,
+    LiveProxy,
 }
 
 impl FromStr for ProviderType {
@@ -24,6 +26,8 @@ impl FromStr for ProviderType {
             "bilibili" => Ok(Self::Bilibili),
             "alist" => Ok(Self::Alist),
             "emby" => Ok(Self::Emby),
+            "rtmp" => Ok(Self::Rtmp),
+            "live_proxy" | "liveproxy" => Ok(Self::LiveProxy),
             _ => Err(format!("Unknown provider type: {s}")),
         }
     }
@@ -36,6 +40,8 @@ impl std::fmt::Display for ProviderType {
             Self::Bilibili => write!(f, "bilibili"),
             Self::Alist => write!(f, "alist"),
             Self::Emby => write!(f, "emby"),
+            Self::Rtmp => write!(f, "rtmp"),
+            Self::LiveProxy => write!(f, "live_proxy"),
         }
     }
 }

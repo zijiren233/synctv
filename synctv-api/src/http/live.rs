@@ -1,4 +1,4 @@
-// Live streaming HTTP endpoints
+//! Live streaming HTTP endpoints
 //!
 //! Provides FLV and HLS streaming endpoints for live video.
 //!
@@ -109,8 +109,13 @@ async fn handle_flv_stream(
     let infrastructure = state.client_api.live_infrastructure()
         .ok_or_else(|| AppError::internal_server_error("Live streaming not configured"))?;
 
+    // Look up external source URL for LiveProxy media (validates media belongs to room)
+    let source_url = state.client_api.get_live_proxy_source_url(&room_id_str, &media_id).await;
+
     // Create FLV streaming session with lazy-load pull
-    let rx = FlvStreamingApi::create_session_with_pull(infrastructure, &room_id_str, &media_id)
+    let (rx, subscriber_guard) = FlvStreamingApi::create_session_with_pull(
+        infrastructure, &room_id_str, &media_id, source_url.as_deref(),
+    )
         .await
         .map_err(|e| AppError::internal_server_error(format!("Failed to create FLV session: {e}")))?;
 
@@ -121,10 +126,13 @@ async fn handle_flv_stream(
     // Create channel wrapper that monitors disconnect signals
     let (tx, rx_wrapped) = tokio::sync::mpsc::unbounded_channel();
 
-    // Spawn task to forward data and monitor disconnect signals
+    // Spawn task to forward data and monitor disconnect signals.
+    // The subscriber_guard lives here — dropped when the task ends (viewer disconnect),
+    // which decrements the subscriber count and eventually triggers idle cleanup.
     let user_id_clone = user_id.clone();
     let room_id_clone = room_id.clone();
     tokio::spawn(async move {
+        let _guard = subscriber_guard; // held for the lifetime of this task
         let mut rx = rx;
         loop {
             tokio::select! {
@@ -238,6 +246,9 @@ async fn handle_hls_playlist(
     let infrastructure = state.client_api.live_infrastructure()
         .ok_or_else(|| AppError::internal_server_error("Live streaming not configured"))?;
 
+    // Look up external source URL for LiveProxy media (validates media belongs to room)
+    let source_url = state.client_api.get_live_proxy_source_url(&room_id, &media_id).await;
+
     // Build segment URL base following synctv-go pattern
     // TS segments are at: /api/room/movie/live/hls/data/{roomId}/{movieId}/
     let segment_url_base = format!("/api/room/movie/live/hls/data/{room_id}/{media_id}/");
@@ -247,6 +258,7 @@ async fn handle_hls_playlist(
         infrastructure,
         &room_id,
         &media_id,
+        source_url.as_deref(),
         &segment_url_base,
     )
     .await

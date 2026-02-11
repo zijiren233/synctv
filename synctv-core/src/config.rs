@@ -115,12 +115,24 @@ impl Default for LoggingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LivestreamConfig {
     pub rtmp_port: u16,
     pub hls_port: u16,
     pub max_streams: u32,
-    pub gop_cache_size: u32, // In number of GOPs
+    pub gop_cache_size: u32,
+    /// Idle timeout before auto-stopping a pull stream (seconds)
     pub stream_timeout_seconds: u64,
+    /// How often to check for idle streams (seconds)
+    pub cleanup_check_interval_seconds: u64,
+    /// Max retries for pull stream connections
+    pub pull_max_retries: u32,
+    /// Initial backoff for pull retries (milliseconds)
+    pub pull_initial_backoff_ms: u64,
+    /// Max backoff for pull retries (milliseconds)
+    pub pull_max_backoff_ms: u64,
+    /// Max FLV tag size to accept (bytes, prevents OOM)
+    pub max_flv_tag_size_bytes: usize,
 }
 
 impl Default for LivestreamConfig {
@@ -131,6 +143,11 @@ impl Default for LivestreamConfig {
             max_streams: 50,
             gop_cache_size: 2,
             stream_timeout_seconds: 300,
+            cleanup_check_interval_seconds: 60,
+            pull_max_retries: 10,
+            pull_initial_backoff_ms: 1000,
+            pull_max_backoff_ms: 30_000,
+            max_flv_tag_size_bytes: 10 * 1024 * 1024,
         }
     }
 }
@@ -203,6 +220,12 @@ pub struct WebRTCConfig {
     pub builtin_turn_max_port: u16,
     /// Maximum concurrent TURN allocations (limit resource usage)
     pub builtin_turn_max_allocations: usize,
+    /// Default TURN allocation lifetime (seconds)
+    pub builtin_turn_default_lifetime: u32,
+    /// Maximum TURN allocation lifetime (seconds)
+    pub builtin_turn_max_lifetime: u32,
+    /// STUN/TURN max UDP packet size (bytes)
+    pub stun_max_packet_size: usize,
 
     // External TURN server configuration
     /// External TURN server URL (e.g., "turn:turn.example.com:3478")
@@ -212,6 +235,8 @@ pub struct WebRTCConfig {
     pub external_turn_static_secret: Option<String>,
     /// TURN credential TTL in seconds (default 24 hours)
     pub turn_credential_ttl: u64,
+    /// TURN realm (default "synctv.local")
+    pub turn_realm: Option<String>,
 
     // SFU Configuration (for large rooms)
     /// Room size threshold to switch to SFU mode (only for Hybrid mode)
@@ -298,11 +323,15 @@ impl Default for WebRTCConfig {
             builtin_turn_min_port: 49152,
             builtin_turn_max_port: 65535,
             builtin_turn_max_allocations: 100,
+            builtin_turn_default_lifetime: 600,
+            builtin_turn_max_lifetime: 3600,
+            stun_max_packet_size: 1500,
 
             // External TURN configuration
             external_turn_server_url: None,
             external_turn_static_secret: None,
             turn_credential_ttl: 86400, // 24 hours
+            turn_realm: None,
 
             // SFU configuration
             sfu_threshold: 5, // Switch to SFU for 5+ participants
@@ -465,6 +494,25 @@ impl Config {
                 "webrtc.builtin_turn_min_port ({}) must be less than builtin_turn_max_port ({})",
                 self.webrtc.builtin_turn_min_port, self.webrtc.builtin_turn_max_port
             ));
+        }
+
+        // Validate connection limits
+        if self.connection_limits.max_per_user == 0 {
+            errors.push("connection_limits.max_per_user must be greater than 0".to_string());
+        }
+        if self.connection_limits.max_per_room == 0 {
+            errors.push("connection_limits.max_per_room must be greater than 0".to_string());
+        }
+        if self.connection_limits.max_total == 0 {
+            errors.push("connection_limits.max_total must be greater than 0".to_string());
+        }
+
+        // Validate livestream config
+        if self.livestream.stream_timeout_seconds == 0 {
+            errors.push("livestream.stream_timeout_seconds must be greater than 0".to_string());
+        }
+        if self.livestream.cleanup_check_interval_seconds == 0 {
+            errors.push("livestream.cleanup_check_interval_seconds must be greater than 0".to_string());
         }
 
         if errors.is_empty() {

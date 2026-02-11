@@ -775,13 +775,15 @@ impl RoomService {
         // Get all media in playlist
         let media_list = self.media_service.get_playlist_media(&playlist_id).await?;
 
-        // Remove each media item
-        let mut count = 0;
-        for media in media_list {
-            if self.media_service.remove_media(room_id.clone(), user_id.clone(), media.id).await.is_ok() {
-                count += 1;
-            }
+        if media_list.is_empty() {
+            return Ok(0);
         }
+
+        // Batch delete for atomicity
+        let media_ids: Vec<_> = media_list.into_iter().map(|m| m.id).collect();
+        let count = self.media_service
+            .remove_media_batch(room_id, user_id, media_ids)
+            .await? as i64;
 
         Ok(count)
     }
@@ -1063,7 +1065,7 @@ impl RoomService {
 
             return Ok(ListRoomsResponse {
                 rooms: admin_rooms,
-                total: total as i32,
+                total: i32::try_from(total).unwrap_or(i32::MAX),
             });
         }
 
@@ -1114,7 +1116,7 @@ impl RoomService {
 
         Ok(ListRoomsResponse {
             rooms: admin_rooms,
-            total: total as i32,
+            total: i32::try_from(total).unwrap_or(i32::MAX),
         })
     }
 

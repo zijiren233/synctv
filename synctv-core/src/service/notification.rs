@@ -97,6 +97,16 @@ pub enum RoomEvent {
     SettingsUpdated { settings: serde_json::Value },
     /// Room deleted
     RoomDeleted,
+    /// Live stream started (publisher connected)
+    StreamStarted {
+        media_id: String,
+        user_id: UserId,
+    },
+    /// Live stream stopped (publisher disconnected)
+    StreamStopped {
+        media_id: String,
+        user_id: UserId,
+    },
 }
 
 impl RoomEvent {
@@ -123,6 +133,8 @@ impl RoomEvent {
             Self::GuestKicked { .. } => "guest_kicked",
             Self::SettingsUpdated { .. } => "settings_updated",
             Self::RoomDeleted => "room_deleted",
+            Self::StreamStarted { .. } => "stream_started",
+            Self::StreamStopped { .. } => "stream_stopped",
         }
     }
 }
@@ -442,6 +454,34 @@ impl NotificationService {
         self.broadcast_to_room(room_id, event).await
     }
 
+    /// Notify room members that a live stream started
+    pub async fn notify_stream_started(
+        &self,
+        room_id: &RoomId,
+        media_id: &str,
+        user_id: &UserId,
+    ) -> Result<()> {
+        let event = RoomEvent::StreamStarted {
+            media_id: media_id.to_string(),
+            user_id: user_id.clone(),
+        };
+        self.broadcast_to_room(room_id, event).await
+    }
+
+    /// Notify room members that a live stream stopped
+    pub async fn notify_stream_stopped(
+        &self,
+        room_id: &RoomId,
+        media_id: &str,
+        user_id: &UserId,
+    ) -> Result<()> {
+        let event = RoomEvent::StreamStopped {
+            media_id: media_id.to_string(),
+            user_id: user_id.clone(),
+        };
+        self.broadcast_to_room(room_id, event).await
+    }
+
     /// Kick all guests from a room
     ///
     /// This sends a `GuestKicked` event to all guest connections in the room.
@@ -646,6 +686,14 @@ mod tests {
                 settings: serde_json::json!({"key": "value"}),
             },
             RoomEvent::RoomDeleted,
+            RoomEvent::StreamStarted {
+                media_id: "media123".to_string(),
+                user_id: UserId::new(),
+            },
+            RoomEvent::StreamStopped {
+                media_id: "media123".to_string(),
+                user_id: UserId::new(),
+            },
         ];
 
         for event in events {

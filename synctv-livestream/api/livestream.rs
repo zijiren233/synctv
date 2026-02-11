@@ -18,6 +18,7 @@ use crate::{
     relay::StreamRegistryTrait,
     livestream::{
         pull_manager::PullStreamManager,
+        external_publish_manager::ExternalPublishManager,
         segment_manager::SegmentManager,
     },
     protocols::hls::remuxer::StreamRegistry as HlsStreamRegistry,
@@ -29,6 +30,30 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use synctv_xiu::streamhub::define::StreamHubEventSender;
 use tokio::sync::mpsc;
+
+/// RAII guard that decrements a stream's subscriber count on drop.
+///
+/// Hold this for the lifetime of a viewer connection:
+/// - **FLV**: lives in the streaming task — dropped when the viewer disconnects
+/// - **HLS**: dropped at the end of each request (transient touch of `last_active_time`)
+///
+/// The cleanup task in both managers checks `subscriber_count == 0 && idle > 5 min`
+/// before tearing down the stream, so this guard is essential for correct lifecycle.
+pub struct StreamSubscriberGuard(Option<Box<dyn FnOnce() + Send>>);
+
+impl StreamSubscriberGuard {
+    fn new(on_drop: impl FnOnce() + Send + 'static) -> Self {
+        Self(Some(Box::new(on_drop)))
+    }
+}
+
+impl Drop for StreamSubscriberGuard {
+    fn drop(&mut self) {
+        if let Some(f) = self.0.take() {
+            f();
+        }
+    }
+}
 
 /// Legacy type alias — prefer `StreamTracker` for new code.
 pub type UserStreamTracker = Arc<StreamTracker>;
@@ -309,8 +334,10 @@ pub struct LiveStreamingInfrastructure {
     pub registry: Arc<dyn StreamRegistryTrait>,
     /// `StreamHub` event sender for subscribing to streams
     pub stream_hub_event_sender: StreamHubEventSender,
-    /// Pull stream manager for lazy-load streaming
+    /// Pull stream manager for gRPC relay (cross-node pull)
     pub pull_manager: Arc<PullStreamManager>,
+    /// External publish manager for pull-to-publish streams (RTMP/HTTP-FLV sources)
+    pub external_publish_manager: Arc<ExternalPublishManager>,
     /// Segment manager for HLS storage
     pub segment_manager: Option<Arc<SegmentManager>>,
     /// HLS stream registry for M3U8 generation
@@ -325,12 +352,14 @@ impl LiveStreamingInfrastructure {
         registry: Arc<dyn StreamRegistryTrait>,
         stream_hub_event_sender: StreamHubEventSender,
         pull_manager: Arc<PullStreamManager>,
+        external_publish_manager: Arc<ExternalPublishManager>,
         user_stream_tracker: UserStreamTracker,
     ) -> Self {
         Self {
             registry,
             stream_hub_event_sender,
             pull_manager,
+            external_publish_manager,
             segment_manager: None,
             hls_stream_registry: None,
             user_stream_tracker,
@@ -413,6 +442,73 @@ impl LiveStreamingInfrastructure {
         }
     }
 
+    /// Kick a specific stream by room_id and media_id.
+    ///
+    /// Removes the publisher from Redis and sends an UnPublish event.
+    pub async fn kick_stream(&self, room_id: &str, media_id: &str) -> Result<()> {
+        // Remove from Redis registry
+        self.registry
+            .unregister_publisher(room_id, media_id)
+            .await?;
+
+        // Remove from local tracker
+        let _ = self.user_stream_tracker.remove_stream(room_id, media_id);
+
+        // Send UnPublish to StreamHub
+        self.kick_publisher(room_id, media_id)?;
+
+        Ok(())
+    }
+
+    /// Ensure a pull stream exists for the given room/media.
+    ///
+    /// Unified entry point that handles both gRPC relay and external pull:
+    /// 1. If a publisher exists in Redis → gRPC relay (cross-node)
+    /// 2. If no publisher + `external_source_url` provided → external pull (lazy start)
+    /// 3. If no publisher + no URL → error
+    ///
+    /// Returns a [`StreamSubscriberGuard`] that decrements the subscriber count
+    /// when dropped. For FLV, hold it in the streaming task; for HLS, let it
+    /// drop at the end of the request (the `last_active_time` touch keeps the
+    /// stream alive across polling intervals).
+    pub async fn ensure_pull_stream(
+        &self,
+        room_id: &str,
+        media_id: &str,
+        external_source_url: Option<&str>,
+    ) -> Result<StreamSubscriberGuard> {
+        // Check Redis for an existing publisher
+        let publisher = self.registry.get_publisher(room_id, media_id).await
+            .map_err(|e| anyhow::anyhow!("Failed to check publisher: {e}"))?;
+
+        if publisher.is_some() {
+            // Publisher found in Redis — create gRPC relay pull stream
+            let stream = self.pull_manager
+                .get_or_create_pull_stream(room_id, media_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to create pull stream: {e}"))?;
+            let guard = StreamSubscriberGuard::new(move || stream.decrement_subscriber_count());
+            return Ok(guard);
+        }
+
+        // No publisher in Redis — try external publish if URL provided
+        if let Some(source_url) = external_source_url {
+            let stream = self.external_publish_manager
+                .get_or_create(room_id, media_id, source_url)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to create external publish stream: {e}"))?;
+            let guard = StreamSubscriberGuard::new(move || stream.decrement_subscriber_count());
+            return Ok(guard);
+        }
+
+        Err(anyhow::anyhow!("No publisher found for {room_id}/{media_id}"))
+    }
+
+    /// Get the registry (for admin queries)
+    pub fn registry(&self) -> &Arc<dyn StreamRegistryTrait> {
+        &self.registry
+    }
+
     /// Check if publisher exists for a room/media
     pub async fn has_publisher(&self, room_id: &str, media_id: &str) -> Result<bool> {
         self.registry
@@ -490,24 +586,27 @@ impl FlvStreamingApi {
     /// Create FLV streaming session with lazy-load pull
     ///
     /// This ensures a pull stream is created if one doesn't exist.
-    /// Useful for cross-node scenarios where the publisher is on a different server.
+    /// Supports both cross-node gRPC relay and external source pulling.
+    ///
+    /// Returns `(receiver, guard)`. The caller **must** hold the
+    /// [`StreamSubscriberGuard`] for the lifetime of the FLV streaming task
+    /// so the subscriber count is decremented when the viewer disconnects.
+    ///
+    /// # Arguments
+    /// * `external_source_url` - If provided and no Redis publisher exists, starts an
+    ///   external pull from this URL (RTMP or HTTP-FLV).
     pub async fn create_session_with_pull(
         infrastructure: &LiveStreamingInfrastructure,
         room_id: &str,
         media_id: &str,
-    ) -> Result<mpsc::UnboundedReceiver<Result<Bytes, std::io::Error>>> {
-        // Ensure publisher exists
-        infrastructure.get_publisher(room_id, media_id).await?;
+        external_source_url: Option<&str>,
+    ) -> Result<(mpsc::UnboundedReceiver<Result<Bytes, std::io::Error>>, StreamSubscriberGuard)> {
+        // Ensure pull stream exists (gRPC relay or external)
+        let guard = infrastructure.ensure_pull_stream(room_id, media_id, external_source_url).await?;
 
-        // Lazy-load: Create pull stream if needed
-        let _pull_stream = infrastructure
-            .pull_manager
-            .get_or_create_pull_stream(room_id, media_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create pull stream: {e}"))?;
-
-        // Create FLV session
-        Self::create_session(infrastructure, room_id, media_id).await
+        // Create FLV session (subscribes to local StreamHub)
+        let rx = Self::create_session(infrastructure, room_id, media_id).await?;
+        Ok((rx, guard))
     }
 }
 
@@ -657,23 +756,30 @@ impl HlsStreamingApi {
     /// Generate HLS M3U8 playlist with lazy-load pull and custom URL generator
     ///
     /// This ensures a pull stream is created if one doesn't exist.
+    /// Supports both cross-node gRPC relay and external source pulling.
     ///
     /// # Arguments
     /// * `infrastructure` - Live streaming infrastructure
     /// * `room_id` - Room identifier
     /// * `media_id` - Media/stream identifier
+    /// * `external_source_url` - If provided and no Redis publisher exists, starts an
+    ///   external pull from this URL.
     /// * `url_generator` - Closure that generates segment URLs (allows auth tokens, CDN, etc)
     pub async fn generate_playlist_with_pull<F>(
         infrastructure: &LiveStreamingInfrastructure,
         room_id: &str,
         media_id: &str,
+        external_source_url: Option<&str>,
         url_generator: F,
     ) -> Result<String>
     where
         F: Fn(&str) -> String,
     {
-        // Ensure publisher exists (this also triggers pull stream creation)
-        infrastructure.get_publisher(room_id, media_id).await?;
+        // Ensure pull stream exists (gRPC relay or external).
+        // Guard is dropped at end of this function — for HLS this is intentional:
+        // each polling request transiently touches last_active_time, keeping the
+        // stream alive as long as the viewer keeps requesting playlists.
+        let _guard = infrastructure.ensure_pull_stream(room_id, media_id, external_source_url).await?;
 
         Self::generate_playlist(infrastructure, room_id, media_id, url_generator).await
     }
@@ -681,19 +787,23 @@ impl HlsStreamingApi {
     /// Generate HLS M3U8 playlist with lazy-load pull and simple base URL (convenience method)
     ///
     /// This ensures a pull stream is created if one doesn't exist.
+    /// Supports both cross-node gRPC relay and external source pulling.
     ///
     /// # Arguments
     /// * `infrastructure` - Live streaming infrastructure
     /// * `room_id` - Room identifier
     /// * `media_id` - Media/stream identifier
+    /// * `external_source_url` - If provided and no Redis publisher exists, starts an
+    ///   external pull from this URL.
     /// * `segment_url_base` - Base URL for segment links (e.g., "/`api/rooms/{room_id}/live/hls/segments`/")
     pub async fn generate_playlist_with_pull_simple(
         infrastructure: &LiveStreamingInfrastructure,
         room_id: &str,
         media_id: &str,
+        external_source_url: Option<&str>,
         segment_url_base: &str,
     ) -> Result<String> {
-        Self::generate_playlist_with_pull(infrastructure, room_id, media_id, |ts_name| {
+        Self::generate_playlist_with_pull(infrastructure, room_id, media_id, external_source_url, |ts_name| {
             format!("{segment_url_base}{ts_name}.ts")
         }).await
     }

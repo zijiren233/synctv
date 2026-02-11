@@ -18,7 +18,7 @@ use tracing::{error, info};
 use crate::http::{AppError, AppState};
 use crate::impls::messaging::{StreamMessageHandler, StreamMessage, ProtoCodec, MessageSender};
 use synctv_core::models::{RoomId, UserId};
-use synctv_core::service::{RateLimiter, RateLimitConfig, ContentFilter, auth::JwtValidator};
+use synctv_core::service::{RateLimitConfig, ContentFilter, auth::JwtValidator};
 use crate::proto::client::{ClientMessage, ServerMessage};
 
 /// Query parameters for WebSocket connection
@@ -153,14 +153,8 @@ async fn handle_socket(
 
     let rid = RoomId::from_string(room_id.clone());
 
-    // Create rate limiter and content filter with default config
-    let rate_limiter = match RateLimiter::new(None, "ws".to_string()) {
-        Ok(rl) => Arc::new(rl),
-        Err(e) => {
-            error!("Failed to create RateLimiter: {}", e);
-            return;
-        }
-    };
+    // Use the shared rate limiter from app state
+    let rate_limiter = Arc::new(state.rate_limiter.clone());
     let rate_limit_config = Arc::new(RateLimitConfig::default());
     let content_filter = Arc::new(ContentFilter::new());
 

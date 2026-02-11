@@ -228,7 +228,7 @@ impl MediaService {
                 item.source_config,
                 provider.name(),  // Provider type name
                 item.provider_instance_name,  // Instance name
-                start_position + index as i32,
+                start_position + i32::try_from(index).unwrap_or(i32::MAX),
             );
             media_items.push(media);
         }

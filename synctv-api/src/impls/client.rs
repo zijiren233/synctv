@@ -467,13 +467,15 @@ impl ClientApiImpl {
             .into_iter()
             .collect();
 
-        // Batch fetch usernames
-        let mut username_map = std::collections::HashMap::new();
-        for user_id in user_ids {
-            if let Ok(user) = self.user_service.get_user(&user_id).await {
-                username_map.insert(user_id.to_string(), user.username);
-            }
-        }
+        // Batch fetch usernames (single query instead of N+1)
+        let username_map: std::collections::HashMap<String, String> = self
+            .user_service
+            .get_usernames(&user_ids)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, name)| (id.to_string(), name))
+            .collect();
 
         // Convert to proto format
         let proto_messages = messages
@@ -989,6 +991,31 @@ impl ClientApiImpl {
     /// Get a reference to the live streaming infrastructure, if configured.
     pub fn live_infrastructure(&self) -> Option<&Arc<synctv_livestream::api::LiveStreamingInfrastructure>> {
         self.live_streaming_infrastructure.as_ref()
+    }
+
+    /// Get the external source URL for a LiveProxy media item.
+    /// Returns None if the media is not a live_proxy type, has no URL,
+    /// or does not belong to the specified room.
+    pub async fn get_live_proxy_source_url(&self, room_id: &str, media_id: &str) -> Option<String> {
+        let mid = synctv_core::models::MediaId::from_string(media_id.to_string());
+        let media = self.room_service.media_service()
+            .get_media(&mid).await.ok()??;
+        // Verify media belongs to the requested room
+        if media.room_id.as_str() != room_id {
+            tracing::warn!(
+                media_id = %media_id,
+                expected_room = %room_id,
+                actual_room = %media.room_id.as_str(),
+                "Media does not belong to requested room"
+            );
+            return None;
+        }
+        if media.source_provider != "live_proxy" {
+            return None;
+        }
+        media.source_config.get("url")
+            .and_then(|v| v.as_str())
+            .map(String::from)
     }
 
     // === Playlist Operations ===

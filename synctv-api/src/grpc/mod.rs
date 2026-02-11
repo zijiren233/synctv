@@ -120,6 +120,7 @@ pub async fn serve(
 
     let email_service_for_admin = email_service.clone();
     let providers_manager_for_client = providers_manager.clone();
+    let rate_limiter_for_provider = rate_limiter.clone();
 
     // Build the shared ClientApiImpl for gRPC handlers
     let client_api = Arc::new(crate::impls::ClientApiImpl::new(
@@ -246,6 +247,7 @@ pub async fn serve(
             publish_key_service: None,
             notification_service: None,
             live_streaming_infrastructure: None,
+            rate_limiter: rate_limiter_for_provider,
             client_api: Arc::new(crate::impls::ClientApiImpl::new(
                 user_service_for_provider,
                 room_service_for_provider,
