@@ -174,42 +174,74 @@ impl RoomService {
             "Room created successfully"
         );
 
-        // Hash password if provided and store in room_settings
-        let hashed_password = if let Some(pwd) = password {
-            Some(hash_password(&pwd).await?)
-        } else {
-            None
-        };
+        // Complete room setup — if any step fails, clean up by deleting the room
+        match self
+            .setup_new_room(&created_room, &created_by, password, room_settings)
+            .await
+        {
+            Ok(member) => {
+                tracing::info!(
+                    room_id = %created_room.id,
+                    user_id = %created_by,
+                    "Room creation completed"
+                );
+                Ok((created_room, member))
+            }
+            Err(e) => {
+                tracing::error!(
+                    room_id = %created_room.id,
+                    error = %e,
+                    "Room setup failed, cleaning up"
+                );
+                if let Err(cleanup_err) = self.room_repo.delete(&created_room.id).await {
+                    tracing::error!(
+                        room_id = %created_room.id,
+                        error = %cleanup_err,
+                        "Failed to clean up partially created room"
+                    );
+                }
+                Err(e)
+            }
+        }
+    }
 
-        // Save settings to room_settings table
-        // Store password hash separately in a "password" key
-        if let Some(pwd_hash) = &hashed_password {
-            self.room_settings_repo.set(&created_room.id, "password", pwd_hash).await?;
-            tracing::debug!(room_id = %created_room.id, "Room password set");
+    /// Internal helper: set up a newly created room (settings, member, playlist, playback).
+    /// Returns the creator's `RoomMember` on success.
+    async fn setup_new_room(
+        &self,
+        room: &Room,
+        created_by: &UserId,
+        password: Option<String>,
+        room_settings: RoomSettings,
+    ) -> Result<RoomMember> {
+        // Hash password if provided and store in room_settings
+        if let Some(pwd) = password {
+            let pwd_hash = hash_password(&pwd).await?;
+            self.room_settings_repo
+                .set(&room.id, "password", &pwd_hash)
+                .await?;
+            tracing::debug!(room_id = %room.id, "Room password set");
         }
 
-        self.room_settings_repo.set_settings(&created_room.id, &room_settings).await?;
+        self.room_settings_repo
+            .set_settings(&room.id, &room_settings)
+            .await?;
 
         // Add creator as member with full permissions
-        let created_member = self.member_service.add_member(
-            created_room.id.clone(),
-            created_by.clone(),
-            RoomRole::Creator,
-        ).await?;
+        let created_member = self
+            .member_service
+            .add_member(room.id.clone(), created_by.clone(), RoomRole::Creator)
+            .await?;
 
         // Create root playlist for the room
-        self.playlist_service.create_root_playlist(&created_room.id, &created_by).await?;
+        self.playlist_service
+            .create_root_playlist(&room.id, created_by)
+            .await?;
 
         // Initialize playback state
-        self.playback_repo.create_or_get(&created_room.id).await?;
+        self.playback_repo.create_or_get(&room.id).await?;
 
-        tracing::info!(
-            room_id = %created_room.id,
-            user_id = %created_by,
-            "Room creation completed"
-        );
-
-        Ok((created_room, created_member))
+        Ok(created_member)
     }
 
     /// Join a room
@@ -1029,23 +1061,15 @@ impl RoomService {
             let creator_ids: Vec<UserId> = rooms.iter().map(|r| r.room.created_by.clone()).collect();
             let usernames_map: std::collections::HashMap<UserId, String> = self.user_service.get_usernames(&creator_ids).await.unwrap_or_default();
 
-            // Load settings for all rooms
-            let room_ids: Vec<RoomId> = rooms.iter().map(|r| r.room.id.clone()).collect();
-            let settings_map: std::collections::HashMap<RoomId, RoomSettings> = {
-                let mut map = std::collections::HashMap::new();
-                for room_id in &room_ids {
-                    if let Ok(settings) = self.room_settings_repo.get(room_id).await {
-                        map.insert(room_id.clone(), settings);
-                    }
-                }
-                map
-            };
+            // Batch-load settings for all rooms (single query)
+            let room_id_strs: Vec<&str> = rooms.iter().map(|r| r.room.id.as_str()).collect();
+            let settings_map = self.room_settings_repo.get_batch(&room_id_strs).await.unwrap_or_default();
 
             // Convert rooms to AdminRoom format
             let admin_rooms: Vec<AdminRoom> = rooms
                 .into_iter()
                 .map(|r| {
-                    let settings = settings_map.get(&r.room.id)
+                    let settings = settings_map.get(r.room.id.as_str())
                         .cloned()
                         .unwrap_or_default();
                     let settings_bytes = serde_json::to_vec(&settings).unwrap_or_default();
@@ -1080,23 +1104,15 @@ impl RoomService {
         let creator_ids: Vec<UserId> = rooms.iter().map(|r| r.room.created_by.clone()).collect();
         let usernames_map: std::collections::HashMap<UserId, String> = self.user_service.get_usernames(&creator_ids).await.unwrap_or_default();
 
-        // Load settings for all rooms
-        let room_ids: Vec<RoomId> = rooms.iter().map(|r| r.room.id.clone()).collect();
-        let settings_map: std::collections::HashMap<RoomId, RoomSettings> = {
-            let mut map = std::collections::HashMap::new();
-            for room_id in &room_ids {
-                if let Ok(settings) = self.room_settings_repo.get(room_id).await {
-                    map.insert(room_id.clone(), settings);
-                }
-            }
-            map
-        };
+        // Batch-load settings for all rooms (single query)
+        let room_id_strs: Vec<&str> = rooms.iter().map(|r| r.room.id.as_str()).collect();
+        let settings_map = self.room_settings_repo.get_batch(&room_id_strs).await.unwrap_or_default();
 
         // Convert rooms to AdminRoom format
         let admin_rooms: Vec<AdminRoom> = rooms
             .into_iter()
             .map(|r| {
-                let settings = settings_map.get(&r.room.id)
+                let settings = settings_map.get(r.room.id.as_str())
                     .cloned()
                     .unwrap_or_default();
                 let settings_bytes = serde_json::to_vec(&settings).unwrap_or_default();

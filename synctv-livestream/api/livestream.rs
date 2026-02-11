@@ -318,6 +318,18 @@ impl StreamTracker {
     pub fn iter_streams(&self) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, String, String>> {
         self.by_stream.iter()
     }
+
+    /// Number of tracked streams.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.by_stream.len()
+    }
+
+    /// Whether the tracker is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_stream.is_empty()
+    }
 }
 
 /// Live streaming infrastructure bundle

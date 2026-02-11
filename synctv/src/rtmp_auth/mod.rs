@@ -258,17 +258,34 @@ impl AuthCallback for SyncTvRtmpAuth {
             let mut interval = tokio::time::interval(std::time::Duration::from_mins(1));
             // Skip the first immediate tick
             interval.tick().await;
+            let mut consecutive_failures: u32 = 0;
             loop {
                 interval.tick().await;
                 if let Err(e) = registry.refresh_publisher_ttl(&room_id, &media_id, &ttl_user_id).await {
-                    tracing::error!(
+                    consecutive_failures += 1;
+                    tracing::warn!(
                         room_id = %room_id,
                         media_id = %media_id,
+                        attempt = consecutive_failures,
                         "Failed to refresh publisher TTL: {}",
                         e
                     );
-                    break;
+                    if consecutive_failures >= 10 {
+                        tracing::error!(
+                            room_id = %room_id,
+                            media_id = %media_id,
+                            "TTL renewal giving up after 10 consecutive failures"
+                        );
+                        break;
+                    }
+                    // Backoff: wait extra time before next attempt
+                    let backoff = std::time::Duration::from_secs(
+                        2u64.saturating_pow(consecutive_failures.min(5)),
+                    );
+                    tokio::time::sleep(backoff).await;
+                    continue;
                 }
+                consecutive_failures = 0;
                 tracing::trace!(
                     room_id = %room_id,
                     media_id = %media_id,

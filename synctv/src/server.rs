@@ -120,6 +120,11 @@ impl SyncTvServer {
             info!("SFU manager: enabled");
         }
 
+        // Start background connection cleanup (every 60 seconds)
+        let _conn_cleanup = self.services.connection_manager.spawn_cleanup_task(
+            Duration::from_secs(60),
+        );
+
         // Start gRPC server
         let grpc_handle = self.start_grpc_server().await?;
         self.grpc_handle = Some(grpc_handle);

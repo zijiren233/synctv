@@ -36,6 +36,8 @@ use tracing::{debug, error, info, warn};
 const MAX_RETRIES: u32 = 10;
 const INITIAL_BACKOFF_MS: u64 = 1000;
 const MAX_BACKOFF_MS: u64 = 30_000;
+/// Maximum total FLV buffer size (50 MB) to prevent unbounded memory growth
+const MAX_FLV_BUFFER_SIZE: usize = 50 * 1024 * 1024;
 
 // FLV format constants
 const FLV_HEADER_SIZE: usize = 9;
@@ -310,6 +312,12 @@ impl ExternalStreamPuller {
         while let Some(chunk) = response.chunk().await
             .map_err(|e| anyhow::anyhow!("Failed to read HTTP chunk: {e}"))?
         {
+            if buffer.len() + chunk.len() > MAX_FLV_BUFFER_SIZE {
+                return Err(anyhow::anyhow!(
+                    "FLV buffer exceeded {} MB limit — likely a slow consumer or malformed stream",
+                    MAX_FLV_BUFFER_SIZE / (1024 * 1024)
+                ));
+            }
             buffer.extend_from_slice(&chunk);
 
             // Parse FLV header on first data arrival

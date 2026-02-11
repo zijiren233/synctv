@@ -235,6 +235,9 @@ pub async fn confirm_password_reset(
     if req.new_password.len() < 8 {
         return Err(AppError::bad_request("Password must be at least 8 characters"));
     }
+    if req.new_password.len() > 128 {
+        return Err(AppError::bad_request("Password must be at most 128 characters"));
+    }
 
     // Update password using UserService
     state

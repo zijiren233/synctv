@@ -371,6 +371,14 @@ impl StreamMessageHandler {
 
         match &msg.message {
             Some(Message::Chat(chat_msg)) => {
+                // Validate message length
+                if chat_msg.content.is_empty() {
+                    return Err("Chat message cannot be empty".to_string());
+                }
+                if chat_msg.content.len() > 2000 {
+                    return Err("Chat message too long (max 2000 characters)".to_string());
+                }
+
                 // Check if this is a danmaku message (has position)
                 let is_danmaku = chat_msg.position.is_some();
 

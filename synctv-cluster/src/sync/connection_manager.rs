@@ -476,6 +476,33 @@ impl ConnectionManager {
             Vec::new()
         }
     }
+
+    /// Spawn a background task that periodically checks for idle/expired connections
+    /// and sends disconnect signals for them.
+    ///
+    /// The task runs every `interval` and continues until the returned `JoinHandle` is aborted.
+    pub fn spawn_cleanup_task(&self, interval: Duration) -> tokio::task::JoinHandle<()> {
+        let manager = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            // Skip the first immediate tick
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                let stale = manager.check_timeouts();
+                if !stale.is_empty() {
+                    info!(
+                        count = stale.len(),
+                        "Cleaning up stale connections"
+                    );
+                    for conn_id in &stale {
+                        manager.disconnect_connection(conn_id);
+                        manager.unregister(conn_id);
+                    }
+                }
+            }
+        })
+    }
 }
 
 impl Default for ConnectionManager {

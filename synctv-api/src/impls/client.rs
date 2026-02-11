@@ -60,6 +60,9 @@ impl ClientApiImpl {
         if req.password.len() < 8 {
             return Err("Password must be at least 8 characters".to_string());
         }
+        if req.password.len() > 128 {
+            return Err("Password must be at most 128 characters".to_string());
+        }
 
         let email = if req.email.is_empty() {
             Some(format!("{}@temp.local", req.username))

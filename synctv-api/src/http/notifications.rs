@@ -65,7 +65,10 @@ pub async fn list_notifications(
     };
 
     let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Notification service not configured"))?;
+        .ok_or_else(|| crate::http::AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Notification service not available",
+        ))?;
 
     let (notifications, total) = notification_service
         .list(&auth.user_id, query)
@@ -89,7 +92,10 @@ pub async fn get_notification(
     State(state): State<AppState>,
 ) -> AppResult<Json<Notification>> {
     let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Notification service not configured"))?;
+        .ok_or_else(|| crate::http::AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Notification service not available",
+        ))?;
 
     let notification = notification_service
         .get(&auth.user_id, notification_id)
@@ -105,7 +111,10 @@ pub async fn mark_as_read(
     Json(req): Json<MarkAsReadRequest>,
 ) -> AppResult<StatusCode> {
     let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Notification service not configured"))?;
+        .ok_or_else(|| crate::http::AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Notification service not available",
+        ))?;
 
     notification_service
         .mark_as_read(&auth.user_id, synctv_core::models::notification::MarkAsReadRequest {
@@ -123,7 +132,10 @@ pub async fn mark_all_as_read(
     req: Option<Json<MarkAllAsReadRequest>>,
 ) -> AppResult<StatusCode> {
     let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Notification service not configured"))?;
+        .ok_or_else(|| crate::http::AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Notification service not available",
+        ))?;
 
     let before = req.and_then(|r| r.before);
 
@@ -143,7 +155,10 @@ pub async fn delete_notification(
     State(state): State<AppState>,
 ) -> AppResult<StatusCode> {
     let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Notification service not configured"))?;
+        .ok_or_else(|| crate::http::AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Notification service not available",
+        ))?;
 
     notification_service
         .delete(&auth.user_id, notification_id)
@@ -158,7 +173,10 @@ pub async fn delete_all_read(
     State(state): State<AppState>,
 ) -> AppResult<StatusCode> {
     let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Notification service not configured"))?;
+        .ok_or_else(|| crate::http::AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Notification service not available",
+        ))?;
 
     notification_service
         .delete_all_read(&auth.user_id)

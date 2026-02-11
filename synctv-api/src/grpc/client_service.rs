@@ -542,6 +542,11 @@ impl UserService for ClientServiceImpl {
                 "Password must be at least 8 characters",
             ));
         }
+        if req.new_password.len() > 128 {
+            return Err(Status::invalid_argument(
+                "Password must be at most 128 characters",
+            ));
+        }
 
         // Get current user
         let mut user = self
@@ -1447,7 +1452,7 @@ impl RoomService for ClientServiceImpl {
             .await
             .map_err(|e| internal_err("Failed to get chat history", e))?;
 
-        // Collect unique user IDs to batch fetch usernames
+        // Collect unique user IDs and batch fetch usernames in one call
         let user_ids: Vec<UserId> = messages
             .iter()
             .map(|m| m.user_id.clone())
@@ -1455,13 +1460,14 @@ impl RoomService for ClientServiceImpl {
             .into_iter()
             .collect();
 
-        // Batch fetch usernames
-        let mut username_map = HashMap::new();
-        for user_id in user_ids {
-            if let Ok(user) = self.user_service.get_user(&user_id).await {
-                username_map.insert(user_id.to_string(), user.username);
-            }
-        }
+        let username_map: HashMap<String, String> = self
+            .user_service
+            .get_usernames(&user_ids)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, name)| (id.to_string(), name))
+            .collect();
 
         // Convert to proto format
         let proto_messages = messages
@@ -2110,7 +2116,7 @@ impl MediaService for ClientServiceImpl {
             .create_publish_key(user_id.as_str(), room_id.as_str(), req)
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(|e| internal_err("Failed to create publish key", e))
     }
 
     async fn get_stream_info(
@@ -2125,7 +2131,7 @@ impl MediaService for ClientServiceImpl {
             .get_stream_info(room_id.as_str(), &req.media_id)
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(|e| internal_err("Failed to get stream info", e))
     }
 
     async fn list_room_streams(
@@ -2140,7 +2146,7 @@ impl MediaService for ClientServiceImpl {
             .list_room_streams(room_id.as_str())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(e))
+            .map_err(|e| internal_err("Failed to list room streams", e))
     }
 
     // Playlist Management
@@ -2994,6 +3000,9 @@ impl EmailService for ClientServiceImpl {
         // Validate new password
         if req.new_password.len() < 8 {
             return Err(Status::invalid_argument("Password must be at least 8 characters"));
+        }
+        if req.new_password.len() > 128 {
+            return Err(Status::invalid_argument("Password must be at most 128 characters"));
         }
 
         // Update password
