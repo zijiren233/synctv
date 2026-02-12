@@ -174,7 +174,10 @@ impl RoomService {
             "Room created successfully"
         );
 
-        // Complete room setup — if any step fails, clean up by deleting the room
+        // Complete room setup — if any step fails, hard-delete the room.
+        // Hard delete triggers ON DELETE CASCADE, which removes any orphaned
+        // room_settings, room_members, playlists, and room_playback_state rows
+        // that were created before the failure.
         match self
             .setup_new_room(&created_room, &created_by, password, room_settings)
             .await
@@ -193,7 +196,7 @@ impl RoomService {
                     error = %e,
                     "Room setup failed, cleaning up"
                 );
-                if let Err(cleanup_err) = self.room_repo.delete(&created_room.id).await {
+                if let Err(cleanup_err) = self.room_repo.hard_delete(&created_room.id).await {
                     tracing::error!(
                         room_id = %created_room.id,
                         error = %cleanup_err,

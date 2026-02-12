@@ -200,27 +200,24 @@ impl ConnectionManager {
             ));
         }
 
-        // Check per-user limit
-        if let Some(user_conns) = self.user_connections.get(&user_id) {
-            if user_conns.len() >= self.limits.max_per_user {
+        // Atomically check per-user limit and add connection ID.
+        // Holding the entry ref-mut prevents concurrent registrations for the same
+        // user from both passing the limit check.
+        {
+            let mut user_entry = self.user_connections.entry(user_id.clone()).or_default();
+            if user_entry.len() >= self.limits.max_per_user {
                 return Err(format!(
                     "Too many connections for this user (max {})",
                     self.limits.max_per_user
                 ));
             }
+            user_entry.push(connection_id.clone());
+            // Drop the shard lock before inserting into another DashMap
         }
 
-        // Create connection info
+        // Create and register connection info
         let conn_info = ConnectionInfo::new(connection_id.clone(), user_id.clone());
-
-        // Register connection
         self.connections.insert(connection_id.clone(), conn_info);
-
-        // Add to user connections
-        self.user_connections
-            .entry(user_id.clone())
-            .or_default()
-            .push(connection_id.clone());
 
         // Update metrics
         self.total_connections.fetch_add(1, Ordering::Relaxed);
@@ -237,14 +234,18 @@ impl ConnectionManager {
 
     /// Associate a connection with a room
     pub fn join_room(&self, connection_id: &str, room_id: RoomId) -> Result<(), String> {
-        // Check per-room limit
-        if let Some(room_conns) = self.room_connections.get(&room_id) {
-            if room_conns.len() >= self.limits.max_per_room {
+        // Atomically check per-room limit and add connection.
+        // Holding the entry ref-mut prevents concurrent joins from exceeding the limit.
+        {
+            let mut room_entry = self.room_connections.entry(room_id.clone()).or_default();
+            if room_entry.len() >= self.limits.max_per_room {
                 return Err(format!(
                     "Room at capacity ({} connections)",
                     self.limits.max_per_room
                 ));
             }
+            room_entry.push(connection_id.to_string());
+            // Drop the shard lock before accessing `connections` DashMap
         }
 
         // Update connection info
@@ -252,14 +253,12 @@ impl ConnectionManager {
             conn.room_id = Some(room_id.clone());
             conn.last_activity = Instant::now();
         } else {
+            // Connection disappeared — roll back the room_connections entry
+            if let Some(mut room_conns) = self.room_connections.get_mut(&room_id) {
+                room_conns.retain(|id| id != connection_id);
+            }
             return Err("Connection not found".to_string());
         }
-
-        // Add to room connections
-        self.room_connections
-            .entry(room_id.clone())
-            .or_default()
-            .push(connection_id.to_string());
 
         debug!(
             connection_id = %connection_id,

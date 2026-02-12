@@ -560,6 +560,20 @@ impl SfuRoom {
     }
 }
 
+impl Drop for SfuRoom {
+    fn drop(&mut self) {
+        // Abort all forwarding tasks to prevent leaked spawned tasks
+        for entry in &self.forwarding_tasks {
+            entry.value().abort();
+        }
+        debug!(
+            room_id = %self.id,
+            task_count = self.forwarding_tasks.len(),
+            "Room dropped, aborted all forwarding tasks"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -76,14 +76,6 @@ pub async fn get_ice_servers(
     let user_id = auth.user_id;
     let room_id = RoomId::from_string(room_id);
 
-    // Check if user has access to the room (is a member)
-    state
-        .room_service
-        .check_membership(&room_id, &user_id)
-        .await
-        .map_err(|e| AppError::forbidden(e.to_string()))?;
-
-    // Use the unified API implementation
     let response = state
         .client_api
         .get_ice_servers(&room_id, &user_id)
@@ -135,14 +127,6 @@ pub async fn get_network_quality(
     let user_id = auth.user_id;
     let room_id = RoomId::from_string(room_id);
 
-    // Check if user has access to the room (is a member)
-    state
-        .room_service
-        .check_membership(&room_id, &user_id)
-        .await
-        .map_err(|e| AppError::forbidden(e.to_string()))?;
-
-    // Use the unified API implementation
     let response = state
         .client_api
         .get_network_quality(&room_id, &user_id)

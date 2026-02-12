@@ -1,10 +1,13 @@
 //! Bilibili HTTP Client
 
-use reqwest::Client;
-use regex::Regex;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::LazyLock;
+use std::time::Duration;
+
+use regex::Regex;
+use reqwest::Client;
+use serde::Deserialize;
+
 use super::error::BilibiliError;
 use super::types::{self as types, VideoInfo, Quality, PlayUrlInfo, DurlItem, AnimeInfo};
 
@@ -29,6 +32,8 @@ impl BilibiliClient {
     pub fn new() -> Result<Self, BilibiliError> {
         let client = Client::builder()
             .user_agent(USER_AGENT)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| BilibiliError::Network(e.to_string()))?;
 
@@ -42,6 +47,8 @@ impl BilibiliClient {
     pub fn with_cookies(cookies: HashMap<String, String>) -> Result<Self, BilibiliError> {
         let client = Client::builder()
             .user_agent(USER_AGENT)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| BilibiliError::Network(e.to_string()))?;
 

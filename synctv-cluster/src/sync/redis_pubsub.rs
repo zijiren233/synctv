@@ -3,7 +3,17 @@ use futures::stream::StreamExt;
 use redis::{AsyncCommands, Client as RedisClient};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
+use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
+
+/// Timeout for Redis operations in seconds
+const REDIS_TIMEOUT_SECS: u64 = 5;
+
+/// Initial backoff delay for subscriber reconnection
+const INITIAL_BACKOFF_SECS: u64 = 1;
+
+/// Maximum backoff delay for subscriber reconnection
+const MAX_BACKOFF_SECS: u64 = 30;
 
 use super::events::ClusterEvent;
 use super::room_hub::RoomMessageHub;
@@ -54,10 +64,19 @@ impl RedisPubSub {
 
         // Spawn task to handle publishing
         tokio::spawn(async move {
-            let mut conn = match publish_client.get_multiplexed_async_connection().await {
-                Ok(conn) => conn,
-                Err(e) => {
+            let mut conn = match timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                publish_client.get_multiplexed_async_connection(),
+            )
+            .await
+            {
+                Ok(Ok(conn)) => conn,
+                Ok(Err(e)) => {
                     error!(error = %e, "Failed to get Redis connection for publishing");
+                    return;
+                }
+                Err(_) => {
+                    error!("Timed out getting Redis connection for publishing");
                     return;
                 }
             };
@@ -89,39 +108,85 @@ impl RedisPubSub {
         // Clone for the subscriber task
         let self_clone = self;
 
-        // Spawn task to handle subscribing
+        // Spawn task to handle subscribing with exponential backoff on reconnection
         tokio::spawn(async move {
+            let mut backoff_secs = INITIAL_BACKOFF_SECS;
+
             loop {
                 match self_clone.run_subscriber().await {
-                    Ok(()) => {
-                        info!("Redis subscriber task completed normally");
-                        break;
+                    SubscriberExit::Disconnected => {
+                        // Connection was healthy before it dropped.
+                        // Reset backoff since the server was reachable.
+                        error!(
+                            "Redis subscriber stream ended (connection lost), reconnecting after {}s",
+                            INITIAL_BACKOFF_SECS
+                        );
+                        backoff_secs = INITIAL_BACKOFF_SECS;
                     }
-                    Err(e) => {
-                        error!(error = %e, "Redis subscriber task failed, retrying in 5s");
-                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    SubscriberExit::ConnectFailed(e) => {
+                        // Could not connect -- keep increasing backoff.
+                        error!(
+                            error = %e,
+                            backoff_secs = backoff_secs,
+                            "Redis subscriber failed to connect, retrying after backoff"
+                        );
                     }
                 }
+
+                tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+
+                // Exponential backoff: double the delay, cap at MAX_BACKOFF_SECS
+                backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
             }
         });
 
         Ok(publish_tx)
     }
 
-    /// Run the subscriber task
-    /// This subscribes to room:* pattern and forwards events to `RoomMessageHub`
-    async fn run_subscriber(&self) -> Result<()> {
-        let mut pubsub = self
-            .redis_client
-            .get_async_pubsub()
-            .await
-            .context("Failed to get Redis Pub/Sub connection")?;
+    /// Run the subscriber task.
+    ///
+    /// Returns `SubscriberExit::Disconnected` if the connection was established but then
+    /// the stream ended (Redis disconnected). Returns `SubscriberExit::ConnectFailed` if
+    /// the initial connection or subscription failed.
+    async fn run_subscriber(&self) -> SubscriberExit {
+        let mut pubsub = match timeout(
+            Duration::from_secs(REDIS_TIMEOUT_SECS),
+            self.redis_client.get_async_pubsub(),
+        )
+        .await
+        {
+            Ok(Ok(ps)) => ps,
+            Ok(Err(e)) => {
+                return SubscriberExit::ConnectFailed(
+                    anyhow::anyhow!(e).context("Failed to get Redis Pub/Sub connection"),
+                );
+            }
+            Err(_) => {
+                return SubscriberExit::ConnectFailed(anyhow::anyhow!(
+                    "Timed out getting Redis Pub/Sub connection"
+                ));
+            }
+        };
 
         // Subscribe to all room channels using pattern
-        pubsub
-            .psubscribe("room:*")
-            .await
-            .context("Failed to subscribe to room:* pattern")?;
+        match timeout(
+            Duration::from_secs(REDIS_TIMEOUT_SECS),
+            pubsub.psubscribe("room:*"),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                return SubscriberExit::ConnectFailed(
+                    anyhow::anyhow!(e).context("Failed to subscribe to room:* pattern"),
+                );
+            }
+            Err(_) => {
+                return SubscriberExit::ConnectFailed(anyhow::anyhow!(
+                    "Timed out subscribing to room:* pattern"
+                ));
+            }
+        }
 
         info!("Redis subscriber connected, listening to room:* channels");
 
@@ -191,7 +256,8 @@ impl RedisPubSub {
             }
         }
 
-        Ok(())
+        // Stream returned None -- the Redis connection was lost
+        SubscriberExit::Disconnected
     }
 
     /// Publish an event to Redis
@@ -216,13 +282,27 @@ impl RedisPubSub {
             serde_json::to_string(&envelope).context("Failed to serialize event envelope")?;
 
         // Publish to Redis
-        let subscribers: usize = conn
-            .publish(&channel, payload)
-            .await
-            .context("Failed to publish to Redis")?;
+        let subscribers: usize = timeout(
+            Duration::from_secs(REDIS_TIMEOUT_SECS),
+            conn.publish(&channel, payload),
+        )
+        .await
+        .context("Timed out publishing to Redis")?
+        .context("Failed to publish to Redis")?;
 
         Ok(subscribers)
     }
+}
+
+/// Describes how the subscriber loop exited, enabling proper backoff behavior.
+enum SubscriberExit {
+    /// Connection was established and messages were being processed, but the
+    /// stream ended (Redis disconnected). Backoff should be reset since the
+    /// connection was healthy before it dropped.
+    Disconnected,
+    /// Failed to connect or subscribe to Redis. Backoff should continue
+    /// increasing to avoid hammering an unavailable server.
+    ConnectFailed(anyhow::Error),
 }
 
 /// Request to publish an event

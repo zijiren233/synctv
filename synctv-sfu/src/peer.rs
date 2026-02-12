@@ -15,6 +15,10 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Maximum number of samples to retain in the bandwidth estimator.
+/// This prevents unbounded memory growth under high packet rates.
+const MAX_BANDWIDTH_SAMPLES: usize = 1000;
+
 /// Bandwidth estimator using exponential smoothing
 struct BandwidthEstimator {
     /// Recent data samples: (timestamp, bytes)
@@ -47,6 +51,12 @@ impl BandwidthEstimator {
     /// Record received bytes
     fn record_bytes(&mut self, bytes: usize) {
         let now = Instant::now();
+
+        // Enforce capacity limit to prevent unbounded memory growth
+        if self.recent_bytes.len() >= MAX_BANDWIDTH_SAMPLES {
+            self.recent_bytes.pop_front();
+        }
+
         self.recent_bytes.push_back((now, bytes));
 
         // Remove samples outside the window

@@ -1,60 +1,39 @@
 // Room management HTTP handlers
 //
-// This layer now uses proto types and delegates to the impls layer for business logic
+// Thin transport layer: delegates all business logic to the impls layer.
+// Request and response types are proto-generated structs.
 
 use axum::{
     extract::{Path, Query, State},
     Json,
 };
-use synctv_core::models::{
-    id::{MediaId, RoomId},
-    permission::PermissionBits,
-};
 
 use super::{middleware::AuthUser, AppResult, AppState};
-use crate::proto::client::{CreateRoomResponse, CreateRoomRequest, GetRoomResponse, JoinRoomResponse, JoinRoomRequest, LeaveRoomResponse, LeaveRoomRequest, DeleteRoomResponse, DeleteRoomRequest, AddMediaResponse, AddMediaRequest, RemoveMediaResponse, RemoveMediaRequest, ListPlaylistResponse, SwapMediaResponse, SwapMediaRequest, PlayResponse, PlayRequest, PauseResponse, SeekResponse, SeekRequest, GetPlaybackStateResponse, GetPlaybackStateRequest, GetRoomMembersResponse, CheckRoomResponse, ListRoomsResponse, ListRoomsRequest, UpdateRoomSettingsRequest};
-
-/// Room settings for HTTP requests
-#[derive(Debug, Clone, Default)]
-pub struct RoomSettingsRequest {
-    pub password: Option<String>,
-    pub max_members: Option<i32>,
-    pub allow_guest_join: Option<bool>,
-    pub auto_play_next: Option<bool>,
-    pub loop_playlist: Option<bool>,
-    pub shuffle_playlist: Option<bool>,
-    pub chat_enabled: Option<bool>,
-    pub danmaku_enabled: Option<bool>,
-}
-
-/// Helper function to convert HTTP-style room settings request to proto settings bytes
-#[allow(clippy::too_many_arguments)]
-fn build_room_settings_bytes(
-    password: &Option<String>,
-    max_members: Option<i32>,
-    allow_guest_join: Option<bool>,
-    auto_play_next: Option<bool>,
-    loop_playlist: Option<bool>,
-    shuffle_playlist: Option<bool>,
-    chat_enabled: Option<bool>,
-    danmaku_enabled: Option<bool>,
-) -> Result<Vec<u8>, String> {
-    use serde_json::json;
-
-    let settings = json!({
-        "require_password": password.is_some(),
-        "max_members": max_members.unwrap_or(0),
-        "allow_guest_join": allow_guest_join.unwrap_or(false),
-        "auto_play_next": auto_play_next.unwrap_or(true),
-        "loop_playlist": loop_playlist.unwrap_or(false),
-        "shuffle_playlist": shuffle_playlist.unwrap_or(false),
-        "chat_enabled": chat_enabled.unwrap_or(true),
-        "danmaku_enabled": danmaku_enabled.unwrap_or(true),
-    });
-
-    serde_json::to_vec(&settings)
-        .map_err(|e| format!("Failed to serialize settings: {e}"))
-}
+use crate::proto::client::{
+    CreateRoomResponse, CreateRoomRequest, GetRoomResponse,
+    JoinRoomResponse, JoinRoomRequest, LeaveRoomResponse,
+    DeleteRoomResponse,
+    AddMediaResponse, AddMediaRequest, RemoveMediaResponse, RemoveMediaRequest,
+    ListPlaylistResponse, SwapMediaResponse, SwapMediaRequest,
+    PlayResponse, PlayRequest, PauseResponse, SeekResponse, SeekRequest,
+    GetPlaybackStateResponse, GetPlaybackStateRequest,
+    GetRoomMembersResponse, CheckRoomResponse, ListRoomsResponse, ListRoomsRequest,
+    UpdateRoomSettingsRequest, UpdateRoomSettingsResponse,
+    ResetRoomSettingsResponse,
+    SetRoomPasswordRequest, SetRoomPasswordResponse,
+    CheckRoomPasswordRequest, CheckRoomPasswordResponse,
+    EditMediaRequest, EditMediaResponse, ClearPlaylistResponse,
+    AddMediaBatchRequest, RemoveMediaBatchRequest, RemoveMediaBatchResponse,
+    ReorderMediaBatchRequest, ReorderMediaBatchResponse, MediaReorderUpdate,
+    GetChatHistoryResponse,
+    CreatePlaylistRequest, CreatePlaylistResponse,
+    UpdatePlaylistRequest, UpdatePlaylistResponse,
+    DeletePlaylistRequest, DeletePlaylistResponse,
+    ListPlaylistsResponse,
+    SetCurrentMediaRequest, SetCurrentMediaResponse,
+    SetPlaybackSpeedRequest, SetPlaybackSpeedResponse,
+    GetHotRoomsResponse,
+};
 
 // ==================== Room Management Endpoints ====================
 
@@ -63,68 +42,16 @@ fn build_room_settings_bytes(
 pub async fn create_room(
     auth: AuthUser,
     State(state): State<AppState>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<CreateRoomRequest>,
 ) -> AppResult<Json<CreateRoomResponse>> {
-    // Extract fields from JSON request
-    let name = req.get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| super::AppError::bad_request("Missing name field"))?
-        .to_string();
+    tracing::info!(user_id = %auth.user_id, room_name = %req.name, "Creating new room");
 
-    if name.is_empty() {
-        return Err(super::AppError::bad_request("Room name cannot be empty"));
-    }
-    if name.len() > 100 {
-        return Err(super::AppError::bad_request("Room name too long (max 100 characters)"));
-    }
-
-    tracing::info!(user_id = %auth.user_id, room_name = %name, "Creating new room");
-
-    let description = req.get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let password = req.get("password")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let max_members = req.get("max_members").and_then(serde_json::Value::as_i64).map(|v| v.clamp(0, 10000) as i32);
-    let allow_guest_join = req.get("allow_guest_join").and_then(serde_json::Value::as_bool);
-    let auto_play_next = req.get("auto_play_next").and_then(serde_json::Value::as_bool);
-    let loop_playlist = req.get("loop_playlist").and_then(serde_json::Value::as_bool);
-    let shuffle_playlist = req.get("shuffle_playlist").and_then(serde_json::Value::as_bool);
-    let chat_enabled = req.get("chat_enabled").and_then(serde_json::Value::as_bool);
-    let danmaku_enabled = req.get("danmaku_enabled").and_then(serde_json::Value::as_bool);
-
-    // Build settings JSON
-    let settings_bytes = build_room_settings_bytes(
-        &if password.is_empty() { None } else { Some(password.clone()) },
-        max_members,
-        allow_guest_join,
-        auto_play_next,
-        loop_playlist,
-        shuffle_playlist,
-        chat_enabled,
-        danmaku_enabled,
-    ).map_err(super::AppError::bad_request)?;
-
-    // Create proto request
-    let proto_req = CreateRoomRequest {
-        name: name.clone(),
-        password,
-        settings: settings_bytes,
-        description,
-    };
-
-    // Call impls layer
     let response = state
         .client_api
-        .create_room(&auth.user_id.to_string(), proto_req)
+        .create_room(&auth.user_id.to_string(), req)
         .await
         .map_err(|e| {
-            tracing::error!(user_id = %auth.user_id, room_name = %name, error = %e, "Failed to create room");
+            tracing::error!(user_id = %auth.user_id, error = %e, "Failed to create room");
             super::AppError::internal_server_error(e)
         })?;
 
@@ -139,15 +66,9 @@ pub async fn get_room(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<GetRoomResponse>> {
-    let room_id_obj = RoomId::from_string(room_id.clone());
-    state.room_service
-        .check_membership(&room_id_obj, &auth.user_id)
-        .await
-        .map_err(|e| super::AppError::forbidden(e.to_string()))?;
-
     let response = state
         .client_api
-        .get_room(&room_id)
+        .get_room(&auth.user_id.to_string(), &room_id)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -159,21 +80,11 @@ pub async fn join_room(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<JoinRoomRequest>,
 ) -> AppResult<Json<JoinRoomResponse>> {
-    let password = req.get("password")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let proto_req = JoinRoomRequest {
-        room_id: room_id.clone(),
-        password,
-    };
-
     let response = state
         .client_api
-        .join_room(&auth.user_id.to_string(), proto_req)
+        .join_room(&auth.user_id.to_string(), &room_id, req)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -186,10 +97,9 @@ pub async fn leave_room(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<LeaveRoomResponse>> {
-    let proto_req = LeaveRoomRequest { room_id };
     let response = state
         .client_api
-        .leave_room(&auth.user_id.to_string(), proto_req)
+        .leave_room(&auth.user_id.to_string(), &room_id)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -205,10 +115,9 @@ pub async fn delete_room(
 ) -> AppResult<Json<DeleteRoomResponse>> {
     tracing::info!(user_id = %auth.user_id, room_id = %room_id, "Deleting room");
 
-    let proto_req = DeleteRoomRequest { room_id: room_id.clone() };
     let response = state
         .client_api
-        .delete_room(&auth.user_id.to_string(), proto_req)
+        .delete_room(&auth.user_id.to_string(), &room_id)
         .await
         .map_err(|e| {
             tracing::error!(user_id = %auth.user_id, room_id = %room_id, error = %e, "Failed to delete room");
@@ -226,45 +135,11 @@ pub async fn add_media(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<AddMediaRequest>,
 ) -> AppResult<Json<AddMediaResponse>> {
-    let url = req.get("url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| super::AppError::bad_request("Missing url field"))?
-        .to_string();
-
-    if url.len() > 2048 {
-        return Err(super::AppError::bad_request("URL too long (max 2048 characters)"));
-    }
-
-    let provider = req.get("provider")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let title = req.get("title")
-        .and_then(|v| v.as_str()).map_or_else(|| {
-            // Extract title from URL
-            url.split('/').next_back().unwrap_or("Unknown").to_string()
-        }, |t| t.chars().take(500).collect::<String>());
-
-    // Build source config JSON
-    let source_config = serde_json::json!({"url": url});
-    let source_config_bytes = serde_json::to_vec(&source_config)
-        .map_err(|e| super::AppError::bad_request(format!("Invalid source config: {e}")))?;
-
-    let proto_req = AddMediaRequest {
-        playlist_id: String::new(), // Default/empty playlist
-        url,
-        provider,
-        provider_instance_name: String::new(),
-        source_config: source_config_bytes,
-        title,
-    };
-
     let response = state
         .client_api
-        .add_media(&auth.user_id.to_string(), &room_id, proto_req)
+        .add_media(&auth.user_id.to_string(), &room_id, req)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -291,191 +166,50 @@ pub async fn remove_media(
 }
 
 /// Bulk remove media from playlist
-///
-/// Removes multiple media items in a single transaction
-#[utoipa::path(
-    delete,
-    path = "/api/rooms/{room_id}/media/batch",
-    tag = "Room Media",
-    params(
-        ("room_id" = String, Path, description = "Room ID")
-    ),
-    request_body(
-        content = inline(serde_json::Value),
-        description = "JSON object with media_ids array",
-        example = json!({"media_ids": ["abc123", "def456", "ghi789"]})
-    ),
-    responses(
-        (status = 200, description = "Media items removed successfully",
-         body = inline(serde_json::Value),
-         example = json!({"deleted_count": 3})),
-        (status = 400, description = "Bad request"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden - insufficient permissions"),
-        (status = 404, description = "Room not found")
-    ),
-    security(
-        ("bearer_auth" = [])
-    )
-)]
 #[tracing::instrument(name = "http_remove_media_batch", skip(state, req), fields(user_id = %auth.user_id, room_id = %room_id))]
 pub async fn remove_media_batch(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<serde_json::Value>> {
-    let media_ids = req.get("media_ids")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| super::AppError::bad_request("Missing or invalid media_ids array"))?;
+    Json(req): Json<RemoveMediaBatchRequest>,
+) -> AppResult<Json<RemoveMediaBatchResponse>> {
+    let media_ids_for_kick = req.media_ids.clone();
 
-    let media_ids_str: Vec<String> = media_ids
-        .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
-
-    if media_ids_str.is_empty() {
-        return Err(super::AppError::bad_request("media_ids array cannot be empty"));
-    }
-
-    tracing::info!(
-        user_id = %auth.user_id,
-        room_id = %room_id,
-        count = media_ids_str.len(),
-        "Removing media batch"
-    );
-
-    // Clone media_ids for kick logic after batch deletion
-    let media_ids_for_kick = media_ids_str.clone();
-
-    let deleted_count = state
+    let response = state
         .client_api
-        .remove_media_batch(&auth.user_id.to_string(), &room_id, media_ids_str)
+        .remove_media_batch(&auth.user_id.to_string(), &room_id, req)
         .await
         .map_err(|e| {
-            tracing::error!(
-                user_id = %auth.user_id,
-                room_id = %room_id,
-                error = %e,
-                "Failed to remove media batch"
-            );
+            tracing::error!(user_id = %auth.user_id, room_id = %room_id, error = %e, "Failed to remove media batch");
             super::AppError::internal_server_error(e)
         })?;
-
-    tracing::info!(
-        user_id = %auth.user_id,
-        room_id = %room_id,
-        deleted_count,
-        "Media batch removed successfully"
-    );
 
     // Kick active streams for deleted media (local + cluster-wide)
     for media_id in &media_ids_for_kick {
         super::kick_stream_cluster(&state, &room_id, media_id, "media_deleted");
     }
 
-    Ok(Json(serde_json::json!({
-        "deleted_count": deleted_count
-    })))
+    Ok(Json(response))
 }
 
 /// Bulk reorder media items in playlist
-///
-/// Reorders multiple media items to new positions in a single transaction
-#[utoipa::path(
-    post,
-    path = "/api/rooms/{room_id}/media/reorder",
-    tag = "Room Media",
-    params(
-        ("room_id" = String, Path, description = "Room ID")
-    ),
-    request_body(
-        content = inline(serde_json::Value),
-        description = "JSON object with updates array containing {media_id, position} pairs",
-        example = json!({
-            "updates": [
-                {"media_id": "abc123", "position": 0},
-                {"media_id": "def456", "position": 1},
-                {"media_id": "ghi789", "position": 2}
-            ]
-        })
-    ),
-    responses(
-        (status = 200, description = "Media items reordered successfully",
-         body = inline(serde_json::Value),
-         example = json!({"success": true})),
-        (status = 400, description = "Bad request"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden - insufficient permissions"),
-        (status = 404, description = "Room not found")
-    ),
-    security(
-        ("bearer_auth" = [])
-    )
-)]
 #[tracing::instrument(name = "http_reorder_media_batch", skip(state, req), fields(user_id = %auth.user_id, room_id = %room_id))]
 pub async fn reorder_media_batch(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<serde_json::Value>> {
-    let updates = req.get("updates")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| super::AppError::bad_request("Missing or invalid updates array"))?;
-
-    let mut updates_vec = Vec::new();
-    for update in updates {
-        let media_id = update.get("media_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| super::AppError::bad_request("Missing media_id in update"))?
-            .to_string();
-
-        let position_raw = update.get("position")
-            .and_then(serde_json::Value::as_i64)
-            .ok_or_else(|| super::AppError::bad_request("Missing or invalid position in update"))?;
-        if position_raw < 0 || position_raw > i64::from(i32::MAX) {
-            return Err(super::AppError::bad_request("Position must be a non-negative integer within i32 range"));
-        }
-        let position = position_raw as i32;
-
-        updates_vec.push((media_id, position));
-    }
-
-    if updates_vec.is_empty() {
-        return Err(super::AppError::bad_request("updates array cannot be empty"));
-    }
-
-    tracing::info!(
-        user_id = %auth.user_id,
-        room_id = %room_id,
-        count = updates_vec.len(),
-        "Reordering media batch"
-    );
-
-    state
+    Json(req): Json<ReorderMediaBatchRequest>,
+) -> AppResult<Json<ReorderMediaBatchResponse>> {
+    let response = state
         .client_api
-        .reorder_media_batch(&auth.user_id.to_string(), &room_id, updates_vec)
+        .reorder_media_batch(&auth.user_id.to_string(), &room_id, req)
         .await
         .map_err(|e| {
-            tracing::error!(
-                user_id = %auth.user_id,
-                room_id = %room_id,
-                error = %e,
-                "Failed to reorder media batch"
-            );
+            tracing::error!(user_id = %auth.user_id, room_id = %room_id, error = %e, "Failed to reorder media batch");
             super::AppError::internal_server_error(e)
         })?;
 
-    tracing::info!(
-        user_id = %auth.user_id,
-        room_id = %room_id,
-        "Media batch reordered successfully"
-    );
-
-    Ok(Json(serde_json::json!({
-        "success": true
-    })))
+    Ok(Json(response))
 }
 
 /// Get playlist
@@ -484,15 +218,9 @@ pub async fn get_playlist(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<ListPlaylistResponse>> {
-    let room_id_obj = RoomId::from_string(room_id.clone());
-    state.room_service
-        .check_membership(&room_id_obj, &auth.user_id)
-        .await
-        .map_err(|e| super::AppError::forbidden(e.to_string()))?;
-
     let response = state
         .client_api
-        .get_playlist(&room_id)
+        .get_playlist(&auth.user_id.to_string(), &room_id)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -504,27 +232,11 @@ pub async fn swap_media_items(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<SwapMediaRequest>,
 ) -> AppResult<Json<SwapMediaResponse>> {
-    let media_id1 = req.get("media_id1")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| super::AppError::bad_request("Missing media_id1 field"))?
-        .to_string();
-
-    let media_id2 = req.get("media_id2")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| super::AppError::bad_request("Missing media_id2 field"))?
-        .to_string();
-
-    let proto_req = SwapMediaRequest {
-        room_id: room_id.clone(),
-        media_id1,
-        media_id2,
-    };
-
     let response = state
         .client_api
-        .swap_media(&auth.user_id.to_string(), proto_req)
+        .swap_media(&auth.user_id.to_string(), &room_id, req)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -569,16 +281,11 @@ pub async fn seek(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<SeekRequest>,
 ) -> AppResult<Json<SeekResponse>> {
-    let position = req.get("position")
-        .and_then(serde_json::Value::as_f64)
-        .ok_or_else(|| super::AppError::bad_request("Missing or invalid position field"))?;
-
-    let proto_req = SeekRequest { position };
     let response = state
         .client_api
-        .seek(&auth.user_id.to_string(), &room_id, proto_req)
+        .seek(&auth.user_id.to_string(), &room_id, req)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -591,16 +298,9 @@ pub async fn get_playback_state(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<GetPlaybackStateResponse>> {
-    let room_id_obj = RoomId::from_string(room_id.clone());
-    state.room_service
-        .check_membership(&room_id_obj, &auth.user_id)
-        .await
-        .map_err(|e| super::AppError::forbidden(e.to_string()))?;
-
-    let proto_req = GetPlaybackStateRequest {};
     let response = state
         .client_api
-        .get_playback_state(&room_id, proto_req)
+        .get_playback_state(&auth.user_id.to_string(), &room_id, GetPlaybackStateRequest {})
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -615,15 +315,9 @@ pub async fn get_room_members(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<GetRoomMembersResponse>> {
-    let room_id_obj = RoomId::from_string(room_id.clone());
-    state.room_service
-        .check_membership(&room_id_obj, &auth.user_id)
-        .await
-        .map_err(|e| super::AppError::forbidden(e.to_string()))?;
-
     let response = state
         .client_api
-        .get_room_members(&room_id)
+        .get_room_members(&auth.user_id.to_string(), &room_id)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -637,22 +331,14 @@ pub async fn check_room(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<CheckRoomResponse>> {
-    let room_id_obj = RoomId::from_string(room_id.clone());
+    let req = crate::proto::client::CheckRoomRequest { room_id };
+    let response = state
+        .client_api
+        .check_room(req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    let (exists, requires_password, name) = match state.room_service.get_room(&room_id_obj).await {
-        Ok(room) => {
-            let settings = state.room_service.get_room_settings(&room_id_obj).await
-                .map_err(|e| super::AppError::internal_server_error(format!("Failed to get room settings: {e}")))?;
-            (true, settings.require_password.0, room.name.clone())
-        }
-        Err(_) => (false, false, String::new()),
-    };
-
-    Ok(Json(CheckRoomResponse {
-        exists,
-        requires_password,
-        name,
-    }))
+    Ok(Json(response))
 }
 
 /// List rooms (public endpoint)
@@ -685,42 +371,15 @@ pub async fn set_room_password(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<serde_json::Value>> {
-    let password = req.get("password")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let room_id_obj = RoomId::from_string(room_id.clone());
-
-    // Check if user is admin or creator
-    state
-        .room_service
-        .check_permission(&room_id_obj, &auth.user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
-        .await?;
-
-    // Hash password if provided
-    let password_hash = if password.is_empty() {
-        None
-    } else {
-        let hash = synctv_core::service::auth::password::hash_password(&password)
-            .await
-            .map_err(|e| super::AppError::internal(format!("Failed to hash password: {e}")))?;
-        Some(hash)
-    };
-
-    // Update password hash
-    state
-        .room_service
-        .update_room_password(&room_id_obj, password_hash)
+    Json(req): Json<SetRoomPasswordRequest>,
+) -> AppResult<Json<SetRoomPasswordResponse>> {
+    let response = state
+        .client_api
+        .set_room_password(&auth.user_id.to_string(), &room_id, req)
         .await
-        .map_err(|e| super::AppError::internal(format!("Failed to update password: {e}")))?;
+        .map_err(super::AppError::internal_server_error)?;
 
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Password updated successfully"
-    })))
+    Ok(Json(response))
 }
 
 /// Check room password (requires authentication to prevent brute force)
@@ -728,62 +387,29 @@ pub async fn check_password(
     _auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<serde_json::Value>> {
-    let password = req.get("password")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let room_id_obj = RoomId::from_string(room_id);
-
-    // Verify room exists
-    state
-        .room_service
-        .get_room(&room_id_obj)
+    Json(req): Json<CheckRoomPasswordRequest>,
+) -> AppResult<Json<CheckRoomPasswordResponse>> {
+    let response = state
+        .client_api
+        .check_room_password(&room_id, req)
         .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {e}")))?;
+        .map_err(super::AppError::internal_server_error)?;
 
-    let is_valid = state
-        .room_service
-        .check_room_password(&room_id_obj, &password)
-        .await
-        .map_err(|e| super::AppError::internal(format!("Password verification failed: {e}")))?;
-
-    Ok(Json(serde_json::json!({
-        "valid": is_valid
-    })))
+    Ok(Json(response))
 }
 
 /// Get room public settings
 pub async fn get_room_settings(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id_obj = RoomId::from_string(room_id);
-
-    let room = state
-        .room_service
-        .get_room(&room_id_obj)
+) -> AppResult<Json<crate::proto::client::GetRoomSettingsResponse>> {
+    let response = state
+        .client_api
+        .get_room_settings(&room_id)
         .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {e}")))?;
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Load settings from service layer
-    let room_settings = state.room_service.get_room_settings(&room_id_obj).await
-        .map_err(|e| super::AppError::internal(format!("Failed to load settings: {e}")))?;
-
-    // Convert to JSON and hide password hash
-    let mut settings_json = serde_json::to_value(&room_settings)
-        .map_err(|e| super::AppError::internal(format!("Failed to serialize settings: {e}")))?;
-
-    if let Some(obj) = settings_json.as_object_mut() {
-        obj.remove("password");
-    }
-
-    Ok(Json(serde_json::json!({
-        "name": room.name,
-        "settings": settings_json
-    })))
+    Ok(Json(response))
 }
 
 /// Push multiple media items to playlist
@@ -791,62 +417,15 @@ pub async fn push_media_batch(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<Vec<AddMediaResponse>>> {
-    let room_id_obj = RoomId::from_string(room_id.clone());
+    Json(req): Json<AddMediaBatchRequest>,
+) -> AppResult<Json<crate::proto::client::AddMediaBatchResponse>> {
+    let response = state
+        .client_api
+        .add_media_batch(&auth.user_id.to_string(), &room_id, req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Check permission
-    state
-        .room_service
-        .check_permission(&room_id_obj, &auth.user_id, PermissionBits::ADD_MEDIA)
-        .await?;
-
-    let items = req.get("items")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| super::AppError::bad_request("Missing items array"))?;
-
-    let mut results = Vec::new();
-    for item in items {
-        let url = item.get("url")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| super::AppError::bad_request("Missing url in item"))?
-            .to_string();
-
-        let provider = item.get("provider")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let title = item.get("title")
-            .and_then(|v| v.as_str()).map_or_else(|| {
-                // Extract title from URL
-                url.split('/').next_back().unwrap_or("Unknown").to_string()
-            }, std::string::ToString::to_string);
-
-        // Build source config JSON
-        let source_config = serde_json::json!({"url": url});
-        let source_config_bytes = serde_json::to_vec(&source_config)
-            .map_err(|e| super::AppError::bad_request(format!("Invalid source config: {e}")))?;
-
-        let proto_req = AddMediaRequest {
-            playlist_id: String::new(),
-            url,
-            provider,
-            provider_instance_name: String::new(),
-            source_config: source_config_bytes,
-            title,
-        };
-
-        let response = state
-            .client_api
-            .add_media(&auth.user_id.to_string(), &room_id, proto_req)
-            .await
-            .map_err(super::AppError::internal_server_error)?;
-
-        results.push(response);
-    }
-
-    Ok(Json(results))
+    Ok(Json(response))
 }
 
 /// Edit media
@@ -854,54 +433,16 @@ pub async fn edit_media(
     auth: AuthUser,
     State(state): State<AppState>,
     Path((room_id, media_id)): Path<(String, String)>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<AddMediaResponse>> {
-    let room_id_obj = RoomId::from_string(room_id.clone());
-    let media_id_obj = MediaId::from_string(media_id.clone());
-
-    // Get title from request
-    let title = req.get("title")
-        .and_then(|v| v.as_str())
-        .map(std::string::ToString::to_string);
-
-    // Edit media (permission check is done inside service)
-    // Note: metadata is no longer stored in database, only in PlaybackResult
-    let media = state
-        .room_service
-        .edit_media(room_id_obj, auth.user_id, media_id_obj, title)
+    Json(mut req): Json<EditMediaRequest>,
+) -> AppResult<Json<EditMediaResponse>> {
+    req.media_id = media_id;
+    let response = state
+        .client_api
+        .edit_media(&auth.user_id.to_string(), &room_id, req)
         .await
-        .map_err(|e| super::AppError::internal_server_error(format!("Failed to edit media: {e}")))?;
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Convert to response
-    let media_url = media.source_config.get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    // Get metadata from PlaybackResult if available (for direct URLs)
-    let metadata_bytes = if media.is_direct() {
-        media
-            .get_playback_result()
-            .map(|pb| serde_json::to_vec(&pb.metadata).unwrap_or_default())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    Ok(Json(AddMediaResponse {
-        media: Some(crate::proto::client::Media {
-            id: media.id.as_str().to_string(),
-            room_id: media.room_id.as_str().to_string(),
-            url: media_url.to_string(),
-            provider: media.source_provider.clone(),
-            title: media.name.clone(),
-            metadata: metadata_bytes,
-            position: media.position,
-            added_at: media.added_at.timestamp(),
-            added_by: media.creator_id.as_str().to_string(),
-            provider_instance_name: media.provider_instance_name.clone().unwrap_or_default(),
-            source_config: serde_json::to_vec(&media.source_config).unwrap_or_default(),
-        }),
-    }))
+    Ok(Json(response))
 }
 
 /// Clear playlist
@@ -909,23 +450,14 @@ pub async fn clear_playlist(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
-    let room_id_obj = RoomId::from_string(room_id);
+) -> AppResult<Json<ClearPlaylistResponse>> {
+    let response = state
+        .client_api
+        .clear_playlist(&auth.user_id.to_string(), &room_id)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
 
-    // Check CLEAR_PLAYLIST permission
-    state
-        .room_service
-        .check_permission(&room_id_obj, &auth.user_id, PermissionBits::CLEAR_PLAYLIST)
-        .await?;
-
-    let deleted_count = state.room_service.clear_playlist(room_id_obj, auth.user_id).await
-        .map_err(|e| super::AppError::internal_server_error(format!("Failed to clear playlist: {e}")))?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "deleted_count": deleted_count,
-        "message": "Playlist cleared successfully"
-    })))
+    Ok(Json(response))
 }
 
 /// GET /`api/rooms/:room_id/movie/:media_id` - Get movie playback info
@@ -934,17 +466,10 @@ pub async fn get_movie_info(
     State(state): State<AppState>,
     Path((room_id, media_id)): Path<(String, String)>,
 ) -> AppResult<Json<crate::proto::client::GetMovieInfoResponse>> {
+    let req = crate::proto::client::GetMovieInfoRequest { media_id };
     let resp = state
         .client_api
-        .get_movie_info(
-            auth.user_id.as_str(),
-            &room_id,
-            &media_id,
-            &state.bilibili_provider,
-            &state.alist_provider,
-            &state.emby_provider,
-            state.settings_registry.as_deref(),
-        )
+        .get_movie_info(auth.user_id.as_str(), &room_id, req)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
@@ -989,53 +514,33 @@ pub async fn update_room_settings(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<serde_json::Value>> {
-    // Fetch current settings to use as baseline (PATCH: only update what's provided)
-    let rid = synctv_core::models::RoomId::from_string(room_id.clone());
-    let current = state.room_service.get_room_settings(&rid).await
-        .map_err(|e| super::AppError::internal_server_error(format!("Failed to get current settings: {e}")))?;
-
-    // Parse optional fields from request body
-    let password = req.get("password").and_then(|v| v.as_str()).map(String::from);
-    let max_members = req.get("max_members").and_then(serde_json::Value::as_i64).map(|v| v.clamp(0, 10000) as i32);
-    let allow_guest_join = req.get("allow_guest_join").and_then(serde_json::Value::as_bool);
-    let auto_play_next = req.get("auto_play_next").and_then(serde_json::Value::as_bool);
-    let loop_playlist = req.get("loop_playlist").and_then(serde_json::Value::as_bool);
-    let shuffle_playlist = req.get("shuffle_playlist").and_then(serde_json::Value::as_bool);
-    let chat_enabled = req.get("chat_enabled").and_then(serde_json::Value::as_bool);
-    let danmaku_enabled = req.get("danmaku_enabled").and_then(serde_json::Value::as_bool);
-
-    // Merge: use provided value if present, otherwise keep current setting
-    let settings = serde_json::json!({
-        "require_password": password.as_ref().map_or(current.require_password.0, |_| true),
-        "max_members": max_members.unwrap_or(current.max_members.0 as i32),
-        "allow_guest_join": allow_guest_join.unwrap_or(current.allow_guest_join.0),
-        "auto_play_next": auto_play_next.unwrap_or(current.auto_play_next.0),
-        "loop_playlist": loop_playlist.unwrap_or(current.loop_playlist.0),
-        "shuffle_playlist": shuffle_playlist.unwrap_or(current.shuffle_playlist.0),
-        "chat_enabled": chat_enabled.unwrap_or(current.chat_enabled.0),
-        "danmaku_enabled": danmaku_enabled.unwrap_or(current.danmaku_enabled.0),
-    });
-
-    let settings_bytes = serde_json::to_vec(&settings)
-        .map_err(|e| super::AppError::bad_request(format!("Failed to serialize settings: {e}")))?;
-
-    let proto_req = UpdateRoomSettingsRequest {
-        room_id: room_id.clone(),
-        settings: settings_bytes,
-    };
-
-    let _response = state
+    Json(req): Json<UpdateRoomSettingsRequest>,
+) -> AppResult<Json<UpdateRoomSettingsResponse>> {
+    let response = state
         .client_api
-        .update_room_settings(&auth.user_id.to_string(), &room_id, proto_req)
+        .update_room_settings(&auth.user_id.to_string(), &room_id, req)
         .await
         .map_err(super::AppError::internal_server_error)?;
 
-    Ok(Json(serde_json::json!({
-        "message": "Room settings updated successfully",
-        "room_id": room_id
-    })))
+    Ok(Json(response))
+}
+
+/// HTTP-specific: Update playback request for PATCH endpoint
+/// Dispatches to individual proto operations (play/pause/seek/speed/switch)
+#[derive(serde::Deserialize)]
+pub struct UpdatePlaybackRequest {
+    /// "playing" or "paused"
+    #[serde(default)]
+    pub state: Option<String>,
+    /// Seek position in seconds
+    #[serde(default)]
+    pub position: Option<f64>,
+    /// Playback speed multiplier
+    #[serde(default)]
+    pub speed: Option<f64>,
+    /// Switch to media ID
+    #[serde(default)]
+    pub media_id: Option<String>,
 }
 
 /// Unified handler for updating playback state via PATCH
@@ -1045,102 +550,83 @@ pub async fn update_playback(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<serde_json::Value>> {
-    // Check which playback property to update
+    Json(req): Json<UpdatePlaybackRequest>,
+) -> AppResult<Json<GetPlaybackStateResponse>> {
+    let user_id = auth.user_id.to_string();
 
     // Handle state change (play/pause)
-    if let Some(state_str) = req.get("state").and_then(|v| v.as_str()) {
-        match state_str {
+    if let Some(ref state_str) = req.state {
+        match state_str.as_str() {
             "playing" => {
-                let request = PlayRequest {};
-                let _response = state
-                    .client_api
-                    .play(&auth.user_id.to_string(), &room_id, request)
-                    .await
-                    .map_err(super::AppError::internal_server_error)?;
-
-                return Ok(Json(serde_json::json!({
-                    "message": "Playback started",
-                    "state": "playing"
-                })));
+                let response = state.client_api
+                    .play(&user_id, &room_id, PlayRequest {})
+                    .await.map_err(super::AppError::internal_server_error)?;
+                return Ok(Json(GetPlaybackStateResponse { playback_state: response.playback_state }));
             }
             "paused" => {
-                let _response = state
-                    .client_api
-                    .pause(&auth.user_id.to_string(), &room_id)
-                    .await
-                    .map_err(super::AppError::internal_server_error)?;
-
-                return Ok(Json(serde_json::json!({
-                    "message": "Playback paused",
-                    "state": "paused"
-                })));
+                let response = state.client_api
+                    .pause(&user_id, &room_id)
+                    .await.map_err(super::AppError::internal_server_error)?;
+                return Ok(Json(GetPlaybackStateResponse { playback_state: response.playback_state }));
             }
             _ => return Err(super::AppError::bad_request("Invalid state value, use 'playing' or 'paused'")),
         }
     }
 
     // Handle position change (seek)
-    if let Some(position) = req.get("position").and_then(serde_json::Value::as_f64) {
-        let request = SeekRequest {
-            position,
-        };
-
-        let _response = state
-            .client_api
-            .seek(&auth.user_id.to_string(), &room_id, request)
-            .await
-            .map_err(super::AppError::internal_server_error)?;
-
-        return Ok(Json(serde_json::json!({
-            "message": "Playback position updated",
-            "position": position
-        })));
+    if let Some(position) = req.position {
+        let response = state.client_api
+            .seek(&user_id, &room_id, SeekRequest { position })
+            .await.map_err(super::AppError::internal_server_error)?;
+        return Ok(Json(GetPlaybackStateResponse { playback_state: response.playback_state }));
     }
 
     // Handle speed change
-    if let Some(speed) = req.get("speed").and_then(serde_json::Value::as_f64) {
+    if let Some(speed) = req.speed {
         use crate::proto::client::SetPlaybackSpeedRequest;
-        let request = SetPlaybackSpeedRequest {
-            speed,
-        };
-
-        let _response = state
-            .client_api
-            .set_playback_speed(&auth.user_id.to_string(), &room_id, request)
-            .await
-            .map_err(super::AppError::internal_server_error)?;
-
-        return Ok(Json(serde_json::json!({
-            "message": "Playback speed updated",
-            "speed": speed
-        })));
+        let response = state.client_api
+            .set_playback_speed(&user_id, &room_id, SetPlaybackSpeedRequest { speed })
+            .await.map_err(super::AppError::internal_server_error)?;
+        return Ok(Json(GetPlaybackStateResponse { playback_state: response.playback_state }));
     }
 
     // Handle media switch
-    if let Some(media_id) = req.get("media_id").and_then(|v| v.as_str()) {
+    if let Some(media_id) = req.media_id {
         use crate::proto::client::SetCurrentMediaRequest;
-        let request = SetCurrentMediaRequest {
-            playlist_id: String::new(), // Not used for direct media switch
-            media_id: media_id.to_string(),
-        };
-
-        let _response = state
-            .client_api
-            .set_current_media(&auth.user_id.to_string(), &room_id, request)
-            .await
-            .map_err(super::AppError::internal_server_error)?;
-
-        return Ok(Json(serde_json::json!({
-            "message": "Switched to new media",
-            "media_id": media_id
-        })));
+        let _response = state.client_api
+            .set_current_media(&user_id, &room_id, SetCurrentMediaRequest {
+                playlist_id: String::new(),
+                media_id,
+            })
+            .await.map_err(super::AppError::internal_server_error)?;
+        // Return current playback state after media switch
+        let pb = state.client_api
+            .get_playback_state(&user_id, &room_id, GetPlaybackStateRequest {})
+            .await.map_err(super::AppError::internal_server_error)?;
+        return Ok(Json(pb));
     }
 
     Err(super::AppError::bad_request(
         "No valid playback update field provided (state, position, speed, or media_id)"
     ))
+}
+
+/// HTTP-specific: Media batch update request for PATCH endpoint
+/// Dispatches to reorder or swap proto operations
+#[derive(serde::Deserialize)]
+pub struct UpdateMediaBatchRequest {
+    /// Reorder operations: list of {`media_id`, position}
+    #[serde(default)]
+    pub reorder: Option<Vec<MediaReorderUpdate>>,
+    /// Swap operation: {`media_id1`, `media_id2`}
+    #[serde(default)]
+    pub swap: Option<SwapMediaRequest>,
+}
+
+/// HTTP-specific: batch operation response
+#[derive(serde::Serialize)]
+pub struct BatchOperationResponse {
+    pub success: bool,
 }
 
 /// Unified handler for media batch operations via PATCH
@@ -1150,70 +636,201 @@ pub async fn update_media_batch(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<serde_json::Value>> {
+    Json(req): Json<UpdateMediaBatchRequest>,
+) -> AppResult<Json<BatchOperationResponse>> {
+    let user_id = auth.user_id.to_string();
+
     // Check for reorder operation
-    if let Some(updates) = req.get("reorder").and_then(|v| v.as_array()) {
-        let mut updates_vec = Vec::new();
-        for update in updates {
-            let media_id = update.get("media_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| super::AppError::bad_request("Missing media_id in reorder update"))?
-                .to_string();
-
-            let position = update.get("position")
-                .and_then(serde_json::Value::as_i64)
-                .ok_or_else(|| super::AppError::bad_request("Missing or invalid position in reorder update"))?
-                as i32;
-
-            updates_vec.push((media_id, position));
-        }
-
-        if updates_vec.is_empty() {
-            return Err(super::AppError::bad_request("reorder array cannot be empty"));
-        }
-
-        let count = updates_vec.len();
-        state
-            .client_api
-            .reorder_media_batch(&auth.user_id.to_string(), &room_id, updates_vec)
+    if let Some(updates) = req.reorder {
+        let proto_req = ReorderMediaBatchRequest { updates };
+        let response = state.client_api
+            .reorder_media_batch(&user_id, &room_id, proto_req)
             .await
             .map_err(super::AppError::internal_server_error)?;
 
-        return Ok(Json(serde_json::json!({
-            "message": "Media reordered successfully",
-            "count": count
-        })));
+        return Ok(Json(BatchOperationResponse { success: response.success }));
     }
 
     // Check for swap operation
-    if let Some(swap_data) = req.get("swap") {
-        let media_id1 = swap_data.get("media_id1")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| super::AppError::bad_request("Missing media_id1 in swap operation"))?;
-
-        let media_id2 = swap_data.get("media_id2")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| super::AppError::bad_request("Missing media_id2 in swap operation"))?;
-
-        let request = SwapMediaRequest {
-            room_id: room_id.clone(),
-            media_id1: media_id1.to_string(),
-            media_id2: media_id2.to_string(),
-        };
-
-        let _response = state
-            .client_api
-            .swap_media(&auth.user_id.to_string(), request)
+    if let Some(swap_req) = req.swap {
+        let response = state.client_api
+            .swap_media(&user_id, &room_id, swap_req)
             .await
             .map_err(super::AppError::internal_server_error)?;
 
-        return Ok(Json(serde_json::json!({
-            "message": "Media items swapped successfully"
-        })));
+        return Ok(Json(BatchOperationResponse { success: response.success }));
     }
 
     Err(super::AppError::bad_request(
         "No valid batch operation provided (reorder or swap)"
     ))
+}
+
+// ==================== Room Settings Reset ====================
+
+/// Reset room settings to defaults
+/// POST /`api/rooms/:room_id/settings/reset`
+pub async fn reset_room_settings(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> AppResult<Json<ResetRoomSettingsResponse>> {
+    let response = state
+        .client_api
+        .reset_room_settings(&auth.user_id.to_string(), &room_id)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+// ==================== Chat History ====================
+
+/// Get chat history for a room
+/// GET /`api/rooms/:room_id/chat/history`
+pub async fn get_chat_history(
+    _auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> AppResult<Json<GetChatHistoryResponse>> {
+    let limit = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(50i32).min(500);
+    let before = params.get("before").and_then(|v| v.parse().ok()).unwrap_or(0i64);
+
+    let req = crate::proto::client::GetChatHistoryRequest { limit, before };
+    let response = state
+        .client_api
+        .get_chat_history(&room_id, req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+// ==================== Playlist CRUD ====================
+
+/// Create a playlist
+/// POST /`api/rooms/:room_id/playlists`
+pub async fn create_playlist(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<CreatePlaylistRequest>,
+) -> AppResult<Json<CreatePlaylistResponse>> {
+    let response = state
+        .client_api
+        .create_playlist(&auth.user_id.to_string(), &room_id, req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+/// Update a playlist
+/// PATCH /`api/rooms/:room_id/playlists/:playlist_id`
+pub async fn update_playlist(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((room_id, playlist_id)): Path<(String, String)>,
+    Json(mut req): Json<UpdatePlaylistRequest>,
+) -> AppResult<Json<UpdatePlaylistResponse>> {
+    req.playlist_id = playlist_id;
+    let response = state
+        .client_api
+        .update_playlist(&auth.user_id.to_string(), &room_id, req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+/// Delete a playlist
+/// DELETE /`api/rooms/:room_id/playlists/:playlist_id`
+pub async fn delete_playlist(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((room_id, playlist_id)): Path<(String, String)>,
+) -> AppResult<Json<DeletePlaylistResponse>> {
+    let req = DeletePlaylistRequest { playlist_id };
+    let response = state
+        .client_api
+        .delete_playlist(&auth.user_id.to_string(), &room_id, req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+/// List playlists in a room
+/// GET /`api/rooms/:room_id/playlists`
+pub async fn list_playlists(
+    _auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> AppResult<Json<ListPlaylistsResponse>> {
+    let parent_id = params.get("parent_id").cloned().unwrap_or_default();
+    let req = crate::proto::client::ListPlaylistsRequest { parent_id };
+    let response = state
+        .client_api
+        .list_playlists(&room_id, req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+// ==================== Playback: Set Current Media & Speed ====================
+
+/// Set current media
+/// POST /`api/rooms/:room_id/playback/current`
+pub async fn set_current_media(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<SetCurrentMediaRequest>,
+) -> AppResult<Json<SetCurrentMediaResponse>> {
+    let response = state
+        .client_api
+        .set_current_media(&auth.user_id.to_string(), &room_id, req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+/// Set playback speed
+/// POST /`api/rooms/:room_id/playback/speed`
+pub async fn set_playback_speed(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<SetPlaybackSpeedRequest>,
+) -> AppResult<Json<SetPlaybackSpeedResponse>> {
+    let response = state
+        .client_api
+        .set_playback_speed(&auth.user_id.to_string(), &room_id, req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+// ==================== Public: Hot Rooms ====================
+
+/// Get hot rooms (sorted by online count)
+/// GET /api/rooms/hot
+pub async fn get_hot_rooms(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> AppResult<Json<GetHotRoomsResponse>> {
+    let limit = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(10i32).min(50);
+    let req = crate::proto::client::GetHotRoomsRequest { limit };
+    let response = state
+        .client_api
+        .get_hot_rooms(req)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
 }

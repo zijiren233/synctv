@@ -46,6 +46,9 @@ impl UserService {
     }
 
     /// Register a new user
+    ///
+    /// Uniqueness of username/email is enforced atomically by the database
+    /// UNIQUE constraints, avoiding any check-then-act (TOCTOU) race condition.
     pub async fn register(
         &self,
         username: String,
@@ -59,22 +62,12 @@ impl UserService {
         }
         self.validate_password(&password)?;
 
-        // Check if username already exists
-        if self.repository.username_exists(&username).await? {
-            return Err(Error::InvalidInput("Username already exists".to_string()));
-        }
-
-        // Check if email already exists (only if provided)
-        if let Some(ref email) = email {
-            if self.repository.email_exists(email).await? {
-                return Err(Error::InvalidInput("Email already exists".to_string()));
-            }
-        }
-
         // Hash password
         let password_hash = hash_password(&password).await?;
 
-        // Create user with email signup method
+        // Create user with email signup method.
+        // The database UNIQUE constraints on username and email will reject
+        // duplicates atomically -- no separate existence check needed.
         let user = User::new(username.clone(), email.clone(), password_hash, Some(SignupMethod::Email));
         let created_user = self.repository.create(&user).await?;
 
@@ -151,6 +144,13 @@ impl UserService {
             return Err(Error::Authentication("Account has been deleted".to_string()));
         }
 
+        // Reject refresh tokens issued before the last password change
+        if self.blacklist_service.are_user_tokens_invalidated(&user_id, claims.iat).await? {
+            return Err(Error::Authentication(
+                "Token invalidated due to password change. Please log in again.".to_string(),
+            ));
+        }
+
         // Generate new tokens (role will be fetched from DB on each request)
         let new_access_token = self
             .jwt_service
@@ -196,6 +196,14 @@ impl UserService {
     }
 
     /// Set user password (admin use, no old password required)
+    ///
+    /// After updating the password, all existing tokens for the user are
+    /// invalidated so that stolen or leaked tokens cannot be reused.
+    ///
+    /// Token invalidation is performed **before** the database password
+    /// update.  If Redis is unavailable the password change is aborted,
+    /// because allowing the password to change while old tokens remain
+    /// valid is a security risk.
     pub async fn set_password(&self, user_id: &UserId, new_password: &str) -> Result<User> {
         // Validate new password
         self.validate_password(new_password)?;
@@ -203,7 +211,32 @@ impl UserService {
         // Hash new password
         let password_hash = hash_password(new_password).await?;
 
-        // Update password in database
+        // Invalidate all existing tokens for this user BEFORE updating the
+        // password.  This ordering ensures that if Redis is down we abort
+        // early and the password remains unchanged — a safe, consistent
+        // state.  The reverse (password first, then invalidation) would
+        // leave old tokens valid after a successful password change, which
+        // is a security hole.
+        //
+        // TTL = 30 days (the maximum token lifetime, i.e. refresh tokens).
+        // After 30 days, even old refresh tokens will have expired naturally.
+        const THIRTY_DAYS_SECS: i64 = 30 * 24 * 60 * 60;
+        if let Err(e) = self.blacklist_service.invalidate_user_tokens(user_id, THIRTY_DAYS_SECS).await {
+            tracing::error!(
+                user_id = %user_id.as_str(),
+                error = %e,
+                "SECURITY: Failed to invalidate tokens during password change — \
+                 aborting password update to prevent old tokens from remaining valid"
+            );
+            return Err(Error::Internal(
+                "Cannot securely process password change: \
+                 token invalidation service is unavailable. \
+                 Please try again later."
+                    .to_string(),
+            ));
+        }
+
+        // Update password in database (only reached if token invalidation succeeded)
         let updated_user = self.repository.update_password(user_id, &password_hash).await?;
 
         tracing::info!("Password updated for user {}", user_id.as_str());
@@ -259,30 +292,42 @@ impl UserService {
         self.blacklist_service.is_blacklisted(token).await
     }
 
-    /// Create or load user by `OAuth2` provider
+    /// Check if a token has been invalidated by a password change.
     ///
-    /// This method is called during `OAuth2` login flow.
-    /// If a user exists with the given provider and `provider_user_id`, return it.
-    /// Otherwise, create a new user with a random password.
+    /// Returns `true` if the token was issued before the user's most recent
+    /// password change and should therefore be rejected.
+    pub async fn is_token_invalidated_by_password_change(
+        &self,
+        user_id: &UserId,
+        token_iat: i64,
+    ) -> Result<bool> {
+        self.blacklist_service
+            .are_user_tokens_invalidated(user_id, token_iat)
+            .await
+    }
+
+    /// Create a new user for an `OAuth2` login.
     ///
-    /// Note: This method doesn't save the `OAuth2` token - that's handled by `OAuth2Service`.
+    /// This method is called during `OAuth2` login flow when no existing provider
+    /// mapping was found (the caller must check provider-based lookup first).
+    /// It creates a new user with a random password.
+    ///
+    /// If the desired username is already taken (detected atomically via DB
+    /// UNIQUE constraint), a numeric suffix is appended (e.g., "alice" ->
+    /// "`alice_2`", "`alice_3`") to avoid collisions. This prevents account
+    /// takeover where an `OAuth2` user with a matching username would silently
+    /// gain access to an existing local account.
+    ///
+    /// Note: This method doesn't save the `OAuth2` provider mapping - that's handled
+    /// by `OAuth2Service::upsert_user_provider`.
     /// Note: Email is optional for `OAuth2` users.
     pub async fn create_or_load_by_oauth2(
         &self,
         provider: &OAuth2Provider,
-        _provider_user_id: &str,
+        provider_user_id: &str,
         username: &str,
         email: Option<&str>,
     ) -> Result<User> {
-        // Check if user already exists by username
-        if let Some(user) = self.repository.get_by_username(username).await? {
-            tracing::info!(
-                "Found existing user {} by username during OAuth2 login",
-                user.id.as_str()
-            );
-            return Ok(user);
-        }
-
         // Generate a random password (OAuth2 users don't need password login)
         let random_password = nanoid::nanoid!(32);
 
@@ -292,20 +337,65 @@ impl UserService {
         // Hash password
         let password_hash = hash_password(&random_password).await?;
 
-        // Create user with OAuth2 signup method
-        let user = User::new(username.to_string(), user_email, password_hash, Some(SignupMethod::OAuth2));
-        let created_user = self.repository.create(&user).await?;
+        // Try to create user with the desired username first. If the DB UNIQUE
+        // constraint rejects it, fall back to suffixed variants. This avoids
+        // the TOCTOU race of check-then-insert.
+        let candidates = std::iter::once(username.to_string())
+            .chain((2..=1000).map(|suffix| {
+                // Cap the base to leave room for the suffix within the 50-char limit
+                let max_base_len = 45;
+                let base = if username.len() > max_base_len {
+                    &username[..max_base_len]
+                } else {
+                    username
+                };
+                format!("{base}_{suffix}")
+            }));
 
-        // Populate username cache
-        self.username_cache.set(&created_user.id, username).await?;
+        for candidate in candidates {
+            let user = User::new(
+                candidate.clone(),
+                user_email.clone(),
+                password_hash.clone(),
+                Some(SignupMethod::OAuth2),
+            );
+            match self.repository.create(&user).await {
+                Ok(created_user) => {
+                    // Populate username cache
+                    self.username_cache.set(&created_user.id, &candidate).await?;
 
-        tracing::info!(
-            "Created new user {} via OAuth2 provider {}",
-            created_user.id.as_str(),
-            provider.as_str()
-        );
+                    if candidate == username {
+                        tracing::info!(
+                            "Created new user {} (username='{}') via OAuth2 provider {} (provider_user_id={})",
+                            created_user.id.as_str(),
+                            candidate,
+                            provider.as_str(),
+                            provider_user_id
+                        );
+                    } else {
+                        tracing::info!(
+                            "Username '{}' was taken; created user {} as '{}' via OAuth2 provider {} (provider_user_id={})",
+                            username,
+                            created_user.id.as_str(),
+                            candidate,
+                            provider.as_str(),
+                            provider_user_id
+                        );
+                    }
 
-        Ok(created_user)
+                    return Ok(created_user);
+                }
+                Err(Error::AlreadyExists(ref msg)) if msg.contains("Username") => {
+                    // Username conflict -- try next candidate
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(Error::Internal(format!(
+            "Could not generate a unique username for base '{username}' after 1000 attempts"
+        )))
     }
 
     /// Validate username

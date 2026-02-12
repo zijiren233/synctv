@@ -31,8 +31,10 @@ impl RtmpServer {
     }
 
     pub async fn run(&mut self) -> Result<(), Error> {
-        let socket_addr: &SocketAddr = &self.address.parse().unwrap();
-        let listener = TcpListener::bind(socket_addr).await?;
+        let socket_addr: SocketAddr = self.address.parse().map_err(|e| {
+            Error::new(std::io::ErrorKind::InvalidInput, format!("invalid address '{}': {}", self.address, e))
+        })?;
+        let listener = TcpListener::bind(&socket_addr).await?;
 
         log::info!("Rtmp server listening on tcp://{socket_addr}");
         loop {

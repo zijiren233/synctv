@@ -80,13 +80,13 @@ impl PermissionService {
         if let Some(registry) = &self.settings_registry {
             match role {
                 crate::models::RoomRole::Admin => {
-                    PermissionBits(registry.admin_default_permissions.get().unwrap_or(1073741823))
+                    PermissionBits(registry.admin_default_permissions.get().unwrap_or(PermissionBits::DEFAULT_ADMIN))
                 }
                 crate::models::RoomRole::Member => {
-                    PermissionBits(registry.member_default_permissions.get().unwrap_or(262143))
+                    PermissionBits(registry.member_default_permissions.get().unwrap_or(PermissionBits::DEFAULT_MEMBER))
                 }
                 crate::models::RoomRole::Guest => {
-                    PermissionBits(registry.guest_default_permissions.get().unwrap_or(511))
+                    PermissionBits(registry.guest_default_permissions.get().unwrap_or(PermissionBits::DEFAULT_GUEST))
                 }
                 crate::models::RoomRole::Creator => PermissionBits(crate::models::PermissionBits::ALL),
             }

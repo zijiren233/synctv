@@ -1,5 +1,7 @@
 //! Emby/Jellyfin HTTP Client
 
+use std::time::Duration;
+
 use reqwest::{Client, header::{HeaderMap, HeaderValue, CONTENT_TYPE}};
 use serde_json::{json, Value};
 
@@ -23,7 +25,10 @@ impl EmbyClient {
             host: host.into(),
             token: None,
             user_id: None,
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .build()?,
         })
     }
 
@@ -37,7 +42,10 @@ impl EmbyClient {
             host: host.into(),
             token: Some(token.into()),
             user_id: Some(user_id.into()),
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .build()?,
         })
     }
 

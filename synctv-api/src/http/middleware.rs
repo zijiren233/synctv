@@ -51,14 +51,18 @@ where
             .get(axum::http::header::AUTHORIZATION)
             .ok_or_else(|| AppError::unauthorized("Missing Authorization header"))?;
 
-        // Parse Bearer token and validate using unified validator
+        // Parse Bearer token and validate using unified validator.
+        // We extract full claims (not just user_id) so we can check the
+        // issued-at timestamp against password-change invalidation.
         let auth_str = auth_header
             .to_str()
             .map_err(|e| AppError::unauthorized(format!("Invalid Authorization header: {e}")))?;
 
-        let user_id = validator
-            .validate_http_extract_user_id(auth_str)
+        let claims = validator
+            .validate_http(auth_str)
             .map_err(|e| AppError::unauthorized(format!("{e}")))?;
+
+        let user_id = UserId::from_string(claims.sub);
 
         // Check if user is banned or deleted (defense-in-depth: catches banned
         // users even if they hold a valid JWT issued before the ban)
@@ -69,6 +73,19 @@ where
         }
         if user.status == UserStatus::Banned {
             return Err(AppError::forbidden("Account is suspended"));
+        }
+
+        // Reject tokens issued before the user's last password change.
+        // This ensures that stolen tokens become useless after a password reset.
+        if app_state
+            .user_service
+            .is_token_invalidated_by_password_change(&user_id, claims.iat)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(AppError::unauthorized(
+                "Token invalidated due to password change. Please log in again.",
+            ));
         }
 
         Ok(Self { user_id })

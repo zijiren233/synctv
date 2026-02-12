@@ -26,6 +26,9 @@ impl UserRepository {
     }
 
     /// Create a new user
+    ///
+    /// Relies on database UNIQUE constraints on `username` and `email` columns
+    /// to prevent duplicates atomically (no TOCTOU race condition).
     pub async fn create(&self, user: &User) -> Result<User> {
         let row = sqlx::query(
             r"
@@ -47,8 +50,15 @@ impl UserRepository {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| match e {
-            sqlx::Error::Database(db_err) if db_err.constraint().is_some() => {
-                Error::InvalidInput("User with this username or email already exists".to_string())
+            sqlx::Error::Database(ref db_err) if db_err.constraint().is_some() => {
+                let constraint = db_err.constraint().unwrap_or("");
+                if constraint.contains("username") {
+                    Error::AlreadyExists("Username already taken".to_string())
+                } else if constraint.contains("email") {
+                    Error::AlreadyExists("Email already taken".to_string())
+                } else {
+                    Error::AlreadyExists("Username or email already taken".to_string())
+                }
             }
             _ => Error::Database(e),
         })?;

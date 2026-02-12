@@ -44,7 +44,7 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
     let client = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(ssrf_safe_redirect_policy())
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
 
@@ -152,7 +152,7 @@ pub async fn proxy_m3u8_and_rewrite(
     let client = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(ssrf_safe_redirect_policy())
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
 
@@ -317,11 +317,28 @@ pub fn percent_encode(input: &str) -> String {
 }
 
 // ------------------------------------------------------------------
+// Redirect policy
+// ------------------------------------------------------------------
+
+/// Build a redirect policy that validates each hop against SSRF rules.
+fn ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 {
+            attempt.error(anyhow::anyhow!("Too many redirects"))
+        } else if let Err(e) = validate_proxy_url(attempt.url().as_str()) {
+            attempt.error(e)
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+// ------------------------------------------------------------------
 // SSRF protection
 // ------------------------------------------------------------------
 
 /// Validate that a URL is safe to proxy (not targeting internal services).
-fn validate_proxy_url(raw: &str) -> Result<(), anyhow::Error> {
+pub fn validate_proxy_url(raw: &str) -> Result<(), anyhow::Error> {
     let parsed = url::Url::parse(raw)
         .map_err(|_| anyhow::anyhow!("Invalid proxy URL"))?;
 
@@ -372,11 +389,14 @@ const fn is_private_ip(ip: IpAddr) -> bool {
             || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
             || v4.is_link_local()      // 169.254.0.0/16
             || v4.is_unspecified()     // 0.0.0.0
+            || v4.is_multicast()       // 224.0.0.0/4
+            || v4.is_broadcast()       // 255.255.255.255
             || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64  // 100.64.0.0/10 (CGNAT)
         }
         IpAddr::V6(v6) => {
             v6.is_loopback()           // ::1
             || v6.is_unspecified()     // ::
+            || v6.is_multicast()       // ff00::/8
             // fe80::/10 (link-local)
             || (v6.segments()[0] & 0xffc0) == 0xfe80
             // fc00::/7 (unique local)

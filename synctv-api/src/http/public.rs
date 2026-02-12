@@ -9,8 +9,6 @@ use axum::{
     Router,
 };
 
-use synctv_core::service::PublicSettings;
-
 use crate::http::AppState;
 
 /// Create public API router
@@ -23,10 +21,8 @@ pub fn create_public_router() -> Router<AppState> {
 /// This endpoint can be called without authentication and returns
 /// public server configuration that clients need to know.
 pub async fn get_public_settings(State(state): State<AppState>) -> impl IntoResponse {
-    let settings = match &state.settings_registry {
-        Some(reg) => reg.to_public_settings(),
-        None => PublicSettings::defaults(),
-    };
-
-    Json(settings)
+    match state.client_api.get_public_settings() {
+        Ok(response) => Json(serde_json::to_value(response).unwrap_or_default()),
+        Err(_) => Json(serde_json::to_value(synctv_core::service::PublicSettings::defaults()).unwrap_or_default()),
+    }
 }

@@ -46,6 +46,8 @@ pub struct PasswordResetResponse {
 }
 
 /// Create email-related routes
+///
+/// Rate limiting is applied externally in `create_router` where `AppState` is available.
 pub fn create_email_router() -> Router<AppState> {
     Router::new()
         .route("/api/email/verify/send", post(send_verification_email))
@@ -114,15 +116,7 @@ pub async fn confirm_email(
     let _email_service = state.email_service.as_ref()
         .ok_or_else(|| AppError::bad_request("Email service not configured"))?;
 
-    // Check if user exists
-    let user = state
-        .user_service
-        .get_by_email(&req.email)
-        .await
-        .map_err(|e| AppError::internal_server_error(format!("Database error: {e}")))?
-        .ok_or_else(|| AppError::bad_request("User not found"))?;
-
-    // Validate token
+    // Validate token first (constant-time regardless of user existence)
     let token_service = EmailTokenService::new(
         state.user_service.pool().clone()
     );
@@ -130,11 +124,21 @@ pub async fn confirm_email(
     let validated_user_id = token_service
         .validate_token(&req.token, EmailTokenType::EmailVerification)
         .await
-        .map_err(|e| AppError::bad_request(format!("Invalid token: {e}")))?;
+        .map_err(|_| AppError::bad_request("Invalid or expired verification token"))?;
+
+    // Look up user by email
+    let user = state
+        .user_service
+        .get_by_email(&req.email)
+        .await
+        .map_err(|e| AppError::internal_server_error(format!("Database error: {e}")))?;
+
+    // Use generic error to prevent user enumeration
+    let user = user.ok_or_else(|| AppError::bad_request("Invalid or expired verification token"))?;
 
     // Verify token matches user
     if validated_user_id != user.id {
-        return Err(AppError::bad_request("Token does not match email"));
+        return Err(AppError::bad_request("Invalid or expired verification token"));
     }
 
     // Mark email as verified
@@ -148,7 +152,6 @@ pub async fn confirm_email(
 
     Ok(Json(serde_json::json!({
         "message": "Email verified successfully",
-        "user_id": user.id.to_string(),
     })))
 }
 
@@ -208,15 +211,15 @@ pub async fn confirm_password_reset(
 ) -> AppResult<Json<serde_json::Value>> {
     use synctv_core::service::{EmailTokenService, EmailTokenType};
 
-    // Check if user exists
-    let user = state
-        .user_service
-        .get_by_email(&req.email)
-        .await
-        .map_err(|e| AppError::internal_server_error(format!("Database error: {e}")))?
-        .ok_or_else(|| AppError::bad_request("User not found"))?;
+    // Validate new password first (fast-fail before any DB lookups)
+    if req.new_password.len() < 8 {
+        return Err(AppError::bad_request("Password must be at least 8 characters"));
+    }
+    if req.new_password.len() > 128 {
+        return Err(AppError::bad_request("Password must be at most 128 characters"));
+    }
 
-    // Validate token
+    // Validate token first (constant-time regardless of user existence)
     let token_service = EmailTokenService::new(
         state.user_service.pool().clone()
     );
@@ -224,19 +227,26 @@ pub async fn confirm_password_reset(
     let validated_user_id = token_service
         .validate_token(&req.token, EmailTokenType::PasswordReset)
         .await
-        .map_err(|e| AppError::bad_request(format!("Invalid token: {e}")))?;
+        .map_err(|_| AppError::bad_request("Invalid or expired reset token"))?;
+
+    // Look up user by email
+    let user = state
+        .user_service
+        .get_by_email(&req.email)
+        .await
+        .map_err(|e| AppError::internal_server_error(format!("Database error: {e}")))?;
+
+    // Use generic error to prevent user enumeration
+    let user = user.ok_or_else(|| AppError::bad_request("Invalid or expired reset token"))?;
 
     // Verify token matches user
     if validated_user_id != user.id {
-        return Err(AppError::bad_request("Token does not match email"));
+        return Err(AppError::bad_request("Invalid or expired reset token"));
     }
 
-    // Validate new password
-    if req.new_password.len() < 8 {
-        return Err(AppError::bad_request("Password must be at least 8 characters"));
-    }
-    if req.new_password.len() > 128 {
-        return Err(AppError::bad_request("Password must be at most 128 characters"));
+    // Check if user is banned (don't allow password reset for suspended accounts)
+    if user.status == synctv_core::models::UserStatus::Banned {
+        return Err(AppError::bad_request("Invalid or expired reset token"));
     }
 
     // Update password using UserService
@@ -250,7 +260,6 @@ pub async fn confirm_password_reset(
 
     Ok(Json(serde_json::json!({
         "message": "Password reset successfully",
-        "user_id": user.id.to_string(),
     })))
 }
 

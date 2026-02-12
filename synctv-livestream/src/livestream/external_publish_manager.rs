@@ -180,12 +180,8 @@ impl ExternalPublishManager {
                         idle_time
                     );
 
-                    // Stop the local stream first (B7: stop before unregister)
-                    if let Err(e) = stream.stop().await {
-                        log::error!("Failed to stop external publish stream {}: {}", stream_key, e);
-                    }
-
-                    // Unregister from Redis only if we still own it (B6: ownership check)
+                    // Unregister from Redis FIRST so other nodes stop routing
+                    // viewers to us before we tear down the local stream.
                     if let Some((room_id, media_id)) = stream_key.split_once(':') {
                         match registry.get_publisher(room_id, media_id).await {
                             Ok(Some(info)) if info.node_id == local_node_id => {
@@ -198,6 +194,11 @@ impl ExternalPublishManager {
                             }
                             _ => {}
                         }
+                    }
+
+                    // Now stop the local stream after Redis no longer advertises it
+                    if let Err(e) = stream.stop().await {
+                        log::error!("Failed to stop external publish stream {}: {}", stream_key, e);
                     }
 
                     streams.remove(stream_key);
@@ -290,7 +291,8 @@ impl ExternalPublishStream {
         self.is_running.store(false, Ordering::SeqCst);
         if let Some(handle) = self.task_handle.lock().await.take() {
             handle.abort();
-            let _ = handle.await;
+            // Don't await aborted handle - it will return JoinError::Cancelled
+            // The abort() call is sufficient for cleanup
             log::info!(
                 "Aborted external publish task for {}/{}",
                 self.room_id,
@@ -314,9 +316,12 @@ impl ExternalPublishStream {
     }
 
     pub fn decrement_subscriber_count(&self) {
-        let _ = self.subscriber_count.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+        let result = self.subscriber_count.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
             if v > 0 { Some(v - 1) } else { None }
         });
+        if result.is_err() {
+            tracing::warn!("Attempted to decrement subscriber count below zero");
+        }
     }
 
     pub async fn last_active_time(&self) -> Instant {

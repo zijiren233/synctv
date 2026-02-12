@@ -128,7 +128,7 @@ pub(crate) fn kick_stream_cluster(state: &AppState, room_id: &str, media_id: &st
 
 /// Create the HTTP router with all routes
 #[allow(clippy::too_many_arguments)]
-pub fn create_router(
+fn create_router(
     config: Arc<synctv_core::Config>,
     user_service: Arc<UserService>,
     room_service: Arc<RoomService>,
@@ -162,6 +162,8 @@ pub fn create_router(
         publish_key_service.clone(),
         jwt_service.clone(),
         live_streaming_infrastructure.clone(),
+        None, // providers_manager - HTTP uses individual provider instances
+        settings_registry.clone(),
     ));
 
     // AdminApi requires SettingsService and EmailService
@@ -233,7 +235,7 @@ pub fn create_router(
     // Media mutation routes — moderate rate limiting (20 req/min)
     let media_routes = Router::new()
         .route("/api/rooms/:room_id/media", post(room::add_media))
-        .route("/api/rooms/:room_id/media", axum::routing::delete(media::clear_playlist))
+        .route("/api/rooms/:room_id/media", axum::routing::delete(room::clear_playlist))
         .route("/api/rooms/:room_id/media", axum::routing::patch(room::update_media_batch))
         .route(
             "/api/rooms/:room_id/media/batch",
@@ -242,6 +244,14 @@ pub fn create_router(
         .route(
             "/api/rooms/:room_id/media/batch",
             axum::routing::delete(room::remove_media_batch),
+        )
+        .route(
+            "/api/rooms/:room_id/media/reorder",
+            post(room::reorder_media_batch),
+        )
+        .route(
+            "/api/rooms/:room_id/media/swap",
+            post(room::swap_media_items),
         )
         .route(
             "/api/rooms/:room_id/media/:media_id",
@@ -264,6 +274,10 @@ pub fn create_router(
         .route("/api/rooms/:room_id/members/@me", axum::routing::delete(room::leave_room))
         .route("/api/rooms/:room_id/settings", axum::routing::patch(room::update_room_settings))
         .route("/api/rooms/:room_id/password", axum::routing::patch(room::set_room_password))
+        // Individual playback control routes
+        .route("/api/rooms/:room_id/playback/play", post(room::play))
+        .route("/api/rooms/:room_id/playback/pause", post(room::pause))
+        .route("/api/rooms/:room_id/playback/seek", post(room::seek))
         .route("/api/user", axum::routing::patch(user::update_user))
         .route("/api/auth/session", axum::routing::delete(user::logout))
         .route(
@@ -292,9 +306,31 @@ pub fn create_router(
             axum::routing::delete(room_extra::unban_member),
         )
         .route("/api/rooms/:room_id/playback", axum::routing::patch(room::update_playback))
+        // Playlist CRUD (write)
+        .route("/api/rooms/:room_id/playlists", post(room::create_playlist))
+        .route(
+            "/api/rooms/:room_id/playlists/:playlist_id",
+            axum::routing::patch(room::update_playlist),
+        )
+        .route(
+            "/api/rooms/:room_id/playlists/:playlist_id",
+            axum::routing::delete(room::delete_playlist),
+        )
+        // Room settings reset
+        .route("/api/rooms/:room_id/settings/reset", post(room::reset_room_settings))
+        // Playback: set current media & speed
+        .route("/api/rooms/:room_id/playback/current", post(room::set_current_media))
+        .route("/api/rooms/:room_id/playback/speed", post(room::set_playback_speed))
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::write_rate_limit,
+        ));
+
+    // Email routes — strict rate limiting (5 req/min) to prevent email spam and token brute-force
+    let email_routes = email_verification::create_email_router()
+        .route_layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth_rate_limit,
         ));
 
     let router = Router::new()
@@ -302,8 +338,8 @@ pub fn create_router(
         .merge(health::create_health_router())
         // Public endpoints (no authentication required)
         .merge(public::create_public_router())
-        // Email verification and password reset
-        .merge(email_verification::create_email_router())
+        // Email verification and password reset (rate-limited)
+        .merge(email_routes)
         // Publish key routes
         .merge(publish_key::create_publish_key_router())
         // Notification routes
@@ -321,11 +357,19 @@ pub fn create_router(
         // User read routes
         .route("/api/user", get(user::get_me))
         .route("/api/user/rooms", get(user::get_joined_rooms))
+        .route("/api/user/rooms/created", get(user::list_created_rooms))
         // Room discovery routes (public)
         .route("/api/rooms", get(room::list_or_get_rooms))
+        .route("/api/rooms/hot", get(room::get_hot_rooms))
+        .route("/api/rooms/:room_id/check", get(room::check_room))
         // Room read routes
+        .route("/api/rooms/:room_id", get(room::get_room))
         .route("/api/rooms/:room_id/settings", get(room::get_room_settings))
         .route("/api/rooms/:room_id/members", get(room::get_room_members))
+        // Playlist read routes
+        .route("/api/rooms/:room_id/playlists", get(room::list_playlists))
+        // Chat history
+        .route("/api/rooms/:room_id/chat/history", get(room::get_chat_history))
         // Media read routes
         .route("/api/rooms/:room_id/media", get(room::get_playlist))
         // Movie info endpoint (resolves provider playback)

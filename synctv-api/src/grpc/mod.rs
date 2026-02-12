@@ -132,6 +132,8 @@ pub async fn serve(
         publish_key_service,
         jwt_service.clone(),
         live_streaming_infrastructure.clone(),
+        providers_manager_for_client.clone(),
+        settings_registry.clone(),
     ));
 
     let client_service = ClientServiceImpl::new(
@@ -257,6 +259,8 @@ pub async fn serve(
                 None, // No publish_key_service for provider gRPC
                 jwt_service_for_provider.clone(),
                 None, // No live_streaming_infrastructure for provider gRPC
+                None, // No providers_manager for provider gRPC
+                None, // No settings_registry for provider gRPC
             )),
             admin_api: None,
         });

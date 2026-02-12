@@ -59,7 +59,7 @@ impl LoadBalancer {
             LoadBalancingStrategy::RoundRobin => {
                 let index = self
                     .round_robin_index
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
                     % nodes.len();
                 nodes[index].node_id.clone()
             }

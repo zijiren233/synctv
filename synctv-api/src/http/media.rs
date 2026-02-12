@@ -96,7 +96,6 @@ pub async fn list_playlist_items(
     Query(params): Query<ListPlaylistItemsQuery>,
 ) -> AppResult<impl IntoResponse> {
     let req = crate::proto::client::ListPlaylistItemsRequest {
-        room_id: room_id.clone(),
         playlist_id: playlist_id.clone(),
         relative_path: params.relative_path.unwrap_or_default(),
         page: params.page.unwrap_or(0).max(0),
@@ -105,7 +104,7 @@ pub async fn list_playlist_items(
 
     let response = state
         .client_api
-        .list_playlist_items(auth.user_id.as_str(), req)
+        .list_playlist_items(auth.user_id.as_str(), &room_id, req)
         .await
         .map_err(super::AppError::internal_server_error)?;
 

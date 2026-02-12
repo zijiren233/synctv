@@ -88,6 +88,20 @@ impl RoomRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Hard delete room (used for cleanup of partially created rooms).
+    ///
+    /// This performs a real `DELETE` which triggers `ON DELETE CASCADE` on all
+    /// related tables (`room_settings`, `room_members`, playlists, `room_playback_state`,
+    /// etc.), ensuring no orphaned rows are left behind.
+    pub async fn hard_delete(&self, room_id: &RoomId) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM rooms WHERE id = $1")
+            .bind(room_id.as_str())
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// List rooms with pagination and filters
     pub async fn list(&self, query: &RoomListQuery) -> Result<(Vec<Room>, i64)> {
         let offset = (query.page - 1) * query.page_size;

@@ -6,6 +6,9 @@ use synctv_core::models::id::RoomId;
 use hostname::get as get_hostname;
 use jsonwebtoken::{decode, Validation, DecodingKey};
 
+// Import TTL constant from registry to keep heartbeat/TTL relationship in sync
+use crate::relay::registry::PUBLISHER_TTL_SECS;
+
 /// JWT claims for RTMP publish authentication
 #[derive(Debug, serde::Deserialize)]
 struct PublishClaims {
@@ -105,10 +108,10 @@ impl StreamHandler {
             }
         }
 
-        // Set TTL of 300 seconds (5 minutes) - publisher must heartbeat
+        // Set TTL derived from heartbeat interval - publisher must heartbeat to stay alive
         let _: () = self.redis
             .clone()
-            .expire(&stream_key, 300)
+            .expire(&stream_key, PUBLISHER_TTL_SECS)
             .await?;
 
         info!(

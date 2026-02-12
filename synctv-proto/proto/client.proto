@@ -42,6 +42,10 @@ service RoomService {
     rpc UpdateRoomSettings(UpdateRoomSettingsRequest) returns (UpdateRoomSettingsResponse);
     rpc ResetRoomSettings(ResetRoomSettingsRequest) returns (ResetRoomSettingsResponse);
 
+    // Room Password Management
+    rpc SetRoomPassword(SetRoomPasswordRequest) returns (SetRoomPasswordResponse);
+    rpc CheckRoomPassword(CheckRoomPasswordRequest) returns (CheckRoomPasswordResponse);
+
     // Member Management (room-scoped operations, use x-room-id)
     rpc GetRoomMembers(GetRoomMembersRequest) returns (GetRoomMembersResponse);
     rpc UpdateMemberPermissions(UpdateMemberPermissionsRequest) returns (UpdateMemberPermissionsResponse);
@@ -74,9 +78,16 @@ service MediaService {
     // Media Management (room-scoped operations, use x-room-id)
     rpc AddMedia(AddMediaRequest) returns (AddMediaResponse);
     rpc RemoveMedia(RemoveMediaRequest) returns (RemoveMediaResponse);
+    rpc EditMedia(EditMediaRequest) returns (EditMediaResponse);
     rpc ListPlaylist(ListPlaylistRequest) returns (ListPlaylistResponse);
     rpc ListPlaylistItems(ListPlaylistItemsRequest) returns (ListPlaylistItemsResponse); // List dynamic playlist items
     rpc SwapMedia(SwapMediaRequest) returns (SwapMediaResponse);
+    rpc ClearPlaylist(ClearPlaylistRequest) returns (ClearPlaylistResponse);
+
+    // Batch Operations (room-scoped)
+    rpc AddMediaBatch(AddMediaBatchRequest) returns (AddMediaBatchResponse);
+    rpc RemoveMediaBatch(RemoveMediaBatchRequest) returns (RemoveMediaBatchResponse);
+    rpc ReorderMediaBatch(ReorderMediaBatchRequest) returns (ReorderMediaBatchResponse);
 
     // Playback Control (room-scoped operations, use x-room-id)
     rpc Play(PlayRequest) returns (PlayResponse);
@@ -249,9 +260,8 @@ message CreateRoomResponse {
     Room room = 1;
 }
 
-message GetRoomRequest {
-    string room_id = 1;
-}
+// Note: room_id extracted from x-room-id metadata (gRPC) or URL path (HTTP)
+message GetRoomRequest {}
 
 message GetRoomResponse {
     Room room = 1;
@@ -259,8 +269,7 @@ message GetRoomResponse {
 }
 
 message JoinRoomRequest {
-    string room_id = 1;
-    string password = 2; // Optional room password
+    string password = 1; // Optional room password
 }
 
 message JoinRoomResponse {
@@ -269,9 +278,7 @@ message JoinRoomResponse {
     repeated RoomMember members = 3;
 }
 
-message LeaveRoomRequest {
-    string room_id = 1;
-}
+message LeaveRoomRequest {}
 
 message LeaveRoomResponse {
     bool success = 1;
@@ -288,17 +295,14 @@ message ListRoomsResponse {
     int32 total = 2;
 }
 
-message DeleteRoomRequest {
-    string room_id = 1;
-}
+message DeleteRoomRequest {}
 
 message DeleteRoomResponse {
     bool success = 1;
 }
 
 message UpdateRoomSettingsRequest {
-    string room_id = 1;
-    bytes settings = 2; // JSON settings (partial or complete update)
+    bytes settings = 1; // JSON settings (partial or complete update)
 }
 
 message UpdateRoomSettingsResponse {
@@ -306,21 +310,32 @@ message UpdateRoomSettingsResponse {
 }
 
 // Get room settings
-message GetRoomSettingsRequest {
-    string room_id = 1;
-}
+message GetRoomSettingsRequest {}
 
 message GetRoomSettingsResponse {
     bytes settings = 1; // JSON settings
 }
 
 // Reset room settings to default
-message ResetRoomSettingsRequest {
-    string room_id = 1;
-}
+message ResetRoomSettingsRequest {}
 
 message ResetRoomSettingsResponse {
     bytes settings = 1; // Reset settings (default values)
+}
+
+// Room Password Messages
+message SetRoomPasswordRequest {
+    string password = 1;  // empty = remove password
+}
+message SetRoomPasswordResponse {
+    bool success = 1;
+}
+
+message CheckRoomPasswordRequest {
+    string password = 1;
+}
+message CheckRoomPasswordResponse {
+    bool valid = 1;
 }
 
 // Room Members Messages
@@ -460,11 +475,10 @@ message ListPlaylistResponse {
 }
 
 message ListPlaylistItemsRequest {
-    string room_id = 1; // Room ID
-    string playlist_id = 2; // Playlist ID
-    string relative_path = 3; // Relative path within dynamic folder (empty for root)
-    int32 page = 4; // Page number (default 0)
-    int32 page_size = 5; // Items per page (default 50)
+    string playlist_id = 1; // Playlist ID
+    string relative_path = 2; // Relative path within dynamic folder (empty for root)
+    int32 page = 3; // Page number (default 0)
+    int32 page_size = 4; // Items per page (default 50)
 }
 
 message ListPlaylistItemsResponse {
@@ -491,12 +505,53 @@ message DirectoryItem {
 }
 
 message SwapMediaRequest {
-    string room_id = 1; // Room ID
-    string media_id1 = 2;
-    string media_id2 = 3;
+    string media_id1 = 1;
+    string media_id2 = 2;
 }
 
 message SwapMediaResponse {
+    bool success = 1;
+}
+
+// Edit Media
+message EditMediaRequest {
+    string media_id = 1;
+    string title = 2;
+}
+message EditMediaResponse {
+    Media media = 1;
+}
+
+// Clear Playlist
+message ClearPlaylistRequest {} // room_id from context
+message ClearPlaylistResponse {
+    bool success = 1;
+    int32 deleted_count = 2;
+}
+
+// Batch Media Operations
+message AddMediaBatchRequest {
+    repeated AddMediaRequest items = 1;
+}
+message AddMediaBatchResponse {
+    repeated AddMediaResponse results = 1;
+}
+
+message RemoveMediaBatchRequest {
+    repeated string media_ids = 1;
+}
+message RemoveMediaBatchResponse {
+    int32 deleted_count = 1;
+}
+
+message MediaReorderUpdate {
+    string media_id = 1;
+    int32 position = 2;
+}
+message ReorderMediaBatchRequest {
+    repeated MediaReorderUpdate updates = 1;
+}
+message ReorderMediaBatchResponse {
     bool success = 1;
 }
 

@@ -166,25 +166,11 @@ pub async fn ban_member(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::client::BanMemberRequest>,
 ) -> AppResult<Json<crate::proto::client::BanMemberResponse>> {
-    let target_user_id = req.get("user_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::bad_request("Missing user_id in request body"))?
-        .to_string();
-
-    let reason = req.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
-
     let resp = state
         .client_api
-        .ban_member(
-            auth.user_id.as_str(),
-            &room_id,
-            crate::proto::client::BanMemberRequest {
-                user_id: target_user_id,
-                reason,
-            },
-        )
+        .ban_member(auth.user_id.as_str(), &room_id, req)
         .await
         .map_err(AppError::internal)?;
 

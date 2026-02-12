@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::IpAddr;
 
 /// Direct URL `MediaProvider`
 pub struct DirectUrlProvider {}
@@ -15,6 +16,53 @@ impl DirectUrlProvider {
     #[must_use] 
     pub const fn new() -> Self {
         Self {}
+    }
+
+    /// Validate that a URL does not target internal/private network addresses (SSRF protection).
+    fn validate_url_not_internal(raw: &str) -> Result<(), ProviderError> {
+        let parsed = url::Url::parse(raw)
+            .map_err(|_| ProviderError::InvalidUrl("Failed to parse URL".to_string()))?;
+
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| ProviderError::InvalidUrl("URL has no host".to_string()))?;
+
+        // Block well-known internal hostnames
+        if matches!(
+            host,
+            "localhost" | "metadata.google.internal" | "instance-data"
+        ) {
+            return Err(ProviderError::InvalidUrl(
+                "URLs targeting internal hosts are not allowed".to_string(),
+            ));
+        }
+
+        // Block any hostname that resolves to a private/reserved IP
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            if is_private_ip(ip) {
+                return Err(ProviderError::InvalidUrl(
+                    "URLs targeting private IP addresses are not allowed".to_string(),
+                ));
+            }
+        }
+
+        // Also check via the url crate's typed host (handles bracketed IPv6, etc.)
+        if let Some(url::Host::Ipv4(ip)) = parsed.host() {
+            if is_private_ip(IpAddr::V4(ip)) {
+                return Err(ProviderError::InvalidUrl(
+                    "URLs targeting private IP addresses are not allowed".to_string(),
+                ));
+            }
+        }
+        if let Some(url::Host::Ipv6(ip)) = parsed.host() {
+            if is_private_ip(IpAddr::V6(ip)) {
+                return Err(ProviderError::InvalidUrl(
+                    "URLs targeting private IP addresses are not allowed".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Detect format from URL
@@ -64,6 +112,30 @@ impl TryFrom<&Value> for DirectUrlSourceConfig {
     }
 }
 
+/// Check if an IP address is in a private/reserved range.
+const fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()           // 127.0.0.0/8
+            || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+            || v4.is_link_local()      // 169.254.0.0/16
+            || v4.is_unspecified()     // 0.0.0.0
+            || v4.is_multicast()       // 224.0.0.0/4
+            || v4.is_broadcast()       // 255.255.255.255
+            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64  // 100.64.0.0/10 (CGNAT)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()           // ::1
+            || v6.is_unspecified()     // ::
+            || v6.is_multicast()       // ff00::/8
+            // fe80::/10 (link-local)
+            || (v6.segments()[0] & 0xffc0) == 0xfe80
+            // fc00::/7 (unique local)
+            || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
 #[async_trait]
 impl MediaProvider for DirectUrlProvider {
     fn name(&self) -> &'static str {
@@ -86,6 +158,11 @@ impl MediaProvider for DirectUrlProvider {
             return Err(ProviderError::InvalidConfig(
                 "URL must use http, https, rtmp, or rtmps scheme".to_string(),
             ));
+        }
+
+        // SSRF protection: reject URLs targeting private/internal networks
+        if config.url.starts_with("http://") || config.url.starts_with("https://") {
+            Self::validate_url_not_internal(&config.url)?;
         }
 
         let format = Self::detect_format(&config.url);
@@ -133,6 +210,61 @@ impl MediaProvider for DirectUrlProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ssrf_blocks_localhost() {
+        let result = DirectUrlProvider::validate_url_not_internal("http://localhost/secret");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ssrf_blocks_private_ipv4() {
+        // 10.x.x.x
+        assert!(DirectUrlProvider::validate_url_not_internal("http://10.0.0.1/path").is_err());
+        // 172.16.x.x
+        assert!(DirectUrlProvider::validate_url_not_internal("http://172.16.0.1/path").is_err());
+        // 192.168.x.x
+        assert!(DirectUrlProvider::validate_url_not_internal("http://192.168.1.1/path").is_err());
+        // 127.x.x.x
+        assert!(DirectUrlProvider::validate_url_not_internal("http://127.0.0.1/path").is_err());
+        // 0.0.0.0
+        assert!(DirectUrlProvider::validate_url_not_internal("http://0.0.0.0/path").is_err());
+        // link-local
+        assert!(
+            DirectUrlProvider::validate_url_not_internal("http://169.254.169.254/latest/meta-data")
+                .is_err()
+        );
+        // CGNAT
+        assert!(DirectUrlProvider::validate_url_not_internal("http://100.64.0.1/path").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_blocks_metadata_endpoints() {
+        assert!(
+            DirectUrlProvider::validate_url_not_internal("http://metadata.google.internal/v1")
+                .is_err()
+        );
+        assert!(
+            DirectUrlProvider::validate_url_not_internal("http://instance-data/latest").is_err()
+        );
+    }
+
+    #[test]
+    fn test_ssrf_blocks_ipv6_loopback() {
+        assert!(DirectUrlProvider::validate_url_not_internal("http://[::1]/path").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_allows_public_urls() {
+        assert!(DirectUrlProvider::validate_url_not_internal("https://example.com/video.mp4").is_ok());
+        assert!(
+            DirectUrlProvider::validate_url_not_internal("https://cdn.example.com/stream.m3u8")
+                .is_ok()
+        );
+        assert!(
+            DirectUrlProvider::validate_url_not_internal("http://93.184.216.34/video.mp4").is_ok()
+        );
+    }
 
     #[test]
     fn test_detect_format() {

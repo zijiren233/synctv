@@ -3,7 +3,7 @@
 // This layer now uses proto types and delegates to the impls layer for business logic
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use synctv_core::models::id::RoomId;
@@ -12,7 +12,8 @@ use super::{middleware::AuthUser, AppResult, AppState};
 use crate::proto::client::{
     LogoutRequest, LogoutResponse, GetProfileResponse, SetUsernameRequest,
     SetPasswordRequest, ListParticipatedRoomsResponse,
-    DeleteRoomRequest, DeleteRoomResponse,
+    DeleteRoomResponse,
+    ListCreatedRoomsResponse,
 };
 
 /// Logout user
@@ -135,10 +136,29 @@ pub async fn delete_my_room(
         return Err(super::AppError::forbidden("You can only delete your own rooms"));
     }
 
-    let request = DeleteRoomRequest { room_id };
     let response = state
         .client_api
-        .delete_room(&auth.user_id.to_string(), request)
+        .delete_room(&auth.user_id.to_string(), &room_id)
+        .await
+        .map_err(super::AppError::internal_server_error)?;
+
+    Ok(Json(response))
+}
+
+/// List rooms created by this user
+/// GET /api/user/rooms/created
+pub async fn list_created_rooms(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> AppResult<Json<ListCreatedRoomsResponse>> {
+    let page = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1i32).max(1);
+    let page_size = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(10i32).clamp(1, 50);
+
+    let req = crate::proto::client::ListCreatedRoomsRequest { page, page_size };
+    let response = state
+        .client_api
+        .list_created_rooms(&auth.user_id.to_string(), req)
         .await
         .map_err(super::AppError::internal_server_error)?;
 

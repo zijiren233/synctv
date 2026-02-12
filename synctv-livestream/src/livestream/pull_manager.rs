@@ -307,11 +307,12 @@ impl PullStream {
     pub async fn stop(&self) -> StreamResult<()> {
         self.is_running.store(false, Ordering::SeqCst);
 
-        // Abort the gRPC puller task and await to ensure cleanup
+        // Abort the gRPC puller task
         let mut puller_handle = self.puller_handle.lock().await;
         if let Some(handle) = puller_handle.take() {
             handle.abort();
-            let _ = handle.await;
+            // Don't await aborted handle - it will return JoinError::Cancelled
+            // The abort() call is sufficient for cleanup
             log::info!("Aborted gRPC puller task for {} / {}", self.room_id, self.media_id);
         }
 
@@ -343,9 +344,12 @@ impl PullStream {
     /// Decrement subscriber count
     pub fn decrement_subscriber_count(&self) {
         // Use fetch_update to avoid underflow
-        let _ = self.subscriber_count.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+        let result = self.subscriber_count.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
             if v > 0 { Some(v - 1) } else { None }
         });
+        if result.is_err() {
+            tracing::warn!("Attempted to decrement subscriber count below zero");
+        }
     }
 
     /// Get the last active time

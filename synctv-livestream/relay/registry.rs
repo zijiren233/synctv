@@ -4,6 +4,26 @@ use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
+/// Heartbeat interval in seconds for publisher liveness.
+/// The publisher manager sends a heartbeat every this many seconds.
+pub const HEARTBEAT_INTERVAL_SECS: u64 = 60;
+
+/// TTL multiplier: TTL = `HEARTBEAT_INTERVAL_SECS` * `TTL_MULTIPLIER`.
+/// A multiplier of 5 means up to 4 consecutive missed heartbeats are tolerated
+/// before the registry entry expires.
+const TTL_MULTIPLIER: u64 = 5;
+
+/// Publisher TTL in seconds, derived from heartbeat interval.
+/// This is the Redis key expiration set on publisher entries.
+pub const PUBLISHER_TTL_SECS: i64 = (HEARTBEAT_INTERVAL_SECS * TTL_MULTIPLIER) as i64;
+
+// Compile-time safety check: TTL must be at least 3x the heartbeat interval
+// to tolerate transient network issues.
+const _: () = assert!(
+    PUBLISHER_TTL_SECS as u64 >= HEARTBEAT_INTERVAL_SECS * 3,
+    "PUBLISHER_TTL_SECS must be at least 3x HEARTBEAT_INTERVAL_SECS"
+);
+
 /// Publisher information stored in Redis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublisherInfo {
@@ -69,15 +89,15 @@ impl StreamRegistry {
             .await?;
 
         if registered {
-            // Set TTL of 300 seconds (5 minutes)
-            let _: () = self.redis.expire(&key, 300).await?;
+            // Set TTL derived from heartbeat interval (HEARTBEAT_INTERVAL_SECS * TTL_MULTIPLIER)
+            let _: () = self.redis.expire(&key, PUBLISHER_TTL_SECS).await?;
 
             // Add to user reverse index if user_id is provided
             if !user_id.is_empty() {
                 let user_key = format!("stream:user_publishers:{user_id}");
                 let member = format!("{room_id}:{media_id}");
                 let _: () = self.redis.sadd(&user_key, &member).await?;
-                let _: () = self.redis.expire(&user_key, 300).await?;
+                let _: () = self.redis.expire(&user_key, PUBLISHER_TTL_SECS).await?;
             }
         }
 
@@ -126,10 +146,10 @@ impl StreamRegistry {
             .map_err(|e| anyhow!(e.to_string()))?;
 
         if registered {
-            // Set TTL of 300 seconds (5 minutes)
+            // Set TTL derived from heartbeat interval (HEARTBEAT_INTERVAL_SECS * TTL_MULTIPLIER)
             let _: () = redis::cmd("EXPIRE")
                 .arg(&key)
-                .arg(300)
+                .arg(PUBLISHER_TTL_SECS)
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| anyhow!(e.to_string()))?;
@@ -146,7 +166,7 @@ impl StreamRegistry {
                     .map_err(|e| anyhow!(e.to_string()))?;
                 let _: () = redis::cmd("EXPIRE")
                     .arg(&user_key)
-                    .arg(300)
+                    .arg(PUBLISHER_TTL_SECS)
                     .query_async(&mut conn)
                     .await
                     .map_err(|e| anyhow!(e.to_string()))?;
@@ -166,10 +186,10 @@ impl StreamRegistry {
         let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
-        // Refresh publisher key TTL to 300 seconds
+        // Refresh publisher key TTL (derived from HEARTBEAT_INTERVAL_SECS * TTL_MULTIPLIER)
         let _: () = redis::cmd("EXPIRE")
             .arg(&key)
-            .arg(300)
+            .arg(PUBLISHER_TTL_SECS)
             .query_async(&mut conn)
             .await
             .map_err(|e| anyhow!(e.to_string()))?;
@@ -179,7 +199,7 @@ impl StreamRegistry {
             let user_key = format!("stream:user_publishers:{user_id}");
             let _: () = redis::cmd("EXPIRE")
                 .arg(&user_key)
-                .arg(300)
+                .arg(PUBLISHER_TTL_SECS)
                 .query_async(&mut conn)
                 .await
                 .map_err(|e| anyhow!(e.to_string()))?;

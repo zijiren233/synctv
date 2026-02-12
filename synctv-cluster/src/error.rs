@@ -25,6 +25,9 @@ pub enum Error {
 
     #[error("Redis error: {0}")]
     Redis(String),
+
+    #[error("Timeout: {0}")]
+    Timeout(String),
 }
 
 /// Result type for cluster operations

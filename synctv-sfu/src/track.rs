@@ -15,6 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use webrtc::track::track_remote::TrackRemote;
@@ -143,8 +145,11 @@ pub struct MediaTrack {
     /// Current active quality layer (for simulcast video)
     pub active_quality_layer: Arc<RwLock<Option<QualityLayer>>>,
 
-    /// Whether this track is active
-    pub active: Arc<RwLock<bool>>,
+    /// Cancellation token for signalling shutdown to the RTP reader task
+    cancel_token: CancellationToken,
+
+    /// Handle to the spawned RTP reader task
+    reader_handle: Option<JoinHandle<()>>,
 
     /// Track statistics
     stats: Arc<TrackStatsInner>,
@@ -188,7 +193,8 @@ impl MediaTrack {
             remote_track,
             receiver,
             active_quality_layer: Arc::new(RwLock::new(None)),
-            active: Arc::new(RwLock::new(true)),
+            cancel_token: CancellationToken::new(),
+            reader_handle: None,
             stats: Arc::new(TrackStatsInner {
                 packets_received: AtomicU64::new(0),
                 bytes_received: AtomicU64::new(0),
@@ -212,61 +218,66 @@ impl MediaTrack {
         let stats = Arc::clone(&self.stats);
         let track_id = self.id.clone();
         let quality_layer = Arc::clone(&self.active_quality_layer);
-        let active = Arc::clone(&self.active);
+        let cancel_token = self.cancel_token.clone();
 
-        // Spawn RTP packet reading task
-        tokio::spawn(async move {
+        // Spawn RTP packet reading task and store the handle
+        let handle = tokio::spawn(async move {
             let mut buf = vec![0u8; 1500]; // MTU size
 
             loop {
-                // Check if track is still active
-                if !*active.read() {
-                    debug!(track_id = %track_id, "Track deactivated, stopping RTP reader");
-                    break;
-                }
-
-                // Read RTP packet
-                match track.read(&mut buf).await {
-                    Ok((rtp_packet, _attributes)) => {
-                        // Update statistics
-                        let packet_size = rtp_packet.header.marshal_size() + rtp_packet.payload.len();
-                        stats.packets_received.fetch_add(1, Ordering::Relaxed);
-                        stats.bytes_received.fetch_add(packet_size as u64, Ordering::Relaxed);
-                        *stats.last_packet_time.write() = Some(Instant::now());
-
-                        // Create forwardable packet
-                        let forwardable = ForwardablePacket {
-                            data: Bytes::copy_from_slice(&buf[..packet_size]),
-                            ssrc: rtp_packet.header.ssrc,
-                            sequence_number: rtp_packet.header.sequence_number,
-                            timestamp: rtp_packet.header.timestamp,
-                            quality_layer: *quality_layer.read(),
-                            received_at: Instant::now(),
-                        };
-
-                        // Forward packet to subscribers
-                        if let Err(e) = packet_tx.send(forwardable) {
-                            error!(
-                                track_id = %track_id,
-                                error = %e,
-                                "Failed to forward RTP packet"
-                            );
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            track_id = %track_id,
-                            error = %e,
-                            "Failed to read RTP packet"
-                        );
+                tokio::select! {
+                    // Check for cancellation
+                    () = cancel_token.cancelled() => {
+                        debug!(track_id = %track_id, "Track cancelled, stopping RTP reader");
                         break;
+                    }
+                    // Read RTP packet
+                    result = track.read(&mut buf) => {
+                        match result {
+                            Ok((rtp_packet, _attributes)) => {
+                                // Update statistics
+                                let packet_size = rtp_packet.header.marshal_size() + rtp_packet.payload.len();
+                                stats.packets_received.fetch_add(1, Ordering::Relaxed);
+                                stats.bytes_received.fetch_add(packet_size as u64, Ordering::Relaxed);
+                                *stats.last_packet_time.write() = Some(Instant::now());
+
+                                // Create forwardable packet
+                                let forwardable = ForwardablePacket {
+                                    data: Bytes::copy_from_slice(&buf[..packet_size]),
+                                    ssrc: rtp_packet.header.ssrc,
+                                    sequence_number: rtp_packet.header.sequence_number,
+                                    timestamp: rtp_packet.header.timestamp,
+                                    quality_layer: *quality_layer.read(),
+                                    received_at: Instant::now(),
+                                };
+
+                                // Forward packet to subscribers
+                                if let Err(e) = packet_tx.send(forwardable) {
+                                    error!(
+                                        track_id = %track_id,
+                                        error = %e,
+                                        "Failed to forward RTP packet"
+                                    );
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    track_id = %track_id,
+                                    error = %e,
+                                    "Failed to read RTP packet"
+                                );
+                                break;
+                            }
+                        }
                     }
                 }
             }
 
             info!(track_id = %track_id, "RTP reader stopped");
         });
+
+        self.reader_handle = Some(handle);
 
         Ok(packet_rx)
     }
@@ -315,15 +326,18 @@ impl MediaTrack {
         self.kind == TrackKind::Audio
     }
 
-    /// Check if track is active
-    #[must_use] 
+    /// Check if track is active (not cancelled)
+    #[must_use]
     pub fn is_active(&self) -> bool {
-        *self.active.read()
+        !self.cancel_token.is_cancelled()
     }
 
-    /// Deactivate track
-    pub fn deactivate(&self) {
-        *self.active.write() = false;
+    /// Deactivate track: cancel the token and abort the reader task
+    pub fn deactivate(&mut self) {
+        self.cancel_token.cancel();
+        if let Some(handle) = self.reader_handle.take() {
+            handle.abort();
+        }
     }
 
     /// Get track statistics
@@ -369,6 +383,16 @@ impl MediaTrack {
     /// Record packet loss
     pub fn record_packet_loss(&self, count: u64) {
         self.stats.packets_lost.fetch_add(count, Ordering::Relaxed);
+    }
+}
+
+impl Drop for MediaTrack {
+    fn drop(&mut self) {
+        // Ensure the reader task is cancelled and aborted on drop
+        self.cancel_token.cancel();
+        if let Some(handle) = self.reader_handle.take() {
+            handle.abort();
+        }
     }
 }
 

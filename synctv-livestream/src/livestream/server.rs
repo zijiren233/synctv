@@ -36,6 +36,7 @@ pub struct LivestreamServer {
     node_id: String,
     segment_manager: Option<Arc<SegmentManager>>,
     auth: Option<Arc<dyn AuthCallback>>,
+    hub_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl LivestreamServer {
@@ -57,6 +58,7 @@ impl LivestreamServer {
             node_id,
             segment_manager: None,
             auth: None,
+            hub_handle: None,
         }
     }
 
@@ -142,11 +144,12 @@ impl LivestreamServer {
 
         // Start StreamHub event loop
         let hub_clone = Arc::clone(&stream_hub);
-        tokio::spawn(async move {
+        let hub_handle = tokio::spawn(async move {
             let mut hub = hub_clone.lock().await;
             hub.run().await;
             log::info!("StreamHub event loop ended");
         });
+        self.hub_handle = Some(hub_handle);
 
         Ok(())
     }
@@ -170,6 +173,14 @@ impl LivestreamServer {
         });
 
         Ok(())
+    }
+
+    /// Shutdown the livestream server, aborting the `StreamHub` event loop.
+    pub async fn shutdown(&mut self) {
+        if let Some(handle) = self.hub_handle.take() {
+            handle.abort();
+            log::info!("StreamHub event loop aborted");
+        }
     }
 
     async fn start_hls_server(

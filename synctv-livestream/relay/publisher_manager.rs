@@ -7,6 +7,7 @@
 //
 // Based on design doc 17-数据流设计.md § 11.1
 
+use super::registry::HEARTBEAT_INTERVAL_SECS;
 use super::registry_trait::StreamRegistryTrait;
 use anyhow::anyhow;
 use synctv_xiu::streamhub::{
@@ -166,7 +167,7 @@ impl PublisherManager {
 
     /// Maintain heartbeat for all active publishers
     async fn maintain_heartbeats(&self) {
-        let mut heartbeat_interval = interval(Duration::from_mins(1));
+        let mut heartbeat_interval = interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
 
         loop {
             heartbeat_interval.tick().await;

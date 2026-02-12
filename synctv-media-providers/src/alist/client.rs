@@ -2,6 +2,8 @@
 //!
 //! Pure HTTP client for Alist API, no dependency on `MediaProvider`
 
+use std::time::Duration;
+
 use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT}};
 use serde_json::json;
 
@@ -25,7 +27,10 @@ impl AlistClient {
         Ok(Self {
             host: host.into(),
             token: None,
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .build()?,
         })
     }
 
@@ -34,7 +39,10 @@ impl AlistClient {
         Ok(Self {
             host: host.into(),
             token: Some(token.into()),
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .build()?,
         })
     }
 

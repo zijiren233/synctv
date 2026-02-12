@@ -7,8 +7,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::time::{timeout, Duration};
 
 use crate::error::{Error, Result};
+
+/// Timeout for Redis operations in seconds
+const REDIS_TIMEOUT_SECS: u64 = 5;
 
 /// Node information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,23 +82,30 @@ impl NodeRegistry {
         let node_info = NodeInfo::new(self.node_id.clone(), grpc_address, http_address);
 
         if let Some(ref client) = self.redis_client {
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                client.get_multiplexed_async_connection(),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(&self.node_id);
             let value = serde_json::to_string(&node_info)
                 .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?;
 
             // Set with expiration (heartbeat_timeout * 2 for safety)
-            redis::cmd("SETEX")
-                .arg(&key)
-                .arg(self.heartbeat_timeout_secs * 2)
-                .arg(&value)
-                .query_async::<()>(&mut conn)
-                .await
-                .map_err(|e| Error::Database(format!("Redis SETEX failed: {e}")))?;
+            timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("SETEX")
+                    .arg(&key)
+                    .arg(self.heartbeat_timeout_secs * 2)
+                    .arg(&value)
+                    .query_async::<()>(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis SETEX timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis SETEX failed: {e}")))?;
         }
 
         // Also update local cache
@@ -107,20 +118,27 @@ impl NodeRegistry {
     /// Send heartbeat to keep this node alive
     pub async fn heartbeat(&self) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                client.get_multiplexed_async_connection(),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(&self.node_id);
 
             // Update TTL (keep alive)
-            redis::cmd("EXPIRE")
-                .arg(&key)
-                .arg(self.heartbeat_timeout_secs * 2)
-                .query_async::<()>(&mut conn)
-                .await
-                .map_err(|e| Error::Database(format!("Redis EXPIRE failed: {e}")))?;
+            timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("EXPIRE")
+                    .arg(&key)
+                    .arg(self.heartbeat_timeout_secs * 2)
+                    .query_async::<()>(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis EXPIRE timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis EXPIRE failed: {e}")))?;
         }
 
         // Update local heartbeat time
@@ -135,18 +153,25 @@ impl NodeRegistry {
     /// Unregister this node
     pub async fn unregister(&self) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                client.get_multiplexed_async_connection(),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(&self.node_id);
 
-            redis::cmd("DEL")
-                .arg(&key)
-                .query_async::<()>(&mut conn)
-                .await
-                .map_err(|e| Error::Database(format!("Redis DEL failed: {e}")))?;
+            timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("DEL")
+                    .arg(&key)
+                    .query_async::<()>(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis DEL timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis DEL failed: {e}")))?;
         }
 
         // Remove from local cache
@@ -159,26 +184,37 @@ impl NodeRegistry {
     /// Get all active nodes
     pub async fn get_all_nodes(&self) -> Result<Vec<NodeInfo>> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                client.get_multiplexed_async_connection(),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             // Get all node keys
             let pattern = format!("{}:*", Self::KEY_PREFIX);
-            let keys: Vec<String> = redis::cmd("KEYS")
-                .arg(&pattern)
-                .query_async(&mut conn)
-                .await
-                .map_err(|e| Error::Database(format!("Redis KEYS failed: {e}")))?;
+            let keys: Vec<String> = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("KEYS")
+                    .arg(&pattern)
+                    .query_async(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis KEYS timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis KEYS failed: {e}")))?;
 
             let mut nodes = Vec::new();
             for key in keys {
-                let value: Option<String> = redis::cmd("GET")
-                    .arg(&key)
-                    .query_async(&mut conn)
-                    .await
-                    .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+                let value: Option<String> = timeout(
+                    Duration::from_secs(REDIS_TIMEOUT_SECS),
+                    redis::cmd("GET")
+                        .arg(&key)
+                        .query_async(&mut conn),
+                )
+                .await
+                .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
+                .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
 
                 if let Some(value) = value {
                     if let Ok(node_info) = serde_json::from_str::<NodeInfo>(&value) {
@@ -207,17 +243,24 @@ impl NodeRegistry {
     /// Get a specific node by ID
     pub async fn get_node(&self, node_id: &str) -> Result<Option<NodeInfo>> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                client.get_multiplexed_async_connection(),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(node_id);
-            let value: Option<String> = redis::cmd("GET")
-                .arg(&key)
-                .query_async(&mut conn)
-                .await
-                .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+            let value: Option<String> = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("GET")
+                    .arg(&key)
+                    .query_async(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
 
             if let Some(value) = value {
                 let node_info: NodeInfo = serde_json::from_str(&value)

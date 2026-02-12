@@ -12,6 +12,7 @@ use super::{
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::IpAddr;
 
 /// `LiveProxy` `MediaProvider`
 ///
@@ -116,7 +117,7 @@ impl MediaProvider for LiveProxyProvider {
         source_config: &Value,
     ) -> Result<(), ProviderError> {
         // Validate required fields
-        source_config
+        let url = source_config
             .get("url")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ProviderError::InvalidConfig("Missing url".to_string()))?;
@@ -132,7 +133,6 @@ impl MediaProvider for LiveProxyProvider {
             .ok_or_else(|| ProviderError::InvalidConfig("Missing media_id".to_string()))?;
 
         // Validate URL format (only RTMP and HTTP-FLV are supported for pulling)
-        let url = source_config["url"].as_str().unwrap();
         if !url.starts_with("rtmp://")
             && !url.ends_with(".flv")
             && !url.contains(".flv?")
@@ -141,6 +141,9 @@ impl MediaProvider for LiveProxyProvider {
                 "Unsupported source URL format: {url}. Expected rtmp:// or *.flv"
             )));
         }
+
+        // SSRF protection: validate the host is not a private/internal address
+        validate_source_url_host(url)?;
 
         Ok(())
     }
@@ -155,5 +158,78 @@ impl MediaProvider for LiveProxyProvider {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         format!("live_proxy:{room_id}:{media_id}")
+    }
+}
+
+/// Validate that a source URL's host is not a private/internal address (SSRF protection).
+///
+/// Supports `rtmp://`, `http://`, and `https://` schemes. Strips `rtmp://` prefix and
+/// parses the host portion to check against private IP ranges and well-known internal hostnames.
+fn validate_source_url_host(raw: &str) -> Result<(), ProviderError> {
+    // For RTMP URLs, extract host from rtmp://host:port/app/stream format
+    let host_str = if let Some(rest) = raw.strip_prefix("rtmp://") {
+        // Take everything before the first '/' after the host:port
+        let authority = rest.split('/').next().unwrap_or(rest);
+        // Strip port if present
+        if let Some((host, _port)) = authority.rsplit_once(':') {
+            host
+        } else {
+            authority
+        }
+    } else if let Ok(parsed) = url::Url::parse(raw) {
+        // For HTTP(S) URLs, use url crate
+        return match parsed.host_str() {
+            Some(host) => check_host_not_internal(host),
+            None => Err(ProviderError::InvalidConfig("URL has no host".to_string())),
+        };
+    } else {
+        return Err(ProviderError::InvalidConfig(format!("Cannot parse URL: {raw}")));
+    };
+
+    check_host_not_internal(host_str)
+}
+
+fn check_host_not_internal(host: &str) -> Result<(), ProviderError> {
+    // Block well-known internal hostnames
+    if matches!(
+        host,
+        "localhost" | "metadata.google.internal" | "instance-data"
+    ) {
+        return Err(ProviderError::InvalidConfig(
+            "Source URL targets an internal host".to_string(),
+        ));
+    }
+
+    // Check IP addresses against private ranges
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_ip(ip) {
+            return Err(ProviderError::InvalidConfig(
+                "Source URL targets a private IP address".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Check if an IP address is in a private/reserved range.
+const fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+            || v4.is_private()
+            || v4.is_link_local()
+            || v4.is_unspecified()
+            || v4.is_multicast()
+            || v4.is_broadcast()
+            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+            || v6.is_unspecified()
+            || v6.is_multicast()
+            || (v6.segments()[0] & 0xffc0) == 0xfe80 // link-local
+            || (v6.segments()[0] & 0xfe00) == 0xfc00  // unique local
+        }
     }
 }

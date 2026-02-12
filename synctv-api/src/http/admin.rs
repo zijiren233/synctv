@@ -384,6 +384,10 @@ async fn ban_user(
         .unwrap_or("")
         .to_string();
 
+    if reason.len() > 500 {
+        return Err(AppError::bad_request("Reason too long (max 500 characters)"));
+    }
+
     let api = require_admin_api(&state)?;
     let resp = api
         .ban_user(admin::BanUserRequest { user_id, reason })
@@ -536,6 +540,10 @@ async fn ban_room(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+
+    if reason.len() > 500 {
+        return Err(AppError::bad_request("Reason too long (max 500 characters)"));
+    }
 
     let api = require_admin_api(&state)?;
     let resp = api

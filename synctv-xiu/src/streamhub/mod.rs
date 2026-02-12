@@ -86,8 +86,9 @@ impl StreamDataTransceiver {
                         data: data.clone(),
                     };
 
-                    for (_, v) in frame_senders.lock().await.iter() {
-                        if let Err(audio_err) = v.send(data.clone()).map_err(|_| StreamHubError {
+                    let senders: Vec<_> = frame_senders.lock().await.values().cloned().collect();
+                    for sender in &senders {
+                        if let Err(audio_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
                             value: StreamHubErrorValue::SendAudioError,
                         }) {
                             log::error!("Transmiter send error: {audio_err}");
@@ -99,8 +100,9 @@ impl StreamDataTransceiver {
                         timestamp,
                         data: data.clone(),
                     };
-                    for (_, v) in frame_senders.lock().await.iter() {
-                        if let Err(video_err) = v.send(data.clone()).map_err(|_| StreamHubError {
+                    let senders: Vec<_> = frame_senders.lock().await.values().cloned().collect();
+                    for sender in &senders {
+                        if let Err(video_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
                             value: StreamHubErrorValue::SendVideoError,
                         }) {
                             log::error!("Transmiter send error: {video_err}");
@@ -113,8 +115,9 @@ impl StreamDataTransceiver {
                     let data = FrameData::MediaInfo {
                         media_info: info_value,
                     };
-                    for (_, v) in frame_senders.lock().await.iter() {
-                        if let Err(media_err) = v.send(data.clone()).map_err(|_| StreamHubError {
+                    let senders: Vec<_> = frame_senders.lock().await.values().cloned().collect();
+                    for sender in &senders {
+                        if let Err(media_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
                             value: StreamHubErrorValue::SendVideoError,
                         }) {
                             log::error!("Transmiter send error: {media_err}");
@@ -156,8 +159,9 @@ impl StreamDataTransceiver {
                         data: data.clone(),
                     };
 
-                    for (_, v) in packet_senders.lock().await.iter() {
-                        if let Err(audio_err) = v.send(data.clone()).map_err(|_| StreamHubError {
+                    let senders: Vec<_> = packet_senders.lock().await.values().cloned().collect();
+                    for sender in &senders {
+                        if let Err(audio_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
                             value: StreamHubErrorValue::SendAudioError,
                         }) {
                             log::error!("Transmiter send error: {audio_err}");
@@ -169,8 +173,9 @@ impl StreamDataTransceiver {
                         timestamp,
                         data: data.clone(),
                     };
-                    for (_, v) in packet_senders.lock().await.iter() {
-                        if let Err(video_err) = v.send(data.clone()).map_err(|_| StreamHubError {
+                    let senders: Vec<_> = packet_senders.lock().await.values().cloned().collect();
+                    for sender in &senders {
+                        if let Err(video_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
                             value: StreamHubErrorValue::SendVideoError,
                         }) {
                             log::error!("Transmiter send error: {video_err}");
