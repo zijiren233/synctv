@@ -119,14 +119,21 @@ pub struct RoomState {
 pub struct PlaybackState {
     #[prost(string, tag = "1")]
     pub playing_media_id: ::prost::alloc::string::String,
+    /// playback position in seconds
     #[prost(double, tag = "2")]
-    pub position: f64,
+    pub current_time: f64,
     #[prost(double, tag = "3")]
     pub speed: f64,
     #[prost(bool, tag = "4")]
     pub is_playing: bool,
     #[prost(int64, tag = "5")]
     pub updated_at: i64,
+    /// Currently playing playlist
+    #[prost(string, tag = "6")]
+    pub playing_playlist_id: ::prost::alloc::string::String,
+    /// Relative path within dynamic folder
+    #[prost(string, tag = "7")]
+    pub relative_path: ::prost::alloc::string::String,
 }
 /// Event broadcasting
 #[derive(Clone, PartialEq, ::prost::Message)]

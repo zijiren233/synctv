@@ -31,21 +31,11 @@ impl EmbyProvider {
         }
     }
 
-    /// Get Emby client for the given instance name
-    ///
-    /// Selection priority:
-    /// 1. Instance specified by `instance_name` parameter
-    /// 2. Fallback to singleton local client
+    /// Get Emby client for the given instance name (remote if available, local fallback)
     async fn get_client(&self, instance_name: Option<&str>) -> EmbyClientArc {
-        if let Some(name) = instance_name {
-            if let Some(channel) = self.provider_instance_manager.get(name).await {
-                // Remote instance - create gRPC client
-                return create_remote_emby_client(channel);
-            }
-        }
-
-        // Fallback to singleton local client
-        load_local_emby_client()
+        self.provider_instance_manager
+            .resolve_client(instance_name, create_remote_emby_client, load_local_emby_client)
+            .await
     }
 
     // ========== Provider API Methods ==========
@@ -104,9 +94,7 @@ impl TryFrom<&Value> for EmbySourceConfig {
     type Error = ProviderError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            ProviderError::InvalidConfig(format!("Failed to parse Emby source config: {e}"))
-        })
+        super::parse_source_config(value, "Emby")
     }
 }
 

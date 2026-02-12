@@ -104,7 +104,9 @@ fn write_base_url(xml: &mut String, stream_idx: usize, cdn_url: &str, opts: &Mpd
     if let Some(base) = opts.proxy_base_url {
         let mut url = format!("{base}/stream/{stream_idx}");
         if let Some(token) = opts.token {
-            let _ = write!(url, "?token={token}");
+            // URL-encode the token to prevent query parameter injection
+            let encoded_token = super::percent_encode(token);
+            let _ = write!(url, "?token={encoded_token}");
         }
         let _ = writeln!(xml, "        <BaseURL>{}</BaseURL>", xml_escape(&url));
     } else {

@@ -272,8 +272,18 @@ impl SyncTvServer {
         let user_service = self.services.user_service.clone();
         let room_service = self.services.room_service.clone();
         let jwt_service = self.services.jwt_service.clone();
-        let cluster_manager = self.services.cluster_manager.clone()
-            .ok_or_else(|| anyhow::anyhow!("ClusterManager is required for gRPC server"))?;
+        // If no ClusterManager (Redis unavailable), create a default single-node one
+        // so gRPC server can still start without Redis.
+        let cluster_manager = if let Some(cm) = self.services.cluster_manager.clone() {
+            cm
+        } else {
+            warn!("ClusterManager not available, creating default single-node instance for gRPC server");
+            Arc::new(
+                synctv_cluster::sync::ClusterManager::with_defaults()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to create default ClusterManager: {e}"))?
+            )
+        };
         let redis_publish_tx = self.services.redis_publish_tx.clone();
         let rate_limiter = self.services.rate_limiter.clone();
         let rate_limit_config = self.services.rate_limit_config.clone();

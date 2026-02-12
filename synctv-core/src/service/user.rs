@@ -104,12 +104,9 @@ impl UserService {
             return Err(Error::Authentication("Invalid username or password".to_string()));
         }
 
-        // Check if user is banned or soft-deleted
-        if user.status == crate::models::UserStatus::Banned {
-            return Err(Error::Authentication("Account is suspended".to_string()));
-        }
-        if user.deleted_at.is_some() {
-            return Err(Error::Authentication("Account has been deleted".to_string()));
+        // Check if user is banned or soft-deleted (generic message to prevent enumeration)
+        if user.status == crate::models::UserStatus::Banned || user.deleted_at.is_some() {
+            return Err(Error::Authentication("Invalid username or password".to_string()));
         }
 
         // Generate JWT tokens (role will be fetched from DB on each request)
@@ -136,12 +133,9 @@ impl UserService {
             .await?
             .ok_or_else(|| Error::Authentication("User not found".to_string()))?;
 
-        // Reject banned or soft-deleted users
-        if user.status == crate::models::UserStatus::Banned {
-            return Err(Error::Authentication("Account is suspended".to_string()));
-        }
-        if user.deleted_at.is_some() {
-            return Err(Error::Authentication("Account has been deleted".to_string()));
+        // Reject banned or soft-deleted users (generic message to prevent enumeration)
+        if user.status == crate::models::UserStatus::Banned || user.deleted_at.is_some() {
+            return Err(Error::Authentication("Authentication failed".to_string()));
         }
 
         // Reject refresh tokens issued before the last password change

@@ -274,8 +274,17 @@ impl AuthCallback for SyncTvRtmpAuth {
                         tracing::error!(
                             room_id = %room_id,
                             media_id = %media_id,
-                            "TTL renewal giving up after 10 consecutive failures"
+                            "TTL renewal giving up after 10 consecutive failures, unregistering publisher"
                         );
+                        // Clean up the orphaned registration so another publisher can take over
+                        if let Err(e) = registry.unregister_publisher(&room_id, &media_id).await {
+                            tracing::error!(
+                                room_id = %room_id,
+                                media_id = %media_id,
+                                "Failed to unregister orphaned publisher: {}",
+                                e
+                            );
+                        }
                         break;
                     }
                     // Backoff: wait extra time before next attempt

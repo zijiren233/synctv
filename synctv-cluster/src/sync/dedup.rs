@@ -9,6 +9,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 
 /// Deduplication key for events
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
@@ -16,12 +17,14 @@ pub struct DedupKey {
     pub event_type: String,
     pub room_id: String,
     pub user_id: String,
+    /// Extra discriminator for events without `room_id/user_id` (e.g. `SystemNotification` message)
+    pub extra: String,
     pub timestamp_ms: i64,
 }
 
 impl DedupKey {
     /// Create a deduplication key from a cluster event
-    #[must_use] 
+    #[must_use]
     pub fn from_event(event: &crate::sync::events::ClusterEvent) -> Self {
         Self {
             event_type: event.event_type().to_string(),
@@ -31,6 +34,7 @@ impl DedupKey {
             user_id: event.user_id()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_default(),
+            extra: event.dedup_extra(),
             timestamp_ms: event.timestamp().timestamp_millis(),
         }
     }
@@ -51,6 +55,8 @@ pub struct MessageDeduplicator {
     dedup_window: Duration,
     /// Cleanup interval
     cleanup_interval: Duration,
+    /// Cancellation token for graceful shutdown of the cleanup task
+    cancel_token: CancellationToken,
 }
 
 impl MessageDeduplicator {
@@ -59,15 +65,17 @@ impl MessageDeduplicator {
     /// # Arguments
     /// * `dedup_window` - How long to remember events (default 5 seconds)
     /// * `cleanup_interval` - How often to clean expired entries (default 30 seconds)
-    #[must_use] 
+    #[must_use]
     pub fn new(dedup_window: Duration, cleanup_interval: Duration) -> Self {
+        let cancel_token = CancellationToken::new();
         let dedup = Self {
             entries: Arc::new(DashMap::new()),
             dedup_window,
             cleanup_interval,
+            cancel_token: cancel_token,
         };
 
-        // Start cleanup task
+        // Start cleanup task with cancellation support
         let dedup_clone = dedup.clone();
         tokio::spawn(async move {
             dedup_clone.run_cleanup().await;
@@ -86,27 +94,31 @@ impl MessageDeduplicator {
     }
 
     /// Check if an event should be processed (not a duplicate)
-    #[must_use] 
+    ///
+    /// Uses `DashMap::entry()` for atomic check-and-insert to prevent TOCTOU races
+    /// where two concurrent calls for the same key could both return `true`.
+    #[must_use]
     pub fn should_process(&self, key: &DedupKey) -> bool {
         let now = Instant::now();
+        let new_expiry = now + self.dedup_window;
 
-        // Check if key exists and hasn't expired
-        if let Some(entry) = self.entries.get(key) {
-            if entry.expires_at > now {
-                // Within dedup window, skip
-                return false;
+        match self.entries.entry(key.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if entry.get().expires_at > now {
+                    // Within dedup window, skip (duplicate)
+                    false
+                } else {
+                    // Expired, refresh and process
+                    entry.insert(DedupEntry { expires_at: new_expiry });
+                    true
+                }
             }
-            // Expired, remove and process
-            self.entries.remove(key);
-            return true;
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                // Key doesn't exist, insert and process
+                entry.insert(DedupEntry { expires_at: new_expiry });
+                true
+            }
         }
-
-        // Key doesn't exist, add it
-        self.entries.insert(key.clone(), DedupEntry {
-            expires_at: now + self.dedup_window,
-        });
-
-        true
     }
 
     /// Mark an event as processed
@@ -117,12 +129,24 @@ impl MessageDeduplicator {
         });
     }
 
-    /// Run periodic cleanup of expired entries
+    /// Shutdown the deduplicator and its cleanup task
+    pub fn shutdown(&self) {
+        self.cancel_token.cancel();
+    }
+
+    /// Run periodic cleanup of expired entries (stops when cancelled)
     async fn run_cleanup(&self) {
         let mut interval = tokio::time::interval(self.cleanup_interval);
         loop {
-            interval.tick().await;
-            self.cleanup_expired();
+            tokio::select! {
+                _ = interval.tick() => {
+                    self.cleanup_expired();
+                }
+                () = self.cancel_token.cancelled() => {
+                    tracing::debug!("Deduplicator cleanup task shutting down");
+                    return;
+                }
+            }
         }
     }
 
@@ -159,6 +183,12 @@ impl Default for MessageDeduplicator {
     }
 }
 
+impl Drop for MessageDeduplicator {
+    fn drop(&mut self) {
+        self.cancel_token.cancel();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +203,7 @@ mod tests {
             event_type: "chat".to_string(),
             room_id: "room1".to_string(),
             user_id: "user1".to_string(),
+            extra: String::new(),
             timestamp_ms: 1000,
         };
 

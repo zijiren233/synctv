@@ -34,7 +34,6 @@ pub mod livestream;
 
 // Re-exports for convenience
 pub use libraries::storage::HlsStorage;
-pub use xiu_integration::RtmpServer;
 pub use protocols::httpflv::HttpFlvSession;
 pub use protocols::hls::{HlsServer, CustomHlsRemuxer, StreamRegistry};
 pub use protocols::rtmp::RtmpAuthCallbackImpl;

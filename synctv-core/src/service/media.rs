@@ -191,6 +191,12 @@ impl MediaService {
             return Ok(Vec::new());
         }
 
+        if items.len() > 100 {
+            return Err(Error::InvalidInput(
+                "Batch size cannot exceed 100 items".to_string(),
+            ));
+        }
+
         // Get starting position
         let start_position = self.media_repo.get_next_position(&playlist_id).await?;
 
@@ -400,7 +406,8 @@ impl MediaService {
 
     /// Bulk remove media from playlist
     ///
-    /// Removes multiple media items in a single transaction
+    /// Removes multiple media items in a single transaction.
+    /// Uses a single batch query to verify ownership instead of N individual queries.
     pub async fn remove_media_batch(
         &self,
         room_id: RoomId,
@@ -411,15 +418,16 @@ impl MediaService {
             return Ok(0);
         }
 
+        // Batch-load all media in a single query
+        let media_items = self.media_repo.get_by_ids(&media_ids).await?;
+
+        if media_items.len() != media_ids.len() {
+            return Err(Error::NotFound("One or more media items not found".to_string()));
+        }
+
         // Verify all media belong to the room and check ownership
         let mut all_owned_by_user = true;
-        for media_id in &media_ids {
-            let media = self
-                .media_repo
-                .get_by_id(media_id)
-                .await?
-                .ok_or_else(|| Error::NotFound("Media not found".to_string()))?;
-
+        for media in &media_items {
             if media.room_id != room_id {
                 return Err(Error::Authorization("Media does not belong to this room".to_string()));
             }
@@ -452,7 +460,8 @@ impl MediaService {
 
     /// Bulk reorder media items
     ///
-    /// Reorders multiple media items to new positions in a single transaction
+    /// Reorders multiple media items to new positions in a single transaction.
+    /// Uses a single batch query to verify room ownership instead of N individual queries.
     pub async fn reorder_media_batch(
         &self,
         room_id: RoomId,
@@ -468,14 +477,15 @@ impl MediaService {
             return Ok(());
         }
 
-        // Verify all media belong to the room
-        for (media_id, _) in &updates {
-            let media = self
-                .media_repo
-                .get_by_id(media_id)
-                .await?
-                .ok_or_else(|| Error::NotFound("Media not found".to_string()))?;
+        // Batch-load all media in a single query to verify room ownership
+        let media_ids: Vec<MediaId> = updates.iter().map(|(id, _)| id.clone()).collect();
+        let media_items = self.media_repo.get_by_ids(&media_ids).await?;
 
+        if media_items.len() != updates.len() {
+            return Err(Error::NotFound("One or more media items not found".to_string()));
+        }
+
+        for media in &media_items {
             if media.room_id != room_id {
                 return Err(Error::Authorization("Media does not belong to this room".to_string()));
             }
@@ -494,6 +504,11 @@ impl MediaService {
     }
 
     /// Count media items in a playlist
+    /// Delete all media in a playlist (single query, no N+1)
+    pub async fn delete_by_playlist(&self, playlist_id: &PlaylistId) -> Result<usize> {
+        self.media_repo.delete_by_playlist(playlist_id).await
+    }
+
     pub async fn count_playlist_media(&self, playlist_id: &PlaylistId) -> Result<i64> {
         self.media_repo.count_by_playlist(playlist_id).await
     }

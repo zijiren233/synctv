@@ -139,6 +139,25 @@ impl RemoteProviderManager {
         self.instances.read().await.get(name).cloned()
     }
 
+    /// Resolve a provider client: try remote instance first, fallback to local.
+    ///
+    /// Encapsulates the common pattern used by all provider adapters:
+    /// 1. If `instance_name` is provided and a remote channel exists, call `create_remote`
+    /// 2. Otherwise, call `load_local`
+    pub async fn resolve_client<T>(
+        &self,
+        instance_name: Option<&str>,
+        create_remote: impl FnOnce(Channel) -> T,
+        load_local: impl FnOnce() -> T,
+    ) -> T {
+        if let Some(name) = instance_name {
+            if let Some(channel) = self.get(name).await {
+                return create_remote(channel);
+            }
+        }
+        load_local()
+    }
+
     /// List all remote instance names
     pub async fn list(&self) -> Vec<String> {
         self.instances.read().await.keys().cloned().collect()

@@ -14,7 +14,9 @@ use crate::Config;
 pub async fn init_database(config: &Config) -> Result<PgPool> {
     let database_url = config.database_url();
 
-    info!("Connecting to database: {}", config.database_url());
+    // Log only host/port, not credentials
+    let masked_url = mask_database_url(database_url);
+    info!("Connecting to database: {}", masked_url);
 
     let pool: PgPool = PgPoolOptions::new()
         .max_connections(config.database.max_connections)
@@ -31,4 +33,21 @@ pub async fn init_database(config: &Config) -> Result<PgPool> {
     info!("Database connected successfully");
 
     Ok(pool)
+}
+
+/// Mask credentials in a database URL for safe logging.
+/// Turns `postgres://user:pass@host:5432/db` into `postgres://***:***@host:5432/db`
+fn mask_database_url(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(mut parsed) => {
+            if !parsed.username().is_empty() {
+                let _ = parsed.set_username("***");
+            }
+            if parsed.password().is_some() {
+                let _ = parsed.set_password(Some("***"));
+            }
+            parsed.to_string()
+        }
+        Err(_) => "<invalid-url>".to_string(),
+    }
 }

@@ -26,6 +26,8 @@ pub mod provider_common;
 pub mod providers;
 
 use axum::{
+    body::Body,
+    http::Request,
     middleware as axum_middleware,
     routing::{get, post},
     Router,
@@ -444,6 +446,7 @@ fn create_router(
 
     // Apply layers before state
     let router = router
+        .layer(axum_middleware::from_fn(security_headers_middleware))
         .layer(axum_middleware::from_fn(
             crate::observability::metrics_middleware::metrics_layer,
         ))
@@ -479,4 +482,18 @@ pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
         config.sfu_manager,
         config.rate_limiter,
     )
+}
+
+/// Middleware that adds security headers to all HTTP responses.
+async fn security_headers_middleware(
+    request: Request<Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
+    headers.insert("X-Frame-Options", "DENY".parse().unwrap());
+    headers.insert("X-XSS-Protection", "1; mode=block".parse().unwrap());
+    headers.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
+    response
 }

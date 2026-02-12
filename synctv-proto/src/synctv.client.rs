@@ -117,9 +117,9 @@ pub struct PlaybackState {
     pub room_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub playing_media_id: ::prost::alloc::string::String,
-    /// seconds
+    /// playback position in seconds
     #[prost(double, tag = "3")]
-    pub position: f64,
+    pub current_time: f64,
     #[prost(double, tag = "4")]
     pub speed: f64,
     #[prost(bool, tag = "5")]
@@ -129,6 +129,12 @@ pub struct PlaybackState {
     /// For optimistic locking
     #[prost(int32, tag = "7")]
     pub version: i32,
+    /// Currently playing playlist
+    #[prost(string, tag = "8")]
+    pub playing_playlist_id: ::prost::alloc::string::String,
+    /// Relative path within dynamic folder (empty for static playlists)
+    #[prost(string, tag = "9")]
+    pub relative_path: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -754,9 +760,9 @@ pub struct PauseResponse {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct SeekRequest {
-    /// seconds
+    /// playback position in seconds
     #[prost(double, tag = "1")]
-    pub position: f64,
+    pub current_time: f64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]

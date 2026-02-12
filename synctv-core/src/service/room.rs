@@ -9,7 +9,7 @@ use crate::{
     models::{
         Room, RoomId, RoomMember, RoomSettings, RoomStatus, RoomWithCount, UserId,
         PermissionBits, RoomRole, MemberStatus, RoomPlaybackState, Media, MediaId,
-        RoomListQuery, ChatMessage,
+        Playlist, PlaylistId, RoomListQuery, ChatMessage,
     },
     repository::{RoomRepository, RoomMemberRepository, MediaRepository, PlaylistRepository, RoomPlaybackStateRepository, ChatRepository, RoomSettingsRepository},
     service::{
@@ -43,9 +43,17 @@ pub use synctv_proto::admin::{
 /// Core room operations are handled here, while specific domains are delegated.
 #[derive(Clone)]
 pub struct RoomService {
+    // Database pool for transactions
+    pool: PgPool,
+
+    // Optional distributed lock (requires Redis, used in multi-replica mode)
+    distributed_lock: Option<crate::service::DistributedLock>,
+
     // Core repositories
     room_repo: RoomRepository,
     room_settings_repo: RoomSettingsRepository,
+    member_repo: RoomMemberRepository,
+    playlist_repo: PlaylistRepository,
     playback_repo: RoomPlaybackStateRepository,
     chat_repo: ChatRepository,
 
@@ -80,6 +88,11 @@ impl RoomService {
         &self.permission_service
     }
 
+    /// Set the distributed lock (enables multi-replica safety for room creation)
+    pub fn set_distributed_lock(&mut self, lock: crate::service::DistributedLock) {
+        self.distributed_lock = Some(lock);
+    }
+
     #[must_use] 
     pub fn new(pool: PgPool, user_service: UserService) -> Self {
         // Initialize repositories
@@ -90,15 +103,15 @@ impl RoomService {
         let playlist_repo = PlaylistRepository::new(pool.clone());
         let playback_repo = RoomPlaybackStateRepository::new(pool.clone());
         let provider_instance_repo = Arc::new(crate::repository::ProviderInstanceRepository::new(pool.clone()));
-        let chat_repo = ChatRepository::new(pool);
+        let chat_repo = ChatRepository::new(pool.clone());
 
         // Initialize permission service with caching
         let mut permission_service = PermissionService::new(
             member_repo.clone(),
             room_repo.clone(),
             None, // SettingsRegistry - will be set later if needed
-            10000,
-            300
+            PermissionService::DEFAULT_CACHE_SIZE,
+            PermissionService::DEFAULT_CACHE_TTL_SECS,
         );
         permission_service.set_room_settings_repo(room_settings_repo.clone());
 
@@ -107,12 +120,12 @@ impl RoomService {
         let providers_manager = Arc::new(ProvidersManager::new(provider_instance_manager));
 
         // Initialize domain services
-        let mut member_service = MemberService::new(member_repo, room_repo.clone(), permission_service.clone());
+        let mut member_service = MemberService::new(member_repo.clone(), room_repo.clone(), permission_service.clone());
         member_service.set_room_settings_repo(room_settings_repo.clone());
         let playlist_service = PlaylistService::new(playlist_repo.clone(), permission_service.clone());
         let media_service = MediaService::new(
             media_repo.clone(),
-            playlist_repo,
+            playlist_repo.clone(),
             permission_service.clone(),
             providers_manager,
         );
@@ -120,8 +133,12 @@ impl RoomService {
         let notification_service = NotificationService::default();
 
         Self {
+            pool,
+            distributed_lock: None,
             room_repo,
             room_settings_repo,
+            member_repo,
+            playlist_repo,
             playback_repo,
             chat_repo,
             member_service,
@@ -137,7 +154,41 @@ impl RoomService {
     // ========== Core Room Operations ==========
 
     /// Create a new room
+    ///
+    /// All database operations run inside a single transaction so the room is
+    /// either fully created or not visible at all — no partially-created rooms.
+    ///
+    /// When a distributed lock is configured (multi-replica mode), a per-user
+    /// lock prevents duplicate rooms from concurrent requests (network retries,
+    /// double-clicks).
     pub async fn create_room(
+        &self,
+        name: String,
+        description: String,
+        created_by: UserId,
+        password: Option<String>,
+        settings: Option<RoomSettings>,
+    ) -> Result<(Room, RoomMember)> {
+        // Acquire distributed lock to prevent duplicate creation by the same user
+        if let Some(ref lock) = self.distributed_lock {
+            let lock_key = format!("create_room:{}", created_by.as_str());
+            return lock.with_lock(&lock_key, 15, || {
+                let name = name.clone();
+                let description = description.clone();
+                let created_by = created_by.clone();
+                let password = password.clone();
+                let settings = settings.clone();
+                async move {
+                    self.do_create_room(name, description, created_by, password, settings).await
+                }
+            }).await;
+        }
+
+        self.do_create_room(name, description, created_by, password, settings).await
+    }
+
+    /// Internal room creation implementation
+    async fn do_create_room(
         &self,
         name: String,
         description: String,
@@ -172,87 +223,69 @@ impl RoomService {
         let mut room_settings = settings.unwrap_or_default();
         room_settings.require_password = crate::models::room_settings::RequirePassword(password.is_some());
 
-        // Create room
+        // Hash password outside the transaction (CPU-intensive bcrypt work)
+        let pwd_hash = if let Some(ref pwd) = password {
+            Some(hash_password(pwd).await?)
+        } else {
+            None
+        };
+
+        // Run all DB operations in a single transaction
+        let mut tx = self.pool.begin().await?;
+
+        // 1. Create room
         let room = Room::new_with_description(name, description, created_by.clone());
-        let created_room = self.room_repo.create(&room).await?;
+        let created_room = self.room_repo.create_with_executor(&room, &mut *tx).await?;
+
+        // 2. Set password if provided
+        if let Some(ref hash) = pwd_hash {
+            self.room_settings_repo
+                .set_with_executor(&created_room.id, "password", hash, &mut *tx)
+                .await?;
+            tracing::debug!(room_id = %created_room.id, "Room password set");
+        }
+
+        // 3. Set room settings
+        self.room_settings_repo
+            .set_settings_with_executor(&created_room.id, &room_settings, &mut *tx)
+            .await?;
+
+        // 4. Add creator as member with full permissions
+        let member = RoomMember::new(created_room.id.clone(), created_by.clone(), RoomRole::Creator);
+        let created_member = self.member_repo.add_with_executor(&member, &mut *tx).await?;
+
+        // 5. Create root playlist
+        let root_playlist = Playlist {
+            id: PlaylistId::new(),
+            room_id: created_room.id.clone(),
+            creator_id: created_by.clone(),
+            name: String::new(),
+            parent_id: None,
+            position: 0,
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        self.playlist_repo.create_with_executor(&root_playlist, &mut *tx).await?;
+
+        // 6. Initialize playback state
+        self.playback_repo.create_or_get_with_executor(&created_room.id, &mut *tx).await?;
+
+        // Commit — all or nothing
+        tx.commit().await?;
 
         tracing::info!(
             room_id = %created_room.id,
             user_id = %created_by,
-            "Room created successfully"
+            "Room creation completed"
         );
 
-        // Complete room setup — if any step fails, hard-delete the room.
-        // Hard delete triggers ON DELETE CASCADE, which removes any orphaned
-        // room_settings, room_members, playlists, and room_playback_state rows
-        // that were created before the failure.
-        match self
-            .setup_new_room(&created_room, &created_by, password, room_settings)
-            .await
-        {
-            Ok(member) => {
-                tracing::info!(
-                    room_id = %created_room.id,
-                    user_id = %created_by,
-                    "Room creation completed"
-                );
-                Ok((created_room, member))
-            }
-            Err(e) => {
-                tracing::error!(
-                    room_id = %created_room.id,
-                    error = %e,
-                    "Room setup failed, cleaning up"
-                );
-                if let Err(cleanup_err) = self.room_repo.hard_delete(&created_room.id).await {
-                    tracing::error!(
-                        room_id = %created_room.id,
-                        error = %cleanup_err,
-                        "Failed to clean up partially created room"
-                    );
-                }
-                Err(e)
-            }
-        }
-    }
+        // Invalidate permission cache outside transaction
+        self.permission_service.invalidate_cache(&created_room.id, &created_by).await;
 
-    /// Internal helper: set up a newly created room (settings, member, playlist, playback).
-    /// Returns the creator's `RoomMember` on success.
-    async fn setup_new_room(
-        &self,
-        room: &Room,
-        created_by: &UserId,
-        password: Option<String>,
-        room_settings: RoomSettings,
-    ) -> Result<RoomMember> {
-        // Hash password if provided and store in room_settings
-        if let Some(pwd) = password {
-            let pwd_hash = hash_password(&pwd).await?;
-            self.room_settings_repo
-                .set(&room.id, "password", &pwd_hash)
-                .await?;
-            tracing::debug!(room_id = %room.id, "Room password set");
-        }
-
-        self.room_settings_repo
-            .set_settings(&room.id, &room_settings)
-            .await?;
-
-        // Add creator as member with full permissions
-        let created_member = self
-            .member_service
-            .add_member(room.id.clone(), created_by.clone(), RoomRole::Creator)
-            .await?;
-
-        // Create root playlist for the room
-        self.playlist_service
-            .create_root_playlist(&room.id, created_by)
-            .await?;
-
-        // Initialize playback state
-        self.playback_repo.create_or_get(&room.id).await?;
-
-        Ok(created_member)
+        Ok((created_room, created_member))
     }
 
     /// Join a room
@@ -502,7 +535,9 @@ impl RoomService {
         use crate::models::{AutoPlaySettings, PlayMode, room_settings::{ChatEnabled, DanmakuEnabled, AutoPlay, AllowGuestJoin, RequirePassword, MaxMembers, AutoPlayNext, LoopPlaylist, ShufflePlaylist}};
         use crate::service::notification::GuestKickReason;
 
-        let mut settings = self.room_settings_repo.get(room_id).await?;
+        // Use a transaction with FOR UPDATE to prevent concurrent read-modify-write races
+        let mut tx = self.pool.begin().await?;
+        let mut settings = self.room_settings_repo.get_for_update(room_id, &mut *tx).await?;
         let mut should_kick_guests = false;
         let mut kick_reason = GuestKickReason::RoomGuestModeDisabled;
 
@@ -555,6 +590,9 @@ impl RoomService {
             }
             "max_members" => {
                 if let Some(num_val) = value.as_u64() {
+                    if num_val > MaxMembers::MAX {
+                        return Err(Error::InvalidInput(format!("max_members cannot exceed {}", MaxMembers::MAX)));
+                    }
                     settings.max_members = MaxMembers(num_val);
                 }
             }
@@ -578,13 +616,16 @@ impl RoomService {
             }
         }
 
-        // Save the updated settings
-        self.room_settings_repo.set_settings(room_id, &settings).await?;
+        // Save the updated settings within the same transaction
+        self.room_settings_repo.set_settings_with_executor(room_id, &settings, &mut *tx).await?;
 
-        // Invalidate permission cache for all room members
+        // Commit the transaction
+        tx.commit().await?;
+
+        // Invalidate permission cache for all room members (outside transaction)
         self.permission_service.invalidate_room_cache(room_id).await;
 
-        // Kick guests if needed
+        // Kick guests if needed (outside transaction)
         if should_kick_guests {
             if let Err(e) = self.notification_service.kick_all_guests(room_id, kick_reason).await {
                 tracing::warn!("Failed to kick guests after settings change: {}", e);
@@ -623,33 +664,39 @@ impl RoomService {
     pub async fn update_room_password(&self, room_id: &RoomId, password_hash: Option<String>) -> Result<()> {
         use crate::service::notification::GuestKickReason;
 
-        if let Some(pwd_hash) = password_hash {
-            self.room_settings_repo.set(room_id, "password", &pwd_hash).await?;
+        let password_was_set = password_hash.is_some();
+        self.do_set_password_hash(room_id, password_hash).await?;
 
-            // Sync require_password setting to true when password is set
-            let mut settings = self.get_room_settings(room_id).await?;
-            if !settings.require_password.0 {
-                settings.require_password = crate::models::room_settings::RequirePassword(true);
-                self.room_settings_repo.set_settings(room_id, &settings).await?;
-            }
-
-            // Kick all guests when password is added (guests cannot access password-protected rooms)
+        // Side effects outside transaction
+        if password_was_set {
             if let Err(e) = self.notification_service.kick_all_guests(
                 room_id,
                 GuestKickReason::RoomPasswordAdded
             ).await {
                 tracing::warn!("Failed to kick guests after password was added: {}", e);
             }
-        } else {
-            self.room_settings_repo.delete(room_id, "password").await?;
-
-            // Sync require_password setting to false when password is removed
-            let mut settings = self.get_room_settings(room_id).await?;
-            if settings.require_password.0 {
-                settings.require_password = crate::models::room_settings::RequirePassword(false);
-                self.room_settings_repo.set_settings(room_id, &settings).await?;
-            }
         }
+        Ok(())
+    }
+
+    /// Core password update logic: atomically set/remove password hash and sync `require_password`.
+    ///
+    /// Runs in a transaction with row-level locking. Does NOT trigger side effects
+    /// (guest kicking, notifications) — callers handle that.
+    async fn do_set_password_hash(&self, room_id: &RoomId, password_hash: Option<String>) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let mut settings = self.room_settings_repo.get_for_update(room_id, &mut *tx).await?;
+
+        if let Some(pwd_hash) = password_hash {
+            self.room_settings_repo.set_with_executor(room_id, "password", &pwd_hash, &mut *tx).await?;
+            settings.require_password = crate::models::room_settings::RequirePassword(true);
+        } else {
+            self.room_settings_repo.delete_with_executor(room_id, "password", &mut *tx).await?;
+            settings.require_password = crate::models::room_settings::RequirePassword(false);
+        }
+
+        self.room_settings_repo.set_settings_with_executor(room_id, &settings, &mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -854,20 +901,16 @@ impl RoomService {
 
     /// Clear all media from room's root playlist
     pub async fn clear_playlist(&self, room_id: RoomId, user_id: UserId) -> Result<i64> {
+        // Check permission
+        self.permission_service
+            .check_permission(&room_id, &user_id, PermissionBits::DELETE_MOVIE_ANY)
+            .await?;
+
         let root_playlist = self.playlist_service.get_root_playlist(&room_id).await?;
-        let playlist_id = root_playlist.id.clone();
 
-        // Get all media in playlist
-        let media_list = self.media_service.get_playlist_media(&playlist_id).await?;
-
-        if media_list.is_empty() {
-            return Ok(0);
-        }
-
-        // Batch delete for atomicity
-        let media_ids: Vec<_> = media_list.into_iter().map(|m| m.id).collect();
+        // Delete all media in playlist directly (single query, no N+1)
         let count = self.media_service
-            .remove_media_batch(room_id, user_id, media_ids)
+            .delete_by_playlist(&root_playlist.id)
             .await? as i64;
 
         Ok(count)
@@ -937,6 +980,13 @@ impl RoomService {
         user_id: UserId,
         content: String,
     ) -> Result<ChatMessage> {
+        if content.is_empty() {
+            return Err(Error::InvalidInput("Chat message cannot be empty".to_string()));
+        }
+        if content.len() > 2000 {
+            return Err(Error::InvalidInput("Chat message cannot exceed 2000 bytes".to_string()));
+        }
+
         let message = ChatMessage {
             id: nanoid::nanoid!(12),
             room_id,
@@ -1088,7 +1138,6 @@ impl RoomService {
         };
 
         if !request.status.is_empty() {
-            // Parse status string to RoomStatus enum
             query.status = match request.status.as_str() {
                 "active" => Some(RoomStatus::Active),
                 "banned" => Some(RoomStatus::Banned),
@@ -1101,63 +1150,39 @@ impl RoomService {
             query.search = Some(request.search);
         }
 
-        if !request.creator_id.is_empty() {
+        let (rooms, total) = if request.creator_id.is_empty() {
+            self.list_rooms_with_count(&query).await?
+        } else {
             let creator_id = UserId::from_string(request.creator_id.clone());
-            let (rooms, total) = self.list_rooms_by_creator_with_count(&creator_id, i64::from(query.page), i64::from(query.page_size)).await?;
+            self.list_rooms_by_creator_with_count(&creator_id, i64::from(query.page), i64::from(query.page_size)).await?
+        };
 
-            // Collect creator IDs for batch lookup
-            let creator_ids: Vec<UserId> = rooms.iter().map(|r| r.room.created_by.clone()).collect();
-            let usernames_map: std::collections::HashMap<UserId, String> = self.user_service.get_usernames(&creator_ids).await.unwrap_or_default();
+        let admin_rooms = self.rooms_to_admin_rooms(rooms).await?;
 
-            // Batch-load settings for all rooms (single query)
-            let room_id_strs: Vec<&str> = rooms.iter().map(|r| r.room.id.as_str()).collect();
-            let settings_map = self.room_settings_repo.get_batch(&room_id_strs).await.unwrap_or_default();
+        Ok(ListRoomsResponse {
+            rooms: admin_rooms,
+            total: i32::try_from(total).unwrap_or(i32::MAX),
+        })
+    }
 
-            // Convert rooms to AdminRoom format
-            let admin_rooms: Vec<AdminRoom> = rooms
-                .into_iter()
-                .map(|r| {
-                    let settings = settings_map.get(r.room.id.as_str())
-                        .cloned()
-                        .unwrap_or_default();
-                    let settings_bytes = serde_json::to_vec(&settings).unwrap_or_default();
-                    let creator_username = usernames_map
-                        .get(&r.room.created_by)
-                        .cloned()
-                        .unwrap_or_else(|| "Unknown".to_string());
-                    AdminRoom {
-                        id: r.room.id.as_str().to_string(),
-                        name: r.room.name,
-                        description: r.room.description,
-                        creator_id: r.room.created_by.as_str().to_string(),
-                        creator_username,
-                        status: r.room.status.as_str().to_string(),
-                        settings: settings_bytes,
-                        member_count: r.member_count,
-                        created_at: r.room.created_at.timestamp(),
-                        updated_at: r.room.updated_at.timestamp(),
-                    }
-                })
-                .collect();
-
-            return Ok(ListRoomsResponse {
-                rooms: admin_rooms,
-                total: i32::try_from(total).unwrap_or(i32::MAX),
-            });
+    /// Convert a list of `RoomWithCount` to `AdminRoom` proto format.
+    ///
+    /// Batch-loads usernames and settings in two queries (not N+1).
+    async fn rooms_to_admin_rooms(&self, rooms: Vec<RoomWithCount>) -> Result<Vec<AdminRoom>> {
+        if rooms.is_empty() {
+            return Ok(Vec::new());
         }
 
-        let (rooms, total) = self.list_rooms_with_count(&query).await?;
-
-        // Collect creator IDs for batch lookup
+        // Batch lookup: usernames
         let creator_ids: Vec<UserId> = rooms.iter().map(|r| r.room.created_by.clone()).collect();
-        let usernames_map: std::collections::HashMap<UserId, String> = self.user_service.get_usernames(&creator_ids).await.unwrap_or_default();
+        let usernames_map: std::collections::HashMap<UserId, String> =
+            self.user_service.get_usernames(&creator_ids).await.unwrap_or_default();
 
-        // Batch-load settings for all rooms (single query)
+        // Batch lookup: settings
         let room_id_strs: Vec<&str> = rooms.iter().map(|r| r.room.id.as_str()).collect();
         let settings_map = self.room_settings_repo.get_batch(&room_id_strs).await.unwrap_or_default();
 
-        // Convert rooms to AdminRoom format
-        let admin_rooms: Vec<AdminRoom> = rooms
+        Ok(rooms
             .into_iter()
             .map(|r| {
                 let settings = settings_map.get(r.room.id.as_str())
@@ -1181,12 +1206,7 @@ impl RoomService {
                     updated_at: r.room.updated_at.timestamp(),
                 }
             })
-            .collect();
-
-        Ok(ListRoomsResponse {
-            rooms: admin_rooms,
-            total: i32::try_from(total).unwrap_or(i32::MAX),
-        })
+            .collect())
     }
 
     /// Delete room using gRPC types
@@ -1222,28 +1242,14 @@ impl RoomService {
             .await?
             .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
 
-        // Hash new password if provided
+        // Hash new password outside transaction (CPU-intensive)
         let hashed_password = if request.new_password.is_empty() {
             None
         } else {
             Some(hash_password(&request.new_password).await?)
         };
 
-        // Load current settings
-        let mut settings = self.room_settings_repo.get(&room_id).await?;
-
-        settings.require_password = crate::models::room_settings::RequirePassword(hashed_password.is_some());
-
-        // Update password in room_settings table
-        if let Some(pwd_hash) = &hashed_password {
-            self.room_settings_repo.set(&room_id, "password", pwd_hash).await?;
-        } else {
-            // Remove password if clearing
-            self.room_settings_repo.delete(&room_id, "password").await?;
-        }
-
-        // Update settings
-        self.room_settings_repo.set_settings(&room_id, &settings).await?;
+        self.do_set_password_hash(&room_id, hashed_password).await?;
 
         Ok(UpdateRoomPasswordResponse { success: true })
     }
@@ -1281,24 +1287,14 @@ impl RoomService {
             .await?
             .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
 
-        // Hash new password if provided
+        // Hash new password outside transaction (CPU-intensive)
         let hashed_password = if request.new_password.is_empty() {
             None
         } else {
             Some(hash_password(&request.new_password).await?)
         };
 
-        // Load current settings
-        let mut settings = self.room_settings_repo.get(&room_id).await?;
-        settings.require_password = crate::models::room_settings::RequirePassword(hashed_password.is_some());
-
-        if let Some(pwd_hash) = &hashed_password {
-            self.room_settings_repo.set(&room_id, "password", pwd_hash).await?;
-        } else {
-            self.room_settings_repo.delete(&room_id, "password").await?;
-        }
-
-        self.room_settings_repo.set_settings(&room_id, &settings).await?;
+        self.do_set_password_hash(&room_id, hashed_password).await?;
 
         Ok(UpdateRoomPasswordResponse { success: true })
     }

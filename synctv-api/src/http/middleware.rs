@@ -68,11 +68,8 @@ where
         // users even if they hold a valid JWT issued before the ban)
         let user = app_state.user_service.get_user(&user_id).await
             .map_err(|_| AppError::unauthorized("User not found"))?;
-        if user.is_deleted() {
-            return Err(AppError::unauthorized("Account is deleted"));
-        }
-        if user.status == UserStatus::Banned {
-            return Err(AppError::forbidden("Account is suspended"));
+        if user.is_deleted() || user.status == UserStatus::Banned {
+            return Err(AppError::unauthorized("Authentication failed"));
         }
 
         // Reject tokens issued before the user's last password change.

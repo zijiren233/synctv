@@ -4,7 +4,7 @@
 //! and media switching with optimistic locking for concurrent updates.
 
 use crate::{
-    models::{RoomId, UserId, MediaId, PermissionBits, RoomPlaybackState, RoomSettings, PlayMode},
+    models::{RoomId, UserId, MediaId, PlaylistId, PermissionBits, RoomPlaybackState, RoomSettings, PlayMode},
     repository::{RoomPlaybackStateRepository, MediaRepository},
     service::{permission::PermissionService, media::MediaService},
     Error, Result,
@@ -74,14 +74,18 @@ impl PlaybackService {
         &self,
         room_id: RoomId,
         user_id: UserId,
-        position: f64,
+        current_time: f64,
     ) -> Result<RoomPlaybackState> {
+        if current_time < 0.0 {
+            return Err(Error::InvalidInput("Seek position must be non-negative".to_string()));
+        }
+
         self.permission_service
             .check_permission(&room_id, &user_id, PermissionBits::SEEK)
             .await?;
 
         self.update_state(room_id, |state| {
-            state.position = position;
+            state.current_time = current_time;
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here
         })
@@ -119,6 +123,18 @@ impl PlaybackService {
         user_id: UserId,
         media_id: MediaId,
     ) -> Result<RoomPlaybackState> {
+        self.switch_media_with_context(room_id, user_id, media_id, None, String::new()).await
+    }
+
+    /// Switch to different media with playlist context and media path
+    pub async fn switch_media_with_context(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        media_id: MediaId,
+        playlist_id: Option<PlaylistId>,
+        media_path: String,
+    ) -> Result<RoomPlaybackState> {
         self.permission_service
             .check_permission(&room_id, &user_id, PermissionBits::SWITCH_MEDIA)
             .await?;
@@ -136,7 +152,9 @@ impl PlaybackService {
 
         self.update_state(room_id, |state| {
             state.playing_media_id = Some(media_id.clone());
-            state.position = 0.0;
+            state.playing_playlist_id = playlist_id.clone();
+            state.relative_path = media_path.clone();
+            state.current_time = 0.0;
             state.is_playing = true;
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here
@@ -258,7 +276,7 @@ impl PlaybackService {
         if let Some(next) = next_media {
             let new_state = self.update_state(room_id.clone(), |state| {
                 state.playing_media_id = Some(next.id.clone());
-                state.position = 0.0;
+                state.current_time = 0.0;
                 state.is_playing = true;
                 state.updated_at = chrono::Utc::now();
                 // version is incremented by the SQL UPDATE, not here
@@ -285,13 +303,13 @@ impl PlaybackService {
 
     /// Check if media has ended and auto-play next if needed
     ///
-    /// This should be called when playback position is updated.
-    /// It checks if the current position has reached or exceeded the media duration.
+    /// This should be called when playback `current_time` is updated.
+    /// It checks if the current time has reached or exceeded the media duration.
     pub async fn check_and_auto_play(
         &self,
         room_id: &RoomId,
         settings: &RoomSettings,
-        current_position: f64,
+        current_time: f64,
     ) -> Result<Option<RoomPlaybackState>> {
         // Use new auto_play settings with legacy fallback
         let enabled = settings.auto_play.value.enabled || settings.auto_play_next.0;
@@ -326,9 +344,9 @@ impl PlaybackService {
             return Ok(None);
         };
 
-        // Check if position is near end (within 1 second or past end)
+        // Check if current_time is near end (within 1 second or past end)
         if let Some(dur) = duration {
-            if current_position >= dur - 1.0 {
+            if current_time >= dur - 1.0 {
                 // Auto-play next media
                 self.play_next(room_id, settings).await
             } else {
@@ -397,9 +415,11 @@ impl PlaybackService {
 
         self.update_state(room_id, |state| {
             state.is_playing = false;
-            state.position = 0.0;
+            state.current_time = 0.0;
             state.speed = 1.0;
             state.playing_media_id = None;
+            state.playing_playlist_id = None;
+            state.relative_path = String::new();
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here
         })
@@ -419,9 +439,9 @@ impl PlaybackService {
     }
 
     /// Get current playback position
-    pub async fn get_position(&self, room_id: &RoomId) -> Result<f64> {
+    pub async fn get_current_time(&self, room_id: &RoomId) -> Result<f64> {
         let state = self.get_state(room_id).await?;
-        Ok(state.position)
+        Ok(state.current_time)
     }
 
     /// Get current playback speed
@@ -436,7 +456,7 @@ impl PlaybackService {
         room_id: RoomId,
         user_id: UserId,
         playing: Option<bool>,
-        position: Option<f64>,
+        current_time: Option<f64>,
         speed: Option<f64>,
         media_id: Option<MediaId>,
     ) -> Result<RoomPlaybackState> {
@@ -445,7 +465,7 @@ impl PlaybackService {
         if playing.is_some() {
             required_perms |= PermissionBits::PLAY_PAUSE;
         }
-        if position.is_some() {
+        if current_time.is_some() {
             required_perms |= PermissionBits::SEEK;
         }
         if speed.is_some() {
@@ -478,8 +498,8 @@ impl PlaybackService {
             if let Some(p) = playing {
                 state.is_playing = p;
             }
-            if let Some(pos) = position {
-                state.position = pos;
+            if let Some(ct) = current_time {
+                state.current_time = ct;
             }
             if let Some(s) = speed {
                 state.speed = s;

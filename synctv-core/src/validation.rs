@@ -122,12 +122,22 @@ impl PasswordValidator {
         self
     }
 
+    /// Maximum password length to prevent bcrypt `DoS` (bcrypt input limit is 72 bytes)
+    const MAX_LENGTH: usize = 128;
+
     pub fn validate(&self, password: &str) -> ValidationResult<()> {
         // Check length
         if password.len() < self.min_length {
             return Err(ValidationError::Field {
                 field: "password".to_string(),
                 message: format!("must be at least {} characters", self.min_length),
+            });
+        }
+
+        if password.len() > Self::MAX_LENGTH {
+            return Err(ValidationError::Field {
+                field: "password".to_string(),
+                message: format!("must not exceed {} characters", Self::MAX_LENGTH),
             });
         }
 
@@ -238,7 +248,7 @@ impl UrlValidator {
                 // Check allowed domains
                 if let Some(ref domains) = self.allowed_domains {
                     if let Some(host) = parsed.host_str() {
-                        if !domains.iter().any(|d| host.ends_with(d)) {
+                        if !domains.iter().any(|d| host == d.as_str() || host.ends_with(&format!(".{d}"))) {
                             return Err(ValidationError::Field {
                                 field: "url".to_string(),
                                 message: format!("domain not in allowed list: {domains:?}"),

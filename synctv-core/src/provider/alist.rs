@@ -34,21 +34,11 @@ impl AlistProvider {
         }
     }
 
-    /// Get Alist client for the given instance name
-    ///
-    /// Selection priority:
-    /// 1. Instance specified by `instance_name` parameter
-    /// 2. Fallback to singleton local client
+    /// Get Alist client for the given instance name (remote if available, local fallback)
     async fn get_client(&self, instance_name: Option<&str>) -> AlistClientArc {
-        if let Some(name) = instance_name {
-            if let Some(channel) = self.provider_instance_manager.get(name).await {
-                // Remote instance - create gRPC client
-                return create_remote_alist_client(channel);
-            }
-        }
-
-        // Fallback to singleton local client
-        load_local_alist_client()
+        self.provider_instance_manager
+            .resolve_client(instance_name, create_remote_alist_client, load_local_alist_client)
+            .await
     }
 
     /// Detect file format from extension
@@ -121,9 +111,7 @@ impl TryFrom<&Value> for AlistSourceConfig {
     type Error = ProviderError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            ProviderError::InvalidConfig(format!("Failed to parse Alist source config: {e}"))
-        })
+        super::parse_source_config(value, "Alist")
     }
 }
 

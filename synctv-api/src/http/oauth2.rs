@@ -212,21 +212,12 @@ async fn handle_oauth2_callback(
         super::AppError::internal_server_error("Failed to get user info")
     })?;
 
-    // Check if user is deleted
-    if user.is_deleted() {
+    // Check if user is deleted or banned (generic message to prevent user enumeration)
+    if user.is_deleted() || user.status == synctv_core::models::UserStatus::Banned {
         return Ok(Json(OAuth2CallbackJsonResponse {
             token: None,
             redirect: oauth_state.redirect_url,
-            message: Some("Account is deleted".to_string()),
-        }));
-    }
-
-    // Check if user is banned
-    if user.status == synctv_core::models::UserStatus::Banned {
-        return Ok(Json(OAuth2CallbackJsonResponse {
-            token: None,
-            redirect: oauth_state.redirect_url,
-            message: Some("Account is suspended".to_string()),
+            message: Some("Authentication failed".to_string()),
         }));
     }
 

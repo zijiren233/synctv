@@ -148,14 +148,14 @@ pub struct MediaTrack {
     /// Cancellation token for signalling shutdown to the RTP reader task
     cancel_token: CancellationToken,
 
-    /// Handle to the spawned RTP reader task
-    reader_handle: Option<JoinHandle<()>>,
+    /// Handle to the spawned RTP reader task (interior mutability for shared access)
+    reader_handle: parking_lot::Mutex<Option<JoinHandle<()>>>,
 
     /// Track statistics
     stats: Arc<TrackStatsInner>,
 
-    /// Packet forwarding channel
-    packet_tx: Option<mpsc::UnboundedSender<ForwardablePacket>>,
+    /// Packet forwarding channel (interior mutability for shared access)
+    packet_tx: parking_lot::Mutex<Option<mpsc::Sender<ForwardablePacket>>>,
 }
 
 /// Internal track statistics with atomic counters
@@ -194,7 +194,7 @@ impl MediaTrack {
             receiver,
             active_quality_layer: Arc::new(RwLock::new(None)),
             cancel_token: CancellationToken::new(),
-            reader_handle: None,
+            reader_handle: parking_lot::Mutex::new(None),
             stats: Arc::new(TrackStatsInner {
                 packets_received: AtomicU64::new(0),
                 bytes_received: AtomicU64::new(0),
@@ -203,16 +203,22 @@ impl MediaTrack {
                 packets_lost: AtomicU64::new(0),
                 last_packet_time: RwLock::new(None),
             }),
-            packet_tx: None,
+            packet_tx: parking_lot::Mutex::new(None),
         }
     }
 
+    /// RTP channel buffer size — limits memory for slow subscribers
+    const RTP_CHANNEL_CAPACITY: usize = 256;
+
     /// Start reading RTP packets from the track
+    ///
+    /// Uses interior mutability so this can be called through `Arc<MediaTrack>`.
+    /// The channel is bounded to prevent OOM from slow subscribers.
     pub async fn start_reading(
-        &mut self,
-    ) -> Result<mpsc::UnboundedReceiver<ForwardablePacket>> {
-        let (packet_tx, packet_rx) = mpsc::unbounded_channel();
-        self.packet_tx = Some(packet_tx.clone());
+        &self,
+    ) -> Result<mpsc::Receiver<ForwardablePacket>> {
+        let (packet_tx, packet_rx) = mpsc::channel(Self::RTP_CHANNEL_CAPACITY);
+        *self.packet_tx.lock() = Some(packet_tx.clone());
 
         let track = Arc::clone(&self.remote_track);
         let stats = Arc::clone(&self.stats);
@@ -251,14 +257,23 @@ impl MediaTrack {
                                     received_at: Instant::now(),
                                 };
 
-                                // Forward packet to subscribers
-                                if let Err(e) = packet_tx.send(forwardable) {
-                                    error!(
-                                        track_id = %track_id,
-                                        error = %e,
-                                        "Failed to forward RTP packet"
-                                    );
-                                    break;
+                                // Forward packet to subscribers (drop on overflow to prevent OOM)
+                                match packet_tx.try_send(forwardable) {
+                                    Ok(()) => {}
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        // Slow subscriber — drop packet to prevent OOM
+                                        debug!(
+                                            track_id = %track_id,
+                                            "RTP channel full, dropping packet"
+                                        );
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                                        error!(
+                                            track_id = %track_id,
+                                            "RTP channel closed, stopping reader"
+                                        );
+                                        break;
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -277,7 +292,7 @@ impl MediaTrack {
             info!(track_id = %track_id, "RTP reader stopped");
         });
 
-        self.reader_handle = Some(handle);
+        *self.reader_handle.lock() = Some(handle);
 
         Ok(packet_rx)
     }
@@ -333,9 +348,9 @@ impl MediaTrack {
     }
 
     /// Deactivate track: cancel the token and abort the reader task
-    pub fn deactivate(&mut self) {
+    pub fn deactivate(&self) {
         self.cancel_token.cancel();
-        if let Some(handle) = self.reader_handle.take() {
+        if let Some(handle) = self.reader_handle.lock().take() {
             handle.abort();
         }
     }
@@ -390,7 +405,7 @@ impl Drop for MediaTrack {
     fn drop(&mut self) {
         // Ensure the reader task is cancelled and aborted on drop
         self.cancel_token.cancel();
-        if let Some(handle) = self.reader_handle.take() {
+        if let Some(handle) = self.reader_handle.lock().take() {
             handle.abort();
         }
     }

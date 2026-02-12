@@ -40,12 +40,13 @@ type ValidatorFn<T> = Arc<dyn Fn(&T) -> Result<()> + Send + Sync>;
 /// Trait for setting operations (type-erased)
 ///
 /// This trait provides a unified interface for working with a single setting
+#[async_trait::async_trait]
 pub trait SettingProvider: Send + Sync {
     /// Get raw string value
     fn get_raw(&self) -> Option<String>;
 
-    /// Set raw string value
-    fn set_raw(&self, value: String) -> Result<()>;
+    /// Set raw string value (persists to database)
+    async fn set_raw(&self, value: String) -> Result<()>;
 
     /// Validate a raw string value
     fn is_valid_raw(&self, value: &str) -> Result<()>;
@@ -135,23 +136,22 @@ impl SettingsStorage {
         storage.get(key).cloned()
     }
 
-    /// Set raw string value for a key
-    pub fn set_raw(&self, key: &str, value: String) -> Result<()> {
-        // Update in-memory storage
+    /// Set raw string value for a key, persisting to database before updating cache.
+    pub async fn set_raw(&self, key: &str, value: String) -> Result<()> {
+        // Persist to database first — fail fast if the write fails
+        self.settings_service
+            .update(key, value.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to persist setting '{key}': {e}"))?;
+
+        // Only update in-memory cache after successful DB write
         {
             let mut storage = self
                 .inner
                 .write()
                 .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
-            storage.insert(key.to_string(), value.clone());
+            storage.insert(key.to_string(), value);
         }
-
-        // Spawn a task to update in database using the full key
-        let settings_service = self.settings_service.clone();
-        let key = key.to_string();
-        tokio::spawn(async move {
-            let _ = settings_service.update(&key, value).await;
-        });
 
         Ok(())
     }
@@ -313,7 +313,7 @@ where
     }
 
     /// Set a new value and persist to database
-    pub fn set(&self, value: T) -> Result<()> {
+    pub async fn set(&self, value: T) -> Result<()> {
         // Validate if validator is set
         if let Ok(validators) = self.validator.read() {
             if let Some(validator) = validators.as_ref() {
@@ -322,7 +322,7 @@ where
         }
         // Convert to string using standard Display trait
         let str_value = value.to_string();
-        self.storage.set_raw(self.key, str_value)?;
+        self.storage.set_raw(self.key, str_value).await?;
         Ok(())
     }
 
@@ -348,6 +348,7 @@ where
     }
 }
 
+#[async_trait::async_trait]
 impl<T> SettingProvider for Setting<T>
 where
     T: Clone + Display + std::str::FromStr + Send + Sync + 'static,
@@ -357,10 +358,10 @@ where
         self.storage.get_raw(self.key)
     }
 
-    fn set_raw(&self, value: String) -> Result<()> {
+    async fn set_raw(&self, value: String) -> Result<()> {
         // Validate before setting
         self.is_valid_raw(&value)?;
-        self.storage.set_raw(self.key, value)
+        self.storage.set_raw(self.key, value).await
     }
 
     fn is_valid_raw(&self, value: &str) -> Result<()> {

@@ -181,6 +181,128 @@ impl NodeRegistry {
         Ok(())
     }
 
+    /// Register a remote node (called by gRPC handler when another node joins)
+    pub async fn register_remote(&self, node_info: NodeInfo) -> Result<()> {
+        if let Some(ref client) = self.redis_client {
+            let mut conn = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                client.get_multiplexed_async_connection(),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+
+            let key = Self::node_key(&node_info.node_id);
+            let value = serde_json::to_string(&node_info)
+                .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?;
+
+            timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("SETEX")
+                    .arg(&key)
+                    .arg(self.heartbeat_timeout_secs * 2)
+                    .arg(&value)
+                    .query_async::<()>(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis SETEX timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis SETEX failed: {e}")))?;
+        }
+
+        let mut nodes = self.local_nodes.write().await;
+        nodes.insert(node_info.node_id.clone(), node_info);
+
+        Ok(())
+    }
+
+    /// Update heartbeat for a remote node
+    pub async fn heartbeat_remote(&self, node_id: &str) -> Result<()> {
+        if let Some(ref client) = self.redis_client {
+            let mut conn = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                client.get_multiplexed_async_connection(),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+
+            let key = Self::node_key(node_id);
+
+            // Read current value, update last_heartbeat, write back with fresh TTL
+            let value: Option<String> = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("GET")
+                    .arg(&key)
+                    .query_async(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+
+            if let Some(value) = value {
+                if let Ok(mut node_info) = serde_json::from_str::<NodeInfo>(&value) {
+                    node_info.last_heartbeat = Utc::now();
+                    let updated = serde_json::to_string(&node_info)
+                        .map_err(|e| Error::Serialization(format!("Failed to serialize: {e}")))?;
+
+                    timeout(
+                        Duration::from_secs(REDIS_TIMEOUT_SECS),
+                        redis::cmd("SETEX")
+                            .arg(&key)
+                            .arg(self.heartbeat_timeout_secs * 2)
+                            .arg(&updated)
+                            .query_async::<()>(&mut conn),
+                    )
+                    .await
+                    .map_err(|_| Error::Timeout("Redis SETEX timed out".to_string()))?
+                    .map_err(|e| Error::Database(format!("Redis SETEX failed: {e}")))?;
+
+                    // Update local cache
+                    let mut nodes = self.local_nodes.write().await;
+                    nodes.insert(node_id.to_string(), node_info);
+                }
+            }
+        } else {
+            // Local-only mode: update local cache
+            let mut nodes = self.local_nodes.write().await;
+            if let Some(node) = nodes.get_mut(node_id) {
+                node.last_heartbeat = Utc::now();
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Unregister a remote node
+    pub async fn unregister_remote(&self, node_id: &str) -> Result<()> {
+        if let Some(ref client) = self.redis_client {
+            let mut conn = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                client.get_multiplexed_async_connection(),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+
+            let key = Self::node_key(node_id);
+
+            timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("DEL")
+                    .arg(&key)
+                    .query_async::<()>(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis DEL timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis DEL failed: {e}")))?;
+        }
+
+        let mut nodes = self.local_nodes.write().await;
+        nodes.remove(node_id);
+
+        Ok(())
+    }
+
     /// Get all active nodes
     pub async fn get_all_nodes(&self) -> Result<Vec<NodeInfo>> {
         if let Some(ref client) = self.redis_client {

@@ -9,7 +9,7 @@
 
 use crate::{
     libraries::storage::{HlsStorage, StorageBackend, FileStorage, MemoryStorage, OssStorage, OssConfig},
-    relay::registry_trait::StreamRegistryTrait,
+    relay::{registry_trait::StreamRegistryTrait, PublisherManager},
     livestream::{
         pull_manager::PullStreamManager,
         segment_manager::{SegmentManager, CleanupConfig},
@@ -129,6 +129,12 @@ impl LivestreamServer {
             event_receiver,
         )));
 
+        // Get broadcast receiver for PublisherManager BEFORE spawning the hub
+        let broadcast_receiver = {
+            let mut hub = stream_hub.lock().await;
+            hub.get_client_event_consumer()
+        };
+
         // Start RTMP server with the event sender
         self.start_rtmp_server(event_sender.clone()).await?;
 
@@ -138,6 +144,19 @@ impl LivestreamServer {
             self.node_id.clone(),
             event_sender,
         ));
+
+        // Start PublisherManager - listens to StreamHub broadcast events
+        // and registers/unregisters publishers in Redis for multi-node relay
+        let publisher_manager = Arc::new(PublisherManager::new(
+            self.registry.clone(),
+            self.node_id.clone(),
+        ));
+        tokio::spawn({
+            let pm = Arc::clone(&publisher_manager);
+            async move {
+                pm.start(broadcast_receiver).await;
+            }
+        });
 
         // Start HLS server
         self.start_hls_server(Arc::clone(&stream_hub), segment_manager).await?;

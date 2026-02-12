@@ -52,21 +52,11 @@ impl BilibiliProvider {
         }
     }
 
-    /// Get Bilibili client for the given instance name
-    ///
-    /// Selection priority:
-    /// 1. Instance specified by `instance_name` parameter
-    /// 2. Fallback to singleton local client
+    /// Get Bilibili client for the given instance name (remote if available, local fallback)
     async fn get_client(&self, instance_name: Option<&str>) -> BilibiliClientArc {
-        if let Some(name) = instance_name {
-            if let Some(channel) = self.provider_instance_manager.get(name).await {
-                // Remote instance - create gRPC client
-                return create_remote_bilibili_client(channel);
-            }
-        }
-
-        // Fallback to singleton local client
-        load_local_bilibili_client()
+        self.provider_instance_manager
+            .resolve_client(instance_name, create_remote_bilibili_client, load_local_bilibili_client)
+            .await
     }
 
     // ========== Provider API Methods ==========
@@ -251,9 +241,7 @@ impl TryFrom<&Value> for BilibiliSourceConfig {
     type Error = ProviderError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            ProviderError::InvalidConfig(format!("Failed to parse Bilibili source config: {e}"))
-        })
+        super::parse_source_config(value, "Bilibili")
     }
 }
 

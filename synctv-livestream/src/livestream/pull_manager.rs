@@ -11,7 +11,8 @@ use crate::{
     error::StreamResult,
     grpc::GrpcStreamPuller,
 };
-use synctv_xiu::streamhub::define::StreamHubEventSender;
+use synctv_xiu::streamhub::define::{StreamHubEvent, StreamHubEventSender};
+use synctv_xiu::streamhub::stream::StreamIdentifier;
 use tracing::{self as log, Instrument};
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -197,16 +198,30 @@ impl PullStreamManager {
                 let idle_time = pull_stream.last_active_time().await.elapsed();
 
                 if idle_time > idle_timeout {
+                    // Mark as not running FIRST so concurrent viewers see it as unhealthy
+                    // and fall through to create a fresh stream instead of subscribing
+                    // to one that's about to be stopped.
+                    pull_stream.mark_stopping();
+
+                    // Re-check subscriber count after marking stopping (SeqCst ordering).
+                    // A concurrent viewer may have incremented between our initial check
+                    // and the mark_stopping store. After mark_stopping, any *new*
+                    // is_healthy() returns false, so only viewers that got through the
+                    // fast-path before mark_stopping can be caught here.
+                    if pull_stream.subscriber_count() > 0 {
+                        log::debug!(
+                            "Cleanup aborted for {}: late subscriber detected, restoring stream",
+                            stream_key,
+                        );
+                        pull_stream.restore_running();
+                        continue;
+                    }
+
                     log::info!(
                         "Auto cleanup: Stopping pull stream {} (idle for {:?})",
                         stream_key,
                         idle_time
                     );
-
-                    // Mark as not running FIRST so concurrent viewers see it as unhealthy
-                    // and fall through to create a fresh stream instead of subscribing
-                    // to one that's about to be stopped.
-                    pull_stream.mark_stopping();
 
                     // Remove from map so new lookups won't find this stream
                     streams.remove(stream_key);
@@ -304,15 +319,27 @@ impl PullStream {
     }
 
     /// Stop the pull stream
+    ///
+    /// Sends `UnPublish` to the local `StreamHub` BEFORE aborting the puller task,
+    /// because the puller's own cleanup path won't run on abort.
     pub async fn stop(&self) -> StreamResult<()> {
         self.is_running.store(false, Ordering::SeqCst);
+
+        // Clean up the local StreamHub publisher first — the abort below
+        // will prevent the puller from running its own cleanup.
+        let stream_name = format!("{}/{}", self.room_id, self.media_id);
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name,
+        };
+        if let Err(e) = self.stream_hub_event_sender.send(StreamHubEvent::UnPublish { identifier }) {
+            log::warn!("Failed to send UnPublish to StreamHub for {} / {}: {}", self.room_id, self.media_id, e);
+        }
 
         // Abort the gRPC puller task
         let mut puller_handle = self.puller_handle.lock().await;
         if let Some(handle) = puller_handle.take() {
             handle.abort();
-            // Don't await aborted handle - it will return JoinError::Cancelled
-            // The abort() call is sufficient for cleanup
             log::info!("Aborted gRPC puller task for {} / {}", self.room_id, self.media_id);
         }
 
@@ -323,6 +350,11 @@ impl PullStream {
     /// Mark the stream as stopping (prevents new subscribers from seeing it as healthy)
     pub fn mark_stopping(&self) {
         self.is_running.store(false, Ordering::SeqCst);
+    }
+
+    /// Restore running state (used when cleanup detects a late subscriber)
+    pub fn restore_running(&self) {
+        self.is_running.store(true, Ordering::SeqCst);
     }
 
     /// Check if the pull stream is healthy (running and receiving data)

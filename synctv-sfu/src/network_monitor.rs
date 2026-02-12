@@ -20,7 +20,12 @@ use crate::peer::PeerStats;
 use crate::types::PeerId;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
+
+/// Maximum number of samples to retain per peer.
+/// Prevents unbounded memory growth under high update rates.
+const MAX_SAMPLES: usize = 1000;
 
 /// Network statistics for a single peer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,11 +81,11 @@ struct PeerMonitorEntry {
     /// Current computed stats
     stats: NetworkStats,
 
-    /// Rolling window of RTT samples (last 30 seconds)
-    rtt_samples: Vec<(Instant, u32)>,
+    /// Rolling window of RTT samples (last 30 seconds, bounded by `MAX_SAMPLES`)
+    rtt_samples: VecDeque<(Instant, u32)>,
 
-    /// Rolling window of packet loss samples
-    loss_samples: Vec<(Instant, f32)>,
+    /// Rolling window of packet loss samples (bounded by `MAX_SAMPLES`)
+    loss_samples: VecDeque<(Instant, f32)>,
 
     /// Last update time
     last_updated: Instant,
@@ -90,8 +95,8 @@ impl PeerMonitorEntry {
     fn new() -> Self {
         Self {
             stats: NetworkStats::default(),
-            rtt_samples: Vec::new(),
-            loss_samples: Vec::new(),
+            rtt_samples: VecDeque::new(),
+            loss_samples: VecDeque::new(),
             last_updated: Instant::now(),
         }
     }
@@ -140,14 +145,26 @@ impl NetworkQualityMonitor {
             0.0
         };
 
+        // Enforce capacity limit before adding
+        if entry.rtt_samples.len() >= MAX_SAMPLES {
+            entry.rtt_samples.pop_front();
+        }
+        if entry.loss_samples.len() >= MAX_SAMPLES {
+            entry.loss_samples.pop_front();
+        }
+
         // Add samples
-        entry.rtt_samples.push((now, 0)); // RTT from RTCP when available
-        entry.loss_samples.push((now, loss_rate));
+        entry.rtt_samples.push_back((now, 0)); // RTT from RTCP when available
+        entry.loss_samples.push_back((now, loss_rate));
 
         // Prune old samples outside the window
         let cutoff = now.checked_sub(self.window_duration).unwrap();
-        entry.rtt_samples.retain(|(t, _)| *t >= cutoff);
-        entry.loss_samples.retain(|(t, _)| *t >= cutoff);
+        while let Some(&(t, _)) = entry.rtt_samples.front() {
+            if t < cutoff { entry.rtt_samples.pop_front(); } else { break; }
+        }
+        while let Some(&(t, _)) = entry.loss_samples.front() {
+            if t < cutoff { entry.loss_samples.pop_front(); } else { break; }
+        }
 
         // Compute averaged stats
         let avg_rtt = if entry.rtt_samples.is_empty() {
@@ -209,11 +226,18 @@ impl NetworkQualityMonitor {
             .or_insert_with(PeerMonitorEntry::new);
 
         let entry = entry.value_mut();
-        entry.rtt_samples.push((now, rtt_ms));
+
+        // Enforce capacity limit
+        if entry.rtt_samples.len() >= MAX_SAMPLES {
+            entry.rtt_samples.pop_front();
+        }
+        entry.rtt_samples.push_back((now, rtt_ms));
 
         // Prune old samples
         let cutoff = now.checked_sub(self.window_duration).unwrap();
-        entry.rtt_samples.retain(|(t, _)| *t >= cutoff);
+        while let Some(&(t, _)) = entry.rtt_samples.front() {
+            if t < cutoff { entry.rtt_samples.pop_front(); } else { break; }
+        }
     }
 
     /// Get network stats for a specific peer

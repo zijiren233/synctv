@@ -129,6 +129,37 @@ impl PlaylistRepository {
         self.row_to_playlist(row)
     }
 
+    /// Create a playlist using a provided executor (pool or transaction)
+    pub async fn create_with_executor<'e, E>(&self, playlist: &Playlist, executor: E) -> Result<Playlist>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        let source_provider_str = playlist.source_provider.as_deref();
+        let row = sqlx::query(
+            r"
+            INSERT INTO playlists (id, room_id, creator_id, name, parent_id, position,
+                                   source_provider, source_config, provider_instance_name)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id, room_id, creator_id, name, parent_id, position,
+                      source_provider, source_config, provider_instance_name,
+                      created_at, updated_at
+            "
+        )
+        .bind(playlist.id.as_str())
+        .bind(playlist.room_id.as_str())
+        .bind(playlist.creator_id.as_str())
+        .bind(&playlist.name)
+        .bind(playlist.parent_id.as_ref().map(super::super::models::id::PlaylistId::as_str))
+        .bind(playlist.position)
+        .bind(source_provider_str)
+        .bind(&playlist.source_config)
+        .bind(&playlist.provider_instance_name)
+        .fetch_one(executor)
+        .await?;
+
+        self.row_to_playlist(row)
+    }
+
     /// Get next available position in a parent
     pub async fn get_next_position(&self, room_id: &RoomId, parent_id: Option<&PlaylistId>) -> Result<i32> {
         let max_pos: Option<i32> = sqlx::query_scalar(
@@ -184,6 +215,38 @@ impl PlaylistRepository {
     }
 
     /// Convert database row to Playlist
+    /// Get playlist path from a given node to root using a recursive CTE (single query)
+    pub async fn get_path(&self, playlist_id: &PlaylistId) -> Result<Vec<Playlist>> {
+        let rows = sqlx::query(
+            r"
+            WITH RECURSIVE ancestors AS (
+                SELECT id, room_id, creator_id, name, parent_id, position,
+                       source_provider, source_config, provider_instance_name,
+                       created_at, updated_at, 0 AS depth
+                FROM playlists
+                WHERE id = $1
+              UNION ALL
+                SELECT p.id, p.room_id, p.creator_id, p.name, p.parent_id, p.position,
+                       p.source_provider, p.source_config, p.provider_instance_name,
+                       p.created_at, p.updated_at, a.depth + 1
+                FROM playlists p
+                JOIN ancestors a ON p.id = a.parent_id
+                WHERE a.depth < 50
+            )
+            SELECT id, room_id, creator_id, name, parent_id, position,
+                   source_provider, source_config, provider_instance_name,
+                   created_at, updated_at
+            FROM ancestors
+            ORDER BY depth DESC
+            "
+        )
+        .bind(playlist_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(|row| self.row_to_playlist(row)).collect()
+    }
+
     fn row_to_playlist(&self, row: sqlx::postgres::PgRow) -> Result<Playlist> {
         Ok(Playlist {
             id: crate::models::PlaylistId::from_string(row.try_get("id")?),

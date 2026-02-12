@@ -59,6 +59,38 @@ impl RoomSettingsRepository {
         }
     }
 
+    /// Get settings with row-level lock (FOR UPDATE) using a provided executor.
+    ///
+    /// Must be called within a transaction. Locks the settings row to prevent
+    /// concurrent read-modify-write races.
+    pub async fn get_for_update<'e, E>(&self, room_id: &RoomId, executor: E) -> Result<RoomSettings>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        let room_id_str = room_id.as_str();
+
+        let row = sqlx::query(
+            r"
+            SELECT value
+            FROM room_settings
+            WHERE room_id = $1 AND key = '_settings'
+            FOR UPDATE
+        "
+        )
+        .bind(room_id_str)
+        .fetch_optional(executor)
+        .await?;
+
+        if let Some(row) = row {
+            let value: String = row.try_get("value")?;
+            let settings: RoomSettings = serde_json::from_str(&value)
+                .map_err(|e| Error::Internal(format!("Failed to deserialize room settings: {e}")))?;
+            Ok(settings)
+        } else {
+            Ok(RoomSettings::default())
+        }
+    }
+
     /// Set a specific setting for a room
     pub async fn set(&self, room_id: &RoomId, key: &str, value: &str) -> Result<()> {
         let room_id_str = room_id.as_str();
@@ -75,6 +107,56 @@ impl RoomSettingsRepository {
         .bind(key)
         .bind(value)
         .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Set a specific setting using a provided executor (pool or transaction)
+    pub async fn set_with_executor<'e, E>(&self, room_id: &RoomId, key: &str, value: &str, executor: E) -> Result<()>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        let room_id_str = room_id.as_str();
+
+        sqlx::query(
+            r"
+            INSERT INTO room_settings (room_id, key, value)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (room_id, key)
+            DO UPDATE SET value = $3, updated_at = NOW()
+        "
+        )
+        .bind(room_id_str)
+        .bind(key)
+        .bind(value)
+        .execute(executor)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Set multiple settings at once using a provided executor (pool or transaction)
+    pub async fn set_settings_with_executor<'e, E>(&self, room_id: &RoomId, settings: &RoomSettings, executor: E) -> Result<()>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        let room_id_str = room_id.as_str();
+
+        let json_value = serde_json::to_string(settings)
+            .map_err(|e| Error::Internal(format!("Failed to serialize room settings: {e}")))?;
+
+        sqlx::query(
+            r"
+            INSERT INTO room_settings (room_id, key, value)
+            VALUES ($1, '_settings', $2)
+            ON CONFLICT (room_id, key)
+            DO UPDATE SET value = $2, updated_at = NOW()
+        "
+        )
+        .bind(room_id_str)
+        .bind(&json_value)
+        .execute(executor)
         .await?;
 
         Ok(())
@@ -168,6 +250,22 @@ impl RoomSettingsRepository {
             .bind(room_id_str)
             .bind(key)
             .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Delete a specific setting using a provided executor (pool or transaction)
+    pub async fn delete_with_executor<'e, E>(&self, room_id: &RoomId, key: &str, executor: E) -> Result<()>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        let room_id_str = room_id.as_str();
+
+        sqlx::query("DELETE FROM room_settings WHERE room_id = $1 AND key = $2")
+            .bind(room_id_str)
+            .bind(key)
+            .execute(executor)
             .await?;
 
         Ok(())

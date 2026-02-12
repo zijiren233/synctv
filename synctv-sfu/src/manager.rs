@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// Global SFU manager statistics
@@ -50,15 +51,21 @@ pub struct SfuManager {
 
     /// Global statistics
     stats: Arc<RwLock<ManagerStats>>,
+
+    /// Cancellation token for background tasks
+    cancel_token: CancellationToken,
 }
 
 impl SfuManager {
     /// Create a new SFU manager
     pub fn new(config: SfuConfig) -> Arc<Self> {
+        let cancel_token = CancellationToken::new();
+
         let manager = Arc::new(Self {
             config: Arc::new(config),
             rooms: DashMap::new(),
             stats: Arc::new(RwLock::new(ManagerStats::default())),
+            cancel_token,
         });
 
         info!(
@@ -68,7 +75,7 @@ impl SfuManager {
             "SFU Manager initialized"
         );
 
-        // Start background tasks
+        // Start background tasks with cancellation support
         let manager_clone = Arc::clone(&manager);
         tokio::spawn(async move {
             manager_clone.cleanup_task().await;
@@ -83,6 +90,7 @@ impl SfuManager {
     }
 
     /// Get or create a room
+    #[allow(clippy::unused_async)]
     pub async fn get_or_create_room(&self, room_id: RoomId) -> Result<Arc<SfuRoom>> {
         // Check if room already exists
         if let Some(room) = self.rooms.get(&room_id) {
@@ -290,26 +298,40 @@ impl SfuManager {
         }
     }
 
-    /// Background task for periodic cleanup
+    /// Background task for periodic cleanup (cancelled on shutdown)
     async fn cleanup_task(self: Arc<Self>) {
         let mut ticker = interval(Duration::from_mins(1));
         info!("Starting cleanup task (interval: 60s)");
 
         loop {
-            ticker.tick().await;
-            self.cleanup_empty_rooms().await;
+            tokio::select! {
+                () = self.cancel_token.cancelled() => {
+                    info!("Cleanup task cancelled");
+                    break;
+                }
+                _ = ticker.tick() => {
+                    self.cleanup_empty_rooms().await;
+                }
+            }
         }
     }
 
-    /// Background task for statistics collection
+    /// Background task for statistics collection (cancelled on shutdown)
     async fn stats_collection_task(self: Arc<Self>) {
         let mut ticker = interval(Duration::from_secs(5));
         info!("Starting statistics collection task (interval: 5s)");
 
         loop {
-            ticker.tick().await;
-            if let Err(e) = self.update_global_stats().await {
-                error!(error = %e, "Failed to update global statistics");
+            tokio::select! {
+                () = self.cancel_token.cancelled() => {
+                    info!("Stats collection task cancelled");
+                    break;
+                }
+                _ = ticker.tick() => {
+                    if let Err(e) = self.update_global_stats().await {
+                        error!(error = %e, "Failed to update global statistics");
+                    }
+                }
             }
         }
     }
@@ -337,7 +359,8 @@ impl SfuManager {
             stats.total_packets_relayed += room_stats.packets_relayed;
 
             // Count room modes
-            match *room.mode.read().await {
+            let mode = *room.mode.read().await;
+            match mode {
                 RoomMode::SFU => stats.sfu_mode_rooms += 1,
                 RoomMode::P2P => stats.p2p_mode_rooms += 1,
             }
@@ -359,8 +382,12 @@ impl SfuManager {
     }
 
     /// Gracefully shut down the SFU manager, closing all rooms and peers.
+    #[allow(clippy::unused_async)]
     pub async fn shutdown(&self) {
         info!("SFU Manager shutting down, closing {} rooms", self.rooms.len());
+
+        // Cancel background tasks (cleanup + stats collection)
+        self.cancel_token.cancel();
 
         // Collect room IDs and clear the rooms map
         let room_ids: Vec<RoomId> = self.rooms.iter().map(|entry| entry.key().clone()).collect();
@@ -387,6 +414,7 @@ impl SfuManager {
                 );
                 *current_mode = mode;
             }
+            drop(current_mode);
 
             Ok(())
         } else {
@@ -399,12 +427,10 @@ impl SfuManager {
         &self,
         room_id: &RoomId,
     ) -> Result<Vec<(String, crate::network_monitor::NetworkStats)>> {
-        if let Some(room_entry) = self.rooms.get(room_id) {
-            let room = room_entry.value();
-            Ok(room.get_network_quality_stats())
-        } else {
-            Ok(Vec::new())
-        }
+        self.rooms.get(room_id).map_or_else(
+            || Ok(Vec::new()),
+            |room_entry| Ok(room_entry.value().get_network_quality_stats()),
+        )
     }
 }
 
@@ -436,8 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_limit() {
-        let mut config = SfuConfig::default();
-        config.max_peers_per_room = 2;
+        let config = SfuConfig { max_peers_per_room: 2, ..SfuConfig::default() };
         let manager = SfuManager::new(config);
 
         let room_id = RoomId::from("test-room");
@@ -453,8 +478,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_room_limit() {
-        let mut config = SfuConfig::default();
-        config.max_sfu_rooms = 2;
+        let config = SfuConfig { max_sfu_rooms: 2, ..SfuConfig::default() };
         let manager = SfuManager::new(config);
 
         // Create rooms up to limit

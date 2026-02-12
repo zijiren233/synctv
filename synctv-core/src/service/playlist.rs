@@ -75,6 +75,15 @@ impl PlaylistService {
         user_id: UserId,
         request: CreatePlaylistRequest,
     ) -> Result<Playlist> {
+        // Validate name
+        let name = request.name.trim();
+        if name.is_empty() {
+            return Err(Error::InvalidInput("Playlist name cannot be empty".to_string()));
+        }
+        if name.len() > 200 {
+            return Err(Error::InvalidInput("Playlist name cannot exceed 200 bytes".to_string()));
+        }
+
         // Check permission
         self.permission_service
             .check_permission(&room_id, &user_id, PermissionBits::ADD_MEDIA)
@@ -92,8 +101,19 @@ impl PlaylistService {
                 return Err(Error::Authorization("Parent playlist does not belong to this room".to_string()));
             }
 
-            // Check if name is unique in parent
-            // Note: Database has UNIQUE constraint, so this will fail anyway
+            // Check nesting depth (walk up to root, cap at 10 levels)
+            let mut depth = 1u32;
+            let mut current_parent = parent.parent_id.clone();
+            while let Some(pid) = current_parent {
+                depth += 1;
+                if depth > 10 {
+                    return Err(Error::InvalidInput(
+                        "Playlist nesting depth cannot exceed 10 levels".to_string(),
+                    ));
+                }
+                let ancestor = self.playlist_repo.get_by_id(&pid).await?;
+                current_parent = ancestor.and_then(|p| p.parent_id);
+            }
         }
 
         // Calculate position if not provided
@@ -117,7 +137,7 @@ impl PlaylistService {
             id: crate::models::PlaylistId::new(),
             room_id: room_id.clone(),
             creator_id: user_id,
-            name: request.name,
+            name: name.to_string(),
             parent_id: request.parent_id,
             position,
             source_provider: request.source_provider,
@@ -148,38 +168,6 @@ impl PlaylistService {
     /// Get root playlist for a room
     pub async fn get_root_playlist(&self, room_id: &RoomId) -> Result<Playlist> {
         self.playlist_repo.get_root_playlist(room_id).await
-    }
-
-    /// Create root playlist for a room (internal use only, no permission check)
-    /// This should be called when creating a new room.
-    pub(crate) async fn create_root_playlist(
-        &self,
-        room_id: &RoomId,
-        creator_id: &UserId,
-    ) -> Result<Playlist> {
-        let playlist = Playlist {
-            id: PlaylistId::new(),
-            room_id: room_id.clone(),
-            creator_id: creator_id.clone(),
-            name: String::new(), // Root playlist has empty name
-            parent_id: None,     // Root has no parent
-            position: 0,
-            source_provider: None,
-            source_config: None,
-            provider_instance_name: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-
-        let created_playlist = self.playlist_repo.create(&playlist).await?;
-
-        tracing::debug!(
-            room_id = %room_id.as_str(),
-            playlist_id = %created_playlist.id.as_str(),
-            "Root playlist created"
-        );
-
-        Ok(created_playlist)
     }
 
     /// Get children playlists
@@ -278,30 +266,12 @@ impl PlaylistService {
         Ok(())
     }
 
-    /// Get playlist path (breadcrumbs)
+    /// Get playlist path (breadcrumbs) using recursive CTE (single query)
     pub async fn get_playlist_path(&self, playlist_id: &PlaylistId) -> Result<Vec<Playlist>> {
-        let mut path = Vec::new();
-        let mut current = self
-            .playlist_repo
-            .get_by_id(playlist_id)
-            .await?
-            .ok_or_else(|| Error::NotFound("Playlist not found".to_string()))?;
-
-        path.push(current.clone());
-
-        // Walk up the tree
-        while let Some(parent_id) = current.parent_id.clone() {
-            current = self
-                .playlist_repo
-                .get_by_id(&parent_id)
-                .await?
-                .ok_or_else(|| Error::NotFound("Parent playlist not found".to_string()))?;
-
-            path.push(current.clone());
+        let path = self.playlist_repo.get_path(playlist_id).await?;
+        if path.is_empty() {
+            return Err(Error::NotFound("Playlist not found".to_string()));
         }
-
-        // Reverse to get root → leaf order
-        path.reverse();
         Ok(path)
     }
 }

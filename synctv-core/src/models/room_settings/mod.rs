@@ -239,6 +239,11 @@ room_setting!(ShufflePlaylist, bool, "shuffle_playlist", false);
 
 room_setting!(MaxMembers, u64, "max_members", 0);
 
+impl MaxMembers {
+    /// Maximum allowed value for `max_members` setting
+    pub const MAX: u64 = 10_000;
+}
+
 room_setting!(AdminAddedPermissions, u64, "admin_added_permissions", 0);
 room_setting!(AdminRemovedPermissions, u64, "admin_removed_permissions", 0);
 room_setting!(MemberAddedPermissions, u64, "member_added_permissions", 0);
@@ -463,5 +468,61 @@ mod tests {
 
         assert!(!deserialized.chat_enabled.0);
         assert_eq!(deserialized.max_members.0, 100);
+    }
+
+    #[test]
+    fn test_admin_permissions_default() {
+        let settings = RoomSettings::default();
+        let global = PermissionBits(PermissionBits::DEFAULT_ADMIN);
+        let result = settings.admin_permissions(global);
+        // No overrides -> result should equal global default
+        assert_eq!(result.0, PermissionBits::DEFAULT_ADMIN);
+    }
+
+    #[test]
+    fn test_admin_permissions_with_added() {
+        let settings = RoomSettings {
+            admin_added_permissions: AdminAddedPermissions(PermissionBits::EXPORT_DATA),
+            ..Default::default()
+        };
+        let global = PermissionBits(PermissionBits::DEFAULT_ADMIN);
+        let result = settings.admin_permissions(global);
+        assert!(result.has(PermissionBits::EXPORT_DATA));
+        // Original permissions preserved
+        assert!(result.has(PermissionBits::SEND_CHAT));
+    }
+
+    #[test]
+    fn test_member_permissions_with_removed() {
+        let settings = RoomSettings {
+            member_removed_permissions: MemberRemovedPermissions(PermissionBits::SEND_CHAT),
+            ..Default::default()
+        };
+        let global = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+        let result = settings.member_permissions(global);
+        // SEND_CHAT should be removed
+        assert!(!result.has(PermissionBits::SEND_CHAT));
+        // Other permissions remain
+        assert!(result.has(PermissionBits::ADD_MOVIE));
+    }
+
+    #[test]
+    fn test_guest_permissions_with_added_and_removed() {
+        let settings = RoomSettings {
+            // Give guests chat ability
+            guest_added_permissions: GuestAddedPermissions(PermissionBits::SEND_CHAT),
+            // But remove their playlist view
+            guest_removed_permissions: GuestRemovedPermissions(PermissionBits::VIEW_PLAYLIST),
+            ..Default::default()
+        };
+        let global = PermissionBits(PermissionBits::DEFAULT_GUEST);
+        let result = settings.guest_permissions(global);
+        assert!(result.has(PermissionBits::SEND_CHAT));
+        assert!(!result.has(PermissionBits::VIEW_PLAYLIST));
+    }
+
+    #[test]
+    fn test_max_members_max_constant() {
+        assert_eq!(MaxMembers::MAX, 10_000);
     }
 }

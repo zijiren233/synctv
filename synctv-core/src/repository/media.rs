@@ -142,6 +142,29 @@ impl MediaRepository {
         }
     }
 
+    /// Get multiple media items by IDs in a single query
+    pub async fn get_by_ids(&self, media_ids: &[MediaId]) -> Result<Vec<Media>> {
+        if media_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let id_strs: Vec<&str> = media_ids.iter().map(super::super::models::id::MediaId::as_str).collect();
+        let rows = sqlx::query(
+            r"
+            SELECT id, playlist_id, room_id, creator_id, name, position,
+                   source_provider, source_config, provider_instance_name,
+                   added_at, deleted_at
+             FROM media
+             WHERE id = ANY($1) AND deleted_at IS NULL
+            "
+        )
+        .bind(&id_strs)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(|row| self.row_to_media(row)).collect()
+    }
+
     /// Get playlist for a room (all media in room's root playlist and sub-playlists)
     pub async fn get_playlist(&self, room_id: &RoomId) -> Result<Vec<Media>> {
         let rows = sqlx::query(

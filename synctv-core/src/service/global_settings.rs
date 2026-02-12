@@ -28,8 +28,12 @@
 
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
+use crate::models::room_settings::MaxMembers;
 use crate::service::{SettingsService, settings_vars::{Setting, SettingsStorage}};
 use crate::setting;
+
+/// Maximum allowed value for `max_chat_messages` setting (0 = unlimited)
+const MAX_CHAT_MESSAGES_LIMIT: u64 = 10_000;
 
 /// A snapshot of all client-visible settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,19 +171,19 @@ impl SettingsRegistry {
             ),
             max_members_per_room: setting!(i64, "server.max_members_per_room", storage.clone(), 100,
                 |v: &i64| -> anyhow::Result<()> {
-                    if *v > 0 && *v <= 10000 {
+                    if *v > 0 && *v <= MaxMembers::MAX as i64 {
                         Ok(())
                     } else {
-                        Err(anyhow::anyhow!("max_members_per_room must be between 1 and 10000"))
+                        Err(anyhow::anyhow!("max_members_per_room must be between 1 and {}", MaxMembers::MAX))
                     }
                 }
             ),
             max_chat_messages: setting!(u64, "server.max_chat_messages", storage.clone(), 500,
                 |v: &u64| -> anyhow::Result<()> {
-                    if *v <= 10000 {
+                    if *v <= MAX_CHAT_MESSAGES_LIMIT {
                         Ok(())
                     } else {
-                        Err(anyhow::anyhow!("max_chat_messages must be at most 10000 (0 = unlimited)"))
+                        Err(anyhow::anyhow!("max_chat_messages must be at most {MAX_CHAT_MESSAGES_LIMIT} (0 = unlimited)"))
                     }
                 }
             ),

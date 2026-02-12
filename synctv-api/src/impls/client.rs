@@ -1116,7 +1116,7 @@ impl ClientApiImpl {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
-        self.room_service.playback_service().seek(rid.clone(), uid, req.position).await
+        self.room_service.playback_service().seek(rid.clone(), uid, req.current_time).await
             .map_err(|e| e.to_string())?;
 
         let state = self.room_service.get_playback_state(&rid).await.ok();
@@ -1931,11 +1931,13 @@ fn playback_state_to_proto(state: &synctv_core::models::RoomPlaybackState) -> cr
     crate::proto::client::PlaybackState {
         room_id: state.room_id.as_str().to_string(),
         playing_media_id: state.playing_media_id.as_ref().map(|id| id.as_str().to_string()).unwrap_or_default(),
-        position: state.position,
+        current_time: state.current_time,
         speed: state.speed,
         is_playing: state.is_playing,
         updated_at: state.updated_at.timestamp(),
         version: state.version,
+        playing_playlist_id: state.playing_playlist_id.as_ref().map(|id| id.as_str().to_string()).unwrap_or_default(),
+        relative_path: state.relative_path.clone(),
     }
 }
 

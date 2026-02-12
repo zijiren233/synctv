@@ -15,7 +15,6 @@ pub fn load_config() -> Result<Config> {
         match Config::from_file("config.yaml") {
             Ok(cfg) => {
                 eprintln!("Successfully loaded config.yaml");
-                eprintln!("JWT secret length: {}", cfg.jwt.secret.len());
                 cfg
             }
             Err(e) => {

@@ -69,6 +69,8 @@ impl RedisPubSub {
         // Spawn task to handle publishing with reconnection logic
         tokio::spawn(async move {
             let mut backoff_secs = INITIAL_BACKOFF_SECS;
+            // Buffer for retrying a failed publish after reconnection
+            let mut retry_request: Option<PublishRequest> = None;
 
             loop {
                 let conn = match timeout(
@@ -105,10 +107,35 @@ impl RedisPubSub {
                 info!("Redis publisher task (re)connected");
                 let mut conn = conn;
 
+                // Retry the previously failed publish request if any
+                if let Some(req) = retry_request.take() {
+                    match Self::publish_event(&mut conn, &node_id, req.event.clone()).await {
+                        Ok(subscribers) => {
+                            debug!(
+                                room_id = %req.room_id.as_str(),
+                                subscribers = subscribers,
+                                "Retried event published to Redis"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                room_id = %req.room_id.as_str(),
+                                "Retry publish failed, will retry after next reconnect"
+                            );
+                            // Put request back for another attempt after reconnection
+                            retry_request = Some(req);
+                            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                            backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+                            continue;
+                        }
+                    }
+                }
+
                 // Process events until connection breaks
                 loop {
                     if let Some(req) = publish_rx.recv().await {
-                        match Self::publish_event(&mut conn, &node_id, req.event).await {
+                        match Self::publish_event(&mut conn, &node_id, req.event.clone()).await {
                             Ok(subscribers) => {
                                 debug!(
                                     room_id = %req.room_id.as_str(),
@@ -120,9 +147,10 @@ impl RedisPubSub {
                                 error!(
                                     error = %e,
                                     room_id = %req.room_id.as_str(),
-                                    "Failed to publish event, reconnecting"
+                                    "Failed to publish event, saving for retry after reconnect"
                                 );
-                                // Break inner loop to reconnect
+                                // Save failed request for retry after reconnection
+                                retry_request = Some(req);
                                 break;
                             }
                         }
@@ -276,6 +304,14 @@ impl RedisPubSub {
                                         room_id = %room_id.as_str(),
                                         user_id = %target_user_id.as_str(),
                                         "Invalidated permission cache (cross-replica)"
+                                    );
+                                }
+                                ClusterEvent::UserLeft { user_id, .. } => {
+                                    perm_svc.invalidate_cache(&room_id, user_id).await;
+                                    debug!(
+                                        room_id = %room_id.as_str(),
+                                        user_id = %user_id.as_str(),
+                                        "Invalidated permission cache on UserLeft (cross-replica)"
                                     );
                                 }
                                 ClusterEvent::RoomSettingsChanged { .. } => {

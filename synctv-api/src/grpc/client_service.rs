@@ -269,11 +269,16 @@ impl ClientServiceImpl {
                                 .playing_media_id
                                 .map(|id| id.as_str().to_string())
                                 .unwrap_or_default(),
-                            position: state.position,
+                            current_time: state.current_time,
                             speed: state.speed,
                             is_playing: state.is_playing,
                             updated_at: state.updated_at.timestamp(),
                             version: state.version,
+                            playing_playlist_id: state
+                                .playing_playlist_id
+                                .map(|id| id.as_str().to_string())
+                                .unwrap_or_default(),
+                            relative_path: state.relative_path,
                         }),
                     },
                 )),

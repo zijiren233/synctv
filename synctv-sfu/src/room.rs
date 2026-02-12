@@ -16,6 +16,7 @@ use anyhow::{anyhow, Result};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -73,6 +74,10 @@ pub struct SfuRoom {
     /// Statistics
     pub stats: Arc<RwLock<RoomStats>>,
 
+    /// Atomic counters for hot-path stats (avoids write lock per packet)
+    packets_relayed: Arc<AtomicU64>,
+    bytes_relayed: Arc<AtomicU64>,
+
     /// Network quality monitoring
     network_monitor: Arc<NetworkQualityMonitor>,
 }
@@ -91,6 +96,8 @@ impl SfuRoom {
             forwarding_tasks: DashMap::new(),
             config,
             stats: Arc::new(RwLock::new(RoomStats::default())),
+            packets_relayed: Arc::new(AtomicU64::new(0)),
+            bytes_relayed: Arc::new(AtomicU64::new(0)),
             network_monitor: Arc::new(NetworkQualityMonitor::new()),
         }
     }
@@ -322,7 +329,8 @@ impl SfuRoom {
         let room_id = self.id.clone();
         let peers = self.peers.clone();
         let subscriptions = self.subscriptions.clone();
-        let stats = Arc::clone(&self.stats);
+        let packets_relayed = Arc::clone(&self.packets_relayed);
+        let bytes_relayed = Arc::clone(&self.bytes_relayed);
 
         // Spawn forwarding task
         let task = tokio::spawn(async move {
@@ -333,7 +341,8 @@ impl SfuRoom {
                 peers,
                 subscriptions,
                 publisher_peer_id,
-                stats,
+                packets_relayed,
+                bytes_relayed,
             )
             .await
             {
@@ -350,17 +359,15 @@ impl SfuRoom {
     async fn forward_track_packets(
         room_id: RoomId,
         track_id: TrackId,
-        mut track: Arc<MediaTrack>,
+        track: Arc<MediaTrack>,
         peers: DashMap<PeerId, Arc<SfuPeer>>,
         subscriptions: DashMap<(PeerId, TrackId), ()>,
         publisher_peer_id: PeerId,
-        stats: Arc<RwLock<RoomStats>>,
+        packets_relayed: Arc<AtomicU64>,
+        bytes_relayed: Arc<AtomicU64>,
     ) -> Result<()> {
-        // Start reading packets from the track
-        let mut packet_rx = Arc::get_mut(&mut track)
-            .ok_or_else(|| anyhow!("Cannot get mutable reference to track"))?
-            .start_reading()
-            .await?;
+        // Start reading packets from the track (uses interior mutability)
+        let mut packet_rx = track.start_reading().await?;
 
         debug!(
             room_id = %room_id,
@@ -381,15 +388,13 @@ impl SfuRoom {
                 .collect();
 
             // Forward to each subscriber
-            for subscriber_id in subscribers {
-                if let Some(_peer) = peers.get(&subscriber_id) {
+            let packet_size = packet.data.len();
+            for subscriber_id in &subscribers {
+                if peers.contains_key(subscriber_id) {
                     // In a real implementation, we would forward the packet via WebRTC
-                    // For now, just update statistics
-                    let packet_size = packet.data.len();
-
-                    let mut stats = stats.write().await;
-                    stats.packets_relayed += 1;
-                    stats.bytes_relayed += packet_size as u64;
+                    // Update statistics using atomic counters (no lock contention)
+                    packets_relayed.fetch_add(1, Ordering::Relaxed);
+                    bytes_relayed.fetch_add(packet_size as u64, Ordering::Relaxed);
                 }
             }
         }
@@ -510,6 +515,10 @@ impl SfuRoom {
 
         // Update current peer count
         stats.peer_count = self.peers.len();
+
+        // Read hot-path counters from atomics
+        stats.packets_relayed = self.packets_relayed.load(Ordering::Relaxed);
+        stats.bytes_relayed = self.bytes_relayed.load(Ordering::Relaxed);
 
         // Count tracks by type
         stats.audio_tracks = 0;

@@ -7,6 +7,7 @@ pub mod mpd;
 
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use axum::{
@@ -27,6 +28,22 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Overall request timeout for outbound proxy requests.
 const REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
 
+/// Timeout for reading the response body after headers are received.
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Shared HTTP client for proxy requests.
+///
+/// Reuses TCP connections and TLS sessions across requests for performance.
+static PROXY_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .redirect(ssrf_safe_redirect_policy())
+        .pool_max_idle_per_host(20)
+        .build()
+        .expect("Failed to build shared proxy HTTP client")
+});
+
 /// Configuration for a single proxy fetch.
 pub struct ProxyConfig<'a> {
     /// The remote URL to fetch.
@@ -37,18 +54,43 @@ pub struct ProxyConfig<'a> {
     pub client_headers: &'a HeaderMap,
 }
 
+/// Apply provider headers and defaults (User-Agent, Referer) to a request builder.
+fn apply_provider_headers(
+    mut request: reqwest::RequestBuilder,
+    url: &str,
+    provider_headers: &HashMap<String, String>,
+) -> reqwest::RequestBuilder {
+    for (name, value) in provider_headers {
+        request = request.header(name.as_str(), value.as_str());
+    }
+
+    if !provider_headers.contains_key("User-Agent") {
+        request = request.header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        );
+    }
+
+    if !provider_headers.contains_key("Referer") {
+        if let Ok(parsed) = url::Url::parse(url) {
+            let referer = format!(
+                "{}://{}{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or(""),
+                parsed.path()
+            );
+            request = request.header("Referer", referer);
+        }
+    }
+
+    request
+}
+
 /// Fetch a remote URL and return the response.
 pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, anyhow::Error> {
     validate_proxy_url(cfg.url)?;
 
-    let client = reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(REQUEST_TIMEOUT)
-        .redirect(ssrf_safe_redirect_policy())
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
-
-    let mut request = client.get(cfg.url);
+    let mut request = PROXY_CLIENT.get(cfg.url);
 
     // Forward relevant client headers
     for (name, value) in cfg.client_headers {
@@ -63,31 +105,7 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
         }
     }
 
-    // Apply provider-required headers
-    for (name, value) in cfg.provider_headers {
-        request = request.header(name.as_str(), value.as_str());
-    }
-
-    // Default User-Agent if provider didn't set one
-    if !cfg.provider_headers.contains_key("User-Agent") {
-        request = request.header(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        );
-    }
-
-    // Default Referer from source URL if provider didn't set one
-    if !cfg.provider_headers.contains_key("Referer") {
-        if let Ok(parsed) = url::Url::parse(cfg.url) {
-            let referer = format!(
-                "{}://{}{}",
-                parsed.scheme(),
-                parsed.host_str().unwrap_or(""),
-                parsed.path()
-            );
-            request = request.header("Referer", referer);
-        }
-    }
+    request = apply_provider_headers(request, cfg.url, cfg.provider_headers);
 
     let proxy_response = request
         .send()
@@ -106,9 +124,9 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
         }
     }
 
-    let body_bytes = proxy_response
-        .bytes()
+    let body_bytes = tokio::time::timeout(BODY_READ_TIMEOUT, proxy_response.bytes())
         .await
+        .map_err(|_| anyhow::anyhow!("Body read timed out after {}s", BODY_READ_TIMEOUT.as_secs()))?
         .map_err(|e| anyhow::anyhow!("Failed to read response body: {e}"))?;
 
     if body_bytes.len() > MAX_PROXY_BODY_SIZE {
@@ -149,37 +167,7 @@ pub async fn proxy_m3u8_and_rewrite(
 ) -> Result<Response, anyhow::Error> {
     validate_proxy_url(url)?;
 
-    let client = reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(REQUEST_TIMEOUT)
-        .redirect(ssrf_safe_redirect_policy())
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
-
-    let mut request = client.get(url);
-
-    for (name, value) in provider_headers {
-        request = request.header(name.as_str(), value.as_str());
-    }
-
-    if !provider_headers.contains_key("User-Agent") {
-        request = request.header(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        );
-    }
-
-    if !provider_headers.contains_key("Referer") {
-        if let Ok(parsed) = url::Url::parse(url) {
-            let referer = format!(
-                "{}://{}{}",
-                parsed.scheme(),
-                parsed.host_str().unwrap_or(""),
-                parsed.path()
-            );
-            request = request.header("Referer", referer);
-        }
-    }
+    let request = apply_provider_headers(PROXY_CLIENT.get(url), url, provider_headers);
 
     let proxy_response = request
         .send()
@@ -201,9 +189,9 @@ pub async fn proxy_m3u8_and_rewrite(
         }
     }
 
-    let m3u8_text = proxy_response
-        .text()
+    let m3u8_text = tokio::time::timeout(BODY_READ_TIMEOUT, proxy_response.text())
         .await
+        .map_err(|_| anyhow::anyhow!("M3U8 body read timed out after {}s", BODY_READ_TIMEOUT.as_secs()))?
         .map_err(|e| anyhow::anyhow!("Failed to read M3U8 body: {e}"))?;
 
     if m3u8_text.len() > MAX_MANIFEST_SIZE {
@@ -299,7 +287,7 @@ fn rewrite_uri_attribute(line: &str, base: Option<&url::Url>, proxy_base: &str) 
 }
 
 /// Minimal percent-encoding for URL query parameter values.
-#[must_use] 
+#[must_use]
 pub fn percent_encode(input: &str) -> String {
     use std::fmt::Write;
     let mut result = String::with_capacity(input.len() * 2);
@@ -444,8 +432,3 @@ const fn is_ipv4_compatible_private(v6: &std::net::Ipv6Addr) -> bool {
     }
     false
 }
-
-// ------------------------------------------------------------------
-// Internal helpers
-// ------------------------------------------------------------------
-

@@ -5217,6 +5217,7 @@ dependencies = [
  "axum",
  "reqwest 0.12.28",
  "synctv-core",
+ "tokio",
  "tracing",
  "url",
 ]

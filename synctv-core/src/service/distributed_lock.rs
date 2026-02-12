@@ -257,19 +257,25 @@ impl DistributedLock {
     }
 }
 
-/// RAII lock guard that automatically releases on drop
+/// RAII lock guard that releases on explicit `release()` or best-effort on Drop.
+///
+/// **Preferred usage**: Call `release()` explicitly for guaranteed lock release.
+/// The `Drop` implementation is a safety net that uses `tokio::spawn` for
+/// best-effort async release, but may fail if the runtime is shutting down.
 ///
 /// # Example
 /// ```ignore
 /// let guard = LockGuard::new(&lock, "create_room:user123".to_string(), 10).await?;
 /// // Lock is held
-/// room_service.create_room(request).await?;
-/// // Lock is automatically released when guard goes out of scope
+/// let result = room_service.create_room(request).await;
+/// // Explicitly release for guaranteed cleanup
+/// guard.release().await;
+/// result?;
 /// ```
 pub struct LockGuard {
     lock: DistributedLock,
     key: String,
-    value: String,
+    value: Option<String>,
 }
 
 impl LockGuard {
@@ -280,31 +286,54 @@ impl LockGuard {
             .await?
             .ok_or_else(|| Error::Internal(format!("Failed to acquire lock: {key}")))?;
 
-        Ok(Self { lock, key, value })
+        Ok(Self { lock, key, value: Some(value) })
     }
 
     /// Extend the lock TTL
     pub async fn extend(&self, ttl_seconds: u64) -> Result<bool> {
-        self.lock.extend(&self.key, &self.value, ttl_seconds).await
+        if let Some(ref value) = self.value {
+            self.lock.extend(&self.key, value, ttl_seconds).await
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Explicitly release the lock (preferred over relying on Drop)
+    pub async fn release(mut self) -> Result<bool> {
+        if let Some(value) = self.value.take() {
+            self.lock.release(&self.key, &value).await
+        } else {
+            Ok(false)
+        }
     }
 }
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        let lock = self.lock.clone();
-        let key = self.key.clone();
-        let value = self.value.clone();
+        // Only attempt release if not already explicitly released
+        if let Some(value) = self.value.take() {
+            let lock = self.lock.clone();
+            let key = self.key.clone();
 
-        // Spawn async task to release lock
-        tokio::spawn(async move {
-            if let Err(e) = lock.release(&key, &value).await {
-                tracing::error!(
+            // Best-effort: try to spawn an async release task.
+            // This may fail if the runtime is shutting down.
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    if let Err(e) = lock.release(&key, &value).await {
+                        tracing::error!(
+                            key = %key,
+                            error = %e,
+                            "Failed to release lock in Drop"
+                        );
+                    }
+                });
+            } else {
+                tracing::warn!(
                     key = %key,
-                    error = %e,
-                    "Failed to release lock in Drop"
+                    "Cannot release lock in Drop: no tokio runtime available (lock will expire after TTL)"
                 );
             }
-        });
+        }
     }
 }
 

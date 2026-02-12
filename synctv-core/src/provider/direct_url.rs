@@ -106,9 +106,7 @@ impl TryFrom<&Value> for DirectUrlSourceConfig {
     type Error = ProviderError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            ProviderError::InvalidConfig(format!("Failed to parse DirectUrl source config: {e}"))
-        })
+        super::parse_source_config(value, "DirectUrl")
     }
 }
 
@@ -132,6 +130,19 @@ const fn is_private_ip(ip: IpAddr) -> bool {
             || (v6.segments()[0] & 0xffc0) == 0xfe80
             // fc00::/7 (unique local)
             || (v6.segments()[0] & 0xfe00) == 0xfc00
+            // IPv4-mapped IPv6 (::ffff:x.x.x.x) - check the embedded IPv4
+            || {
+                let segs = v6.segments();
+                if segs[0] == 0 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0
+                    && segs[4] == 0 && segs[5] == 0xffff
+                {
+                    let o = v6.octets();
+                    let v4 = std::net::Ipv4Addr::new(o[12], o[13], o[14], o[15]);
+                    is_private_ip(IpAddr::V4(v4))
+                } else {
+                    false
+                }
+            }
         }
     }
 }

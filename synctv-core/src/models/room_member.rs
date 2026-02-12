@@ -292,3 +292,94 @@ impl RoomMemberWithUser {
         member.effective_permissions(role_default)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_member(role: RoomRole) -> RoomMember {
+        RoomMember::new(
+            RoomId("test_room".to_string()),
+            UserId("test_user".to_string()),
+            role,
+        )
+    }
+
+    #[test]
+    fn test_creator_always_has_all_permissions() {
+        let member = test_member(RoomRole::Creator);
+        let result = member.effective_permissions(PermissionBits::empty());
+        assert_eq!(result.0, PermissionBits::ALL);
+    }
+
+    #[test]
+    fn test_member_default_permissions() {
+        let member = test_member(RoomRole::Member);
+        let default = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+        let result = member.effective_permissions(default);
+        assert_eq!(result.0, PermissionBits::DEFAULT_MEMBER);
+    }
+
+    #[test]
+    fn test_member_with_added_permissions() {
+        let mut member = test_member(RoomRole::Member);
+        member.added_permissions = PermissionBits::KICK_MEMBER;
+        let default = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+        let result = member.effective_permissions(default);
+        assert!(result.has(PermissionBits::KICK_MEMBER));
+        assert!(result.has(PermissionBits::SEND_CHAT)); // original kept
+    }
+
+    #[test]
+    fn test_member_with_removed_permissions() {
+        let mut member = test_member(RoomRole::Member);
+        member.removed_permissions = PermissionBits::SEND_CHAT;
+        let default = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+        let result = member.effective_permissions(default);
+        assert!(!result.has(PermissionBits::SEND_CHAT));
+        assert!(result.has(PermissionBits::ADD_MOVIE)); // other permissions intact
+    }
+
+    #[test]
+    fn test_admin_uses_admin_overrides() {
+        let mut member = test_member(RoomRole::Admin);
+        member.admin_added_permissions = PermissionBits::EXPORT_DATA;
+        member.admin_removed_permissions = PermissionBits::BAN_MEMBER;
+        let default = PermissionBits(PermissionBits::DEFAULT_ADMIN);
+        let result = member.effective_permissions(default);
+        assert!(result.has(PermissionBits::EXPORT_DATA));
+        assert!(!result.has(PermissionBits::BAN_MEMBER));
+    }
+
+    #[test]
+    fn test_guest_with_added_chat() {
+        let mut member = test_member(RoomRole::Guest);
+        member.added_permissions = PermissionBits::SEND_CHAT;
+        let default = PermissionBits(PermissionBits::DEFAULT_GUEST);
+        let result = member.effective_permissions(default);
+        assert!(result.has(PermissionBits::SEND_CHAT));
+        assert!(result.has(PermissionBits::VIEW_PLAYLIST));
+    }
+
+    #[test]
+    fn test_member_status() {
+        assert!(MemberStatus::Active.is_active());
+        assert!(!MemberStatus::Active.is_banned());
+        assert!(MemberStatus::Banned.is_banned());
+        assert!(MemberStatus::Pending.is_pending());
+    }
+
+    #[test]
+    fn test_member_is_active() {
+        let member = test_member(RoomRole::Member);
+        assert!(member.is_active());
+
+        let mut left_member = test_member(RoomRole::Member);
+        left_member.left_at = Some(Utc::now());
+        assert!(!left_member.is_active());
+
+        let mut banned_member = test_member(RoomRole::Member);
+        banned_member.status = MemberStatus::Banned;
+        assert!(!banned_member.is_active());
+    }
+}

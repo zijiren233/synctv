@@ -788,6 +788,14 @@ impl AdminService for AdminServiceImpl {
 
         let user_id = UserId::from_string(req.user_id);
 
+        // Validate password length
+        if req.new_password.len() < 8 {
+            return Err(Status::invalid_argument("Password must be at least 8 characters"));
+        }
+        if req.new_password.len() > 128 {
+            return Err(Status::invalid_argument("Password must not exceed 128 characters"));
+        }
+
         // Get user
         let mut user = self
             .user_service

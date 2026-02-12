@@ -104,10 +104,12 @@ message RoomState {
 
 message PlaybackState {
     string playing_media_id = 1;
-    double position = 2;
+    double current_time = 2; // playback position in seconds
     double speed = 3;
     bool is_playing = 4;
     int64 updated_at = 5;
+    string playing_playlist_id = 6; // Currently playing playlist
+    string relative_path = 7; // Relative path within dynamic folder
 }
 
 // Event broadcasting

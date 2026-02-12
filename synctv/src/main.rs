@@ -199,6 +199,10 @@ async fn main() -> Result<()> {
                             stream_hub_event_sender.clone(),
                             stream_hub_event_receiver,
                         );
+
+                        // Get broadcast receiver BEFORE spawning the hub (moves streams_hub)
+                        let broadcast_receiver = streams_hub.get_client_event_consumer();
+
                         tokio::spawn(async move {
                             streams_hub.run().await;
                         });
@@ -276,7 +280,7 @@ async fn main() -> Result<()> {
                                 synctv_services.publish_key_service.clone(),
                                 user_stream_tracker,
                                 publisher_registry.clone(),
-                                node_id,
+                                node_id.clone(),
                                 Some(stream_lifecycle_tx),
                             ));
 
@@ -292,6 +296,21 @@ async fn main() -> Result<()> {
                         tokio::spawn(async move {
                             if let Err(e) = rtmp_server.run().await {
                                 error!("RTMP server error: {}", e);
+                            }
+                        });
+
+                        // Start PublisherManager - listens to StreamHub broadcast events
+                        // and registers/unregisters publishers in Redis for multi-node relay
+                        let publisher_manager = Arc::new(
+                            synctv_livestream::relay::PublisherManager::new(
+                                publisher_registry.clone(),
+                                node_id,
+                            ),
+                        );
+                        tokio::spawn({
+                            let pm = Arc::clone(&publisher_manager);
+                            async move {
+                                pm.start(broadcast_receiver).await;
                             }
                         });
 

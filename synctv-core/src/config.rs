@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Application configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
@@ -18,6 +18,25 @@ pub struct Config {
     pub webrtc: WebRTCConfig,
     pub connection_limits: ConnectionLimitsConfig,
     pub bootstrap: BootstrapConfig,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("server", &self.server)
+            .field("database", &"<redacted>")
+            .field("redis", &self.redis)
+            .field("jwt", &"<redacted>")
+            .field("logging", &self.logging)
+            .field("livestream", &self.livestream)
+            .field("oauth2", &self.oauth2)
+            .field("email", &"<redacted>")
+            .field("media_providers", &self.media_providers)
+            .field("webrtc", &self.webrtc)
+            .field("connection_limits", &self.connection_limits)
+            .field("bootstrap", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -199,6 +199,18 @@ impl ClusterEvent {
         }
     }
 
+    /// Extra discriminator for deduplication of events without `room_id/user_id`.
+    /// Returns empty string for most events; non-empty for `SystemNotification`.
+    #[must_use]
+    pub fn dedup_extra(&self) -> String {
+        match self {
+            Self::SystemNotification { message, level, .. } => {
+                format!("{level:?}:{message}")
+            }
+            _ => String::new(),
+        }
+    }
+
     /// Get a short description of the event type
     #[must_use]
     pub const fn event_type(&self) -> &'static str {

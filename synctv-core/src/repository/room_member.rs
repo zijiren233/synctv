@@ -59,6 +59,48 @@ impl RoomMemberRepository {
         self.row_to_member(row)
     }
 
+    /// Add user to room using a provided executor (pool or transaction)
+    pub async fn add_with_executor<'e, E>(&self, member: &RoomMember, executor: E) -> Result<RoomMember>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        let row = sqlx::query(
+            "INSERT INTO room_members (
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                joined_at, version
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (room_id, user_id) DO UPDATE
+             SET
+                role = EXCLUDED.role,
+                status = EXCLUDED.status,
+                added_permissions = EXCLUDED.added_permissions,
+                removed_permissions = EXCLUDED.removed_permissions,
+                left_at = NULL,
+                joined_at = EXCLUDED.joined_at,
+                version = room_members.version + 1
+             RETURNING
+                room_id, user_id, role, status,
+                added_permissions, removed_permissions,
+                admin_added_permissions, admin_removed_permissions,
+                joined_at, left_at, version,
+                banned_at, banned_by, banned_reason"
+        )
+        .bind(member.room_id.as_str())
+        .bind(member.user_id.as_str())
+        .bind(member.role)
+        .bind(member.status)
+        .bind(member.added_permissions as i64)
+        .bind(member.removed_permissions as i64)
+        .bind(member.joined_at)
+        .bind(member.version)
+        .fetch_one(executor)
+        .await?;
+
+        self.row_to_member(row)
+    }
+
     /// Add user to room with role and options in a single transaction
     ///
     /// This method performs all checks and the insert operation in a single database transaction:

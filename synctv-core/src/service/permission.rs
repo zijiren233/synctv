@@ -30,8 +30,13 @@ impl std::fmt::Debug for PermissionService {
 }
 
 impl PermissionService {
+    /// Default permission cache capacity (max entries)
+    pub const DEFAULT_CACHE_SIZE: u64 = 10_000;
+    /// Default permission cache TTL in seconds (5 minutes)
+    pub const DEFAULT_CACHE_TTL_SECS: u64 = 300;
+
     /// Create a new permission service with caching
-    #[must_use] 
+    #[must_use]
     pub fn new(
         member_repo: RoomMemberRepository,
         _room_repo: RoomRepository,

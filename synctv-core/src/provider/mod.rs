@@ -45,3 +45,15 @@ pub use direct_url::DirectUrlProvider;
 pub use emby::EmbyProvider;
 pub use rtmp::RtmpProvider;
 pub use live_proxy::LiveProxyProvider;
+
+/// Parse a `serde_json::Value` into a typed source config.
+///
+/// Common helper for provider `TryFrom<&Value>` implementations.
+pub fn parse_source_config<T: serde::de::DeserializeOwned>(
+    value: &serde_json::Value,
+    provider_name: &str,
+) -> std::result::Result<T, ProviderError> {
+    serde_json::from_value(value.clone()).map_err(|e| {
+        ProviderError::InvalidConfig(format!("Failed to parse {provider_name} source config: {e}"))
+    })
+}

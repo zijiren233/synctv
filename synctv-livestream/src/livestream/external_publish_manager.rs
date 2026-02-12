@@ -18,7 +18,8 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use synctv_xiu::streamhub::define::StreamHubEventSender;
+use synctv_xiu::streamhub::define::{StreamHubEvent, StreamHubEventSender};
+use synctv_xiu::streamhub::stream::StreamIdentifier;
 use tokio::sync::Mutex;
 use tracing::{self as log, Instrument};
 
@@ -30,6 +31,8 @@ use tracing::{self as log, Instrument};
 /// unregisters after 5 minutes with no subscribers.
 pub struct ExternalPublishManager {
     streams: Arc<DashMap<String, Arc<ExternalPublishStream>>>,
+    /// Per-key creation locks to prevent concurrent creation of the same stream
+    creation_locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     registry: Arc<dyn StreamRegistryTrait>,
     local_node_id: String,
     stream_hub_event_sender: StreamHubEventSender,
@@ -55,6 +58,7 @@ impl ExternalPublishManager {
     ) -> Self {
         Self {
             streams: Arc::new(DashMap::new()),
+            creation_locks: Arc::new(DashMap::new()),
             registry,
             local_node_id,
             stream_hub_event_sender,
@@ -77,13 +81,37 @@ impl ExternalPublishManager {
     ) -> StreamResult<Arc<ExternalPublishStream>> {
         let stream_key = format!("{room_id}:{media_id}");
 
-        // Reuse healthy existing stream
+        // Fast path: Reuse healthy existing stream (no lock needed)
         if let Some(stream) = self.streams.get(&stream_key) {
             if stream.is_healthy().await {
                 stream.increment_subscriber_count();
                 stream.update_last_active_time().await;
                 return Ok(stream.clone());
             }
+            drop(stream);
+            self.streams.remove(&stream_key);
+        }
+
+        // Acquire per-key creation lock to prevent concurrent creation for the same stream
+        let lock = self.creation_locks
+            .entry(stream_key.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+
+        // Re-check after acquiring lock (another task may have created it while we waited)
+        if let Some(stream) = self.streams.get(&stream_key) {
+            if stream.is_healthy().await {
+                log::debug!(
+                    "Reusing external publish stream created by concurrent request for {}/{}",
+                    room_id,
+                    media_id,
+                );
+                stream.increment_subscriber_count();
+                stream.update_last_active_time().await;
+                return Ok(stream.clone());
+            }
+            drop(stream);
             self.streams.remove(&stream_key);
         }
 
@@ -287,12 +315,24 @@ impl ExternalPublishStream {
     }
 
     /// Stop the external puller task.
+    ///
+    /// Sends `UnPublish` to the local `StreamHub` BEFORE aborting, since the
+    /// puller's own cleanup path won't run on abort.
     pub async fn stop(&self) -> StreamResult<()> {
         self.is_running.store(false, Ordering::SeqCst);
+
+        // Clean up the local StreamHub publisher before aborting
+        let stream_name = format!("{}/{}", self.room_id, self.media_id);
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name,
+        };
+        if let Err(e) = self.stream_hub_event_sender.send(StreamHubEvent::UnPublish { identifier }) {
+            log::warn!("Failed to send UnPublish for {}/{}: {}", self.room_id, self.media_id, e);
+        }
+
         if let Some(handle) = self.task_handle.lock().await.take() {
             handle.abort();
-            // Don't await aborted handle - it will return JoinError::Cancelled
-            // The abort() call is sufficient for cleanup
             log::info!(
                 "Aborted external publish task for {}/{}",
                 self.room_id,

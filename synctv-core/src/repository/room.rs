@@ -37,6 +37,29 @@ impl RoomRepository {
         self.row_to_room(row)
     }
 
+    /// Create a new room using a provided executor (pool or transaction)
+    pub async fn create_with_executor<'e, E>(&self, room: &Room, executor: E) -> Result<Room>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        let row = sqlx::query(
+            "INSERT INTO rooms (id, name, description, created_by, status, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id, name, description, created_by, status, created_at, updated_at, deleted_at"
+        )
+        .bind(room.id.as_str())
+        .bind(&room.name)
+        .bind(&room.description)
+        .bind(room.created_by.as_str())
+        .bind(self.status_to_i16(&room.status))
+        .bind(room.created_at)
+        .bind(room.updated_at)
+        .fetch_one(executor)
+        .await?;
+
+        self.row_to_room(row)
+    }
+
     /// Get room by ID
     pub async fn get_by_id(&self, room_id: &RoomId) -> Result<Option<Room>> {
         let row = sqlx::query(

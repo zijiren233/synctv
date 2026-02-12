@@ -58,7 +58,16 @@ impl ClusterService for ClusterServer {
             metadata: std::collections::HashMap::new(),
         };
 
-        // Store in Redis via registry (simulated - we'd update the registry directly)
+        // Register the remote node in Redis
+        if let Err(e) = self.node_registry.register_remote(node_info.clone()).await {
+            tracing::error!(
+                node_id = %req.node_id,
+                error = %e,
+                "Failed to register node in cluster"
+            );
+            return Err(Status::internal(format!("Failed to register node: {e}")));
+        }
+
         tracing::info!(
             node_id = %req.node_id,
             address = %req.address,
@@ -91,8 +100,16 @@ impl ClusterService for ClusterServer {
     ) -> std::result::Result<Response<HeartbeatResponse>, Status> {
         let req = request.into_inner();
 
-        // Update heartbeat in registry
-        // In production, we'd update metrics here
+        // Update heartbeat in registry (refreshes TTL and last_heartbeat in Redis)
+        if let Err(e) = self.node_registry.heartbeat_remote(&req.node_id).await {
+            tracing::warn!(
+                node_id = %req.node_id,
+                error = %e,
+                "Failed to update heartbeat"
+            );
+            return Err(Status::internal(format!("Failed to update heartbeat: {e}")));
+        }
+
         tracing::trace!(
             node_id = %req.node_id,
             "Heartbeat received"
@@ -132,14 +149,21 @@ impl ClusterService for ClusterServer {
     ) -> std::result::Result<Response<DeregisterNodeResponse>, Status> {
         let req = request.into_inner();
 
+        // Remove the node from Redis registry
+        if let Err(e) = self.node_registry.unregister_remote(&req.node_id).await {
+            tracing::warn!(
+                node_id = %req.node_id,
+                error = %e,
+                "Failed to deregister node from cluster"
+            );
+            // Don't fail the response — best-effort cleanup, TTL will expire anyway
+        }
+
         tracing::info!(
             node_id = %req.node_id,
             reason = %req.reason,
             "Node deregistered from cluster"
         );
-
-        // In production, we'd clean up the node from registry here
-        // For now, let Redis TTL handle expiration
 
         Ok(Response::new(DeregisterNodeResponse { success: true }))
     }

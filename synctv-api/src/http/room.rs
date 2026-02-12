@@ -576,7 +576,7 @@ pub async fn update_playback(
     // Handle position change (seek)
     if let Some(position) = req.position {
         let response = state.client_api
-            .seek(&user_id, &room_id, SeekRequest { position })
+            .seek(&user_id, &room_id, SeekRequest { current_time: position })
             .await.map_err(super::AppError::internal_server_error)?;
         return Ok(Json(GetPlaybackStateResponse { playback_state: response.playback_state }));
     }
