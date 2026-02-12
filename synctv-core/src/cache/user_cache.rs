@@ -148,11 +148,11 @@ impl UserCache {
     /// Invalidate user data from cache
     ///
     /// Removes from both L1 and L2 caches.
+    /// L2 is invalidated first to prevent a concurrent `get()` from reading stale
+    /// L2 data and re-populating L1 after this invalidation clears it.
     pub async fn invalidate(&self, user_id: &UserId) -> Result<()> {
-        // Remove from L1 cache
-        self.l1_cache.invalidate(user_id).await;
-
-        // Remove from L2 cache
+        // Remove from L2 (Redis) FIRST to prevent concurrent get() from
+        // re-populating L1 with stale L2 data
         if let Some(ref client) = self.redis_client {
             let mut conn = client
                 .get_multiplexed_async_connection()
@@ -164,9 +164,12 @@ impl UserCache {
                 .del(&key)
                 .await
                 .map_err(|e| Error::Internal(format!("Failed to invalidate user cache: {e}")))?;
-
-            tracing::debug!(user_id = %user_id.as_str(), "User cache invalidated");
         }
+
+        // Then remove from L1 cache
+        self.l1_cache.invalidate(user_id).await;
+
+        tracing::debug!(user_id = %user_id.as_str(), "User cache invalidated (L2 then L1)");
 
         Ok(())
     }

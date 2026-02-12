@@ -110,6 +110,18 @@ pub struct RateLimitConfig {
     /// Media operations (add, remove media) - moderate limits
     pub media_max_requests: u32,
     pub media_window_seconds: u64,
+
+    /// Admin operations - moderate limits to prevent brute force
+    pub admin_max_requests: u32,
+    pub admin_window_seconds: u64,
+
+    /// Streaming operations (FLV/HLS) - per-user concurrency limits
+    pub streaming_max_requests: u32,
+    pub streaming_window_seconds: u64,
+
+    /// WebSocket connection attempts
+    pub websocket_max_requests: u32,
+    pub websocket_window_seconds: u64,
 }
 
 impl Default for RateLimitConfig {
@@ -130,6 +142,18 @@ impl Default for RateLimitConfig {
             // Media: 20 requests per minute
             media_max_requests: 20,
             media_window_seconds: 60,
+
+            // Admin: 30 requests per minute
+            admin_max_requests: 30,
+            admin_window_seconds: 60,
+
+            // Streaming: 50 requests per minute (playlist + segment fetches)
+            streaming_max_requests: 50,
+            streaming_window_seconds: 60,
+
+            // WebSocket: 10 connection attempts per minute
+            websocket_max_requests: 10,
+            websocket_window_seconds: 60,
         }
     }
 }
@@ -141,6 +165,9 @@ pub enum RateLimitCategory {
     Write,
     Read,
     Media,
+    Admin,
+    Streaming,
+    WebSocket,
 }
 
 /// Middleware for rate limiting based on user ID and endpoint category
@@ -186,6 +213,9 @@ pub async fn rate_limit_middleware(
         RateLimitCategory::Write => (config.write_max_requests, config.write_window_seconds, "write"),
         RateLimitCategory::Read => (config.read_max_requests, config.read_window_seconds, "read"),
         RateLimitCategory::Media => (config.media_max_requests, config.media_window_seconds, "media"),
+        RateLimitCategory::Admin => (config.admin_max_requests, config.admin_window_seconds, "admin"),
+        RateLimitCategory::Streaming => (config.streaming_max_requests, config.streaming_window_seconds, "streaming"),
+        RateLimitCategory::WebSocket => (config.websocket_max_requests, config.websocket_window_seconds, "websocket"),
     };
 
     // Check rate limit
@@ -211,9 +241,16 @@ pub async fn rate_limit_middleware(
             Ok(response)
         }
         Err(e) => {
-            // Redis error or other issue, log and allow request through
-            tracing::warn!("Rate limit check failed: {}. Allowing request.", e);
-            Ok(next.run(request).await)
+            // Redis error or other issue — fail closed to prevent abuse.
+            // When rate limiting is unavailable, reject requests rather than
+            // allowing unbounded traffic.
+            tracing::error!("Rate limit check failed: {}. Denying request (fail closed).", e);
+            let response = (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Rate limiting service unavailable. Please try again later.",
+            )
+                .into_response();
+            Ok(response)
         }
     }
 }
@@ -263,4 +300,31 @@ pub async fn media_rate_limit(
     next: Next,
 ) -> Result<Response, AppError> {
     rate_limit_middleware(state, RateLimitCategory::Media, request, next).await
+}
+
+/// Middleware factory for admin operations
+pub async fn admin_rate_limit(
+    state: State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    rate_limit_middleware(state, RateLimitCategory::Admin, request, next).await
+}
+
+/// Middleware factory for streaming operations (FLV/HLS)
+pub async fn streaming_rate_limit(
+    state: State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    rate_limit_middleware(state, RateLimitCategory::Streaming, request, next).await
+}
+
+/// Middleware factory for WebSocket connection attempts
+pub async fn websocket_rate_limit(
+    state: State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    rate_limit_middleware(state, RateLimitCategory::WebSocket, request, next).await
 }

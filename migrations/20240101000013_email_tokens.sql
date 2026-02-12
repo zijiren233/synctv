@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS email_tokens (
 CREATE INDEX idx_email_tokens_token ON email_tokens(token);
 CREATE INDEX idx_email_tokens_user_id ON email_tokens(user_id);
 CREATE INDEX idx_email_tokens_type_expires ON email_tokens(token_type, expires_at);
+CREATE INDEX idx_email_tokens_expires_at ON email_tokens(expires_at);
 
 -- Index for finding unused tokens
 CREATE INDEX idx_email_tokens_unused ON email_tokens(user_id, token_type, expires_at)

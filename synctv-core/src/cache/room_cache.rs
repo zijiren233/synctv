@@ -148,11 +148,10 @@ impl RoomCache {
     /// Invalidate room data from cache
     ///
     /// Removes from both L1 and L2 caches.
+    /// L2 is invalidated first to prevent a concurrent `get()` from reading stale
+    /// L2 data and re-populating L1 after this invalidation clears it.
     pub async fn invalidate(&self, room_id: &RoomId) -> Result<()> {
-        // Remove from L1 cache
-        self.l1_cache.invalidate(room_id).await;
-
-        // Remove from L2 cache
+        // Remove from L2 (Redis) FIRST
         if let Some(ref client) = self.redis_client {
             let mut conn = client
                 .get_multiplexed_async_connection()
@@ -164,9 +163,12 @@ impl RoomCache {
                 .del(&key)
                 .await
                 .map_err(|e| Error::Internal(format!("Failed to invalidate room cache: {e}")))?;
-
-            tracing::debug!(room_id = %room_id.0, "Room cache invalidated");
         }
+
+        // Then remove from L1 cache
+        self.l1_cache.invalidate(room_id).await;
+
+        tracing::debug!(room_id = %room_id.0, "Room cache invalidated (L2 then L1)");
 
         Ok(())
     }

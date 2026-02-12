@@ -700,7 +700,9 @@ impl ServerSession {
 
         event_messages.write_stream_is_record(*stream_id).await?;
 
-        let raw_stream_name = stream_name.unwrap();
+        let raw_stream_name = stream_name.ok_or(SessionError {
+            value: SessionErrorValue::NoStreamName,
+        })?;
 
         (self.stream_name, self.query) =
             RtmpUrlParser::parse_stream_name_with_query(&raw_stream_name);

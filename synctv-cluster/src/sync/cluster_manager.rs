@@ -17,6 +17,7 @@ use super::events::ClusterEvent;
 use super::redis_pubsub::{PublishRequest, RedisPubSub};
 use super::room_hub::{ConnectionId, RoomMessageHub};
 use synctv_core::models::id::{RoomId, UserId};
+use synctv_core::service::PermissionService;
 
 /// Cluster configuration
 #[derive(Debug, Clone)]
@@ -65,7 +66,16 @@ pub struct ClusterManager {
 
 impl ClusterManager {
     /// Create a new cluster manager
-    pub async fn new(config: ClusterConfig) -> Result<Self, anyhow::Error> {
+    ///
+    /// # Arguments
+    /// * `config` - Cluster configuration
+    /// * `permission_service` - Optional permission service for cross-replica cache invalidation.
+    ///   When provided, `PermissionChanged` and `RoomSettingsChanged` events received from other
+    ///   nodes will automatically invalidate the local permission cache.
+    pub async fn new(
+        config: ClusterConfig,
+        permission_service: Option<PermissionService>,
+    ) -> Result<Self, anyhow::Error> {
         let message_hub = Arc::new(RoomMessageHub::new());
         let deduplicator = Arc::new(MessageDeduplicator::new(
             config.dedup_window,
@@ -85,6 +95,7 @@ impl ClusterManager {
                     message_hub.clone(),
                     config.node_id.clone(),
                     admin_event_tx.clone(),
+                    permission_service,
                 )?
             );
 
@@ -102,7 +113,7 @@ impl ClusterManager {
 
     /// Create with default configuration
     pub async fn with_defaults() -> Result<Self, anyhow::Error> {
-        Self::new(ClusterConfig::default()).await
+        Self::new(ClusterConfig::default(), None).await
     }
 
     /// Get the message hub (for subscriptions)
@@ -280,7 +291,7 @@ mod tests {
             cleanup_interval: Duration::from_secs(1),
         };
 
-        let manager = ClusterManager::new(config).await.unwrap();
+        let manager = ClusterManager::new(config, None).await.unwrap();
 
         // Subscribe a client
         let room_id = RoomId::from_string("room1".to_string());
@@ -328,7 +339,7 @@ mod tests {
             cleanup_interval: Duration::from_secs(1),
         };
 
-        let manager = ClusterManager::new(config).await.unwrap();
+        let manager = ClusterManager::new(config, None).await.unwrap();
 
         // Subscribe to admin events
         let mut admin_rx = manager.subscribe_admin_events();
@@ -365,7 +376,7 @@ mod tests {
             cleanup_interval: Duration::from_secs(1),
         };
 
-        let manager = ClusterManager::new(config).await.unwrap();
+        let manager = ClusterManager::new(config, None).await.unwrap();
 
         // Subscribe two receivers
         let mut rx1 = manager.subscribe_admin_events();

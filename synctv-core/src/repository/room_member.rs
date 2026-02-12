@@ -655,7 +655,8 @@ impl RoomMemberRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        // Get rooms with user role and member count in single query
+        // Get rooms with user role and member count using LEFT JOIN + GROUP BY
+        // (avoids N+1 correlated subquery that ran COUNT per room)
         let rows = sqlx::query(
             r"
             SELECT
@@ -663,14 +664,14 @@ impl RoomMemberRepository {
                 r.created_at, r.updated_at, r.deleted_at,
                 rm.role as user_role,
                 rm.status as user_status,
-                (
-                    SELECT COUNT(*)::int
-                    FROM room_members rm2
-                    WHERE rm2.room_id = r.id AND rm2.left_at IS NULL
-                ) as member_count
+                COUNT(rm2.user_id)::int as member_count
             FROM room_members rm
             JOIN rooms r ON rm.room_id = r.id
+            LEFT JOIN room_members rm2 ON r.id = rm2.room_id AND rm2.left_at IS NULL
             WHERE rm.user_id = $1 AND rm.left_at IS NULL AND r.deleted_at IS NULL
+            GROUP BY r.id, r.name, r.description, r.created_by, r.status,
+                     r.created_at, r.updated_at, r.deleted_at,
+                     rm.role, rm.status, rm.joined_at
             ORDER BY rm.joined_at DESC
             LIMIT $2 OFFSET $3
             "

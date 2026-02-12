@@ -340,8 +340,14 @@ fn create_router(
         .merge(public::create_public_router())
         // Email verification and password reset (rate-limited)
         .merge(email_routes)
-        // Publish key routes
-        .merge(publish_key::create_publish_key_router())
+        // Publish key routes — strict rate limiting (5 req/min, same as auth)
+        .merge(
+            publish_key::create_publish_key_router()
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::auth_rate_limit,
+                ))
+        )
         // Notification routes
         .merge(notifications::create_notification_router())
         // Rate-limited route groups
@@ -384,18 +390,29 @@ fn create_router(
         )
         // Playback control - read
         .route("/api/rooms/:room_id/playback", get(room::get_playback_state))
-        // Live streaming routes (if infrastructure is configured)
+        // Live streaming routes — rate limited (50 req/min)
         .merge(
             Router::new()
                 .nest(
                     "/api/room/movie/live",
                     live::create_live_router(),
                 )
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::streaming_rate_limit,
+                ))
         )
-        // WebSocket endpoint for real-time messaging
-        .route(
-            "/ws/rooms/:room_id",
-            axum::routing::get(websocket::websocket_handler),
+        // WebSocket endpoint — rate limited (10 connection attempts/min)
+        .merge(
+            Router::new()
+                .route(
+                    "/ws/rooms/:room_id",
+                    axum::routing::get(websocket::websocket_handler),
+                )
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::websocket_rate_limit,
+                ))
         )
         // WebRTC configuration endpoints
         .route(
@@ -406,8 +423,15 @@ fn create_router(
             "/api/rooms/:room_id/webrtc/network-quality",
             get(webrtc::get_network_quality),
         )
-        // Admin routes (admin/root role required)
-        .nest("/api/admin", admin::create_admin_router())
+        // Admin routes (admin/root role required) — rate limited (30 req/min)
+        .merge(
+            Router::new()
+                .nest("/api/admin", admin::create_admin_router())
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::admin_rate_limit,
+                ))
+        )
         // Common provider routes (user-facing)
         .nest("/api/provider", provider_common::register_common_routes())
         // Provider-specific HTTP routes

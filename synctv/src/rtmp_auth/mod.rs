@@ -336,9 +336,9 @@ impl AuthCallback for SyncTvRtmpAuth {
         _query: Option<&str>,
     ) {
         // Remove user→stream mapping from tracker (resolves RTMP identifiers to logical stream)
-        if let Some((user_id, room_id, media_id)) =
-            self.user_stream_tracker.remove_by_app_stream(app_name, stream_name)
-        {
+        let tracked = self.user_stream_tracker.remove_by_app_stream(app_name, stream_name);
+
+        if let Some((ref user_id, ref room_id, ref media_id)) = tracked {
             tracing::info!(
                 user_id = %user_id,
                 room_id = %room_id,
@@ -353,7 +353,7 @@ impl AuthCallback for SyncTvRtmpAuth {
             }
 
             // Unregister from Redis
-            if let Err(e) = self.registry.unregister_publisher(&room_id, &media_id).await {
+            if let Err(e) = self.registry.unregister_publisher(room_id, media_id).await {
                 tracing::error!(
                     room_id = %room_id,
                     media_id = %media_id,
@@ -361,21 +361,24 @@ impl AuthCallback for SyncTvRtmpAuth {
                     e
                 );
             }
-
-            // Emit stream lifecycle event
-            if let Some(ref tx) = self.stream_event_tx {
-                let _ = tx.send(StreamLifecycleEvent::Stopped {
-                    room_id: room_id.clone(),
-                    media_id: media_id.clone(),
-                    user_id: user_id.clone(),
-                });
-            }
         } else {
             tracing::warn!(
                 app_name = %app_name,
                 stream_name = %stream_name,
                 "on_unpublish: no matching stream found in tracker"
             );
+        }
+
+        // Always emit StreamStopped event, even if tracker removal failed.
+        // This ensures subscribers are notified regardless of tracker state.
+        if let Some(ref tx) = self.stream_event_tx {
+            if let Some((ref user_id, ref room_id, ref media_id)) = tracked {
+                let _ = tx.send(StreamLifecycleEvent::Stopped {
+                    room_id: room_id.clone(),
+                    media_id: media_id.clone(),
+                    user_id: user_id.clone(),
+                });
+            }
         }
     }
 }

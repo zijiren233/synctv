@@ -18,6 +18,7 @@ const MAX_BACKOFF_SECS: u64 = 30;
 use super::events::ClusterEvent;
 use super::room_hub::RoomMessageHub;
 use synctv_core::models::id::RoomId;
+use synctv_core::service::PermissionService;
 
 /// Redis Pub/Sub service for cross-node event synchronization
 ///
@@ -32,6 +33,7 @@ pub struct RedisPubSub {
     message_hub: Arc<RoomMessageHub>,
     node_id: String,
     admin_event_tx: broadcast::Sender<ClusterEvent>,
+    permission_service: Option<PermissionService>,
 }
 
 impl RedisPubSub {
@@ -41,6 +43,7 @@ impl RedisPubSub {
         message_hub: Arc<RoomMessageHub>,
         node_id: String,
         admin_event_tx: broadcast::Sender<ClusterEvent>,
+        permission_service: Option<PermissionService>,
     ) -> Result<Self> {
         let redis_client = RedisClient::open(redis_url).context("Failed to create Redis client")?;
 
@@ -49,6 +52,7 @@ impl RedisPubSub {
             message_hub,
             node_id,
             admin_event_tx,
+            permission_service,
         })
     }
 
@@ -62,47 +66,77 @@ impl RedisPubSub {
         let publish_client = self.redis_client.clone();
         let node_id = self.node_id.clone();
 
-        // Spawn task to handle publishing
+        // Spawn task to handle publishing with reconnection logic
         tokio::spawn(async move {
-            let mut conn = match timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                publish_client.get_multiplexed_async_connection(),
-            )
-            .await
-            {
-                Ok(Ok(conn)) => conn,
-                Ok(Err(e)) => {
-                    error!(error = %e, "Failed to get Redis connection for publishing");
-                    return;
-                }
-                Err(_) => {
-                    error!("Timed out getting Redis connection for publishing");
-                    return;
-                }
-            };
+            let mut backoff_secs = INITIAL_BACKOFF_SECS;
 
-            info!("Redis publisher task started");
-
-            while let Some(req) = publish_rx.recv().await {
-                match Self::publish_event(&mut conn, &node_id, req.event).await {
-                    Ok(subscribers) => {
-                        debug!(
-                            room_id = %req.room_id.as_str(),
-                            subscribers = subscribers,
-                            "Event published to Redis"
-                        );
+            loop {
+                let conn = match timeout(
+                    Duration::from_secs(REDIS_TIMEOUT_SECS),
+                    publish_client.get_multiplexed_async_connection(),
+                )
+                .await
+                {
+                    Ok(Ok(conn)) => {
+                        backoff_secs = INITIAL_BACKOFF_SECS;
+                        conn
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         error!(
                             error = %e,
-                            room_id = %req.room_id.as_str(),
-                            "Failed to publish event to Redis"
+                            backoff_secs = backoff_secs,
+                            "Failed to get Redis connection for publishing, retrying"
                         );
+                        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+                        continue;
+                    }
+                    Err(_) => {
+                        error!(
+                            backoff_secs = backoff_secs,
+                            "Timed out getting Redis connection for publishing, retrying"
+                        );
+                        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+                        continue;
+                    }
+                };
+
+                info!("Redis publisher task (re)connected");
+                let mut conn = conn;
+
+                // Process events until connection breaks
+                loop {
+                    if let Some(req) = publish_rx.recv().await {
+                        match Self::publish_event(&mut conn, &node_id, req.event).await {
+                            Ok(subscribers) => {
+                                debug!(
+                                    room_id = %req.room_id.as_str(),
+                                    subscribers = subscribers,
+                                    "Event published to Redis"
+                                );
+                            }
+                            Err(e) => {
+                                error!(
+                                    error = %e,
+                                    room_id = %req.room_id.as_str(),
+                                    "Failed to publish event, reconnecting"
+                                );
+                                // Break inner loop to reconnect
+                                break;
+                            }
+                        }
+                    } else {
+                        // Channel closed, publisher shutting down
+                        warn!("Redis publisher channel closed, exiting");
+                        return;
                     }
                 }
-            }
 
-            warn!("Redis publisher task exiting");
+                // Wait before reconnecting
+                tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+            }
         });
 
         // Clone for the subscriber task
@@ -231,6 +265,28 @@ impl RedisPubSub {
                         // Forward KickPublisher events to admin channel
                         if matches!(&envelope.event, ClusterEvent::KickPublisher { .. }) {
                             let _ = self.admin_event_tx.send(envelope.event.clone());
+                        }
+
+                        // Invalidate local permission cache for cross-replica consistency
+                        if let Some(ref perm_svc) = self.permission_service {
+                            match &envelope.event {
+                                ClusterEvent::PermissionChanged { target_user_id, .. } => {
+                                    perm_svc.invalidate_cache(&room_id, target_user_id).await;
+                                    debug!(
+                                        room_id = %room_id.as_str(),
+                                        user_id = %target_user_id.as_str(),
+                                        "Invalidated permission cache (cross-replica)"
+                                    );
+                                }
+                                ClusterEvent::RoomSettingsChanged { .. } => {
+                                    perm_svc.invalidate_room_cache(&room_id).await;
+                                    debug!(
+                                        room_id = %room_id.as_str(),
+                                        "Invalidated room permission cache (cross-replica)"
+                                    );
+                                }
+                                _ => {}
+                            }
                         }
 
                         // Broadcast to local subscribers
@@ -364,10 +420,10 @@ mod tests {
 
         // Create two PubSub instances simulating different nodes
         let pubsub1 = Arc::new(
-            RedisPubSub::new(redis_url, message_hub.clone(), "node1".to_string(), admin_tx.clone()).unwrap(),
+            RedisPubSub::new(redis_url, message_hub.clone(), "node1".to_string(), admin_tx.clone(), None).unwrap(),
         );
         let pubsub2 = Arc::new(
-            RedisPubSub::new(redis_url, message_hub.clone(), "node2".to_string(), admin_tx.clone()).unwrap(),
+            RedisPubSub::new(redis_url, message_hub.clone(), "node2".to_string(), admin_tx.clone(), None).unwrap(),
         );
 
         // Start both

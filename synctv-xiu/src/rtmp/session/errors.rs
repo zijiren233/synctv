@@ -73,6 +73,8 @@ pub enum SessionErrorValue {
 
     #[fail(display = "no app name error")]
     NoAppName,
+    #[fail(display = "no stream name error")]
+    NoStreamName,
     #[fail(display = "no media data can be received now.")]
     NoMediaDataReceived,
 

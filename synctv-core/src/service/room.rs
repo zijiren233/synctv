@@ -67,9 +67,17 @@ impl std::fmt::Debug for RoomService {
 
 impl RoomService {
     /// Get the playlist service
-    #[must_use] 
+    #[must_use]
     pub const fn playlist_service(&self) -> &PlaylistService {
         &self.playlist_service
+    }
+
+    /// Get the permission service
+    ///
+    /// Used by `ClusterManager` to invalidate permission cache on cross-replica events.
+    #[must_use]
+    pub const fn permission_service(&self) -> &PermissionService {
+        &self.permission_service
     }
 
     #[must_use] 
@@ -893,7 +901,7 @@ impl RoomService {
         &self,
         room_id: RoomId,
         user_id: UserId,
-        update_fn: impl FnOnce(&mut RoomPlaybackState),
+        update_fn: impl Fn(&mut RoomPlaybackState),
         required_permission: u64,
     ) -> Result<RoomPlaybackState> {
         // Check permission

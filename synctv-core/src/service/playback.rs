@@ -135,7 +135,7 @@ impl PlaybackService {
         }
 
         self.update_state(room_id, |state| {
-            state.playing_media_id = Some(media_id);
+            state.playing_media_id = Some(media_id.clone());
             state.position = 0.0;
             state.is_playing = true;
             state.updated_at = chrono::Utc::now();
@@ -339,25 +339,54 @@ impl PlaybackService {
         }
     }
 
-    /// Update playback state with generic update function
+    /// Maximum retry attempts for optimistic lock conflicts
+    const MAX_RETRIES: u32 = 3;
+
+    /// Update playback state with generic update function.
+    ///
+    /// Uses optimistic locking with automatic retry on version conflicts.
+    /// Under high contention (many users controlling playback simultaneously),
+    /// this prevents spurious failures by re-reading state and retrying.
     pub async fn update_state<F>(
         &self,
         room_id: RoomId,
         update_fn: F,
     ) -> Result<RoomPlaybackState>
     where
-        F: FnOnce(&mut RoomPlaybackState),
+        F: Fn(&mut RoomPlaybackState),
     {
-        // Get current state
-        let mut state = self.playback_repo.create_or_get(&room_id).await?;
+        for attempt in 0..Self::MAX_RETRIES {
+            // Get current state
+            let mut state = self.playback_repo.create_or_get(&room_id).await?;
 
-        // Apply update
-        update_fn(&mut state);
+            // Apply update
+            update_fn(&mut state);
 
-        // Save with optimistic locking
-        let updated_state = self.playback_repo.update(&state).await?;
+            // Save with optimistic locking
+            match self.playback_repo.update(&state).await {
+                Ok(updated_state) => return Ok(updated_state),
+                Err(e) if attempt + 1 < Self::MAX_RETRIES => {
+                    // Check if this is an optimistic lock conflict
+                    let is_conflict = matches!(&e, Error::Internal(msg) if msg.contains("optimistic lock"));
+                    if is_conflict {
+                        tracing::debug!(
+                            room_id = %room_id.as_str(),
+                            attempt = attempt + 1,
+                            "Playback state version conflict, retrying"
+                        );
+                        // Brief yield to let the conflicting update complete
+                        tokio::task::yield_now().await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
 
-        Ok(updated_state)
+        Err(Error::Internal(
+            "Playback state update failed after maximum retry attempts".to_string(),
+        ))
     }
 
     /// Reset playback to initial state
@@ -455,8 +484,8 @@ impl PlaybackService {
             if let Some(s) = speed {
                 state.speed = s;
             }
-            if let Some(mid) = media_id {
-                state.playing_media_id = Some(mid);
+            if let Some(ref mid) = media_id {
+                state.playing_media_id = Some(mid.clone());
             }
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here

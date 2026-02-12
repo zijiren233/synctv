@@ -359,14 +359,16 @@ impl Common {
         }
 
         let result = event_result_receiver.await??;
-        self.data_receiver = result.0.frame_receiver.unwrap();
+        self.data_receiver = result.0.frame_receiver.ok_or(SessionError {
+            value: SessionErrorValue::StreamHubEventSendErr,
+        })?;
 
         let statistic_data_sender: Option<StatisticDataSender> = result.1;
 
         if let Some(sender) = &statistic_data_sender {
             let statistic_subscriber = StatisticData::Subscriber {
                 id: self.session_id,
-                remote_addr: self.remote_addr.unwrap().to_string(),
+                remote_addr: self.remote_addr.map_or_else(|| "unknown".to_string(), |a| a.to_string()),
                 start_time: chrono::Local::now(),
                 sub_type: SubscribeType::RtmpPull,
             };
@@ -429,7 +431,9 @@ impl Common {
         }
 
         let result = event_result_receiver.await??;
-        self.data_sender = result.0.unwrap();
+        self.data_sender = result.0.ok_or(SessionError {
+            value: SessionErrorValue::StreamHubEventSendErr,
+        })?;
 
         let statistic_data_sender: Option<StatisticDataSender> = result.2;
 

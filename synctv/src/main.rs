@@ -111,6 +111,9 @@ async fn main() -> Result<()> {
     info!("RoomMessageHub initialized");
 
     // 7. Initialize ClusterManager (unified cluster management)
+    // Extract permission service for cross-replica cache invalidation
+    let permission_service = Some(synctv_services.room_service.permission_service().clone());
+
     let cluster_manager = if config.redis.url.is_empty() {
         info!("Redis not configured, using single-node ClusterManager");
         // Create a single-node ClusterManager (no Redis)
@@ -120,7 +123,7 @@ async fn main() -> Result<()> {
             dedup_window: std::time::Duration::from_secs(5),
             cleanup_interval: std::time::Duration::from_secs(30),
         };
-        match ClusterManager::new(cluster_config).await {
+        match ClusterManager::new(cluster_config, None).await {
             Ok(manager) => Some(Arc::new(manager)),
             Err(e) => {
                 error!("Failed to create single-node ClusterManager: {}", e);
@@ -134,9 +137,9 @@ async fn main() -> Result<()> {
             dedup_window: std::time::Duration::from_secs(5),
             cleanup_interval: std::time::Duration::from_secs(30),
         };
-        match ClusterManager::new(cluster_config).await {
+        match ClusterManager::new(cluster_config, permission_service).await {
             Ok(manager) => {
-                info!("ClusterManager initialized successfully");
+                info!("ClusterManager initialized with cross-replica permission cache invalidation");
                 Some(Arc::new(manager))
             }
             Err(e) => {

@@ -79,10 +79,13 @@ pub async fn update_user(
 
     // Check if password update is requested
     if let Some(password) = req.get("password").and_then(|v| v.as_str()) {
-        // Get old password if provided (for security)
+        // Old password is required to prevent unauthorized password changes
+        // from stolen session tokens.
         let old_password = req.get("old_password")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
+            .ok_or_else(|| super::AppError::bad_request(
+                "old_password is required when changing password"
+            ))?
             .to_string();
 
         let set_password_req = SetPasswordRequest {

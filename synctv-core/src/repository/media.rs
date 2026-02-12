@@ -315,7 +315,8 @@ impl MediaRepository {
     }
 
     /// Bulk reorder media items with new positions
-    /// Takes a list of (`media_id`, `new_position`) tuples and updates them in a transaction
+    /// Takes a list of (`media_id`, `new_position`) tuples and updates them in a transaction.
+    /// Uses FOR UPDATE locks to prevent concurrent reordering race conditions.
     pub async fn reorder_batch(&self, updates: &[(MediaId, i32)]) -> Result<()> {
         if updates.is_empty() {
             return Ok(());
@@ -323,6 +324,15 @@ impl MediaRepository {
 
         let mut tx = self.pool.begin().await?;
 
+        // Lock all affected rows first to prevent concurrent modification
+        for (media_id, _) in updates {
+            sqlx::query("SELECT id FROM media WHERE id = $1 AND deleted_at IS NULL FOR UPDATE")
+                .bind(media_id.as_str())
+                .fetch_optional(&mut *tx)
+                .await?;
+        }
+
+        // Now update positions within the lock scope
         for (media_id, new_position) in updates {
             sqlx::query("UPDATE media SET position = $2 WHERE id = $1 AND deleted_at IS NULL")
                 .bind(media_id.as_str())

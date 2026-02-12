@@ -79,8 +79,12 @@ impl TsMuxer {
 
         self.find_stream(pid)?;
 
-        let cur_pmt = self.pat.pmt.get_mut(self.cur_pmt_index).unwrap();
-        let cur_stream = cur_pmt.streams.get_mut(self.cur_stream_index).unwrap();
+        let cur_pmt = self.pat.pmt.get_mut(self.cur_pmt_index).ok_or(MpegTsError {
+            value: MpegTsErrorValue::StreamNotFound,
+        })?;
+        let cur_stream = cur_pmt.streams.get_mut(self.cur_stream_index).ok_or(MpegTsError {
+            value: MpegTsErrorValue::StreamNotFound,
+        })?;
 
         if 0x1FFF == cur_pmt.pcr_pid
             || (define::epes_stream_id::PES_SID_VIDEO
@@ -170,8 +174,12 @@ impl TsMuxer {
             //write pes header
             let mut pes_muxer = PesMuxer::new();
             if is_start {
-                let cur_pmt = self.pat.pmt.get_mut(self.cur_pmt_index).unwrap();
-                let stream_data = cur_pmt.streams.get_mut(self.cur_stream_index).unwrap();
+                let cur_pmt = self.pat.pmt.get_mut(self.cur_pmt_index).ok_or(MpegTsError {
+                    value: MpegTsErrorValue::StreamNotFound,
+                })?;
+                let stream_data = cur_pmt.streams.get_mut(self.cur_stream_index).ok_or(MpegTsError {
+                    value: MpegTsErrorValue::StreamNotFound,
+                })?;
                 pes_muxer.write_pes_header(
                     payload_reader.len(),
                     stream_data,
@@ -210,8 +218,12 @@ impl TsMuxer {
         payload_data_length: usize,
         is_start: bool,
     ) -> Result<usize, MpegTsError> {
-        let cur_pmt = self.pat.pmt.get_mut(self.cur_pmt_index).unwrap();
-        let stream_data = cur_pmt.streams.get_mut(self.cur_stream_index).unwrap();
+        let cur_pmt = self.pat.pmt.get_mut(self.cur_pmt_index).ok_or(MpegTsError {
+            value: MpegTsErrorValue::StreamNotFound,
+        })?;
+        let stream_data = cur_pmt.streams.get_mut(self.cur_stream_index).ok_or(MpegTsError {
+            value: MpegTsErrorValue::StreamNotFound,
+        })?;
 
         let pcr_pid = cur_pmt.pcr_pid;
 

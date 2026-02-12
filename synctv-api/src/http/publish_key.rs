@@ -81,9 +81,14 @@ pub async fn generate_publish_key(
         .await
         .map_err(|e| AppError::internal_server_error(format!("Failed to generate publish key: {e}")))?;
 
-    // Construct RTMP URL and stream key
+    // Construct RTMP URL and stream key from configuration
     // Stream name format: {room_id}/{media_id}
-    let rtmp_url = format!("rtmp://localhost:1935/live/{}", room_id.as_str());
+    let rtmp_host = &state.client_api.config.server.host;
+    let rtmp_port = state.client_api.config.livestream.rtmp_port;
+    // Use the server's configured host; if bound to 0.0.0.0, clients should use
+    // the public hostname, so we fall back to "localhost" as a safe default hint.
+    let display_host = if rtmp_host == "0.0.0.0" { "localhost" } else { rtmp_host };
+    let rtmp_url = format!("rtmp://{display_host}:{rtmp_port}/live/{}", room_id.as_str());
     let stream_key = publish_key.token.clone();
 
     info!(
