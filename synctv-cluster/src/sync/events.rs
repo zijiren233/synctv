@@ -128,6 +128,14 @@ pub enum ClusterEvent {
         reason: String,
         timestamp: DateTime<Utc>,
     },
+
+    /// Kick all active publishers for a user across all replicas.
+    /// Broadcast cluster-wide when a user is banned.
+    KickUser {
+        user_id: UserId,
+        reason: String,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 /// Notification severity level
@@ -156,7 +164,7 @@ impl ClusterEvent {
             | Self::WebRTCJoin { room_id, .. }
             | Self::WebRTCLeave { room_id, .. }
             | Self::KickPublisher { room_id, .. } => Some(room_id),
-            Self::SystemNotification { .. } => None,
+            Self::SystemNotification { .. } | Self::KickUser { .. } => None,
         }
     }
 
@@ -175,7 +183,7 @@ impl ClusterEvent {
             | Self::WebRTCLeave { user_id, .. } => Some(user_id),
             Self::PermissionChanged { changed_by, .. } => Some(changed_by),
             Self::WebRTCSignaling { .. } | Self::SystemNotification { .. }
-            | Self::KickPublisher { .. } => None,
+            | Self::KickPublisher { .. } | Self::KickUser { .. } => None,
         }
     }
 
@@ -195,7 +203,8 @@ impl ClusterEvent {
             | Self::WebRTCJoin { timestamp, .. }
             | Self::WebRTCLeave { timestamp, .. }
             | Self::SystemNotification { timestamp, .. }
-            | Self::KickPublisher { timestamp, .. } => timestamp,
+            | Self::KickPublisher { timestamp, .. }
+            | Self::KickUser { timestamp, .. } => timestamp,
         }
     }
 
@@ -206,6 +215,9 @@ impl ClusterEvent {
         match self {
             Self::SystemNotification { message, level, .. } => {
                 format!("{level:?}:{message}")
+            }
+            Self::KickUser { user_id, .. } => {
+                format!("kick_user:{}", user_id.as_str())
             }
             _ => String::new(),
         }
@@ -228,6 +240,7 @@ impl ClusterEvent {
             Self::WebRTCLeave { .. } => "webrtc_leave",
             Self::SystemNotification { .. } => "system_notification",
             Self::KickPublisher { .. } => "kick_publisher",
+            Self::KickUser { .. } => "kick_user",
         }
     }
 }
@@ -328,5 +341,34 @@ mod tests {
         assert_eq!(event.room_id().unwrap().as_str(), "room789");
         assert!(event.user_id().is_none());
         assert_eq!(event.event_type(), "kick_publisher");
+    }
+
+    #[test]
+    fn test_kick_user_serialization() {
+        let event = ClusterEvent::KickUser {
+            user_id: UserId::from_string("user123".to_string()),
+            reason: "user_banned".to_string(),
+            timestamp: Utc::now(),
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("kick_user"));
+        assert!(json.contains("user123"));
+
+        let deserialized: ClusterEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.event_type(), "kick_user");
+        assert!(deserialized.room_id().is_none());
+        assert!(deserialized.user_id().is_none()); // KickUser doesn't expose user_id via user_id()
+    }
+
+    #[test]
+    fn test_kick_user_dedup_extra() {
+        let event = ClusterEvent::KickUser {
+            user_id: UserId::from_string("user456".to_string()),
+            reason: "user_banned".to_string(),
+            timestamp: Utc::now(),
+        };
+
+        assert_eq!(event.dedup_extra(), "kick_user:user456");
     }
 }

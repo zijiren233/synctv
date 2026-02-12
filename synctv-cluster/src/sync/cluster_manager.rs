@@ -183,18 +183,16 @@ impl ClusterManager {
 
         // Publish to Redis for cross-node sync
         if let Some(tx) = &self.redis_publish_tx {
-            if let Some(room_id) = event.room_id() {
-                if let Err(e) = tx.send(PublishRequest {
-                    room_id: room_id.clone(),
-                    event,
-                }) {
-                    error!(
-                        error = %e,
-                        "Failed to queue event for Redis publishing"
-                    );
-                } else {
-                    redis_sent = 1;
-                }
+            if let Err(e) = tx.send(PublishRequest {
+                room_id: event.room_id().cloned(),
+                event,
+            }) {
+                error!(
+                    error = %e,
+                    "Failed to queue event for Redis publishing"
+                );
+            } else {
+                redis_sent = 1;
             }
         }
 

@@ -19,16 +19,11 @@ use synctv_core::{
     Config,
 };
 use synctv_cluster::sync::ClusterEvent;
-use synctv_livestream::StreamRegistry;
-
-/// Livestream server state (held for health checks and graceful shutdown).
+/// Livestream server state (held for graceful shutdown).
 ///
-/// Fields are not read directly -- ownership keeps the `StreamRegistry` and
-/// `PullStreamManager` alive for the lifetime of the server (RAII).
-#[allow(dead_code)]
+/// Dropping the handle stops the StreamHub event loop and all dependent tasks.
 pub struct LivestreamState {
-    pub registry: StreamRegistry,
-    pub pull_manager: Arc<synctv_livestream::livestream::PullStreamManager>,
+    pub handle: synctv_livestream::livestream::LivestreamHandle,
 }
 
 /// Container for shared services
@@ -141,14 +136,25 @@ impl SyncTvServer {
                 loop {
                     match admin_rx.recv().await {
                         Ok(event) => {
-                            if let ClusterEvent::KickPublisher { ref room_id, ref media_id, ref reason, .. } = event {
-                                info!(
-                                    room_id = %room_id.as_str(),
-                                    media_id = %media_id.as_str(),
-                                    reason = %reason,
-                                    "Received cluster-wide kick event"
-                                );
-                                let _ = infra.kick_publisher(room_id.as_str(), media_id.as_str());
+                            match &event {
+                                ClusterEvent::KickPublisher { room_id, media_id, reason, .. } => {
+                                    info!(
+                                        room_id = %room_id.as_str(),
+                                        media_id = %media_id.as_str(),
+                                        reason = %reason,
+                                        "Received cluster-wide stream kick"
+                                    );
+                                    let _ = infra.kick_publisher(room_id.as_str(), media_id.as_str());
+                                }
+                                ClusterEvent::KickUser { user_id, reason, .. } => {
+                                    info!(
+                                        user_id = %user_id.as_str(),
+                                        reason = %reason,
+                                        "Received cluster-wide user kick"
+                                    );
+                                    infra.kick_user_publishers(user_id.as_str());
+                                }
+                                _ => {}
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -239,17 +245,10 @@ impl SyncTvServer {
             info!("TURN server shutting down");
         }
 
-        // 4. Stop livestream: drain active pull streams and clear the registry
+        // 4. Stop livestream: abort the StreamHub event loop
         if let Some(ref state) = self.livestream_state {
-            let stream_count = state.registry.len();
-            info!("Stopping livestream infrastructure ({} active stream(s))...", stream_count);
-
-            // Clear the HLS stream registry so no new segments are served
-            state.registry.clear();
-
-            // Stop all active pull streams managed by the PullStreamManager
-            // (PullStreamManager.streams is private, but dropping the Arc will
-            //  clean up; the registry clear above prevents new pull requests.)
+            info!("Stopping livestream infrastructure...");
+            state.handle.shutdown();
             info!("Livestream infrastructure shut down");
         }
 

@@ -185,70 +185,17 @@ async fn main() -> Result<()> {
             Ok(redis_client) => {
                 match redis_client.get_connection_manager().await {
                     Ok(redis_conn) => {
-                        // Create two registries:
-                        // 1. Stream state registry for HLS (DashMap-based)
-                        let stream_registry: synctv_livestream::StreamRegistry = Arc::new(dashmap::DashMap::new());
-
-                        // 2. Publisher registry for Redis (used by PullStreamManager)
+                        // Publisher registry for Redis (used by PullStreamManager + PublisherManager)
                         let publisher_registry = Arc::new(synctv_livestream::relay::StreamRegistry::new(redis_conn)) as Arc<dyn synctv_livestream::relay::StreamRegistryTrait>;
-
-                        // Create StreamHub event channel and spawn the hub event loop
-                        let (stream_hub_event_sender, stream_hub_event_receiver) =
-                            tokio::sync::mpsc::unbounded_channel();
-                        let mut streams_hub = synctv_xiu::streamhub::StreamsHub::new(
-                            stream_hub_event_sender.clone(),
-                            stream_hub_event_receiver,
-                        );
-
-                        // Get broadcast receiver BEFORE spawning the hub (moves streams_hub)
-                        let broadcast_receiver = streams_hub.get_client_event_consumer();
-
-                        tokio::spawn(async move {
-                            streams_hub.run().await;
-                        });
-
-                        // Create PullStreamManager (uses publisher_registry for Redis)
-                        let node_id = generate_node_id();
-                        let pull_manager = Arc::new(synctv_livestream::livestream::PullStreamManager::with_timeouts(
-                            publisher_registry.clone(),
-                            node_id.clone(),
-                            stream_hub_event_sender.clone(),
-                            config.livestream.cleanup_check_interval_seconds,
-                            config.livestream.stream_timeout_seconds,
-                        ));
-
-                        // Clone resources for RTMP server
-                        let rtmp_event_sender = stream_hub_event_sender.clone();
-
-                        // Create ExternalPublishManager (manages external pull-to-publish streams)
-                        let external_publish_manager = Arc::new(
-                            synctv_livestream::livestream::ExternalPublishManager::with_timeouts(
-                                publisher_registry.clone(),
-                                node_id.clone(),
-                                stream_hub_event_sender.clone(),
-                                config.livestream.cleanup_check_interval_seconds,
-                                config.livestream.stream_timeout_seconds,
-                            ),
-                        );
 
                         // Shared tracker for user→stream mapping (kick-on-ban)
                         let user_stream_tracker: synctv_livestream::api::UserStreamTracker =
                             Arc::new(synctv_livestream::api::StreamTracker::new());
 
-                        // Create LiveStreamingInfrastructure (uses publisher_registry for Redis)
-                        let live_infra = Arc::new(synctv_livestream::api::LiveStreamingInfrastructure::new(
-                            publisher_registry.clone(),
-                            stream_hub_event_sender,
-                            pull_manager.clone(),
-                            external_publish_manager,
-                            user_stream_tracker.clone(),
-                        ));
-
-                        // Create stream lifecycle event channel
+                        // Stream lifecycle event channel (app-level logging)
                         let (stream_lifecycle_tx, mut stream_lifecycle_rx) =
                             tokio::sync::broadcast::channel::<rtmp_auth::StreamLifecycleEvent>(64);
 
-                        // Spawn consumer that logs stream lifecycle events
                         tokio::spawn(async move {
                             while let Ok(event) = stream_lifecycle_rx.recv().await {
                                 match event {
@@ -272,54 +219,39 @@ async fn main() -> Result<()> {
                             }
                         });
 
-                        // Create RTMP authentication callback
-                        let rtmp_auth: Arc<dyn synctv_xiu::rtmp::auth::AuthCallback> =
+                        // RTMP auth callback (needs synctv-core services)
+                        let node_id = generate_node_id();
+                        let rtmp_auth: Arc<dyn synctv_livestream::AuthCallback> =
                             Arc::new(rtmp_auth::SyncTvRtmpAuth::new(
                                 synctv_services.room_service.clone(),
                                 synctv_services.user_service.clone(),
                                 synctv_services.publish_key_service.clone(),
-                                user_stream_tracker,
+                                user_stream_tracker.clone(),
                                 publisher_registry.clone(),
                                 node_id.clone(),
                                 Some(stream_lifecycle_tx),
                             ));
 
-                        // Create and start RTMP server with auth integration
+                        // One-shot facade: start all xiu components
                         let rtmp_listen_addr = format!("{}:{}", config.server.host, config.livestream.rtmp_port);
-                        let mut rtmp_server = synctv_xiu::rtmp::rtmp::RtmpServer::new(
-                            rtmp_listen_addr.clone(),
-                            rtmp_event_sender,
-                            config.livestream.gop_cache_size as usize,
-                            Some(rtmp_auth),
-                        );
-
-                        tokio::spawn(async move {
-                            if let Err(e) = rtmp_server.run().await {
-                                error!("RTMP server error: {}", e);
-                            }
-                        });
-
-                        // Start PublisherManager - listens to StreamHub broadcast events
-                        // and registers/unregisters publishers in Redis for multi-node relay
-                        let publisher_manager = Arc::new(
-                            synctv_livestream::relay::PublisherManager::new(
-                                publisher_registry.clone(),
+                        let handle = synctv_livestream::LivestreamServer::new(
+                            synctv_livestream::LivestreamConfig {
+                                rtmp_address: rtmp_listen_addr,
+                                gop_cache_size: config.livestream.gop_cache_size as usize,
                                 node_id,
-                            ),
-                        );
-                        tokio::spawn({
-                            let pm = Arc::clone(&publisher_manager);
-                            async move {
-                                pm.start(broadcast_receiver).await;
-                            }
-                        });
+                                cleanup_check_interval_seconds: config.livestream.cleanup_check_interval_seconds,
+                                stream_timeout_seconds: config.livestream.stream_timeout_seconds,
+                            },
+                            publisher_registry,
+                            user_stream_tracker,
+                        )
+                        .with_auth(rtmp_auth)
+                        .start()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to start livestream: {e}"))?;
 
-                        info!("Livestream infrastructure initialized, RTMP server listening on rtmp://{}", rtmp_listen_addr);
-
-                        let state = Some(server::LivestreamState {
-                            registry: stream_registry,
-                            pull_manager,
-                        });
+                        let live_infra = handle.infrastructure.clone();
+                        let state = Some(server::LivestreamState { handle });
 
                         (state, Some(live_infra))
                     }

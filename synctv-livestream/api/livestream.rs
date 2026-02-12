@@ -407,7 +407,7 @@ impl LiveStreamingInfrastructure {
         };
 
         self.stream_hub_event_sender
-            .send(synctv_xiu::streamhub::define::StreamHubEvent::UnPublish { identifier })
+            .try_send(synctv_xiu::streamhub::define::StreamHubEvent::UnPublish { identifier })
             .map_err(|_| anyhow::anyhow!("Failed to send unpublish event (StreamHub not running)"))?;
 
         Ok(())

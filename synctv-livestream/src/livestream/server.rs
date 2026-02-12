@@ -1,72 +1,76 @@
-// Complete integration of livestream servers into SyncTV architecture
+// Livestream server facade
 //
-// Architecture:
-// 1. Single shared StreamHub (xiu's event bus) for all protocols
-// 2. RTMP server for push (xiu handles protocol, auth via AuthCallback)
-// 3. HLS server for pull (xiu handles HLS transcoding)
-// 4. HTTP-FLV server for pull (lazy-load pattern)
-// 5. All communicate via StreamHub events
+// Single entry point for starting the entire livestream infrastructure:
+// StreamHub, RTMP server, PullStreamManager, ExternalPublishManager,
+// PublisherManager, and LiveStreamingInfrastructure.
+//
+// The synctv binary never touches synctv_xiu directly — all xiu interaction
+// is encapsulated here.
 
 use crate::{
-    libraries::storage::{HlsStorage, StorageBackend, FileStorage, MemoryStorage, OssStorage, OssConfig},
     relay::{registry_trait::StreamRegistryTrait, PublisherManager},
     livestream::{
         pull_manager::PullStreamManager,
-        segment_manager::{SegmentManager, CleanupConfig},
+        external_publish_manager::ExternalPublishManager,
     },
-    protocols::hls::HlsServer,
+    api::{LiveStreamingInfrastructure, UserStreamTracker},
     error::StreamResult,
 };
 use synctv_xiu::rtmp::auth::AuthCallback;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing as log;
 use synctv_xiu::streamhub::StreamsHub;
 
-pub struct LivestreamServer {
-    // Configuration
-    rtmp_address: String,
-    hls_address: String,
-    hls_storage_path: String,
-    storage_backend: StorageBackend,
-    oss_config: Option<OssConfig>,
+pub struct LivestreamConfig {
+    pub rtmp_address: String,
+    pub gop_cache_size: usize,
+    pub node_id: String,
+    pub cleanup_check_interval_seconds: u64,
+    pub stream_timeout_seconds: u64,
+}
 
-    // Shared components
-    registry: Arc<dyn StreamRegistryTrait>,
-    node_id: String,
-    segment_manager: Option<Arc<SegmentManager>>,
+/// Handle returned by [`LivestreamServer::start`].
+///
+/// Owns the spawned tasks (StreamHub event loop, RTMP server, PublisherManager)
+/// and exposes the shared infrastructure components.
+pub struct LivestreamHandle {
+    pub infrastructure: Arc<LiveStreamingInfrastructure>,
+    pub pull_manager: Arc<PullStreamManager>,
+    hub_handle: JoinHandle<()>,
+    rtmp_handle: JoinHandle<()>,
+    publisher_manager_handle: JoinHandle<()>,
+}
+
+impl LivestreamHandle {
+    /// Abort all spawned tasks in reverse startup order.
+    pub fn shutdown(&self) {
+        self.publisher_manager_handle.abort();
+        self.rtmp_handle.abort();
+        self.hub_handle.abort();
+    }
+}
+
+pub struct LivestreamServer {
+    config: LivestreamConfig,
+    publisher_registry: Arc<dyn StreamRegistryTrait>,
+    user_stream_tracker: UserStreamTracker,
     auth: Option<Arc<dyn AuthCallback>>,
-    hub_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl LivestreamServer {
     pub fn new(
-        rtmp_address: String,
-        hls_address: String,
-        hls_storage_path: String,
-        storage_backend: StorageBackend,
-        registry: Arc<dyn StreamRegistryTrait>,
-        node_id: String,
+        config: LivestreamConfig,
+        publisher_registry: Arc<dyn StreamRegistryTrait>,
+        user_stream_tracker: UserStreamTracker,
     ) -> Self {
         Self {
-            rtmp_address,
-            hls_address,
-            hls_storage_path,
-            storage_backend,
-            oss_config: None,
-            registry,
-            node_id,
-            segment_manager: None,
+            config,
+            publisher_registry,
+            user_stream_tracker,
             auth: None,
-            hub_handle: None,
         }
-    }
-
-    /// Set OSS configuration for object storage backend
-    #[must_use]
-    pub fn with_oss_config(mut self, config: OssConfig) -> Self {
-        self.oss_config = Some(config);
-        self
     }
 
     /// Set RTMP auth callback
@@ -76,153 +80,93 @@ impl LivestreamServer {
         self
     }
 
-    pub async fn start(&mut self) -> StreamResult<()> {
-        // Initialize HLS storage backend
-        let storage: Arc<dyn HlsStorage> = match self.storage_backend {
-            StorageBackend::File => {
-                log::info!("Using file storage backend: {}", self.hls_storage_path);
-                Arc::new(FileStorage::new(&self.hls_storage_path))
-            }
-            StorageBackend::Memory => {
-                log::info!("Using memory storage backend (data lost on restart)");
-                Arc::new(MemoryStorage::new())
-            }
-            StorageBackend::Oss => {
-                if let Some(oss_config) = self.oss_config.take() {
-                    log::info!(
-                        "Using OSS storage backend: bucket={}, endpoint={}",
-                        oss_config.bucket,
-                        oss_config.endpoint
-                    );
-                    match OssStorage::new(oss_config) {
-                        Ok(oss) => Arc::new(oss),
-                        Err(e) => {
-                            log::error!("Failed to initialize OSS storage: {}, falling back to file storage", e);
-                            Arc::new(FileStorage::new(&self.hls_storage_path))
-                        }
-                    }
-                } else {
-                    log::warn!("OSS storage selected but no config provided, falling back to file storage");
-                    Arc::new(FileStorage::new(&self.hls_storage_path))
-                }
-            }
-        };
-
-        // Create segment manager with default cleanup config
-        let cleanup_config = CleanupConfig {
-            interval: std::time::Duration::from_secs(10),
-            retention: std::time::Duration::from_mins(1),
-        };
-        let segment_manager = Arc::new(SegmentManager::new(storage, cleanup_config));
-
-        // Start segment cleanup task
-        Arc::clone(&segment_manager).start_cleanup_task();
-        log::info!("HLS segment cleanup task started");
-
-        // Store segment manager for later use
-        self.segment_manager = Some(Arc::clone(&segment_manager));
-
-        // Create StreamHub channels and hub
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        let stream_hub = Arc::new(Mutex::new(StreamsHub::new(
+    /// Start the entire livestream infrastructure.
+    ///
+    /// Creates StreamHub, RTMP server, PullStreamManager,
+    /// ExternalPublishManager, PublisherManager, and LiveStreamingInfrastructure.
+    /// Returns a handle with public components.
+    pub async fn start(self) -> StreamResult<LivestreamHandle> {
+        // 1. Create StreamHub channels and hub (bounded to prevent OOM under load)
+        let (event_sender, event_receiver) =
+            mpsc::channel(synctv_xiu::streamhub::define::STREAM_HUB_EVENT_CHANNEL_CAPACITY);
+        let mut streams_hub = StreamsHub::new(
             event_sender.clone(),
             event_receiver,
-        )));
+        );
 
-        // Get broadcast receiver for PublisherManager BEFORE spawning the hub
-        let broadcast_receiver = {
-            let mut hub = stream_hub.lock().await;
-            hub.get_client_event_consumer()
-        };
+        // Get broadcast receiver BEFORE spawning the hub
+        let broadcast_receiver = streams_hub.get_client_event_consumer();
 
-        // Start RTMP server with the event sender
-        self.start_rtmp_server(event_sender.clone()).await?;
+        // 2. Spawn StreamHub event loop
+        let hub_handle = tokio::spawn(async move {
+            streams_hub.run().await;
+            log::info!("StreamHub event loop ended");
+        });
 
-        // Create PullStreamManager with the event sender from StreamHub
-        let _pull_manager = Arc::new(PullStreamManager::new(
-            self.registry.clone(),
-            self.node_id.clone(),
-            event_sender,
+        // 3. Create and start RTMP server
+        let mut rtmp_server = synctv_xiu::rtmp::rtmp::RtmpServer::new(
+            self.config.rtmp_address.clone(),
+            event_sender.clone(),
+            self.config.gop_cache_size,
+            self.auth,
+        );
+        let rtmp_handle = tokio::spawn(async move {
+            if let Err(e) = rtmp_server.run().await {
+                log::error!("RTMP server error: {}", e);
+            }
+        });
+
+        // 4. Create PullStreamManager
+        let pull_manager = Arc::new(PullStreamManager::with_timeouts(
+            self.publisher_registry.clone(),
+            self.config.node_id.clone(),
+            event_sender.clone(),
+            self.config.cleanup_check_interval_seconds,
+            self.config.stream_timeout_seconds,
         ));
 
-        // Start PublisherManager - listens to StreamHub broadcast events
+        // 5. Create ExternalPublishManager
+        let external_publish_manager = Arc::new(ExternalPublishManager::with_timeouts(
+            self.publisher_registry.clone(),
+            self.config.node_id.clone(),
+            event_sender.clone(),
+            self.config.cleanup_check_interval_seconds,
+            self.config.stream_timeout_seconds,
+        ));
+
+        // 6. Start PublisherManager — listens to StreamHub broadcast events
         // and registers/unregisters publishers in Redis for multi-node relay
         let publisher_manager = Arc::new(PublisherManager::new(
-            self.registry.clone(),
-            self.node_id.clone(),
+            self.publisher_registry.clone(),
+            self.config.node_id,
         ));
-        tokio::spawn({
+        let publisher_manager_handle = tokio::spawn({
             let pm = Arc::clone(&publisher_manager);
             async move {
                 pm.start(broadcast_receiver).await;
             }
         });
 
-        // Start HLS server
-        self.start_hls_server(Arc::clone(&stream_hub), segment_manager).await?;
-
-        // Start StreamHub event loop
-        let hub_clone = Arc::clone(&stream_hub);
-        let hub_handle = tokio::spawn(async move {
-            let mut hub = hub_clone.lock().await;
-            hub.run().await;
-            log::info!("StreamHub event loop ended");
-        });
-        self.hub_handle = Some(hub_handle);
-
-        Ok(())
-    }
-
-    async fn start_rtmp_server(
-        &self,
-        event_sender: synctv_xiu::streamhub::define::StreamHubEventSender,
-    ) -> StreamResult<()> {
-        let auth = self.auth.clone();
-        let mut xiu_rtmp_server = synctv_xiu::rtmp::rtmp::RtmpServer::new(
-            self.rtmp_address.clone(),
+        // 7. Create LiveStreamingInfrastructure
+        let infrastructure = Arc::new(LiveStreamingInfrastructure::new(
+            self.publisher_registry,
             event_sender,
-            2, // gop_num
-            auth,
+            pull_manager.clone(),
+            external_publish_manager,
+            self.user_stream_tracker,
+        ));
+
+        log::info!(
+            "Livestream infrastructure initialized, RTMP server listening on rtmp://{}",
+            self.config.rtmp_address,
         );
 
-        tokio::spawn(async move {
-            if let Err(e) = xiu_rtmp_server.run().await {
-                log::error!("RTMP server error: {}", e);
-            }
-        });
-
-        Ok(())
-    }
-
-    /// Shutdown the livestream server, aborting the `StreamHub` event loop.
-    pub async fn shutdown(&mut self) {
-        if let Some(handle) = self.hub_handle.take() {
-            handle.abort();
-            log::info!("StreamHub event loop aborted");
-        }
-    }
-
-    async fn start_hls_server(
-        &self,
-        stream_hub: Arc<Mutex<StreamsHub>>,
-        segment_manager: Arc<SegmentManager>,
-    ) -> StreamResult<()> {
-        // Create stream registry for HLS (shared between remuxer and HTTP server)
-        let stream_registry = Arc::new(dashmap::DashMap::new());
-
-        let hls_server = HlsServer::new(
-            self.hls_address.clone(),
-            stream_hub,
-            segment_manager,
-            stream_registry,
-        );
-
-        tokio::spawn(async move {
-            if let Err(e) = hls_server.start().await {
-                log::error!("HLS server error: {}", e);
-            }
-        });
-
-        Ok(())
+        Ok(LivestreamHandle {
+            infrastructure,
+            pull_manager,
+            hub_handle,
+            rtmp_handle,
+            publisher_manager_handle,
+        })
     }
 }

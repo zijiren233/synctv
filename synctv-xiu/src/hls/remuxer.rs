@@ -274,7 +274,7 @@ impl StreamHandler {
         };
 
         self.event_producer
-            .send(subscribe_event)
+            .try_send(subscribe_event)
             .map_err(|_| HlsRemuxerError::StreamHubEventSendError)?;
 
         let receiver = event_result_receiver
@@ -316,7 +316,7 @@ impl StreamHandler {
             info: sub_info,
         };
 
-        if let Err(e) = self.event_producer.send(unsubscribe_event) {
+        if let Err(e) = self.event_producer.try_send(unsubscribe_event) {
             log::error!("Unsubscribe error: {}", e);
         }
 

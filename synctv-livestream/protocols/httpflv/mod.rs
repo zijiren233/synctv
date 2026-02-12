@@ -112,7 +112,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_flv_state_creation() {
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (event_sender, _) = tokio::sync::mpsc::channel(64);
 
         let Some(redis_conn) = try_redis_connection().await else {
             eprintln!("Redis not available, skipping test");
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_http_flv_session_creation() {
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (event_sender, _) = tokio::sync::mpsc::channel(64);
         let (response_tx, _response_rx) = mpsc::unbounded_channel();
 
         let session = HttpFlvSession::new(
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_flv_session_defaults() {
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (event_sender, _) = tokio::sync::mpsc::channel(64);
         let (response_tx, _response_rx) = mpsc::unbounded_channel();
 
         let session = HttpFlvSession::new(

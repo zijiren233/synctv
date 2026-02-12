@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use synctv_xiu::rtmp::auth::AuthCallback;
+use synctv_livestream::AuthCallback;
 use synctv_livestream::api::UserStreamTracker;
 use synctv_livestream::relay::StreamRegistryTrait;
 use tokio::task::AbortHandle;
@@ -314,12 +314,11 @@ impl AuthCallback for SyncTvRtmpAuth {
     async fn on_play(
         &self,
         app_name: &str,
-        stream_name: &str,
+        _stream_name: &str,
         _query: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracing::warn!(
             room_id = %app_name,
-            media_id = %stream_name,
             "RTMP play rejected: direct RTMP pull is disabled, use HTTP-FLV or HLS"
         );
         Err("RTMP pull is disabled. Use HTTP-FLV or HLS endpoints for playback.".into())
@@ -328,12 +327,11 @@ impl AuthCallback for SyncTvRtmpAuth {
     async fn on_unplay(
         &self,
         app_name: &str,
-        stream_name: &str,
+        _stream_name: &str,
         _query: Option<&str>,
     ) {
         tracing::info!(
             room_id = %app_name,
-            media_id = %stream_name,
             "RTMP player disconnected"
         );
     }
@@ -373,8 +371,7 @@ impl AuthCallback for SyncTvRtmpAuth {
         } else {
             tracing::warn!(
                 app_name = %app_name,
-                stream_name = %stream_name,
-                "on_unpublish: no matching stream found in tracker"
+                "on_unpublish: no matching stream found in tracker (stream_name redacted)"
             );
         }
 

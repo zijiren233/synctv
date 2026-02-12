@@ -203,7 +203,7 @@ impl HttpFlvSession {
         };
 
         self.event_producer
-            .send(subscribe_event)
+            .try_send(subscribe_event)
             .map_err(|_| anyhow::anyhow!("Failed to send subscribe event"))?;
 
         let result = event_result_receiver
@@ -245,7 +245,7 @@ impl HttpFlvSession {
             info: sub_info,
         };
 
-        if let Err(e) = self.event_producer.send(unsubscribe_event) {
+        if let Err(e) = self.event_producer.try_send(unsubscribe_event) {
             warn!("Failed to send unsubscribe event: {}", e);
         }
 
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn test_http_flv_session_creation() {
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (event_sender, _) = tokio::sync::mpsc::channel(64);
         let (response_tx, _response_rx) = mpsc::unbounded_channel();
 
         let session = HttpFlvSession::new(
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_flv_session_defaults() {
-        let (event_sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (event_sender, _) = tokio::sync::mpsc::channel(64);
         let (response_tx, _response_rx) = mpsc::unbounded_channel();
 
         let session = HttpFlvSession::new(

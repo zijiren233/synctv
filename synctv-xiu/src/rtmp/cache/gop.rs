@@ -1,4 +1,9 @@
 use {std::collections::VecDeque, crate::streamhub::define::FrameData};
+
+/// Max frames per GOP to prevent unbounded memory growth.
+/// 1500 frames ≈ 1 minute at 24fps, generous for any reasonable GOP.
+const MAX_FRAMES_PER_GOP: usize = 1500;
+
 #[derive(Clone)]
 pub struct Gop {
     datas: Vec<FrameData>,
@@ -17,6 +22,9 @@ impl Gop {
     }
 
     fn save_frame_data(&mut self, data: FrameData) {
+        if self.datas.len() >= MAX_FRAMES_PER_GOP {
+            return;
+        }
         self.datas.push(data);
     }
 

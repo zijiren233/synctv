@@ -350,7 +350,7 @@ impl Common {
             info: self.get_subscriber_info(),
             result_sender: event_result_sender,
         };
-        let rv = self.event_producer.send(subscribe_event);
+        let rv = self.event_producer.try_send(subscribe_event);
 
         if rv.is_err() {
             return Err(SessionError {
@@ -396,7 +396,7 @@ impl Common {
             identifier,
             info: self.get_subscriber_info(),
         };
-        if let Err(err) = self.event_producer.send(subscribe_event) {
+        if let Err(err) = self.event_producer.try_send(subscribe_event) {
             log::error!("unsubscribe_from_stream_hub err {err}");
         }
 
@@ -424,7 +424,7 @@ impl Common {
             result_sender: event_result_sender,
         };
 
-        if self.event_producer.send(publish_event).is_err() {
+        if self.event_producer.try_send(publish_event).is_err() {
             return Err(SessionError {
                 value: SessionErrorValue::StreamHubEventSendErr,
             });
@@ -469,7 +469,7 @@ impl Common {
             },
         };
 
-        match self.event_producer.send(unpublish_event) {
+        match self.event_producer.try_send(unpublish_event) {
             Err(_) => {
                 log::error!(
                     "unpublish_to_stream_hub error.app_name: {app_name}, stream_name: {stream_name}"

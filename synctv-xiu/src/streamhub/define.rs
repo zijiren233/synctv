@@ -130,8 +130,12 @@ pub type FrameDataReceiver = mpsc::UnboundedReceiver<FrameData>;
 pub type PacketDataSender = mpsc::UnboundedSender<PacketData>;
 pub type PacketDataReceiver = mpsc::UnboundedReceiver<PacketData>;
 
-pub type StreamHubEventSender = mpsc::UnboundedSender<StreamHubEvent>;
-pub type StreamHubEventReceiver = mpsc::UnboundedReceiver<StreamHubEvent>;
+pub type StreamHubEventSender = mpsc::Sender<StreamHubEvent>;
+pub type StreamHubEventReceiver = mpsc::Receiver<StreamHubEvent>;
+
+/// Default capacity for the bounded StreamHub event channel.
+/// Large enough for normal operation but prevents unbounded memory growth.
+pub const STREAM_HUB_EVENT_CHANNEL_CAPACITY: usize = 4096;
 
 pub type BroadcastEventSender = broadcast::Sender<BroadcastEvent>;
 pub type BroadcastEventReceiver = broadcast::Receiver<BroadcastEvent>;

@@ -102,7 +102,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         // Send subscribe event
         let event_sender = self.stream_hub_event_sender.lock().await;
         event_sender
-            .send(subscribe_event)
+            .try_send(subscribe_event)
             .map_err(|_| Status::internal("Failed to send subscribe event"))?;
         drop(event_sender);
 
@@ -193,7 +193,7 @@ impl StreamRelayServiceImpl {
         };
 
         let sender = event_sender.lock().await;
-        if let Err(e) = sender.send(unsubscribe_event) {
+        if let Err(e) = sender.try_send(unsubscribe_event) {
             warn!("Failed to send unsubscribe event: {}", e);
         }
     }
@@ -205,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_creation() {
-        let (_event_sender, _) = tokio::sync::mpsc::unbounded_channel::<synctv_xiu::streamhub::define::StreamHubEvent>();
+        let (_event_sender, _) = tokio::sync::mpsc::channel::<synctv_xiu::streamhub::define::StreamHubEvent>(64);
         let node_id = "test_node".to_string();
 
         // Verify the node_id is correct

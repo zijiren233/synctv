@@ -90,7 +90,7 @@ impl synctv_livestream::relay::StreamRegistryTrait for MockStreamRegistry {
 
 fn create_test_infrastructure() -> LiveStreamingInfrastructure {
     let registry = Arc::new(MockStreamRegistry) as Arc<dyn synctv_livestream::relay::StreamRegistryTrait>;
-    let (event_sender, _) = mpsc::unbounded_channel();
+    let (event_sender, _) = mpsc::channel(64);
     let storage = Arc::new(MemoryStorage::new());
     let segment_manager = Arc::new(SegmentManager::new(storage, CleanupConfig::default()));
     let hls_registry = Arc::new(DashMap::new());

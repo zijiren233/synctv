@@ -61,7 +61,7 @@ impl AdminApiImpl {
         // 2. Cluster-wide via Redis
         if let Some(tx) = &self.redis_publish_tx {
             let _ = tx.send(PublishRequest {
-                room_id: RoomId::from_string(room_id.to_string()),
+                room_id: Some(RoomId::from_string(room_id.to_string())),
                 event: ClusterEvent::KickPublisher {
                     room_id: RoomId::from_string(room_id.to_string()),
                     media_id: MediaId::from_string(media_id.to_string()),
@@ -650,16 +650,21 @@ impl AdminApiImpl {
         // Force disconnect all user connections (WebSocket and streaming)
         self.connection_manager.disconnect_user(&uid);
 
-        // Kick active RTMP publisher if the user is streaming (local + cluster-wide)
+        // Kick active RTMP streams for this user on ALL replicas
+        // 1. Local kick (this replica's streams)
         if let Some(infra) = &self.live_streaming_infrastructure {
-            let streams = infra.user_stream_tracker.get_user_streams(uid.as_str());
-
-            for (room_id, media_id) in &streams {
-                self.kick_stream_cluster(room_id, media_id, "user_banned");
-            }
-
-            // Also do local tracker cleanup
             infra.kick_user_publishers(uid.as_str());
+        }
+        // 2. Cluster-wide broadcast so other replicas kick their local streams for this user
+        if let Some(tx) = &self.redis_publish_tx {
+            let _ = tx.send(PublishRequest {
+                room_id: None,
+                event: ClusterEvent::KickUser {
+                    user_id: uid.clone(),
+                    reason: "user_banned".to_string(),
+                    timestamp: chrono::Utc::now(),
+                },
+            });
         }
 
         Ok(crate::proto::admin::BanUserResponse {

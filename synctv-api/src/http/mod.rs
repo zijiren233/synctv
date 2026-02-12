@@ -115,7 +115,7 @@ pub(crate) fn kick_stream_cluster(state: &AppState, room_id: &str, media_id: &st
     // 2. Cluster-wide via Redis
     if let Some(tx) = &state.redis_publish_tx {
         if tx.send(PublishRequest {
-            room_id: RoomId::from_string(room_id.to_string()),
+            room_id: Some(RoomId::from_string(room_id.to_string())),
             event: ClusterEvent::KickPublisher {
                 room_id: RoomId::from_string(room_id.to_string()),
                 media_id: MediaId::from_string(media_id.to_string()),

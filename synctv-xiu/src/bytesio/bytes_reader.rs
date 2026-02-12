@@ -9,16 +9,28 @@ use {
     tokio::sync::Mutex,
 };
 
+/// Max buffer size (10 MB) to prevent unbounded memory growth from malicious/buggy input.
+const MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024;
+
 pub struct BytesReader {
     buffer: BytesMut,
 }
 impl BytesReader {
-    #[must_use] 
+    #[must_use]
     pub const fn new(input: BytesMut) -> Self {
         Self { buffer: input }
     }
 
     pub fn extend_from_slice(&mut self, extend: &[u8]) {
+        let new_len = self.buffer.len() + extend.len();
+        if new_len > MAX_BUFFER_SIZE {
+            log::warn!(
+                "BytesReader buffer overflow: {} + {} > {} max, dropping data",
+                self.buffer.len(), extend.len(), MAX_BUFFER_SIZE,
+            );
+            return;
+        }
+
         let remaining_mut = self.buffer.remaining_mut();
         let extend_length = extend.len();
 

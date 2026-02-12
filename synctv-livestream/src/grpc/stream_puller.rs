@@ -225,7 +225,7 @@ impl GrpcStreamPuller {
         };
 
         self.stream_hub_event_sender
-            .send(publish_event)
+            .try_send(publish_event)
             .map_err(|_| anyhow::anyhow!("Failed to send publish event"))?;
 
         let result = event_result_receiver
@@ -251,7 +251,7 @@ impl GrpcStreamPuller {
 
         let unpublish_event = StreamHubEvent::UnPublish { identifier };
 
-        if let Err(e) = self.stream_hub_event_sender.send(unpublish_event) {
+        if let Err(e) = self.stream_hub_event_sender.try_send(unpublish_event) {
             warn!("Failed to send unpublish event: {}", e);
         }
 
@@ -266,7 +266,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_puller_creation() {
-        let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (stream_hub_event_sender, _) = tokio::sync::mpsc::channel(64);
 
         let puller = GrpcStreamPuller::new(
             "room123".to_string(),
@@ -284,7 +284,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_puller_run() {
-        let (stream_hub_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (stream_hub_event_sender, _) = tokio::sync::mpsc::channel(64);
 
         let puller = GrpcStreamPuller::new(
             "room123".to_string(),

@@ -109,10 +109,11 @@ impl RedisPubSub {
 
                 // Retry the previously failed publish request if any
                 if let Some(req) = retry_request.take() {
+                    let event_type = req.event.event_type();
                     match Self::publish_event(&mut conn, &node_id, req.event.clone()).await {
                         Ok(subscribers) => {
                             debug!(
-                                room_id = %req.room_id.as_str(),
+                                event_type = event_type,
                                 subscribers = subscribers,
                                 "Retried event published to Redis"
                             );
@@ -120,7 +121,7 @@ impl RedisPubSub {
                         Err(e) => {
                             warn!(
                                 error = %e,
-                                room_id = %req.room_id.as_str(),
+                                event_type = event_type,
                                 "Retry publish failed, will retry after next reconnect"
                             );
                             // Put request back for another attempt after reconnection
@@ -135,10 +136,11 @@ impl RedisPubSub {
                 // Process events until connection breaks
                 loop {
                     if let Some(req) = publish_rx.recv().await {
+                        let event_type = req.event.event_type();
                         match Self::publish_event(&mut conn, &node_id, req.event.clone()).await {
                             Ok(subscribers) => {
                                 debug!(
-                                    room_id = %req.room_id.as_str(),
+                                    event_type = event_type,
                                     subscribers = subscribers,
                                     "Event published to Redis"
                                 );
@@ -146,7 +148,7 @@ impl RedisPubSub {
                             Err(e) => {
                                 error!(
                                     error = %e,
-                                    room_id = %req.room_id.as_str(),
+                                    event_type = event_type,
                                     "Failed to publish event, saving for retry after reconnect"
                                 );
                                 // Save failed request for retry after reconnection
@@ -230,27 +232,27 @@ impl RedisPubSub {
             }
         };
 
-        // Subscribe to all room channels using pattern
+        // Subscribe to all room channels and admin channel using patterns
         match timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
-            pubsub.psubscribe("room:*"),
+            pubsub.psubscribe(&["room:*", "admin:*"]),
         )
         .await
         {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 return SubscriberExit::ConnectFailed(
-                    anyhow::anyhow!(e).context("Failed to subscribe to room:* pattern"),
+                    anyhow::anyhow!(e).context("Failed to subscribe to room:*/admin:* patterns"),
                 );
             }
             Err(_) => {
                 return SubscriberExit::ConnectFailed(anyhow::anyhow!(
-                    "Timed out subscribing to room:* pattern"
+                    "Timed out subscribing to room:*/admin:* patterns"
                 ));
             }
         }
 
-        info!("Redis subscriber connected, listening to room:* channels");
+        info!("Redis subscriber connected, listening to room:* and admin:* channels");
 
         // Process incoming messages
         let mut stream = pubsub.on_message();
@@ -279,16 +281,23 @@ impl RedisPubSub {
                         continue;
                     }
 
+                    debug!(
+                        channel = %channel,
+                        from_node = %envelope.node_id,
+                        event_type = %envelope.event.event_type(),
+                        "Received event from Redis"
+                    );
+
+                    // Handle admin channel events (no room_id)
+                    if channel.starts_with("admin:") {
+                        // Forward admin events (KickUser, etc.) to admin channel
+                        let _ = self.admin_event_tx.send(envelope.event);
+                        continue;
+                    }
+
                     // Extract room_id from channel name (room:{room_id})
                     if let Some(room_id_str) = channel.strip_prefix("room:") {
                         let room_id = RoomId::from_string(room_id_str.to_string());
-
-                        debug!(
-                            channel = %channel,
-                            from_node = %envelope.node_id,
-                            event_type = %envelope.event.event_type(),
-                            "Received event from Redis"
-                        );
 
                         // Forward KickPublisher events to admin channel
                         if matches!(&envelope.event, ClusterEvent::KickPublisher { .. }) {
@@ -358,11 +367,12 @@ impl RedisPubSub {
         node_id: &str,
         event: ClusterEvent,
     ) -> Result<usize> {
-        let room_id = event
-            .room_id()
-            .context("Cannot publish event without room_id")?;
-
-        let channel = format!("room:{}", room_id.as_str());
+        // Events with a room_id go to room:{room_id}, admin-only events go to admin:events
+        let channel = if let Some(room_id) = event.room_id() {
+            format!("room:{}", room_id.as_str())
+        } else {
+            "admin:events".to_string()
+        };
 
         // Wrap event in envelope with node_id
         let envelope = EventEnvelope {
@@ -397,9 +407,10 @@ enum SubscriberExit {
     ConnectFailed(anyhow::Error),
 }
 
-/// Request to publish an event
+/// Request to publish an event.
+/// `room_id` is used for room-scoped events; admin events (e.g., `KickUser`) set it to `None`.
 pub struct PublishRequest {
-    pub room_id: RoomId,
+    pub room_id: Option<RoomId>,
     pub event: ClusterEvent,
 }
 
@@ -487,7 +498,7 @@ mod tests {
 
         publish_tx1
             .send(PublishRequest {
-                room_id: room_id.clone(),
+                room_id: Some(room_id.clone()),
                 event,
             })
             .unwrap();

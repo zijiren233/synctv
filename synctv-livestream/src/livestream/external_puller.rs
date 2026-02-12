@@ -220,7 +220,7 @@ impl ExternalStreamPuller {
 
         // Create bridge channel — ClientSession sends StreamHub events here
         // instead of the real StreamHub. We intercept and redirect.
-        let (bridge_tx, mut bridge_rx) = tokio::sync::mpsc::unbounded_channel::<StreamHubEvent>();
+        let (bridge_tx, mut bridge_rx) = tokio::sync::mpsc::channel::<StreamHubEvent>(64);
 
         // Clone data_sender for the bridge task
         let bridge_data_sender = data_sender.clone();
@@ -464,7 +464,7 @@ impl ExternalStreamPuller {
         };
 
         self.stream_hub_event_sender
-            .send(publish_event)
+            .try_send(publish_event)
             .map_err(|_| anyhow::anyhow!("Failed to send publish event"))?;
 
         let result = event_result_receiver
@@ -490,7 +490,7 @@ impl ExternalStreamPuller {
 
         let unpublish_event = StreamHubEvent::UnPublish { identifier };
 
-        if let Err(e) = self.stream_hub_event_sender.send(unpublish_event) {
+        if let Err(e) = self.stream_hub_event_sender.try_send(unpublish_event) {
             warn!("Failed to send unpublish event: {}", e);
         }
 
@@ -541,7 +541,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_external_puller_creation_rtmp() {
-        let (sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _) = tokio::sync::mpsc::channel(64);
 
         let puller = ExternalStreamPuller::new(
             "room123".to_string(),
@@ -559,7 +559,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_external_puller_creation_flv() {
-        let (sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _) = tokio::sync::mpsc::channel(64);
 
         let puller = ExternalStreamPuller::new(
             "room123".to_string(),
@@ -574,7 +574,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_external_puller_invalid_url() {
-        let (sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _) = tokio::sync::mpsc::channel(64);
 
         let puller = ExternalStreamPuller::new(
             "room123".to_string(),
@@ -588,7 +588,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_external_puller_m3u8_rejected() {
-        let (sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _) = tokio::sync::mpsc::channel(64);
 
         let puller = ExternalStreamPuller::new(
             "room123".to_string(),

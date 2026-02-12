@@ -4978,7 +4978,6 @@ dependencies = [
  "synctv-core",
  "synctv-livestream",
  "synctv-sfu",
- "synctv-xiu",
  "tokio",
  "tracing",
  "tracing-subscriber",

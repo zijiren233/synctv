@@ -17,9 +17,6 @@ synctv-livestream.workspace = true
 synctv-cluster.workspace = true
 synctv-sfu.workspace = true
 
-# Streaming (for AuthCallback trait)
-synctv-xiu.workspace = true
-
 # Async
 tokio.workspace = true
 async-trait.workspace = true
