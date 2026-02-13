@@ -3,6 +3,7 @@ use redis::aio::ConnectionManager as RedisConnectionManager;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use tracing as log;
 
 /// Heartbeat interval in seconds for publisher liveness.
 /// The publisher manager sends a heartbeat every this many seconds.
@@ -359,28 +360,43 @@ impl StreamRegistry {
     }
 
     /// List all active streams (immutable version)
+    ///
+    /// Uses SCAN instead of KEYS to avoid blocking Redis on large datasets.
+    /// SCAN iterates through keys incrementally without blocking the server.
     pub async fn list_active_streams_immut(&self) -> Result<Vec<(String, String)>> {
         let mut conn = self.redis.clone();
-        let keys: Vec<String> = redis::cmd("KEYS")
-            .arg("stream:publisher:*")
-            .query_async(&mut conn)
-            .await
-            .map_err(|e| anyhow!(e.to_string()))?;
+        let mut streams = Vec::new();
+        let mut cursor: u64 = 0;
 
-        let streams: Vec<(String, String)> = keys
-            .into_iter()
-            .filter_map(|k| {
-                k.strip_prefix("stream:publisher:")
-                    .and_then(|s| {
-                        let parts: Vec<&str> = s.split(':').collect();
-                        if parts.len() == 2 {
-                            Some((parts[0].to_string(), parts[1].to_string()))
-                        } else {
-                            None
-                        }
-                    })
-            })
-            .collect();
+        loop {
+            // SCAN returns (new_cursor, keys)
+            let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg("stream:publisher:*")
+                .arg("COUNT")
+                .arg(100) // Scan 100 keys per iteration for better performance
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| anyhow!(e.to_string()))?;
+
+            // Parse keys into (room_id, media_id) tuples
+            for k in keys {
+                if let Some(s) = k.strip_prefix("stream:publisher:") {
+                    let parts: Vec<&str> = s.split(':').collect();
+                    if parts.len() == 2 {
+                        streams.push((parts[0].to_string(), parts[1].to_string()));
+                    }
+                }
+            }
+
+            cursor = new_cursor;
+            // cursor returns to 0 when scan is complete
+            if cursor == 0 {
+                break;
+            }
+        }
+
         Ok(streams)
     }
 
@@ -417,6 +433,90 @@ impl StreamRegistry {
     pub async fn get_current_epoch(&self, room_id: &str, media_id: &str) -> Result<Option<u64>> {
         let publisher = self.get_publisher_immut(room_id, media_id).await?;
         Ok(publisher.map(|p| p.epoch))
+    }
+
+    /// Clean up all publisher registrations for a specific node.
+    /// Used when a node restarts to remove stale entries from Redis.
+    ///
+    /// This uses SCAN to iterate through all publisher keys and removes
+    /// those belonging to the specified node_id.
+    pub async fn cleanup_all_publishers_for_node(&self, node_id: &str) -> Result<()> {
+        let mut conn = self.redis.clone();
+        let mut cursor: u64 = 0;
+
+        loop {
+            // SCAN for publisher keys
+            let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg("stream:publisher:*")
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| anyhow!(e.to_string()))?;
+
+            // Check each key and remove if it belongs to the node
+            for key in keys {
+                // Extract room_id and media_id from key: "stream:publisher:{room_id}:{media_id}"
+                let key_suffix = match key.strip_prefix("stream:publisher:") {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let (room_id, media_id) = match key_suffix.split_once(':') {
+                    Some((r, m)) => (r.to_string(), m.to_string()),
+                    None => continue,
+                };
+
+                // Get publisher info
+                let info_json: Option<String> = redis::cmd("HGET")
+                    .arg(&key)
+                    .arg("publisher")
+                    .query_async(&mut conn)
+                    .await
+                    .map_err(|e| anyhow!(e.to_string()))?;
+
+                if let Some(json) = info_json {
+                    if let Ok(info) = serde_json::from_str::<PublisherInfo>(&json) {
+                        if info.node_id == node_id {
+                            // Remove the publisher entry
+                            let _: () = redis::cmd("HDEL")
+                                .arg(&key)
+                                .arg("publisher")
+                                .query_async(&mut conn)
+                                .await
+                                .map_err(|e| anyhow!(e.to_string()))?;
+
+                            // Also clean up user reverse index if present
+                            if !info.user_id.is_empty() {
+                                let user_key = format!("stream:user_publishers:{}", info.user_id);
+                                let member = format!("{}:{}", room_id, media_id);
+                                let _: () = redis::cmd("SREM")
+                                    .arg(&user_key)
+                                    .arg(&member)
+                                    .query_async(&mut conn)
+                                    .await
+                                    .map_err(|e| anyhow!(e.to_string()))?;
+                            }
+
+                            log::info!(
+                                "Cleaned up stale publisher entry for node {} (room: {}, media: {})",
+                                node_id,
+                                room_id,
+                                media_id
+                            );
+                        }
+                    }
+                }
+            }
+
+            cursor = new_cursor;
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        Ok(())
     }
 }
 

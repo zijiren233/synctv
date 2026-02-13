@@ -349,3 +349,133 @@ pub async fn websocket_rate_limit(
 ) -> Result<Response, AppError> {
     rate_limit_middleware(state, RateLimitCategory::WebSocket, request, next).await
 }
+
+/// Security headers middleware
+///
+/// Adds security-related HTTP headers to all responses to protect against
+/// common web vulnerabilities:
+/// - X-Frame-Options: Prevents clickjacking
+/// - X-Content-Type-Options: Prevents MIME type sniffing
+/// - X-XSS-Protection: Enables browser XSS filter (legacy, but still useful)
+/// - Content-Security-Policy: Restricts resource loading
+/// - Strict-Transport-Security: Enforces HTTPS (only if configured)
+/// - Referrer-Policy: Controls referrer information
+/// - Permissions-Policy: Restricts browser features
+pub async fn security_headers_middleware(
+    request: Request,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+
+    let headers = response.headers_mut();
+
+    // Prevent clickjacking attacks
+    // DENY: The page cannot be displayed in a frame, regardless of the site attempting to do so.
+    if !headers.contains_key("X-Frame-Options") {
+        headers.insert(
+            axum::http::HeaderName::try_from("X-Frame-Options").unwrap(),
+            axum::http::HeaderValue::from_static("DENY"),
+        );
+    }
+
+    // Prevent MIME type sniffing
+    // nosniff: Blocks a request if the requested type is "style" or "script"
+    // and the MIME type is not a valid MIME type for the requested type.
+    if !headers.contains_key("X-Content-Type-Options") {
+        headers.insert(
+            axum::http::HeaderName::try_from("X-Content-Type-Options").unwrap(),
+            axum::http::HeaderValue::from_static("nosniff"),
+        );
+    }
+
+    // Enable XSS filtering in browsers (legacy but still useful for older browsers)
+    // 1; mode=block: Enables XSS filtering. Rather than sanitizing the page,
+    // the browser will prevent rendering of the page entirely if an attack is detected.
+    if !headers.contains_key("X-XSS-Protection") {
+        headers.insert(
+            axum::http::HeaderName::try_from("X-XSS-Protection").unwrap(),
+            axum::http::HeaderValue::from_static("1; mode=block"),
+        );
+    }
+
+    // Content Security Policy
+    // Restricts sources of executable scripts, styles, and other resources
+    // This is a restrictive default - applications may need to customize this
+    if !headers.contains_key("Content-Security-Policy") {
+        // Note: 'unsafe-inline' for style is often needed for inline styles
+        // For APIs, we can be very restrictive
+        headers.insert(
+            axum::http::HeaderName::try_from("Content-Security-Policy").unwrap(),
+            axum::http::HeaderValue::from_static(
+                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+            ),
+        );
+    }
+
+    // Referrer Policy
+    // strict-origin-when-cross-origin: Send origin only for cross-origin requests,
+    // full URL for same-origin requests
+    if !headers.contains_key("Referrer-Policy") {
+        headers.insert(
+            axum::http::HeaderName::try_from("Referrer-Policy").unwrap(),
+            axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
+        );
+    }
+
+    // Permissions Policy (formerly Feature Policy)
+    // Disables various browser features that are typically not needed by APIs
+    if !headers.contains_key("Permissions-Policy") {
+        headers.insert(
+            axum::http::HeaderName::try_from("Permissions-Policy").unwrap(),
+            axum::http::HeaderValue::from_static(
+                "accelerometer=(), camera=(), geolocation=(), gyroscope=(), \
+                 magnetometer=(), microphone=(), payment=(), usb=()"
+            ),
+        );
+    }
+
+    // Cache Control for API responses
+    // Prevents caching of sensitive API responses
+    if !headers.contains_key("Cache-Control") {
+        headers.insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static(
+                "no-store, no-cache, must-revalidate, proxy-revalidate"
+            ),
+        );
+    }
+
+    // Pragma: no-cache (for HTTP/1.0 compatibility)
+    if !headers.contains_key("Pragma") {
+        headers.insert(
+            axum::http::HeaderName::try_from("Pragma").unwrap(),
+            axum::http::HeaderValue::from_static("no-cache"),
+        );
+    }
+
+    response
+}
+
+/// HSTS (HTTP Strict Transport Security) middleware
+///
+/// Should be used alongside security_headers_middleware when HTTPS is enabled.
+/// This tells browsers to always use HTTPS for this site.
+///
+/// # Arguments
+/// * `max_age` - The time, in seconds, that the browser should remember
+///   that a site is only to be accessed using HTTPS.
+/// * `include_subdomains` - If true, this rule applies to all subdomains as well.
+/// * `preload` - If true, the site can be included in browser HSTS preload lists.
+pub fn hsts_header(max_age: u64, include_subdomains: bool, preload: bool) -> String {
+    let mut value = format!("max-age={max_age}");
+
+    if include_subdomains {
+        value.push_str("; includeSubDomains");
+    }
+
+    if preload {
+        value.push_str("; preload");
+    }
+
+    value
+}

@@ -267,9 +267,10 @@ impl MemberService {
         added_permissions: u64,
         removed_permissions: u64,
     ) -> Result<RoomMember> {
-        // Check if granter has permission to modify permissions
+        // Check if granter has permission to modify permissions without cache
+        // Critical operation requires fresh permissions
         self.permission_service
-            .check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
+            .check_permission_no_cache(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
             .await?;
 
         // Get current member to get version
@@ -358,9 +359,10 @@ impl MemberService {
         granter_id: UserId,
         target_user_id: UserId,
     ) -> Result<RoomMember> {
-        // Check if granter has permission to modify permissions
+        // Check if granter has permission to modify permissions without cache
+        // Critical operation requires fresh permissions
         self.permission_service
-            .check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
+            .check_permission_no_cache(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
             .await?;
 
         // Get current member to get version
@@ -443,9 +445,9 @@ impl MemberService {
         target_user_id: UserId,
         reason: Option<String>,
     ) -> Result<()> {
-        // Check admin permission (BAN_MEMBER, not KICK_USER)
+        // Check admin permission without cache - critical operation requires fresh permissions
         self.permission_service
-            .check_permission(&room_id.clone(), &admin_id, PermissionBits::BAN_MEMBER)
+            .check_permission_no_cache(&room_id.clone(), &admin_id, PermissionBits::BAN_MEMBER)
             .await?;
 
         // Prevent banning users with equal or higher role (Creator > Admin > Member > Guest)

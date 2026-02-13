@@ -199,7 +199,7 @@ impl StreamHandler {
         segment_manager: Arc<SegmentManager>,
         stream_registry: StreamRegistry,
     ) -> Self {
-        let (_, data_consumer) = mpsc::unbounded_channel();
+        let (_, data_consumer) = mpsc::channel(crate::streamhub::define::FRAME_DATA_CHANNEL_CAPACITY);
         let subscriber_id = Uuid::new(RandomDigitCount::Four);
 
         Self {
@@ -441,11 +441,11 @@ impl StreamProcessor {
                     .demux(timestamp, data)
                     .map_err(|e| HlsRemuxerError::DemuxError(format!("Video demux error: {e:?}")))?;
 
-                if video_data.is_none() {
-                    return Ok(());
-                }
+                let video_data = match video_data {
+                    Some(data) => data,
+                    None => return Ok(()),
+                };
 
-                let video_data = video_data.unwrap();
                 let mut flags = 0;
                 let mut payload = BytesMut::new();
                 payload.extend_from_slice(&video_data.data);

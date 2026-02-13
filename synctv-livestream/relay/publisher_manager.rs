@@ -71,10 +71,26 @@ impl PublisherManager {
     }
 
     /// Handle `StreamHub` broadcast events
+    ///
+    /// Note: If publisher registration fails (e.g., Redis error or another
+    /// node already publishing), we return an error but the RTMP session
+    /// may continue. The stream will be published locally but not registered
+    /// globally. This is a known limitation of the broadcast event pattern.
+    /// Future improvement: Use request-response pattern for Publish events
+    /// to allow rejecting RTMP connections before they start.
     async fn handle_broadcast_event(&self, event: synctv_xiu::streamhub::define::BroadcastEvent) -> anyhow::Result<()> {
         match event {
             synctv_xiu::streamhub::define::BroadcastEvent::Publish { identifier } => {
-                self.handle_publish(identifier).await?;
+                if let Err(e) = self.handle_publish(identifier.clone()).await {
+                    // Log detailed error for monitoring
+                    log::error!(
+                        error = %e,
+                        identifier = ?identifier,
+                        "Publisher registration failed - stream will continue locally but not be globally registered. \
+                         This may cause issues with cross-node pull streams."
+                    );
+                    return Err(e);
+                }
             }
             synctv_xiu::streamhub::define::BroadcastEvent::UnPublish { identifier } => {
                 self.handle_unpublish(identifier).await?;

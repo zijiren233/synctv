@@ -75,6 +75,9 @@ impl StreamDataTransceiver {
         frame_senders: &Arc<Mutex<HashMap<Uuid, FrameDataSender>>>,
     ) {
         if let Some(val) = data {
+            // Collect closed subscriber IDs to remove after sending
+            let mut closed_ids = Vec::new();
+
             match val {
                 FrameData::MetaData {
                     timestamp: _,
@@ -86,12 +89,17 @@ impl StreamDataTransceiver {
                         data: data.clone(),
                     };
 
-                    let senders: Vec<_> = frame_senders.lock().await.values().cloned().collect();
-                    for sender in &senders {
-                        if let Err(audio_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
-                            value: StreamHubErrorValue::SendAudioError,
-                        }) {
-                            log::error!("Transmiter send error: {audio_err}");
+                    let senders_guard = frame_senders.lock().await;
+                    for (id, sender) in senders_guard.iter() {
+                        match sender.try_send(data.clone()) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                // Packet dropped due to backpressure - subscriber is slow
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                // Subscriber disconnected, mark for removal
+                                closed_ids.push(*id);
+                            }
                         }
                     }
                 }
@@ -100,12 +108,18 @@ impl StreamDataTransceiver {
                         timestamp,
                         data: data.clone(),
                     };
-                    let senders: Vec<_> = frame_senders.lock().await.values().cloned().collect();
-                    for sender in &senders {
-                        if let Err(video_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
-                            value: StreamHubErrorValue::SendVideoError,
-                        }) {
-                            log::error!("Transmiter send error: {video_err}");
+
+                    let senders_guard = frame_senders.lock().await;
+                    for (id, sender) in senders_guard.iter() {
+                        match sender.try_send(data.clone()) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                // Packet dropped due to backpressure - subscriber is slow
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                // Subscriber disconnected, mark for removal
+                                closed_ids.push(*id);
+                            }
                         }
                     }
                 }
@@ -115,14 +129,29 @@ impl StreamDataTransceiver {
                     let data = FrameData::MediaInfo {
                         media_info: info_value,
                     };
-                    let senders: Vec<_> = frame_senders.lock().await.values().cloned().collect();
-                    for sender in &senders {
-                        if let Err(media_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
-                            value: StreamHubErrorValue::SendVideoError,
-                        }) {
-                            log::error!("Transmiter send error: {media_err}");
+
+                    let senders_guard = frame_senders.lock().await;
+                    for (id, sender) in senders_guard.iter() {
+                        match sender.try_send(data.clone()) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                // Packet dropped due to backpressure - subscriber is slow
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                // Subscriber disconnected, mark for removal
+                                closed_ids.push(*id);
+                            }
                         }
                     }
+                }
+            }
+
+            // Remove closed subscribers
+            if !closed_ids.is_empty() {
+                let mut senders_guard = frame_senders.lock().await;
+                for id in closed_ids {
+                    senders_guard.remove(&id);
+                    log::debug!("Removed closed frame subscriber: {}", id);
                 }
             }
         }
@@ -152,6 +181,9 @@ impl StreamDataTransceiver {
         packet_senders: &Arc<Mutex<HashMap<Uuid, PacketDataSender>>>,
     ) {
         if let Some(val) = data {
+            // Collect closed subscriber IDs to remove after sending
+            let mut closed_ids = Vec::new();
+
             match val {
                 PacketData::Audio { timestamp, data } => {
                     let data = PacketData::Audio {
@@ -159,12 +191,17 @@ impl StreamDataTransceiver {
                         data: data.clone(),
                     };
 
-                    let senders: Vec<_> = packet_senders.lock().await.values().cloned().collect();
-                    for sender in &senders {
-                        if let Err(audio_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
-                            value: StreamHubErrorValue::SendAudioError,
-                        }) {
-                            log::error!("Transmiter send error: {audio_err}");
+                    let senders_guard = packet_senders.lock().await;
+                    for (id, sender) in senders_guard.iter() {
+                        match sender.try_send(data.clone()) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                // Packet dropped due to backpressure - subscriber is slow
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                // Subscriber disconnected, mark for removal
+                                closed_ids.push(*id);
+                            }
                         }
                     }
                 }
@@ -173,14 +210,29 @@ impl StreamDataTransceiver {
                         timestamp,
                         data: data.clone(),
                     };
-                    let senders: Vec<_> = packet_senders.lock().await.values().cloned().collect();
-                    for sender in &senders {
-                        if let Err(video_err) = sender.send(data.clone()).map_err(|_| StreamHubError {
-                            value: StreamHubErrorValue::SendVideoError,
-                        }) {
-                            log::error!("Transmiter send error: {video_err}");
+
+                    let senders_guard = packet_senders.lock().await;
+                    for (id, sender) in senders_guard.iter() {
+                        match sender.try_send(data.clone()) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                // Packet dropped due to backpressure - subscriber is slow
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                // Subscriber disconnected, mark for removal
+                                closed_ids.push(*id);
+                            }
                         }
                     }
+                }
+            }
+
+            // Remove closed subscribers
+            if !closed_ids.is_empty() {
+                let mut senders_guard = packet_senders.lock().await;
+                for id in closed_ids {
+                    senders_guard.remove(&id);
+                    log::debug!("Removed closed packet subscriber: {}", id);
                 }
             }
         }
@@ -524,7 +576,7 @@ impl StreamsHub {
                 } => {
                     let (frame_sender, packet_sender, receiver) = match info.pub_data_type {
                         define::PubDataType::Frame => {
-                            let (sender_chan, receiver_chan) = mpsc::unbounded_channel();
+                            let (sender_chan, receiver_chan) = mpsc::channel(define::FRAME_DATA_CHANNEL_CAPACITY);
                             (
                                 Some(sender_chan),
                                 None,
@@ -535,7 +587,7 @@ impl StreamsHub {
                             )
                         }
                         define::PubDataType::Packet => {
-                            let (sender_chan, receiver_chan) = mpsc::unbounded_channel();
+                            let (sender_chan, receiver_chan) = mpsc::channel(define::PACKET_DATA_CHANNEL_CAPACITY);
                             (
                                 None,
                                 Some(sender_chan),
@@ -547,9 +599,9 @@ impl StreamsHub {
                         }
                         define::PubDataType::Both => {
                             let (sender_frame_chan, receiver_frame_chan) =
-                                mpsc::unbounded_channel();
+                                mpsc::channel(define::FRAME_DATA_CHANNEL_CAPACITY);
                             let (sender_packet_chan, receiver_packet_chan) =
-                                mpsc::unbounded_channel();
+                                mpsc::channel(define::PACKET_DATA_CHANNEL_CAPACITY);
 
                             (
                                 Some(sender_frame_chan),
@@ -599,7 +651,7 @@ impl StreamsHub {
                     //new chan for Frame/Packet sender and receiver
                     let (sender, receiver) = match info.sub_data_type {
                         define::SubDataType::Frame => {
-                            let (sender_chan, receiver_chan) = mpsc::unbounded_channel();
+                            let (sender_chan, receiver_chan) = mpsc::channel(define::FRAME_DATA_CHANNEL_CAPACITY);
                             (
                                 DataSender::Frame {
                                     sender: sender_chan,
@@ -611,7 +663,7 @@ impl StreamsHub {
                             )
                         }
                         define::SubDataType::Packet => {
-                            let (sender_chan, receiver_chan) = mpsc::unbounded_channel();
+                            let (sender_chan, receiver_chan) = mpsc::channel(define::PACKET_DATA_CHANNEL_CAPACITY);
                             (
                                 DataSender::Packet {
                                     sender: sender_chan,

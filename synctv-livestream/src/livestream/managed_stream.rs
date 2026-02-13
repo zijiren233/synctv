@@ -22,7 +22,7 @@ use tracing::{self as log, Instrument};
 pub struct StreamLifecycle {
     subscriber_count: AtomicUsize,
     last_active: Mutex<Instant>,
-    is_running: AtomicBool,
+    is_running: Arc<AtomicBool>,
     task_handle: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
 }
 
@@ -32,7 +32,7 @@ impl StreamLifecycle {
         Self {
             subscriber_count: AtomicUsize::new(0),
             last_active: Mutex::new(Instant::now()),
-            is_running: AtomicBool::new(false),
+            is_running: Arc::new(AtomicBool::new(false)),
             task_handle: Mutex::new(None),
         }
     }
@@ -56,8 +56,27 @@ impl StreamLifecycle {
         }
     }
 
+    /// Check if the stream is healthy.
+    ///
+    /// A stream is considered healthy if:
+    /// 1. The is_running flag is true
+    /// 2. If a task handle is set, it must still be running (not finished)
+    ///
+    /// If no task handle is set, we rely solely on the is_running flag.
+    /// This is useful for unit tests or scenarios where task tracking isn't needed.
     pub async fn is_healthy(&self) -> bool {
-        self.is_running.load(Ordering::SeqCst)
+        if !self.is_running.load(Ordering::SeqCst) {
+            return false;
+        }
+
+        // Check if the task is still running (if a task handle exists)
+        // If the task finished (with or without panic), the stream is not healthy
+        if let Some(handle) = self.task_handle.lock().await.as_ref() {
+            !handle.is_finished()
+        } else {
+            // No task handle set - trust the is_running flag
+            true
+        }
     }
 
     pub fn set_running(&self) {
@@ -72,6 +91,12 @@ impl StreamLifecycle {
     /// Restore running state (used when cleanup detects a late subscriber).
     pub fn restore_running(&self) {
         self.is_running.store(true, Ordering::SeqCst);
+    }
+
+    /// Clone the is_running flag for use in spawned tasks.
+    /// Allows marking the stream as unhealthy from within the task.
+    pub fn is_running_clone(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.is_running)
     }
 
     pub async fn last_active_time(&self) -> Instant {

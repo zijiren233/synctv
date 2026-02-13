@@ -235,6 +235,8 @@ impl PullStream {
 
         let room_id = self.room_id.clone();
         let media_id = self.media_id.clone();
+        // Clone the is_running flag to mark failure in the spawned task
+        let is_running_flag = self.lifecycle.is_running_clone();
 
         let grpc_puller = GrpcStreamPuller::new(
             self.room_id.clone(),
@@ -250,6 +252,9 @@ impl PullStream {
             let result = grpc_puller.run().await;
             if let Err(ref e) = result {
                 log::error!("gRPC puller task failed for {} / {}: {}", room_id, media_id, e);
+                // Mark is_running as false so is_healthy() returns false
+                // This ensures the stream will be removed from the pool on next access
+                is_running_flag.store(false, std::sync::atomic::Ordering::SeqCst);
             }
             result
         });

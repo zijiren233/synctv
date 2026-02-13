@@ -28,6 +28,8 @@ pub enum StreamHubErrorValue {
     BytesWriteError(BytesWriteError),
     #[fail(display = "not correct data sender type")]
     NotCorrectDataSenderType,
+    #[fail(display = "subscriber channel closed")]
+    SubscriberClosed,
     #[fail(display = "Tokio oneshot recv error")]
     RecvError(RecvError),
     #[fail(display = "Serde json error")]

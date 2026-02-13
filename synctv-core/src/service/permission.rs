@@ -179,6 +179,59 @@ impl PermissionService {
         Ok(())
     }
 
+    /// Check permission without using cache (for critical operations).
+    ///
+    /// Use this for security-sensitive operations where permission changes
+    /// must be immediately reflected, such as:
+    /// - Deleting a room
+    /// - Banning/kicking users
+    /// - Changing user roles or permissions
+    ///
+    /// This bypasses the cache and always fetches fresh permissions from the database.
+    pub async fn check_permission_no_cache(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        permission: u64,
+    ) -> Result<()> {
+        let permissions = self.get_user_permissions_no_cache(room_id, user_id).await?;
+
+        if !permissions.has_all(permission) {
+            return Err(Error::Authorization("Permission denied".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Get user's effective permissions without cache (for critical operations).
+    ///
+    /// This always fetches from the database to ensure fresh permission state.
+    pub async fn get_user_permissions_no_cache(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+    ) -> Result<PermissionBits> {
+        // Fetch from database directly, bypassing cache
+        let member = self
+            .member_repo
+            .get(room_id, user_id)
+            .await?
+            .ok_or_else(|| Error::Authorization("Not a member of this room".to_string()))?;
+
+        // Get room settings for role defaults
+        let room_settings = if let Some(ref settings_repo) = self.room_settings_repo {
+            settings_repo.get(room_id).await?
+        } else {
+            RoomSettings::default()
+        };
+
+        // Calculate role default permissions (global + room-level overrides)
+        let role_default = self.calculate_role_default_permissions(&member.role, &room_settings);
+
+        // Apply member-level overrides
+        Ok(member.effective_permissions(role_default))
+    }
+
     /// Get user's effective permissions in a room (with caching)
     ///
     /// This implements the Allow/Deny permission pattern:

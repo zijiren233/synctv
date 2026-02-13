@@ -121,14 +121,26 @@ pub enum PacketData {
 
 //used to transfer a/v frame between different protocols(rtmp/rtsp/webrtc/http-flv/hls)
 //or send a/v frame data from publisher to subscribers.
-pub type FrameDataSender = mpsc::UnboundedSender<FrameData>;
-pub type FrameDataReceiver = mpsc::UnboundedReceiver<FrameData>;
+// Bounded to provide backpressure - when full, packets are dropped.
+pub type FrameDataSender = mpsc::Sender<FrameData>;
+pub type FrameDataReceiver = mpsc::Receiver<FrameData>;
+
+/// Default capacity for frame data channels.
+/// Limits memory usage while allowing enough buffer for normal operation.
+/// When full, new packets are dropped (non-blocking behavior).
+pub const FRAME_DATA_CHANNEL_CAPACITY: usize = 256;
 
 //used to transfer rtp packet data,it includles the following directions:
 // rtsp(publisher)->stream hub->rtsp(subscriber)
 // webrtc(publisher whip)->stream hub->webrtc(subscriber whep)
-pub type PacketDataSender = mpsc::UnboundedSender<PacketData>;
-pub type PacketDataReceiver = mpsc::UnboundedReceiver<PacketData>;
+// Bounded to provide backpressure - when full, packets are dropped.
+pub type PacketDataSender = mpsc::Sender<PacketData>;
+pub type PacketDataReceiver = mpsc::Receiver<PacketData>;
+
+/// Default capacity for packet data channels.
+/// Limits memory usage while allowing enough buffer for normal operation.
+/// When full, new packets are dropped (non-blocking behavior).
+pub const PACKET_DATA_CHANNEL_CAPACITY: usize = 256;
 
 pub type StreamHubEventSender = mpsc::Sender<StreamHubEvent>;
 pub type StreamHubEventReceiver = mpsc::Receiver<StreamHubEvent>;

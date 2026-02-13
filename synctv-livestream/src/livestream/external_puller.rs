@@ -30,7 +30,7 @@ use synctv_xiu::streamhub::{
     stream::StreamIdentifier,
     utils::{RandomDigitCount, Uuid},
 };
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 const MAX_RETRIES: u32 = 10;
@@ -214,9 +214,15 @@ impl ExternalStreamPuller {
             "Connecting to remote RTMP server"
         );
 
-        // Connect TCP to remote RTMP server
-        let tcp_stream = tokio::net::TcpStream::connect(&connect_addr).await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to {connect_addr}: {e}"))?;
+        // Connect TCP to remote RTMP server with timeout
+        const TCP_CONNECT_TIMEOUT_SECS: u64 = 10;
+        let tcp_stream = tokio::time::timeout(
+            std::time::Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS),
+            tokio::net::TcpStream::connect(&connect_addr)
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("TCP connection to {connect_addr} timed out after {TCP_CONNECT_TIMEOUT_SECS}s"))?
+        .map_err(|e| anyhow::anyhow!("Failed to connect to {connect_addr}: {e}"))?;
 
         // Create bridge channel — ClientSession sends StreamHub events here
         // instead of the real StreamHub. We intercept and redirect.
@@ -401,10 +407,10 @@ impl ExternalStreamPuller {
                     }
                 };
 
-                if data_sender.send(frame).is_err() {
-                    return Err(anyhow::anyhow!(
-                        "StreamHub receiver dropped, stopping FLV pull"
-                    ));
+                // Use try_send for non-blocking behavior
+                // If channel is full, drop the packet (backpressure)
+                if let Err(mpsc::error::TrySendError::Full(_)) = data_sender.try_send(frame) {
+                    // Packet dropped due to backpressure - continue receiving
                 }
             }
         }

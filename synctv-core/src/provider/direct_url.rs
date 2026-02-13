@@ -3,66 +3,31 @@
 //! Provides direct playback for HTTP(S) URLs
 
 use super::{MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError};
+use crate::validation::{validate_url_for_ssrf, ValidationError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::net::IpAddr;
 
 /// Direct URL `MediaProvider`
 pub struct DirectUrlProvider {}
 
 impl DirectUrlProvider {
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self {}
     }
 
     /// Validate that a URL does not target internal/private network addresses (SSRF protection).
     fn validate_url_not_internal(raw: &str) -> Result<(), ProviderError> {
-        let parsed = url::Url::parse(raw)
-            .map_err(|_| ProviderError::InvalidUrl("Failed to parse URL".to_string()))?;
-
-        let host = parsed
-            .host_str()
-            .ok_or_else(|| ProviderError::InvalidUrl("URL has no host".to_string()))?;
-
-        // Block well-known internal hostnames
-        if matches!(
-            host,
-            "localhost" | "metadata.google.internal" | "instance-data"
-        ) {
-            return Err(ProviderError::InvalidUrl(
-                "URLs targeting internal hosts are not allowed".to_string(),
-            ));
-        }
-
-        // Block any hostname that resolves to a private/reserved IP
-        if let Ok(ip) = host.parse::<IpAddr>() {
-            if is_private_ip(ip) {
-                return Err(ProviderError::InvalidUrl(
-                    "URLs targeting private IP addresses are not allowed".to_string(),
-                ));
+        validate_url_for_ssrf(raw).map_err(|e| {
+            match e {
+                ValidationError::SSRF(msg) => {
+                    ProviderError::InvalidUrl(format!("SSRF protection: {msg}"))
+                }
+                _ => ProviderError::InvalidUrl(e.to_string()),
             }
-        }
-
-        // Also check via the url crate's typed host (handles bracketed IPv6, etc.)
-        if let Some(url::Host::Ipv4(ip)) = parsed.host() {
-            if is_private_ip(IpAddr::V4(ip)) {
-                return Err(ProviderError::InvalidUrl(
-                    "URLs targeting private IP addresses are not allowed".to_string(),
-                ));
-            }
-        }
-        if let Some(url::Host::Ipv6(ip)) = parsed.host() {
-            if is_private_ip(IpAddr::V6(ip)) {
-                return Err(ProviderError::InvalidUrl(
-                    "URLs targeting private IP addresses are not allowed".to_string(),
-                ));
-            }
-        }
-
-        Ok(())
+        })
     }
 
     /// Detect format from URL
@@ -107,43 +72,6 @@ impl TryFrom<&Value> for DirectUrlSourceConfig {
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
         super::parse_source_config(value, "DirectUrl")
-    }
-}
-
-/// Check if an IP address is in a private/reserved range.
-const fn is_private_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()           // 127.0.0.0/8
-            || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-            || v4.is_link_local()      // 169.254.0.0/16
-            || v4.is_unspecified()     // 0.0.0.0
-            || v4.is_multicast()       // 224.0.0.0/4
-            || v4.is_broadcast()       // 255.255.255.255
-            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64  // 100.64.0.0/10 (CGNAT)
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()           // ::1
-            || v6.is_unspecified()     // ::
-            || v6.is_multicast()       // ff00::/8
-            // fe80::/10 (link-local)
-            || (v6.segments()[0] & 0xffc0) == 0xfe80
-            // fc00::/7 (unique local)
-            || (v6.segments()[0] & 0xfe00) == 0xfc00
-            // IPv4-mapped IPv6 (::ffff:x.x.x.x) - check the embedded IPv4
-            || {
-                let segs = v6.segments();
-                if segs[0] == 0 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0
-                    && segs[4] == 0 && segs[5] == 0xffff
-                {
-                    let o = v6.octets();
-                    let v4 = std::net::Ipv4Addr::new(o[12], o[13], o[14], o[15]);
-                    is_private_ip(IpAddr::V4(v4))
-                } else {
-                    false
-                }
-            }
-        }
     }
 }
 

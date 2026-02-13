@@ -60,6 +60,10 @@ pub trait StreamRegistryTrait: Send + Sync {
     /// Returns Ok(true) if valid, Ok(false) if stale (split-brain detected).
     /// Used by pull streams to detect if publisher has changed.
     async fn validate_epoch(&self, room_id: &str, media_id: &str, epoch: u64) -> Result<bool>;
+
+    /// Clean up all publisher registrations for a specific node.
+    /// Used when a node restarts to remove stale entries from Redis.
+    async fn cleanup_all_publishers_for_node(&self, node_id: &str) -> Result<()>;
 }
 
 // Implement StreamRegistryTrait for StreamRegistry
@@ -115,6 +119,10 @@ impl StreamRegistryTrait for StreamRegistry {
 
     async fn validate_epoch(&self, room_id: &str, media_id: &str, epoch: u64) -> Result<bool> {
         Self::validate_epoch(self, room_id, media_id, epoch).await
+    }
+
+    async fn cleanup_all_publishers_for_node(&self, node_id: &str) -> Result<()> {
+        Self::cleanup_all_publishers_for_node(self, node_id).await
     }
 }
 
@@ -261,6 +269,12 @@ impl StreamRegistryTrait for MockStreamRegistry {
             Some(info) => Ok(info.epoch == epoch),
             None => Ok(false),
         }
+    }
+
+    async fn cleanup_all_publishers_for_node(&self, node_id: &str) -> Result<()> {
+        let mut publishers = self.publishers.lock().await;
+        publishers.retain(|_, info| info.node_id != node_id);
+        Ok(())
     }
 }
 
@@ -430,5 +444,28 @@ mod tests {
         // Validate for non-existent stream
         let valid = registry.validate_epoch("nonexistent", "media", 1).await.unwrap();
         assert!(!valid);
+    }
+
+    #[tokio::test]
+    async fn test_mock_cleanup_all_publishers_for_node() {
+        let mut registry = MockStreamRegistry::new();
+
+        // Register publishers on different nodes
+        registry.register_publisher("room1", "media1", "node1", "live").await.unwrap();
+        registry.register_publisher("room1", "media2", "node1", "live").await.unwrap();
+        registry.register_publisher("room2", "media1", "node2", "live").await.unwrap();
+
+        // Verify all exist
+        assert!(registry.is_stream_active("room1", "media1").await.unwrap());
+        assert!(registry.is_stream_active("room1", "media2").await.unwrap());
+        assert!(registry.is_stream_active("room2", "media1").await.unwrap());
+
+        // Cleanup node1
+        registry.cleanup_all_publishers_for_node("node1").await.unwrap();
+
+        // Verify node1 publishers are removed, node2 remains
+        assert!(!registry.is_stream_active("room1", "media1").await.unwrap());
+        assert!(!registry.is_stream_active("room1", "media2").await.unwrap());
+        assert!(registry.is_stream_active("room2", "media1").await.unwrap());
     }
 }

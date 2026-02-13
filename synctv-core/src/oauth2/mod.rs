@@ -76,8 +76,13 @@ pub type ProviderFactory = fn(config: &serde_yaml::Value) -> Result<Box<dyn Prov
 ///
 /// Maps provider type strings to factory functions.
 /// Similar to Go's `allProviders rwmap.RWMap[provider.OAuth2Provider, provider.Interface]`
-static PROVIDER_REGISTRY: LazyLock<RwLock<HashMap<String, ProviderFactory>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+///
+/// Uses `std::sync::RwLock` instead of `tokio::sync::RwLock` because:
+/// 1. Registration happens only during initialization (synchronous)
+/// 2. Lookups are extremely fast (just a HashMap read)
+/// 3. Lock is held for a very short time, won't significantly block the runtime
+static PROVIDER_REGISTRY: LazyLock<std::sync::RwLock<HashMap<String, ProviderFactory>>> =
+    LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
 
 /// Register an `OAuth2` provider factory function
 ///
@@ -89,14 +94,24 @@ static PROVIDER_REGISTRY: LazyLock<RwLock<HashMap<String, ProviderFactory>>> =
 /// ```ignore
 /// register_provider_factory("github", github_factory);
 /// ```
+///
+/// # Panics
+///
+/// Panics if the registry lock is poisoned (indicates a previous panic during registration).
 pub fn register_provider_factory(provider_type: &str, factory: ProviderFactory) {
-    let mut registry = PROVIDER_REGISTRY.write().unwrap();
+    let mut registry = PROVIDER_REGISTRY
+        .write()
+        .expect("OAuth2 provider registry lock poisoned - this indicates a bug during initialization");
     registry.insert(provider_type.to_string(), factory);
 }
 
 /// Get a registered factory function by type
 async fn get_provider_factory(provider_type: &str) -> Option<ProviderFactory> {
-    let registry = PROVIDER_REGISTRY.read().unwrap();
+    // Use std::sync::RwLock for fast read operations
+    // The lock is held for a very short time (just a HashMap lookup)
+    let registry = PROVIDER_REGISTRY
+        .read()
+        .expect("OAuth2 provider registry lock poisoned");
     registry.get(provider_type).copied()
 }
 

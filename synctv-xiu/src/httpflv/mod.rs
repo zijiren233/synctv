@@ -8,7 +8,7 @@ use bytes::BytesMut;
 use crate::streamhub::{
     define::{
         FrameData, FrameDataReceiver, NotifyInfo, StreamHubEvent, StreamHubEventSender,
-        SubDataType, SubscribeType, SubscriberInfo,
+        SubDataType, SubscribeType, SubscriberInfo, FRAME_DATA_CHANNEL_CAPACITY,
     },
     stream::StreamIdentifier,
     utils::{RandomDigitCount, Uuid},
@@ -40,7 +40,7 @@ impl HttpFlvSession {
         event_producer: StreamHubEventSender,
         response_producer: mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
     ) -> Self {
-        let (_, data_receiver) = mpsc::unbounded_channel();
+        let (_, data_receiver) = mpsc::channel(FRAME_DATA_CHANNEL_CAPACITY);
         let subscriber_id = Uuid::new(RandomDigitCount::Four);
 
         Self {

@@ -93,10 +93,9 @@ impl RtmpUrlParser {
             let pars_array: Vec<&str> = query_val.split('&').collect();
             for ele in pars_array {
                 let (k, v) = scanf!(ele, '=', String, String);
-                if k.is_none() || v.is_none() {
-                    continue;
+                if let (Some(key), Some(val)) = (k, v) {
+                    query_pairs.insert(key, val);
                 }
-                query_pairs.insert(k.unwrap(), v.unwrap());
             }
             Some(data[1].to_string())
         } else {

@@ -433,7 +433,9 @@ impl StreamMessageHandler {
                 }
             }
             Some(Message::Heartbeat(_)) => {
-                // Heartbeat doesn't need to be broadcast
+                // Respond with HeartbeatAck to let client know server is alive
+                // This completes the heartbeat request-response cycle
+                self.send_heartbeat_ack()?;
             }
             Some(Message::WebrtcOffer(offer)) => {
                 self.handle_webrtc_offer(offer).await?;
@@ -642,6 +644,20 @@ impl StreamMessageHandler {
         let _result = self.cluster_manager.broadcast(event);
 
         Ok(())
+    }
+
+    /// Send heartbeat acknowledgment to client
+    fn send_heartbeat_ack(&self) -> Result<(), String> {
+        use crate::proto::client::server_message::Message;
+        use crate::proto::client::HeartbeatAck;
+
+        let msg = ServerMessage {
+            message: Some(Message::HeartbeatAck(HeartbeatAck {
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            })),
+        };
+
+        self.sender.send(msg)
     }
 
     /// Get room ID

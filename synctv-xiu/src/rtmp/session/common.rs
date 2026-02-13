@@ -24,7 +24,7 @@ use {
         define::{
             FrameData, FrameDataReceiver, FrameDataSender, NotifyInfo,
             PublishType, PublisherInfo, StreamHubEvent, StreamHubEventSender, SubscribeType,
-            SubscriberInfo, TStreamHandler,
+            SubscriberInfo, TStreamHandler, FRAME_DATA_CHANNEL_CAPACITY,
         },
         errors::{StreamHubError, StreamHubErrorValue},
         stream::StreamIdentifier,
@@ -65,7 +65,7 @@ impl Common {
         remote_addr: Option<SocketAddr>,
     ) -> Self {
         //only used for init,since I don't found a better way to deal with this.
-        let (init_producer, init_consumer) = mpsc::unbounded_channel();
+        let (init_producer, init_consumer) = mpsc::channel(FRAME_DATA_CHANNEL_CAPACITY);
 
         Self {
             session_id: Uuid::new(crate::streamhub::utils::RandomDigitCount::Four),
@@ -209,10 +209,14 @@ impl Common {
             data: data.clone(),
         };
 
-        match self.data_sender.send(channel_data) {
+        match self.data_sender.try_send(channel_data) {
             Ok(()) => {}
-            Err(err) => {
-                log::error!("send video err: {err}");
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                // Packet dropped due to backpressure - subscriber is slow
+                log::warn!("Video frame dropped due to channel full");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Channel closed - downstream disconnected
                 return Err(SessionError {
                     value: SessionErrorValue::SendFrameDataErr,
                 });
@@ -236,10 +240,14 @@ impl Common {
             data: data.clone(),
         };
 
-        match self.data_sender.send(channel_data) {
+        match self.data_sender.try_send(channel_data) {
             Ok(()) => {}
-            Err(err) => {
-                log::error!("receive audio err {err}");
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                // Packet dropped due to backpressure - subscriber is slow
+                log::warn!("Audio frame dropped due to channel full");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Channel closed - downstream disconnected
                 return Err(SessionError {
                     value: SessionErrorValue::SendFrameDataErr,
                 });
@@ -263,12 +271,17 @@ impl Common {
             data: data.clone(),
         };
 
-        match self.data_sender.send(channel_data) {
+        match self.data_sender.try_send(channel_data) {
             Ok(()) => {}
-            Err(_) => {
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                // Packet dropped due to backpressure - subscriber is slow
+                log::warn!("Metadata frame dropped due to channel full");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Channel closed - downstream disconnected
                 return Err(SessionError {
                     value: SessionErrorValue::SendFrameDataErr,
-                })
+                });
             }
         }
 
@@ -554,24 +567,35 @@ impl TStreamHandler for RtmpStreamHandler {
                 });
             }
         };
+
+        /// Helper to send prior data, returning error on closed channel
+        fn try_send_prior<T>(sender: &mpsc::Sender<T>, data: T, name: &str) -> Result<(), StreamHubError> {
+            match sender.try_send(data) {
+                Ok(()) => Ok(()),
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    log::warn!("send_prior_data: {} dropped due to channel full", name);
+                    Ok(())
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    Err(StreamHubError {
+                        value: StreamHubErrorValue::SubscriberClosed,
+                    })
+                }
+            }
+        }
+
         if let Some(cache) = &mut *self.cache.lock().await {
             if let Some(meta_body_data) = cache.get_metadata() {
                 log::info!("send_prior_data: meta_body_data: ");
-                sender.send(meta_body_data).map_err(|_| StreamHubError {
-                    value: StreamHubErrorValue::SendError,
-                })?;
+                try_send_prior(&sender, meta_body_data, "metadata")?;
             }
             if let Some(audio_seq_data) = cache.get_audio_seq() {
                 log::info!("send_prior_data: audio_seq_data: ",);
-                sender.send(audio_seq_data).map_err(|_| StreamHubError {
-                    value: StreamHubErrorValue::SendError,
-                })?;
+                try_send_prior(&sender, audio_seq_data, "audio seq")?;
             }
             if let Some(video_seq_data) = cache.get_video_seq() {
                 log::info!("send_prior_data: video_seq_data:");
-                sender.send(video_seq_data).map_err(|_| StreamHubError {
-                    value: StreamHubErrorValue::SendError,
-                })?;
+                try_send_prior(&sender, video_seq_data, "video seq")?;
             }
             match sub_type {
                 SubscribeType::RtmpPull
@@ -580,9 +604,7 @@ impl TStreamHandler for RtmpStreamHandler {
                     if let Some(gops_data) = cache.get_gops_data() {
                         for gop in gops_data {
                             for channel_data in gop.get_frame_data() {
-                                sender.send(channel_data).map_err(|_| StreamHubError {
-                                    value: StreamHubErrorValue::SendError,
-                                })?;
+                                try_send_prior(&sender, channel_data, "gop frame")?;
                             }
                         }
                     }

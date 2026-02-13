@@ -443,9 +443,9 @@ impl RoomService {
     pub async fn delete_room(&self, room_id: RoomId, user_id: UserId) -> Result<()> {
         tracing::info!(room_id = %room_id, user_id = %user_id, "Deleting room");
 
-        // Check permission
+        // Check permission without cache - critical operation requires fresh permissions
         self.permission_service
-            .check_permission(&room_id, &user_id, PermissionBits::DELETE_ROOM)
+            .check_permission_no_cache(&room_id, &user_id, PermissionBits::DELETE_ROOM)
             .await?;
 
         // Notify before deletion

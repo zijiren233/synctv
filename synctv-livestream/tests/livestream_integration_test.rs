@@ -92,6 +92,11 @@ impl synctv_livestream::relay::StreamRegistryTrait for MockStreamRegistry {
         // Mock always returns true for validation
         Ok(true)
     }
+
+    async fn cleanup_all_publishers_for_node(&self, _node_id: &str) -> anyhow::Result<()> {
+        // Mock cleanup - no-op
+        Ok(())
+    }
 }
 
 fn create_test_infrastructure() -> LiveStreamingInfrastructure {
