@@ -109,7 +109,10 @@ impl DigestProcessor {
         Ok((left_part, digest_data, right_part))
     }
     pub fn make_digest(&mut self, raw_message: Vec<u8>) -> Result<BytesMut, DigestError> {
-        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key[..]).unwrap();
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key[..])
+            .map_err(|_| DigestError {
+                value: DigestErrorValue::HmacInitError,
+            })?;
         mac.update(&raw_message);
         let result = mac.finalize().into_bytes();
 

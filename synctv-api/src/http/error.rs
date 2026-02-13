@@ -54,6 +54,45 @@ impl AppError {
     pub fn internal(message: impl Into<String>) -> Self {
         Self::internal_server_error(message)
     }
+
+    // Common user-facing error messages for consistency
+    pub fn invalid_credentials() -> Self {
+        Self::unauthorized("Invalid username or password")
+    }
+
+    pub fn session_expired() -> Self {
+        Self::unauthorized("Your session has expired. Please log in again.")
+    }
+
+    pub fn token_invalid() -> Self {
+        Self::unauthorized("Invalid or expired token")
+    }
+
+    pub fn permission_denied() -> Self {
+        Self::forbidden("You do not have permission to perform this action")
+    }
+
+    pub fn resource_not_found(resource: &str) -> Self {
+        Self::not_found(format!("{resource} not found"))
+    }
+
+    pub fn validation_failed(field: &str, reason: &str) -> Self {
+        Self::bad_request(format!("Invalid {field}: {reason}"))
+    }
+
+    pub fn rate_limited(retry_after: u64) -> Self {
+        Self::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("Too many requests. Please try again in {retry_after} seconds."),
+        )
+    }
+
+    pub fn service_unavailable() -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Service temporarily unavailable. Please try again later.",
+        )
+    }
 }
 
 impl fmt::Display for AppError {

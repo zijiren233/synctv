@@ -55,6 +55,11 @@ pub trait StreamRegistryTrait: Send + Sync {
 
     /// Remove all publisher entries for a user
     async fn unregister_all_user_publishers(&self, user_id: &str) -> Result<()>;
+
+    /// Validate that the given epoch matches the current publisher's epoch.
+    /// Returns Ok(true) if valid, Ok(false) if stale (split-brain detected).
+    /// Used by pull streams to detect if publisher has changed.
+    async fn validate_epoch(&self, room_id: &str, media_id: &str, epoch: u64) -> Result<bool>;
 }
 
 // Implement StreamRegistryTrait for StreamRegistry
@@ -107,6 +112,10 @@ impl StreamRegistryTrait for StreamRegistry {
     async fn unregister_all_user_publishers(&self, user_id: &str) -> Result<()> {
         Self::unregister_all_user_publishers(self, user_id).await
     }
+
+    async fn validate_epoch(&self, room_id: &str, media_id: &str, epoch: u64) -> Result<bool> {
+        Self::validate_epoch(self, room_id, media_id, epoch).await
+    }
 }
 
 /// Mock StreamRegistry for testing without Redis
@@ -114,6 +123,8 @@ impl StreamRegistryTrait for StreamRegistry {
 #[derive(Debug, Clone)]
 pub struct MockStreamRegistry {
     publishers: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<(String, String), PublisherInfo>>>,
+    /// Epoch counter for each stream (room_id, media_id)
+    epoch_counters: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<(String, String), u64>>>,
 }
 
 #[cfg(test)]
@@ -121,12 +132,14 @@ impl MockStreamRegistry {
     pub fn new() -> Self {
         Self {
             publishers: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            epoch_counters: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
     pub fn with_publishers(publishers: std::collections::HashMap<(String, String), PublisherInfo>) -> Self {
         Self {
             publishers: std::sync::Arc::new(tokio::sync::Mutex::new(publishers)),
+            epoch_counters: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 }
@@ -149,16 +162,22 @@ impl StreamRegistryTrait for MockStreamRegistry {
         app_name: &str,
     ) -> Result<bool> {
         let mut publishers = self.publishers.lock().await;
+        let mut epoch_counters = self.epoch_counters.lock().await;
         let key = (room_id.to_string(), media_id.to_string());
 
         if publishers.contains_key(&key) {
             Ok(false)
         } else {
+            // Increment epoch counter
+            let epoch = epoch_counters.entry(key.clone()).or_insert(0);
+            *epoch += 1;
+
             publishers.insert(key, PublisherInfo {
                 node_id: node_id.to_string(),
                 app_name: app_name.to_string(),
                 user_id: String::new(),
                 started_at: Utc::now(),
+                epoch: *epoch,
             });
             Ok(true)
         }
@@ -172,16 +191,22 @@ impl StreamRegistryTrait for MockStreamRegistry {
         user_id: &str,
     ) -> Result<bool> {
         let mut publishers = self.publishers.lock().await;
+        let mut epoch_counters = self.epoch_counters.lock().await;
         let key = (room_id.to_string(), media_id.to_string());
 
         if publishers.contains_key(&key) {
             Ok(false)
         } else {
+            // Increment epoch counter
+            let epoch = epoch_counters.entry(key.clone()).or_insert(0);
+            *epoch += 1;
+
             publishers.insert(key, PublisherInfo {
                 node_id: node_id.to_string(),
                 app_name: "live".to_string(),
                 user_id: user_id.to_string(),
                 started_at: Utc::now(),
+                epoch: *epoch,
             });
             Ok(true)
         }
@@ -226,6 +251,16 @@ impl StreamRegistryTrait for MockStreamRegistry {
         let mut publishers = self.publishers.lock().await;
         publishers.retain(|_, info| info.user_id != user_id);
         Ok(())
+    }
+
+    async fn validate_epoch(&self, room_id: &str, media_id: &str, epoch: u64) -> Result<bool> {
+        let publishers = self.publishers.lock().await;
+        let key = (room_id.to_string(), media_id.to_string());
+
+        match publishers.get(&key) {
+            Some(info) => Ok(info.epoch == epoch),
+            None => Ok(false),
+        }
     }
 }
 
@@ -346,6 +381,7 @@ mod tests {
                 app_name: "live".to_string(),
                 user_id: String::new(),
                 started_at: Utc::now(),
+                epoch: 1,
             }
         );
 
@@ -355,5 +391,44 @@ mod tests {
         let result = registry.get_publisher("room1", "media1").await.unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().node_id, "node1");
+    }
+
+    #[tokio::test]
+    async fn test_mock_epoch_increments_on_register() {
+        let mut registry = MockStreamRegistry::new();
+
+        // First registration should have epoch 1
+        registry.register_publisher("room1", "media1", "node1", "live").await.unwrap();
+        let info = registry.get_publisher("room1", "media1").await.unwrap().unwrap();
+        assert_eq!(info.epoch, 1);
+
+        // Unregister
+        registry.unregister_publisher("room1", "media1").await.unwrap();
+
+        // Second registration should have epoch 2
+        registry.register_publisher("room1", "media1", "node2", "live").await.unwrap();
+        let info = registry.get_publisher("room1", "media1").await.unwrap().unwrap();
+        assert_eq!(info.epoch, 2);
+    }
+
+    #[tokio::test]
+    async fn test_mock_validate_epoch() {
+        let mut registry = MockStreamRegistry::new();
+
+        // Register publisher with epoch 1
+        registry.register_publisher("room1", "media1", "node1", "live").await.unwrap();
+        let info = registry.get_publisher("room1", "media1").await.unwrap().unwrap();
+
+        // Validate with correct epoch
+        let valid = registry.validate_epoch("room1", "media1", info.epoch).await.unwrap();
+        assert!(valid);
+
+        // Validate with incorrect epoch
+        let valid = registry.validate_epoch("room1", "media1", 999).await.unwrap();
+        assert!(!valid);
+
+        // Validate for non-existent stream
+        let valid = registry.validate_epoch("nonexistent", "media", 1).await.unwrap();
+        assert!(!valid);
     }
 }

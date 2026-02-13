@@ -34,6 +34,11 @@ const BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Shared HTTP client for proxy requests.
 ///
 /// Reuses TCP connections and TLS sessions across requests for performance.
+///
+/// # Panics
+///
+/// Panics during initialization if the HTTP client cannot be built (e.g., TLS backend unavailable).
+/// This is intentional as the proxy cannot function without an HTTP client.
 static PROXY_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
@@ -41,7 +46,11 @@ static PROXY_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .redirect(ssrf_safe_redirect_policy())
         .pool_max_idle_per_host(20)
         .build()
-        .expect("Failed to build shared proxy HTTP client")
+        .unwrap_or_else(|e| {
+            // Log the error before panicking for better debugging
+            tracing::error!("Failed to build shared proxy HTTP client: {}", e);
+            panic!("Failed to build shared proxy HTTP client: {}", e)
+        })
 });
 
 /// Configuration for a single proxy fetch.

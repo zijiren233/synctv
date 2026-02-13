@@ -192,11 +192,13 @@ impl RateLimiter {
     }
 
     /// Get current timestamp in milliseconds
+    ///
+    /// Returns 0 if system time is before Unix epoch (should never happen in practice).
     fn current_timestamp_millis() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis() as u64
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
     }
 }
 

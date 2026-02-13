@@ -11,7 +11,7 @@ pub struct BitsReader {
 }
 
 impl BitsReader {
-    #[must_use] 
+    #[must_use]
     pub const fn new(reader: BytesReader) -> Self {
         Self {
             reader,
@@ -20,8 +20,9 @@ impl BitsReader {
         }
     }
 
-    pub fn extend_data(&mut self, bytes: BytesMut) {
-        self.reader.extend_from_slice(&bytes[..]);
+    pub fn extend_data(&mut self, bytes: BytesMut) -> Result<(), BitError> {
+        self.reader.extend_from_slice(&bytes[..])?;
+        Ok(())
     }
 
     #[must_use] 
@@ -81,9 +82,9 @@ mod tests {
         let mut bytes_reader = BytesReader::new(BytesMut::new());
 
         let data_0 = 2u8;
-        bytes_reader.extend_from_slice(&[data_0]);
+        bytes_reader.extend_from_slice(&[data_0]).unwrap();
         let data_1 = 7u8;
-        bytes_reader.extend_from_slice(&[data_1]);
+        bytes_reader.extend_from_slice(&[data_1]).unwrap();
 
         let mut bit_reader = BitsReader::new(bytes_reader);
 
@@ -112,10 +113,10 @@ mod tests {
         let mut bytes_reader = BytesReader::new(BytesMut::new());
 
         let data_0 = 2u8;
-        bytes_reader.extend_from_slice(&[data_0]);
+        bytes_reader.extend_from_slice(&[data_0]).unwrap();
         let data_1 = 7u8;
-        bytes_reader.extend_from_slice(&[data_1]);
-        bytes_reader.extend_from_slice(&[0b00000010]);
+        bytes_reader.extend_from_slice(&[data_1]).unwrap();
+        bytes_reader.extend_from_slice(&[0b00000010]).unwrap();
 
         let mut bit_reader = BitsReader::new(bytes_reader);
         assert!(bit_reader.read_n_bits(16).unwrap() == 0x207);
@@ -129,9 +130,9 @@ mod tests {
     fn test_bits_aligment_8() {
         let mut bytes_reader = BytesReader::new(BytesMut::new());
         let data_0 = 2u8;
-        bytes_reader.extend_from_slice(&[data_0]);
+        bytes_reader.extend_from_slice(&[data_0]).unwrap();
         let data_1 = 7u8;
-        bytes_reader.extend_from_slice(&[data_1]);
+        bytes_reader.extend_from_slice(&[data_1]).unwrap();
 
         let mut bit_reader = BitsReader::new(bytes_reader);
 

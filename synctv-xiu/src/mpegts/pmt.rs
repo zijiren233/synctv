@@ -114,3 +114,85 @@ impl PmtMuxer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pmt_new() {
+        let pmt = Pmt::new();
+        assert_eq!(pmt.pid, 0);
+        assert_eq!(pmt.program_number, 0);
+        assert_eq!(pmt.version_number, 0);
+        assert_eq!(pmt.continuity_counter, 0);
+        assert_eq!(pmt.pcr_pid, 0);
+        assert!(pmt.program_info.is_empty());
+        assert!(pmt.streams.is_empty());
+    }
+
+    #[test]
+    fn test_pmt_default() {
+        let pmt = Pmt::default();
+        assert_eq!(pmt.pid, 0);
+        assert!(pmt.streams.is_empty());
+    }
+
+    #[test]
+    fn test_pmt_muxer_new() {
+        let muxer = PmtMuxer::new();
+        assert!(muxer.bytes_writer.get_current_bytes().is_empty());
+    }
+
+    #[test]
+    fn test_pmt_muxer_default() {
+        let muxer = PmtMuxer::default();
+        assert!(muxer.bytes_writer.get_current_bytes().is_empty());
+    }
+
+    #[test]
+    fn test_pmt_muxer_write_empty_streams() {
+        let mut muxer = PmtMuxer::new();
+        let pmt = Pmt::new();
+        let result = muxer.write(&pmt);
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        // Minimum PMT size: table_id(1) + section_length(2) + program_number(2) + version(1) +
+        // section_nums(2) + pcr_pid(2) + program_info_len(2) + crc32(4) = 16 bytes
+        assert!(!data.is_empty());
+        // Check table_id
+        assert_eq!(data[0], epat_pid::PAT_TID_PMS as u8);
+    }
+
+    #[test]
+    fn test_pmt_muxer_write_with_pcr_pid() {
+        let mut muxer = PmtMuxer::new();
+        let mut pmt = Pmt::new();
+        pmt.pcr_pid = 0x100;
+
+        let result = muxer.write(&pmt);
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_pmt_muxer_write_with_program_info() {
+        let mut muxer = PmtMuxer::new();
+        let mut pmt = Pmt::new();
+        // Add some program info
+        pmt.program_info = BytesMut::from(&[0x01, 0x02, 0x03][..]);
+
+        let result = muxer.write(&pmt);
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_pmt_muxer_write_descriptor() {
+        let mut muxer = PmtMuxer::new();
+        let result = muxer.write_descriptor();
+        assert!(result.is_ok());
+    }
+}

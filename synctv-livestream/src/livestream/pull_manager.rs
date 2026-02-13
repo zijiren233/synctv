@@ -34,6 +34,14 @@ impl PullStreamManager {
         Self::with_timeouts(registry, local_node_id, stream_hub_event_sender, 60, 300)
     }
 
+    /// Start the background cleanup task for stale creation locks.
+    ///
+    /// Should be called once after creating the manager to prevent memory leaks
+    /// from failed stream creation attempts.
+    pub fn start_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
+        self.pool.start_creation_lock_cleanup()
+    }
+
     pub fn with_timeouts(
         registry: Arc<dyn StreamRegistryTrait>,
         local_node_id: String,
@@ -106,6 +114,8 @@ impl PullStreamManager {
             })?;
 
         // Create pull stream with gRPC puller
+        // Store the epoch from publisher info for split-brain detection
+        let epoch = publisher_info.epoch;
         let pull_stream = Arc::new(
             PullStream::new(
                 room_id.to_string(),
@@ -114,6 +124,7 @@ impl PullStreamManager {
                 self.local_node_id.clone(),
                 Arc::clone(&self.registry),
                 self.stream_hub_event_sender.clone(),
+                epoch,
             )
         );
 
@@ -147,6 +158,9 @@ pub struct PullStream {
     registry: Arc<dyn StreamRegistryTrait>,
     stream_hub_event_sender: StreamHubEventSender,
     lifecycle: StreamLifecycle,
+    /// Fencing token (epoch) from when the stream was created.
+    /// Used to detect split-brain when publisher changes during network partition.
+    epoch: u64,
 }
 
 impl ManagedStream for PullStream {
@@ -167,6 +181,7 @@ impl PullStream {
         local_node_id: String,
         registry: Arc<dyn StreamRegistryTrait>,
         stream_hub_event_sender: StreamHubEventSender,
+        epoch: u64,
     ) -> Self {
         Self {
             room_id,
@@ -176,11 +191,45 @@ impl PullStream {
             registry,
             stream_hub_event_sender,
             lifecycle: StreamLifecycle::new(),
+            epoch,
         }
     }
 
     /// Start the pull stream - connects to publisher via gRPC
     pub async fn start(&self) -> StreamResult<()> {
+        // Validate epoch before starting to detect split-brain
+        match self.registry.validate_epoch(&self.room_id, &self.media_id, self.epoch).await {
+            Ok(true) => {
+                log::debug!(
+                    "Epoch {} validated for pull stream {}/{}",
+                    self.epoch,
+                    self.room_id,
+                    self.media_id
+                );
+            }
+            Ok(false) => {
+                log::warn!(
+                    "Epoch {} is stale for pull stream {}/{}, publisher may have changed. Stopping.",
+                    self.epoch,
+                    self.room_id,
+                    self.media_id
+                );
+                return Err(crate::error::StreamError::StaleEpoch(format!(
+                    "{} / {}",
+                    self.room_id, self.media_id
+                )));
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to validate epoch for pull stream {}/{}: {}. Continuing optimistically.",
+                    self.room_id,
+                    self.media_id,
+                    e
+                );
+                // Continue on error - fail open to avoid blocking streams during Redis issues
+            }
+        }
+
         self.lifecycle.set_running();
         self.lifecycle.update_last_active_time().await;
 
@@ -298,11 +347,13 @@ mod tests {
             "puller-node".to_string(),
             registry,
             stream_hub_event_sender,
+            1, // epoch
         );
 
         assert_eq!(pull_stream.room_id, "room-123");
         assert_eq!(pull_stream.media_id, "media-456");
         assert_eq!(pull_stream.publisher_node, "publisher-node");
+        assert_eq!(pull_stream.epoch, 1);
     }
 
     #[tokio::test]
@@ -317,6 +368,7 @@ mod tests {
             "puller-node".to_string(),
             registry,
             stream_hub_event_sender,
+            1, // epoch
         );
 
         assert_eq!(pull_stream.subscriber_count(), 0);
@@ -343,6 +395,7 @@ mod tests {
             "puller-node".to_string(),
             registry,
             stream_hub_event_sender,
+            1, // epoch
         );
 
         assert_eq!(pull_stream.stream_key(), "room-123:media-456");

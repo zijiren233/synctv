@@ -70,7 +70,8 @@ impl HlsStorage for FileStorage {
     async fn delete(&self, key: &str) -> Result<()> {
         let file_path = self.get_path(key);
 
-        if file_path.exists() {
+        // Use tokio async exists check
+        if fs::try_exists(&file_path).await.unwrap_or(false) {
             fs::remove_file(&file_path).await?;
             log::trace!("Deleted: {:?} for key: {}", file_path, key);
         }
@@ -80,11 +81,12 @@ impl HlsStorage for FileStorage {
 
     async fn exists(&self, key: &str) -> Result<bool> {
         let file_path = self.get_path(key);
-        Ok(file_path.exists())
+        fs::try_exists(&file_path).await
     }
 
     async fn cleanup(&self, older_than: Duration) -> Result<usize> {
-        if !self.base_path.exists() {
+        // Use tokio async exists check
+        if !fs::try_exists(&self.base_path).await.unwrap_or(false) {
             log::debug!("Cleanup base path does not exist: {:?}", self.base_path);
             return Ok(0);
         }
@@ -97,8 +99,12 @@ impl HlsStorage for FileStorage {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
-            // Only process files (skip directories)
-            if !path.is_file() {
+            // Only process files (skip directories) - use async metadata check
+            let file_type = match entry.file_type().await {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
+            if !file_type.is_file() {
                 continue;
             }
 

@@ -105,6 +105,8 @@ pub enum DigestErrorValue {
     CannotGenerate,
     #[fail(display = "unknow schema")]
     UnknowSchema,
+    #[fail(display = "HMAC key initialization failed")]
+    HmacInitError,
 }
 
 impl From<BytesReadError> for DigestError {

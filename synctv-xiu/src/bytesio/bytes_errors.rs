@@ -18,6 +18,12 @@ pub enum BytesReadErrorValue {
     IndexOutofRange,
     #[fail(display = "bytesio read error: {}", _0)]
     BytesIOError(BytesIOError),
+    #[fail(display = "buffer overflow: {} + {} > {} max", current, additional, max)]
+    BufferOverflow {
+        current: usize,
+        additional: usize,
+        max: usize,
+    },
     // #[fail(display = "elapsed: {}", _0)]
     // TimeoutError(#[cause] Elapsed),
 }

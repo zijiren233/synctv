@@ -230,6 +230,7 @@ pub async fn serve(
         ));
 
         let app_state = Arc::new(crate::http::AppState {
+            config: Arc::new(config.clone()),
             user_service: user_service_for_provider.clone(),
             room_service: room_service_for_provider.clone(),
             provider_instance_manager: _providers_mgr.instance_manager().clone(),

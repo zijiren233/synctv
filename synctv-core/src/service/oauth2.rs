@@ -2,11 +2,16 @@
 //!
 //! This service handles OAuth2/OIDC login flow WITHOUT storing tokens.
 //! Tokens are only used temporarily during login to fetch user info.
+//!
+//! ## State Storage
+//! OAuth2 states are stored in Redis when available (for multi-node deployments).
+//! Falls back to in-memory storage when Redis is not configured.
 
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     models::{oauth2_client::OAuth2Provider, UserId},
@@ -15,8 +20,13 @@ use crate::{
     Error, Result,
 };
 
+/// Redis key prefix for OAuth2 states
+const OAUTH2_STATE_KEY_PREFIX: &str = "oauth2:state:";
+/// Default TTL for OAuth2 states (5 minutes)
+const OAUTH2_STATE_TTL_SECONDS: u64 = 300;
+
 /// `OAuth2` state (for CSRF protection during authorization flow)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2State {
     pub instance_name: String,
     pub redirect_url: Option<String>,
@@ -41,6 +51,10 @@ pub struct OAuth2UserInfo {
 /// 1. Generate authorization URL with PKCE
 /// 2. Exchange authorization code for user info
 /// 3. Create/update user-provider mapping (NO TOKENS STORED)
+///
+/// State storage:
+/// - When Redis is available: states are stored in Redis with TTL (multi-node safe)
+/// - When Redis is not available: states are stored in memory (single-node only)
 #[derive(Clone)]
 pub struct OAuth2Service {
     repository: UserOAuthProviderRepository,
@@ -48,7 +62,10 @@ pub struct OAuth2Service {
     providers: Arc<RwLock<HashMap<String, Box<dyn OAuth2ProviderTrait>>>>,
     /// Map of instance name -> provider enum type
     provider_types: Arc<RwLock<HashMap<String, OAuth2Provider>>>,
-    states: Arc<RwLock<HashMap<String, OAuth2State>>>,
+    /// In-memory state storage (fallback when Redis is not available)
+    local_states: Arc<RwLock<HashMap<String, OAuth2State>>>,
+    /// Optional Redis client for distributed state storage
+    redis: Option<Arc<redis::Client>>,
 }
 
 impl std::fmt::Debug for OAuth2Service {
@@ -60,14 +77,87 @@ impl std::fmt::Debug for OAuth2Service {
 }
 
 impl OAuth2Service {
-    /// Create new `OAuth2` service
-    #[must_use] 
+    /// Create new `OAuth2` service (without Redis - single node only)
+    #[must_use]
     pub fn new(repository: UserOAuthProviderRepository) -> Self {
         Self {
             repository,
             providers: Arc::new(RwLock::new(HashMap::new())),
             provider_types: Arc::new(RwLock::new(HashMap::new())),
-            states: Arc::new(RwLock::new(HashMap::new())),
+            local_states: Arc::new(RwLock::new(HashMap::new())),
+            redis: None,
+        }
+    }
+
+    /// Create new `OAuth2` service with Redis support (multi-node safe)
+    #[must_use]
+    pub fn with_redis(repository: UserOAuthProviderRepository, redis: Arc<redis::Client>) -> Self {
+        Self {
+            repository,
+            providers: Arc::new(RwLock::new(HashMap::new())),
+            provider_types: Arc::new(RwLock::new(HashMap::new())),
+            local_states: Arc::new(RwLock::new(HashMap::new())),
+            redis: Some(redis),
+        }
+    }
+
+    /// Store OAuth2 state (Redis if available, otherwise local memory)
+    async fn store_state(&self, state_token: &str, state: &OAuth2State) -> Result<()> {
+        if let Some(ref redis) = self.redis {
+            let key = format!("{}{}", OAUTH2_STATE_KEY_PREFIX, state_token);
+            let value = serde_json::to_string(state)
+                .map_err(|e| Error::Internal(format!("Failed to serialize OAuth2 state: {e}")))?;
+
+            let mut conn = redis
+                .get_multiplexed_tokio_connection()
+                .await
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+
+            use redis::AsyncCommands;
+            let _: () = conn
+                .set_ex(&key, value, OAUTH2_STATE_TTL_SECONDS)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to store OAuth2 state in Redis: {e}")))?;
+
+            debug!("Stored OAuth2 state in Redis for token {}", &state_token[..8]);
+        } else {
+            let mut states = self.local_states.write().await;
+            states.insert(state_token.to_string(), state.clone());
+            debug!("Stored OAuth2 state in memory for token {}", &state_token[..8]);
+        }
+        Ok(())
+    }
+
+    /// Retrieve and remove OAuth2 state (Redis if available, otherwise local memory)
+    async fn consume_state(&self, state_token: &str) -> Result<OAuth2State> {
+        if let Some(ref redis) = self.redis {
+            let key = format!("{}{}", OAUTH2_STATE_KEY_PREFIX, state_token);
+
+            let mut conn = redis
+                .get_multiplexed_tokio_connection()
+                .await
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+
+            use redis::AsyncCommands;
+            let value: Option<String> = conn
+                .get_del(&key)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get OAuth2 state from Redis: {e}")))?;
+
+            match value {
+                Some(json) => {
+                    let state: OAuth2State = serde_json::from_str(&json)
+                        .map_err(|e| Error::Internal(format!("Failed to deserialize OAuth2 state: {e}")))?;
+                    debug!("Retrieved OAuth2 state from Redis for token {}", &state_token[..8]);
+                    Ok(state)
+                }
+                None => Err(Error::Authentication("Invalid or expired OAuth2 state".to_string())),
+            }
+        } else {
+            let mut states = self.local_states.write().await;
+            states
+                .remove(state_token)
+                .ok_or_else(|| Error::Authentication("Invalid or expired OAuth2 state".to_string()))
         }
     }
 
@@ -122,8 +212,7 @@ impl OAuth2Service {
             bind_user_id: None,
         };
 
-        let mut states = self.states.write().await;
-        states.insert(state_token.clone(), oauth_state);
+        self.store_state(&state_token, &oauth_state).await?;
 
         debug!(
             "Generated OAuth2 authorization URL for provider {}",
@@ -164,8 +253,7 @@ impl OAuth2Service {
             bind_user_id: user_id,
         };
 
-        let mut states = self.states.write().await;
-        states.insert(state_token.clone(), oauth_state);
+        self.store_state(&state_token, &oauth_state).await?;
 
         Ok((auth_url, state_token))
     }
@@ -229,10 +317,7 @@ impl OAuth2Service {
 
     /// Verify `OAuth2` state during callback
     pub async fn verify_state(&self, state_token: &str) -> Result<OAuth2State> {
-        let mut states = self.states.write().await;
-        states
-            .remove(state_token)
-            .ok_or_else(|| Error::Authentication("Invalid or expired OAuth2 state".to_string()))
+        self.consume_state(state_token).await
     }
 
     /// Exchange authorization code for user info
@@ -358,8 +443,12 @@ impl OAuth2Service {
     }
 
     /// Clean up expired `OAuth2` states (maintenance task)
+    ///
+    /// Note: When using Redis, states are automatically cleaned up via TTL.
+    /// This method only cleans up local in-memory states.
     pub async fn cleanup_expired_states(&self, max_age_seconds: i64) -> Result<()> {
-        let mut states = self.states.write().await;
+        // Only clean local states (Redis handles its own TTL)
+        let mut states = self.local_states.write().await;
         let now = chrono::Utc::now();
         let initial_count = states.len();
 
@@ -370,9 +459,15 @@ impl OAuth2Service {
 
         let removed = initial_count - states.len();
         if removed > 0 {
-            debug!("Cleaned up {} expired OAuth2 states", removed);
+            debug!("Cleaned up {} expired OAuth2 states from local memory", removed);
         }
 
         Ok(())
+    }
+
+    /// Check if Redis is being used for state storage
+    #[must_use]
+    pub fn uses_redis(&self) -> bool {
+        self.redis.is_some()
     }
 }

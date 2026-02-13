@@ -15,9 +15,14 @@ use synctv_xiu::streamhub::{
     stream::StreamIdentifier,
 };
 use std::sync::Arc;
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, sleep, Duration};
 use tracing as log;
 use dashmap::DashMap;
+
+/// Maximum number of retry attempts for heartbeat failures
+const MAX_HEARTBEAT_RETRIES: u32 = 3;
+/// Delay between heartbeat retries (exponential backoff base)
+const HEARTBEAT_RETRY_BASE_DELAY_MS: u64 = 100;
 
 /// Publisher manager that listens to `StreamHub` events
 pub struct PublisherManager {
@@ -177,8 +182,37 @@ impl PublisherManager {
 
                 // Parse room_id and media_id from the composite key
                 if let Some((room_id, media_id)) = publisher_key.split_once(':') {
-                    if let Err(e) = self.registry.refresh_publisher_ttl(room_id, media_id, "").await {
-                        log::error!("Failed to refresh TTL for room {} / media {}: {}", room_id, media_id, e);
+                    // Try heartbeat with retries
+                    let mut success = false;
+                    for attempt in 0..MAX_HEARTBEAT_RETRIES {
+                        match self.registry.refresh_publisher_ttl(room_id, media_id, "").await {
+                            Ok(()) => {
+                                success = true;
+                                break;
+                            }
+                            Err(e) => {
+                                if attempt < MAX_HEARTBEAT_RETRIES - 1 {
+                                    // Exponential backoff: 100ms, 200ms, 400ms...
+                                    let delay_ms = HEARTBEAT_RETRY_BASE_DELAY_MS * (1 << attempt);
+                                    log::warn!(
+                                        "Heartbeat attempt {} failed for room {} / media {}: {}. Retrying in {}ms",
+                                        attempt + 1, room_id, media_id, e, delay_ms
+                                    );
+                                    sleep(Duration::from_millis(delay_ms)).await;
+                                } else {
+                                    log::error!(
+                                        "All {} heartbeat attempts failed for room {} / media {}: {}. Publisher may be lost.",
+                                        MAX_HEARTBEAT_RETRIES, room_id, media_id, e
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    // Log success at trace level (tracing::trace handles level check internally)
+                    #[allow(clippy::if_same_then_else)]
+                    if success {
+                        log::trace!("Heartbeat refreshed for room {} / media {}", room_id, media_id);
                     }
                 }
             }

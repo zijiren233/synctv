@@ -235,7 +235,7 @@ impl StreamHandler {
             &self.stream_name,
             Arc::clone(&self.segment_manager),
             state.clone(),
-        );
+        )?;
 
         processor.process_stream(&mut self.data_consumer).await?;
 
@@ -363,16 +363,16 @@ impl StreamProcessor {
         stream_name: &str,
         segment_manager: Arc<SegmentManager>,
         state: Arc<parking_lot::RwLock<StreamProcessorState>>,
-    ) -> Self {
+    ) -> Result<Self, HlsRemuxerError> {
         let mut ts_muxer = TsMuxer::new();
         let audio_pid = ts_muxer
             .add_stream(epsi_stream_type::PSI_STREAM_AAC, BytesMut::new())
-            .unwrap();
+            .map_err(|e| HlsRemuxerError::MuxError(format!("Failed to add audio stream: {e:?}")))?;
         let video_pid = ts_muxer
             .add_stream(epsi_stream_type::PSI_STREAM_H264, BytesMut::new())
-            .unwrap();
+            .map_err(|e| HlsRemuxerError::MuxError(format!("Failed to add video stream: {e:?}")))?;
 
-        Self {
+        Ok(Self {
             app_name: app_name.to_string(),
             stream_name: stream_name.to_string(),
             segment_manager,
@@ -388,35 +388,45 @@ impl StreamProcessor {
             last_segment_dts: 0,
             last_dts: 0,
             last_pts: 0,
-        }
+        })
     }
 
     async fn process_stream(
         &mut self,
         data_consumer: &mut FrameDataReceiver,
     ) -> Result<(), HlsRemuxerError> {
-        let mut retry_count = 0;
+        // Use a longer timeout for stream end detection
+        // The original logic had a flaw: it would increment retry_count on any
+        // recv() returning None, even during brief network pauses.
+        // Now we use a timeout-based approach instead.
+        const RECV_TIMEOUT_MS: u64 = 5000; // 5 seconds of no data = stream ended
 
         loop {
-            if let Some(frame_data) = data_consumer.recv().await {
-                let flv_data = match frame_data {
-                    FrameData::Audio { timestamp, data } => FlvData::Audio { timestamp, data },
-                    FrameData::Video { timestamp, data } => FlvData::Video { timestamp, data },
-                    _ => continue,
-                };
-
-                retry_count = 0;
-                self.process_flv_data(flv_data).await?;
-            } else {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                retry_count += 1;
-            }
-
-            // Stream ended
-            if retry_count > 10 {
-                log::info!("Stream ended: {}/{}", self.app_name, self.stream_name);
-                self.flush_remaining_segment().await?;
-                break;
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(RECV_TIMEOUT_MS),
+                data_consumer.recv()
+            ).await {
+                Ok(Some(frame_data)) => {
+                    let flv_data = match frame_data {
+                        FrameData::Audio { timestamp, data } => FlvData::Audio { timestamp, data },
+                        FrameData::Video { timestamp, data } => FlvData::Video { timestamp, data },
+                        _ => continue,
+                    };
+                    self.process_flv_data(flv_data).await?;
+                }
+                Ok(None) => {
+                    // Channel closed - stream truly ended
+                    log::info!("Stream channel closed: {}/{}", self.app_name, self.stream_name);
+                    self.flush_remaining_segment().await?;
+                    break;
+                }
+                Err(_timeout) => {
+                    // Timeout - no data for 5 seconds, consider stream ended
+                    log::info!("Stream timeout (no data for {}s): {}/{}",
+                        RECV_TIMEOUT_MS / 1000, self.app_name, self.stream_name);
+                    self.flush_remaining_segment().await?;
+                    break;
+                }
             }
         }
 

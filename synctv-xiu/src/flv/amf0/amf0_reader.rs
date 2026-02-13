@@ -199,7 +199,7 @@ mod tests {
         ];
 
         let mut bytes_reader = BytesReader::new(BytesMut::new());
-        bytes_reader.extend_from_slice(&data);
+        bytes_reader.extend_from_slice(&data).unwrap();
         let mut amf_reader = Amf0Reader::new(bytes_reader);
 
         let command_name = amf_reader.read_with_type(amf0_markers::STRING).unwrap();
@@ -274,7 +274,7 @@ mod tests {
 
         let mut bytes_reader = BytesReader::new(BytesMut::new());
 
-        bytes_reader.extend_from_slice(&data);
+        bytes_reader.extend_from_slice(&data).unwrap();
 
         let mut t: u32 = 0;
 
@@ -326,7 +326,7 @@ mod tests {
         // 118 105 100 101  111 67 111 100 101 99 115
 
         let mut bytes_reader = BytesReader::new(BytesMut::new());
-        bytes_reader.extend_from_slice(&data);
+        bytes_reader.extend_from_slice(&data).unwrap();
         let mut amf_reader = Amf0Reader::new(bytes_reader);
 
         let command_name = amf_reader.read_with_type(amf0_markers::STRING).unwrap();

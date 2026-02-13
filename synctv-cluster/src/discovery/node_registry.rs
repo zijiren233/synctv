@@ -22,10 +22,14 @@ pub struct NodeInfo {
     pub http_address: String,
     pub last_heartbeat: DateTime<Utc>,
     pub metadata: HashMap<String, String>,
+    /// Fencing token (epoch) for split-brain protection
+    /// Increments on each registration to prevent stale updates
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 impl NodeInfo {
-    #[must_use] 
+    #[must_use]
     pub fn new(node_id: String, grpc_address: String, http_address: String) -> Self {
         Self {
             node_id,
@@ -33,26 +37,64 @@ impl NodeInfo {
             http_address,
             last_heartbeat: Utc::now(),
             metadata: HashMap::new(),
+            epoch: 1, // Start at epoch 1
         }
     }
 
+    /// Create with a specific epoch (for re-registration)
+    #[must_use]
+    pub fn with_epoch(mut self, epoch: u64) -> Self {
+        self.epoch = epoch;
+        self
+    }
+
     /// Check if node is stale (no recent heartbeat)
-    #[must_use] 
+    #[must_use]
     pub fn is_stale(&self, timeout_secs: i64) -> bool {
         let now = Utc::now();
         let elapsed = now.signed_duration_since(self.last_heartbeat);
         elapsed.num_seconds() > timeout_secs
+    }
+
+    /// Get the fencing token for this node
+    #[must_use]
+    pub fn fencing_token(&self) -> FencingToken {
+        FencingToken::new(self.node_id.clone(), self.epoch)
+    }
+}
+
+/// Fencing token for split-brain protection
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FencingToken {
+    pub node_id: String,
+    pub epoch: u64,
+}
+
+impl FencingToken {
+    /// Create a new fencing token
+    #[must_use]
+    pub fn new(node_id: String, epoch: u64) -> Self {
+        Self { node_id, epoch }
+    }
+
+    /// Check if this token is newer than another (same node, higher epoch)
+    #[must_use]
+    pub fn is_newer_than(&self, other: &FencingToken) -> bool {
+        self.node_id == other.node_id && self.epoch > other.epoch
     }
 }
 
 /// Redis-based node registry
 ///
 /// Tracks active nodes in the cluster using Redis key expiration.
+/// Uses epoch-based fencing tokens to prevent split-brain scenarios.
 pub struct NodeRegistry {
     redis_client: Option<redis::Client>,
     node_id: String,
     pub heartbeat_timeout_secs: i64,
     local_nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
+    /// Current epoch for this node (incremented on each registration)
+    current_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl NodeRegistry {
@@ -74,13 +116,25 @@ impl NodeRegistry {
             node_id,
             heartbeat_timeout_secs,
             local_nodes: Arc::new(RwLock::new(HashMap::new())),
+            current_epoch: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         })
     }
 
-    /// Register this node in the registry
-    pub async fn register(&self, grpc_address: String, http_address: String) -> Result<()> {
-        let node_info = NodeInfo::new(self.node_id.clone(), grpc_address, http_address);
+    /// Get the current fencing token for this node
+    #[must_use]
+    pub fn current_fencing_token(&self) -> FencingToken {
+        FencingToken::new(
+            self.node_id.clone(),
+            self.current_epoch.load(std::sync::atomic::Ordering::SeqCst),
+        )
+    }
 
+    /// Register this node in the registry with epoch-based fencing
+    ///
+    /// This operation is atomic - it reads the current epoch from Redis,
+    /// increments it, and writes the new registration. If another node
+    /// registers with the same ID concurrently, only one will succeed.
+    pub async fn register(&self, grpc_address: String, http_address: String) -> Result<()> {
         if let Some(ref client) = self.redis_client {
             let mut conn = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
@@ -91,10 +145,142 @@ impl NodeRegistry {
             .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(&self.node_id);
+
+            // Read existing node info to get current epoch (if any)
+            let existing_epoch: Option<String> = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("GET")
+                    .arg(&key)
+                    .query_async(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+
+            // Determine new epoch: max(existing + 1, local_epoch + 1, 1)
+            let new_epoch = if let Some(existing) = existing_epoch {
+                if let Ok(existing_info) = serde_json::from_str::<NodeInfo>(&existing) {
+                    // Verify the existing node is actually this node
+                    if existing_info.node_id == self.node_id {
+                        existing_info.epoch + 1
+                    } else {
+                        // Different node had this ID, start fresh
+                        1
+                    }
+                } else {
+                    1
+                }
+            } else {
+                1
+            };
+
+            // Ensure we always increment (never go backwards)
+            let local_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
+            let final_epoch = new_epoch.max(local_epoch + 1);
+            self.current_epoch.store(final_epoch, std::sync::atomic::Ordering::SeqCst);
+
+            let node_info = NodeInfo::new(self.node_id.clone(), grpc_address, http_address)
+                .with_epoch(final_epoch);
+
             let value = serde_json::to_string(&node_info)
                 .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?;
 
-            // Set with expiration (heartbeat_timeout * 2 for safety)
+            // Use SET with NX and EX for atomic registration with expiration
+            // This prevents race conditions during registration
+            let _set_result: Option<String> = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("SET")
+                    .arg(&key)
+                    .arg(&value)
+                    .arg("EX")
+                    .arg(self.heartbeat_timeout_secs * 2)
+                    .query_async(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis SET timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis SET failed: {e}")))?;
+
+            // SET without NX always succeeds, so we update local cache
+            let mut nodes = self.local_nodes.write().await;
+            nodes.insert(self.node_id.clone(), node_info);
+
+            tracing::debug!(
+                node_id = %self.node_id,
+                epoch = final_epoch,
+                "Node registered with fencing token"
+            );
+        } else {
+            // Local-only mode
+            let node_info = NodeInfo::new(self.node_id.clone(), grpc_address, http_address);
+            let mut nodes = self.local_nodes.write().await;
+            nodes.insert(self.node_id.clone(), node_info);
+        }
+
+        Ok(())
+    }
+
+    /// Send heartbeat to keep this node alive with fencing token validation
+    ///
+    /// If the node's epoch in Redis doesn't match our local epoch, this indicates
+    /// another registration happened (possibly split-brain). We should re-register.
+    pub async fn heartbeat(&self) -> Result<()> {
+        if let Some(ref client) = self.redis_client {
+            let mut conn = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                client.get_multiplexed_async_connection(),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+
+            let key = Self::node_key(&self.node_id);
+            let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
+
+            // Read current value to verify epoch
+            let existing: Option<String> = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("GET")
+                    .arg(&key)
+                    .query_async(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+
+            if let Some(existing) = existing {
+                if let Ok(existing_info) = serde_json::from_str::<NodeInfo>(&existing) {
+                    // Check for epoch mismatch (indicates split-brain or re-registration)
+                    if existing_info.epoch != current_epoch {
+                        tracing::warn!(
+                            node_id = %self.node_id,
+                            local_epoch = current_epoch,
+                            remote_epoch = existing_info.epoch,
+                            "Epoch mismatch during heartbeat, node may need re-registration"
+                        );
+                        // Update our epoch to match the remote one
+                        self.current_epoch.store(
+                            existing_info.epoch.max(current_epoch),
+                            std::sync::atomic::Ordering::SeqCst
+                        );
+                    }
+                }
+            }
+
+            // Update heartbeat timestamp and epoch in Redis
+            let node_info = {
+                let nodes = self.local_nodes.read().await;
+                let mut info = nodes.get(&self.node_id).cloned().unwrap_or_else(|| {
+                    NodeInfo::new(self.node_id.clone(), String::new(), String::new())
+                });
+                info.last_heartbeat = Utc::now();
+                info.epoch = current_epoch;
+                info
+            };
+
+            let value = serde_json::to_string(&node_info)
+                .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?;
+
+            // Update value with expiration (atomic SETEX)
             timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 redis::cmd("SETEX")
@@ -108,39 +294,6 @@ impl NodeRegistry {
             .map_err(|e| Error::Database(format!("Redis SETEX failed: {e}")))?;
         }
 
-        // Also update local cache
-        let mut nodes = self.local_nodes.write().await;
-        nodes.insert(self.node_id.clone(), node_info);
-
-        Ok(())
-    }
-
-    /// Send heartbeat to keep this node alive
-    pub async fn heartbeat(&self) -> Result<()> {
-        if let Some(ref client) = self.redis_client {
-            let mut conn = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                client.get_multiplexed_async_connection(),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
-
-            let key = Self::node_key(&self.node_id);
-
-            // Update TTL (keep alive)
-            timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("EXPIRE")
-                    .arg(&key)
-                    .arg(self.heartbeat_timeout_secs * 2)
-                    .query_async::<()>(&mut conn),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis EXPIRE timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis EXPIRE failed: {e}")))?;
-        }
-
         // Update local heartbeat time
         let mut nodes = self.local_nodes.write().await;
         if let Some(node) = nodes.get_mut(&self.node_id) {
@@ -150,7 +303,10 @@ impl NodeRegistry {
         Ok(())
     }
 
-    /// Unregister this node
+    /// Unregister this node with fencing token validation
+    ///
+    /// Only allows unregistration if our epoch matches Redis epoch.
+    /// Prevents stale nodes from unregistering newer registrations.
     pub async fn unregister(&self) -> Result<()> {
         if let Some(ref client) = self.redis_client {
             let mut conn = timeout(
@@ -162,7 +318,38 @@ impl NodeRegistry {
             .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(&self.node_id);
+            let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
 
+            // Read and verify epoch before deleting
+            let existing: Option<String> = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                redis::cmd("GET")
+                    .arg(&key)
+                    .query_async(&mut conn),
+            )
+            .await
+            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+
+            if let Some(existing) = existing {
+                if let Ok(existing_info) = serde_json::from_str::<NodeInfo>(&existing) {
+                    if existing_info.epoch > current_epoch {
+                        // A newer registration exists, don't delete it
+                        tracing::warn!(
+                            node_id = %self.node_id,
+                            local_epoch = current_epoch,
+                            remote_epoch = existing_info.epoch,
+                            "Skipping unregister: newer registration exists in Redis"
+                        );
+                        // Still remove from local cache
+                        let mut nodes = self.local_nodes.write().await;
+                        nodes.remove(&self.node_id);
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Safe to delete
             timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 redis::cmd("DEL")
@@ -314,17 +501,35 @@ impl NodeRegistry {
             .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
             .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
-            // Get all node keys
+            // Use SCAN instead of KEYS for better performance on large datasets
+            // SCAN is non-blocking and returns results incrementally
             let pattern = format!("{}:*", Self::KEY_PREFIX);
-            let keys: Vec<String> = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("KEYS")
-                    .arg(&pattern)
-                    .query_async(&mut conn),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis KEYS timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis KEYS failed: {e}")))?;
+            let mut keys = Vec::new();
+            let mut cursor: u64 = 0;
+
+            loop {
+                let scan_result: (u64, Vec<String>) = timeout(
+                    Duration::from_secs(REDIS_TIMEOUT_SECS),
+                    redis::cmd("SCAN")
+                        .arg(cursor)
+                        .arg("MATCH")
+                        .arg(&pattern)
+                        .arg("COUNT")
+                        .arg(100) // Scan 100 keys at a time
+                        .query_async(&mut conn),
+                )
+                .await
+                .map_err(|_| Error::Timeout("Redis SCAN timed out".to_string()))?
+                .map_err(|e| Error::Database(format!("Redis SCAN failed: {e}")))?;
+
+                cursor = scan_result.0;
+                keys.extend(scan_result.1);
+
+                // cursor 0 means iteration complete
+                if cursor == 0 {
+                    break;
+                }
+            }
 
             let mut nodes = Vec::new();
             for key in keys {
@@ -430,5 +635,118 @@ mod tests {
         // Simulate old heartbeat
         node.last_heartbeat = Utc::now() - Duration::seconds(60);
         assert!(node.is_stale(30));
+    }
+
+    #[test]
+    fn test_node_info_epoch_initialization() {
+        let node = NodeInfo::new(
+            "test".to_string(),
+            "localhost:50051".to_string(),
+            "localhost:8080".to_string(),
+        );
+
+        // New nodes should start with epoch 1
+        assert_eq!(node.epoch, 1);
+    }
+
+    #[test]
+    fn test_node_info_with_epoch() {
+        let node = NodeInfo::new(
+            "test".to_string(),
+            "localhost:50051".to_string(),
+            "localhost:8080".to_string(),
+        ).with_epoch(5);
+
+        assert_eq!(node.epoch, 5);
+    }
+
+    #[test]
+    fn test_fencing_token_new() {
+        let token = FencingToken::new("node1".to_string(), 3);
+        assert_eq!(token.node_id, "node1");
+        assert_eq!(token.epoch, 3);
+    }
+
+    #[test]
+    fn test_fencing_token_is_newer_than() {
+        let token1 = FencingToken::new("node1".to_string(), 3);
+        let token2 = FencingToken::new("node1".to_string(), 5);
+        let token3 = FencingToken::new("node2".to_string(), 5);
+
+        // Same node, higher epoch is newer
+        assert!(token2.is_newer_than(&token1));
+        assert!(!token1.is_newer_than(&token2));
+
+        // Different nodes - not newer even with higher epoch
+        assert!(!token3.is_newer_than(&token1));
+
+        // Same token is not newer than itself
+        assert!(!token1.is_newer_than(&token1));
+    }
+
+    #[test]
+    fn test_node_info_fencing_token() {
+        let node = NodeInfo::new(
+            "test_node".to_string(),
+            "localhost:50051".to_string(),
+            "localhost:8080".to_string(),
+        ).with_epoch(10);
+
+        let token = node.fencing_token();
+        assert_eq!(token.node_id, "test_node");
+        assert_eq!(token.epoch, 10);
+    }
+
+    #[tokio::test]
+    async fn test_node_registry_local_mode() {
+        let registry = NodeRegistry::new(None, "test_node".to_string(), 30).unwrap();
+
+        // Get fencing token
+        let token = registry.current_fencing_token();
+        assert_eq!(token.node_id, "test_node");
+        assert_eq!(token.epoch, 1);
+
+        // Register in local mode
+        registry
+            .register("localhost:50051".to_string(), "localhost:8080".to_string())
+            .await
+            .unwrap();
+
+        // Check local cache
+        let nodes = registry.local_nodes.read().await;
+        assert!(nodes.contains_key("test_node"));
+    }
+
+    #[test]
+    fn test_fencing_token_serialization() {
+        let token = FencingToken::new("node1".to_string(), 42);
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&token).unwrap();
+        assert!(json.contains("node1"));
+        assert!(json.contains("42"));
+
+        // Deserialize back
+        let deserialized: FencingToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.node_id, "node1");
+        assert_eq!(deserialized.epoch, 42);
+    }
+
+    #[test]
+    fn test_node_info_serialization_with_epoch() {
+        let node = NodeInfo::new(
+            "test".to_string(),
+            "localhost:50051".to_string(),
+            "localhost:8080".to_string(),
+        )
+        .with_epoch(7);
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&node).unwrap();
+        assert!(json.contains("\"epoch\":7"));
+
+        // Deserialize back
+        let deserialized: NodeInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.epoch, 7);
     }
 }

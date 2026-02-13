@@ -158,12 +158,15 @@ impl NetworkQualityMonitor {
         entry.loss_samples.push_back((now, loss_rate));
 
         // Prune old samples outside the window
-        let cutoff = now.checked_sub(self.window_duration).unwrap();
-        while let Some(&(t, _)) = entry.rtt_samples.front() {
-            if t < cutoff { entry.rtt_samples.pop_front(); } else { break; }
-        }
-        while let Some(&(t, _)) = entry.loss_samples.front() {
-            if t < cutoff { entry.loss_samples.pop_front(); } else { break; }
+        // If time went backwards (checked_sub returns None), skip pruning
+        // rather than panicking. Samples will be pruned on next valid call.
+        if let Some(cutoff) = now.checked_sub(self.window_duration) {
+            while let Some(&(t, _)) = entry.rtt_samples.front() {
+                if t < cutoff { entry.rtt_samples.pop_front(); } else { break; }
+            }
+            while let Some(&(t, _)) = entry.loss_samples.front() {
+                if t < cutoff { entry.loss_samples.pop_front(); } else { break; }
+            }
         }
 
         // Compute averaged stats
@@ -234,9 +237,11 @@ impl NetworkQualityMonitor {
         entry.rtt_samples.push_back((now, rtt_ms));
 
         // Prune old samples
-        let cutoff = now.checked_sub(self.window_duration).unwrap();
-        while let Some(&(t, _)) = entry.rtt_samples.front() {
-            if t < cutoff { entry.rtt_samples.pop_front(); } else { break; }
+        // If time went backwards (checked_sub returns None), skip pruning
+        if let Some(cutoff) = now.checked_sub(self.window_duration) {
+            while let Some(&(t, _)) = entry.rtt_samples.front() {
+                if t < cutoff { entry.rtt_samples.pop_front(); } else { break; }
+            }
         }
     }
 

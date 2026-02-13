@@ -20,12 +20,13 @@ use crate::{
 ///
 /// * `pool` - Database connection pool
 /// * `config` - Bootstrap configuration
+/// * `development_mode` - Whether running in development mode
 ///
 /// # Returns
 ///
 /// * `Ok(())` if root user exists or was created successfully
 /// * `Err` if database error occurs
-pub async fn bootstrap_root_user(pool: &PgPool, config: &BootstrapConfig) -> Result<()> {
+pub async fn bootstrap_root_user(pool: &PgPool, config: &BootstrapConfig, development_mode: bool) -> Result<()> {
     if !config.create_root_user {
         info!("Root user bootstrap disabled in config");
         return Ok(());
@@ -81,10 +82,10 @@ pub async fn bootstrap_root_user(pool: &PgPool, config: &BootstrapConfig) -> Res
     info!("  Role: {:?}", created_user.role);
     info!("  Status: {:?}", created_user.status);
 
-    if config.root_password == "root" {
+    if config.root_password == "root" && development_mode {
         warn!("⚠ WARNING: Root password is set to default value 'root'");
+        warn!("⚠ This is only allowed in development mode.");
         warn!("⚠ Please change the root password immediately after first login!");
-        warn!("⚠ Set SYNCTV_BOOTSTRAP_ROOT_PASSWORD environment variable to use a different password");
     }
 
     Ok(())

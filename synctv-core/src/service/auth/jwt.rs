@@ -109,14 +109,31 @@ impl std::fmt::Debug for JwtService {
     }
 }
 
+/// Minimum entropy bits required for JWT secret (256 bits = 32 bytes)
+const MIN_JWT_SECRET_ENTROPY_BITS: usize = 256;
+
 impl JwtService {
     /// Create a new JWT service with HS256 secret
     ///
     /// # Arguments
     /// * `secret` - Secret string for HMAC signing
+    ///
+    /// # Security
+    /// The secret must have sufficient entropy (at least 256 bits / 32 characters).
+    /// Weak secrets will be rejected with an error.
     pub fn new(secret: &str) -> Result<Self> {
         if secret.is_empty() {
             return Err(Error::Internal("JWT secret cannot be empty".to_string()));
+        }
+
+        // Validate secret entropy in production builds
+        #[cfg(not(debug_assertions))]
+        Self::validate_secret_entropy(secret)?;
+
+        // In debug builds, warn but allow (for development/testing convenience)
+        #[cfg(debug_assertions)]
+        if let Err(e) = Self::validate_secret_entropy(secret) {
+            tracing::warn!("JWT secret validation: {}", e);
         }
 
         let encoding_key = EncodingKey::from_secret(secret.as_bytes());
@@ -127,6 +144,50 @@ impl JwtService {
             decoding_key: Arc::new(decoding_key),
             algorithm: Algorithm::HS256,
         })
+    }
+
+    /// Validate that the secret has sufficient entropy
+    fn validate_secret_entropy(secret: &str) -> Result<()> {
+        // Calculate entropy estimate based on character variety
+        let mut has_lowercase = false;
+        let mut has_uppercase = false;
+        let mut has_digit = false;
+        let mut has_special = false;
+
+        for c in secret.chars() {
+            if c.is_ascii_lowercase() {
+                has_lowercase = true;
+            } else if c.is_ascii_uppercase() {
+                has_uppercase = true;
+            } else if c.is_ascii_digit() {
+                has_digit = true;
+            } else {
+                has_special = true;
+            }
+        }
+
+        // Estimate charset size based on character variety
+        let charset_size = {
+            let mut size = 0usize;
+            if has_lowercase { size += 26; }
+            if has_uppercase { size += 26; }
+            if has_digit { size += 10; }
+            if has_special { size += 32; } // Common special chars estimate
+            size.max(10) // Minimum assumed charset
+        };
+
+        // Entropy = length * log2(charset_size)
+        let entropy_bits = (secret.len() as f64) * (charset_size as f64).log2();
+
+        if entropy_bits < MIN_JWT_SECRET_ENTROPY_BITS as f64 {
+            return Err(Error::Internal(format!(
+                "JWT secret has insufficient entropy ({:.0} bits, need at least {} bits). \
+                 Use a longer secret with mixed case, numbers, and special characters.",
+                entropy_bits, MIN_JWT_SECRET_ENTROPY_BITS
+            )));
+        }
+
+        Ok(())
     }
 
     /// Sign a token

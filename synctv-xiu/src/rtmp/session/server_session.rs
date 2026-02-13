@@ -131,7 +131,7 @@ impl ServerSession {
         while bytes_len < handshake::define::RTMP_HANDSHAKE_SIZE {
             self.bytesio_data = self.io.lock().await.read().await?;
             bytes_len += self.bytesio_data.len();
-            self.handshaker.extend_data(&self.bytesio_data[..]);
+            self.handshaker.extend_data(&self.bytesio_data[..])?;
         }
 
         self.handshaker.handshake().await?;
@@ -140,7 +140,7 @@ impl ServerSession {
             self.state = ServerSessionState::ReadChunk;
             let left_bytes = self.handshaker.get_remaining_bytes();
             if !left_bytes.is_empty() {
-                self.unpacketizer.extend_data(&left_bytes[..]);
+                self.unpacketizer.extend_data(&left_bytes[..])?;
                 self.has_remaing_data = true;
             }
             log::info!("[ S->C ] [send_set_chunk_size] ");
@@ -196,7 +196,7 @@ impl ServerSession {
                 }
             }
 
-            self.unpacketizer.extend_data(&self.bytesio_data[..]);
+            self.unpacketizer.extend_data(&self.bytesio_data[..])?;
         }
 
         self.has_remaing_data = false;

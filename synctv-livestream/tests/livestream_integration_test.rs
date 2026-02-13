@@ -68,6 +68,7 @@ impl synctv_livestream::relay::StreamRegistryTrait for MockStreamRegistry {
             app_name: "live".to_string(),
             user_id: String::new(),
             started_at: chrono::Utc::now(),
+            epoch: 1,
         }))
     }
 
@@ -85,6 +86,11 @@ impl synctv_livestream::relay::StreamRegistryTrait for MockStreamRegistry {
 
     async fn unregister_all_user_publishers(&self, _user_id: &str) -> anyhow::Result<()> {
         Ok(())
+    }
+
+    async fn validate_epoch(&self, _room_id: &str, _media_id: &str, _epoch: u64) -> anyhow::Result<bool> {
+        // Mock always returns true for validation
+        Ok(true)
     }
 }
 

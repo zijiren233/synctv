@@ -161,7 +161,7 @@ mod tests {
             111, 115, 116, 58, 49, 57, 51, 53, 47, 104, 97, 114, 108, 97, 110, 0, 0, 9,
         ];
 
-        unpacker.extend_data(&data[..]);
+        unpacker.extend_data(&data[..]).unwrap();
 
         loop {
             let result = unpacker.read_chunk();

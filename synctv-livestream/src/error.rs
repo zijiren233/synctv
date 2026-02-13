@@ -52,6 +52,9 @@ pub enum StreamError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Stale epoch (split-brain detected): {0}")]
+    StaleEpoch(String),
 }
 
 pub type StreamResult<T> = Result<T, StreamError>;

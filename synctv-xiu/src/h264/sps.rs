@@ -71,8 +71,9 @@ impl SpsParser {
         }
     }
 
-    pub fn extend_data(&mut self, data: BytesMut) {
-        self.bits_reader.extend_data(data);
+    pub fn extend_data(&mut self, data: BytesMut) -> Result<(), H264Error> {
+        self.bits_reader.extend_data(data)?;
+        Ok(())
     }
 
     pub fn parse(&mut self) -> Result<(u32, u32), H264Error> {
@@ -127,8 +128,12 @@ impl SpsParser {
                 self.sps.num_ref_frames_in_pic_order_cnt_cycle =
                     utils::read_uev(&mut self.bits_reader)?;
 
-                for i in 0..self.sps.num_ref_frames_in_pic_order_cnt_cycle as usize {
-                    self.sps.offset_for_ref_frame[i] = utils::read_sev(&mut self.bits_reader)?;
+                // Clear and resize the vector before filling to avoid index out of bounds panic
+                let count = self.sps.num_ref_frames_in_pic_order_cnt_cycle as usize;
+                self.sps.offset_for_ref_frame.clear();
+                self.sps.offset_for_ref_frame.reserve(count);
+                for _ in 0..count {
+                    self.sps.offset_for_ref_frame.push(utils::read_sev(&mut self.bits_reader)?);
                 }
             }
             _ => {}

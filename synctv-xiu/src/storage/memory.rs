@@ -97,7 +97,9 @@ impl HlsStorage for MemoryStorage {
     }
 
     async fn cleanup(&self, older_than: Duration) -> Result<usize> {
-        let cutoff_time = Instant::now().checked_sub(older_than).unwrap();
+        let cutoff_time = Instant::now()
+            .checked_sub(older_than)
+            .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "older_than duration is too large"))?;
         let mut deleted = 0;
 
         // Collect expired keys

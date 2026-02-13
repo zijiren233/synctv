@@ -178,26 +178,50 @@ pub async fn rate_limit_middleware(
     let user_id = extract_user_id_from_header(&request, &state);
 
     // Use IP address as fallback if no user ID (for public endpoints).
-    // Only the first IP from X-Forwarded-For is used (client IP set by a
-    // trusted reverse proxy). If no proxy is in front, these headers can be
-    // spoofed — deploy behind a proxy that strips/overwrites them, or rely on
-    // authenticated user_id-based rate limiting for stronger guarantees.
+    // We only trust X-Forwarded-For/X-Real-IP headers when:
+    // 1. The request comes from a configured trusted proxy, OR
+    // 2. Development mode is enabled (for local testing)
+    //
+    // This prevents header spoofing attacks that could bypass rate limiting.
     let rate_limit_key = user_id.unwrap_or_else(|| {
-        request
-            .headers()
-            .get("X-Forwarded-For")
-            .and_then(|h| h.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .map(str::trim)
-            .or_else(|| {
-                request
-                    .headers()
-                    .get("X-Real-IP")
-                    .and_then(|h| h.to_str().ok())
-                    .map(str::trim)
-            })
-            .unwrap_or("unknown")
-            .to_string()
+        // Try to get the remote/socket address from ConnectInfo extension
+        let remote_addr = request
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|ci| ci.0.ip());
+
+        // Check if we should trust proxy headers
+        let should_trust_headers = state.config.server.development_mode
+            || remote_addr.map_or(false, |ip| state.config.server.is_trusted_proxy(&ip));
+
+        if should_trust_headers {
+            // Trust X-Forwarded-For from trusted proxies (or in dev mode)
+            let forwarded = request
+                .headers()
+                .get("X-Forwarded-For")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|v| v.split(',').next())
+                .map(str::trim);
+
+            if let Some(ip) = forwarded {
+                ip.to_string()
+            } else if let Some(ip) = request
+                .headers()
+                .get("X-Real-IP")
+                .and_then(|h| h.to_str().ok())
+            {
+                ip.to_string()
+            } else if let Some(ip) = remote_addr {
+                ip.to_string()
+            } else {
+                "unknown".to_string()
+            }
+        } else {
+            // Don't trust headers - use socket address directly
+            remote_addr
+                .map(|ip| ip.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        }
     });
 
     // Get rate limiter from app state

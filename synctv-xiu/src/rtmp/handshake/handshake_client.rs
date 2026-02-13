@@ -31,8 +31,9 @@ impl SimpleHandshakeClient {
         }
     }
 
-    pub fn extend_data(&mut self, data: &[u8]) {
-        self.reader.extend_from_slice(data);
+    pub fn extend_data(&mut self, data: &[u8]) -> Result<(), HandshakeError> {
+        self.reader.extend_from_slice(data)?;
+        Ok(())
     }
     pub async fn flush(&mut self) -> Result<(), HandshakeError> {
         self.writer.flush().await?;

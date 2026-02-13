@@ -52,15 +52,15 @@ mod tests {
         // 8 => 1001 => 0001001
 
         let mut bytes_reader = BytesReader::new(BytesMut::new());
-        bytes_reader.extend_from_slice(&[0b00000001]);
-        bytes_reader.extend_from_slice(&[0b00000010]);
-        bytes_reader.extend_from_slice(&[0b00000011]);
-        bytes_reader.extend_from_slice(&[0b00000100]);
-        bytes_reader.extend_from_slice(&[0b00000101]);
-        bytes_reader.extend_from_slice(&[0b00000110]);
-        bytes_reader.extend_from_slice(&[0b00000111]);
-        bytes_reader.extend_from_slice(&[0b00001000]);
-        bytes_reader.extend_from_slice(&[0b00001001]);
+        bytes_reader.extend_from_slice(&[0b00000001]).unwrap();
+        bytes_reader.extend_from_slice(&[0b00000010]).unwrap();
+        bytes_reader.extend_from_slice(&[0b00000011]).unwrap();
+        bytes_reader.extend_from_slice(&[0b00000100]).unwrap();
+        bytes_reader.extend_from_slice(&[0b00000101]).unwrap();
+        bytes_reader.extend_from_slice(&[0b00000110]).unwrap();
+        bytes_reader.extend_from_slice(&[0b00000111]).unwrap();
+        bytes_reader.extend_from_slice(&[0b00001000]).unwrap();
+        bytes_reader.extend_from_slice(&[0b00001001]).unwrap();
 
         let mut bits_reader = BitsReader::new(bytes_reader);
 

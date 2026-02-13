@@ -12,6 +12,11 @@ use {
 };
 
 const PARSE_ERROR_NUMVER: usize = 5;
+/// Maximum number of chunk stream IDs to track before cleanup
+/// RTMP spec allows up to 65599 stream IDs, but in practice most streams use far fewer
+const MAX_CACHED_CHUNK_HEADERS: usize = 256;
+/// Maximum message size (10 MB) to prevent unbounded memory growth from malicious clients
+const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
 #[derive(Eq, PartialEq, Debug)]
 pub enum UnpackResult {
@@ -93,7 +98,7 @@ impl Default for ChunkUnpacketizer {
 }
 
 impl ChunkUnpacketizer {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             reader: BytesReader::new(BytesMut::new()),
@@ -108,8 +113,36 @@ impl ChunkUnpacketizer {
         }
     }
 
-    pub fn extend_data(&mut self, data: &[u8]) {
-        self.reader.extend_from_slice(data);
+    /// Clear cached chunk headers to free memory
+    /// Call this when the connection is closed or when memory usage is a concern
+    pub fn clear_cached_headers(&mut self) {
+        self.chunk_message_headers.clear();
+    }
+
+    /// Check if we need to prune old entries to prevent unbounded memory growth
+    fn maybe_prune_headers(&mut self) {
+        if self.chunk_message_headers.len() > MAX_CACHED_CHUNK_HEADERS {
+            // Keep only the most recently used entries
+            // Since HashMap doesn't track access order, we'll just clear half
+            // A better solution would be to use an LRU cache, but that adds complexity
+            let to_remove: Vec<u32> = self.chunk_message_headers
+                .keys()
+                .take(self.chunk_message_headers.len() / 2)
+                .copied()
+                .collect();
+            for key in to_remove {
+                self.chunk_message_headers.remove(&key);
+            }
+            log::debug!(
+                "Pruned chunk_message_headers from {} to {} entries",
+                MAX_CACHED_CHUNK_HEADERS * 2,
+                self.chunk_message_headers.len()
+            );
+        }
+    }
+
+    pub fn extend_data(&mut self, data: &[u8]) -> Result<(), UnpackError> {
+        self.reader.extend_from_slice(data)?;
 
         log::trace!(
             "extend_data length: {}: content:{:X?}",
@@ -119,6 +152,7 @@ impl ChunkUnpacketizer {
                 .split_to(self.reader.len())
                 .to_vec()
         );
+        Ok(())
     }
 
     pub fn update_max_chunk_size(&mut self, chunk_size: usize) {
@@ -550,6 +584,14 @@ impl ChunkUnpacketizer {
 
     pub fn read_message_payload(&mut self) -> Result<UnpackResult, UnpackError> {
         let whole_msg_length = self.current_message_header().msg_length as usize;
+
+        // Check message size limit to prevent unbounded memory growth
+        if whole_msg_length > MAX_MESSAGE_SIZE {
+            return Err(UnpackError {
+                value: UnpackErrorValue::MessageTooLarge(whole_msg_length, MAX_MESSAGE_SIZE),
+            });
+        }
+
         let remaining_bytes = whole_msg_length - self.current_chunk_info.payload.len();
 
         log::trace!(
@@ -590,6 +632,10 @@ impl ChunkUnpacketizer {
             self.current_chunk_info.payload.clear();
 
             let csid = self.current_chunk_info.basic_header.chunk_stream_id;
+
+            // Check if we need to prune old entries to prevent memory leak
+            self.maybe_prune_headers();
+
             self.chunk_message_headers
                 .insert(csid, self.current_chunk_info.message_header.clone());
 
@@ -624,7 +670,7 @@ mod tests {
             00, 00, 10, 00, //body
         ];
 
-        unpacker.extend_data(&data[..]);
+        unpacker.extend_data(&data[..]).unwrap();
 
         let rv = unpacker.read_chunk();
 

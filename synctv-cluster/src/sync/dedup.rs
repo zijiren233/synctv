@@ -28,12 +28,15 @@ impl DedupKey {
     pub fn from_event(event: &crate::sync::events::ClusterEvent) -> Self {
         Self {
             event_type: event.event_type().to_string(),
+            // Use "global" for events without room_id to avoid false positive deduplication
+            // across different system events
             room_id: event.room_id()
                 .map(|id| id.as_str().to_string())
-                .unwrap_or_default(),
+                .unwrap_or_else(|| "global".to_string()),
+            // Use "system" for events without user_id (e.g., system notifications)
             user_id: event.user_id()
                 .map(|id| id.as_str().to_string())
-                .unwrap_or_default(),
+                .unwrap_or_else(|| "system".to_string()),
             extra: event.dedup_extra(),
             timestamp_ms: event.timestamp().timestamp_millis(),
         }

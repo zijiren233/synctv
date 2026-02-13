@@ -99,9 +99,9 @@ impl Mpeg4AacProcessor {
         }
     }
 
-    pub fn extend_data(&mut self, data: BytesMut) -> &mut Self {
-        self.bytes_reader.extend_from_slice(&data[..]);
-        self
+    pub fn extend_data(&mut self, data: BytesMut) -> Result<&mut Self, MpegAacError> {
+        self.bytes_reader.extend_from_slice(&data[..])?;
+        Ok(self)
     }
 
     pub fn audio_specific_config_load(&mut self) -> Result<&mut Self, MpegAacError> {
@@ -113,8 +113,15 @@ impl Mpeg4AacProcessor {
         self.mpeg4_aac.sampling_frequency_index = ((byte_0 & 0x07) << 1) | ((byte_1 >> 7) & 0x01);
         self.mpeg4_aac.channel_configuration = (byte_1 >> 3) & 0x0F;
         self.mpeg4_aac.channels = self.mpeg4_aac.channel_configuration;
-        self.mpeg4_aac.sampling_frequency =
-            AAC_FREQUENCE[self.mpeg4_aac.sampling_frequency_index as usize];
+
+        // Validate sampling_frequency_index to prevent array out of bounds
+        let freq_index = self.mpeg4_aac.sampling_frequency_index as usize;
+        if freq_index >= AAC_FREQUENCE_SIZE {
+            return Err(MpegAacError {
+                value: MpegErrorValue::NotSupportedSamplingFrequency,
+            });
+        }
+        self.mpeg4_aac.sampling_frequency = AAC_FREQUENCE[freq_index];
 
         // log::info!("aac info: {:?}", self.mpeg4_aac);
 
@@ -133,7 +140,7 @@ impl Mpeg4AacProcessor {
     pub fn audio_specific_config_load2(&mut self) -> Result<(), MpegAacError> {
         let remain_bytes = self.bytes_reader.extract_remaining_bytes();
         // self.bits_reader.extend_from_bytesmut(remain_bytes);
-        self.bits_reader.extend_data(remain_bytes);
+        self.bits_reader.extend_data(remain_bytes)?;
 
         self.mpeg4_aac.object_type = self.get_audio_object_type()?;
         self.mpeg4_aac.sampling_frequency_index = self.get_sampling_frequency()?;

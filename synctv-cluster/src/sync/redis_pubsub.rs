@@ -15,6 +15,11 @@ const INITIAL_BACKOFF_SECS: u64 = 1;
 /// Maximum backoff delay for subscriber reconnection
 const MAX_BACKOFF_SECS: u64 = 30;
 
+/// Redis Stream key for reliable event delivery
+const EVENT_STREAM_KEY: &str = "synctv:events:stream";
+/// Max length of the event stream (approximate)
+const MAX_STREAM_LENGTH: usize = 10000;
+
 use super::events::ClusterEvent;
 use super::room_hub::RoomMessageHub;
 use synctv_core::models::id::RoomId;
@@ -362,6 +367,9 @@ impl RedisPubSub {
     }
 
     /// Publish an event to Redis
+    ///
+    /// Uses both Pub/Sub (for real-time delivery) and Stream (for reliability).
+    /// If a subscriber disconnects, it can catch up by reading from the stream.
     async fn publish_event(
         conn: &mut redis::aio::MultiplexedConnection,
         node_id: &str,
@@ -383,16 +391,91 @@ impl RedisPubSub {
         let payload =
             serde_json::to_string(&envelope).context("Failed to serialize event envelope")?;
 
-        // Publish to Redis
+        // 1. Add to Redis Stream for reliable delivery (catch-up after disconnect)
+        // Using XADD with MAXLEN to prevent unbounded growth
+        use redis::streams::StreamMaxlen;
+        let stream_result = timeout(
+            Duration::from_secs(REDIS_TIMEOUT_SECS),
+            conn.xadd_maxlen::<_, _, _, _, String>(
+                EVENT_STREAM_KEY,
+                StreamMaxlen::Approx(MAX_STREAM_LENGTH),
+                "*",  // Auto-generate ID
+                &[("channel", channel.as_str()), ("payload", payload.as_str())],
+            ),
+        ).await;
+
+        if let Err(e) = &stream_result {
+            warn!(error = ?e, "Failed to add event to Redis Stream (non-critical)");
+            // Continue with Pub/Sub even if Stream fails
+        }
+
+        // 2. Publish to Pub/Sub for real-time delivery
         let subscribers: usize = timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
-            conn.publish(&channel, payload),
+            conn.publish(&channel, &payload),
         )
         .await
         .context("Timed out publishing to Redis")?
         .context("Failed to publish to Redis")?;
 
         Ok(subscribers)
+    }
+
+    /// Read missed events from Redis Stream after reconnection
+    ///
+    /// This should be called after subscriber reconnects to catch up on any
+    /// events that were missed during the disconnection period.
+    #[allow(dead_code)]
+    async fn read_missed_events(
+        &self,
+        last_id: &str,
+    ) -> Result<Vec<(String, ClusterEvent)>> {
+        let mut conn = self.redis_client
+            .get_multiplexed_async_connection()
+            .await
+            .context("Failed to get Redis connection")?;
+
+        // Read from stream starting after last_id
+        let entries: Vec<(String, Vec<(String, String)>)> = timeout(
+            Duration::from_secs(REDIS_TIMEOUT_SECS),
+            conn.xread(
+                &[EVENT_STREAM_KEY],
+                &[last_id],
+            ),
+        )
+        .await
+        .context("Timed out reading from Redis Stream")?
+        .context("Failed to read from Redis Stream")?;
+
+        let mut events = Vec::new();
+        for (id, fields) in entries {
+            // Parse the fields
+            let mut channel = None;
+            let mut payload = None;
+            for (key, value) in fields {
+                match key.as_str() {
+                    "channel" => channel = Some(value),
+                    "payload" => payload = Some(value),
+                    _ => {}
+                }
+            }
+
+            if let (Some(_chan), Some(payload_str)) = (channel, payload) {
+                match serde_json::from_str::<EventEnvelope>(&payload_str) {
+                    Ok(envelope) => {
+                        // Skip events from this node
+                        if envelope.node_id != self.node_id {
+                            events.push((id, envelope.event));
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to parse event envelope from stream");
+                    }
+                }
+            }
+        }
+
+        Ok(events)
     }
 }
 

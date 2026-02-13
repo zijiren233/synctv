@@ -105,6 +105,41 @@ pub trait ManagedStream: Send + Sync + 'static {
     fn stream_key(&self) -> String;
 }
 
+/// Creation lock entry with last access time for cleanup
+struct CreationLockEntry {
+    lock: Arc<tokio::sync::Mutex<()>>,
+    last_accessed: AtomicUsize, // stores seconds since Unix epoch as usize
+}
+
+impl CreationLockEntry {
+    fn new() -> Self {
+        Self {
+            lock: Arc::new(tokio::sync::Mutex::new(())),
+            last_accessed: AtomicUsize::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as usize)
+                    .unwrap_or(0),
+            ),
+        }
+    }
+
+    fn touch(&self) {
+        if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            self.last_accessed.store(d.as_secs() as usize, Ordering::Relaxed);
+        }
+    }
+
+    fn age_seconds(&self) -> u64 {
+        if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            let last = self.last_accessed.load(Ordering::Relaxed) as u64;
+            now.as_secs().saturating_sub(last)
+        } else {
+            0
+        }
+    }
+}
+
 /// Generic stream pool with double-checked locking and idle cleanup.
 ///
 /// Provides the common infrastructure for both `PullStreamManager` and
@@ -112,9 +147,11 @@ pub trait ManagedStream: Send + Sync + 'static {
 /// streams, and background idle cleanup.
 pub struct StreamPool<S: ManagedStream> {
     pub streams: Arc<DashMap<String, Arc<S>>>,
-    creation_locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    creation_locks: Arc<DashMap<String, Arc<CreationLockEntry>>>,
     pub cleanup_check_interval: Duration,
     pub idle_timeout: Duration,
+    /// Maximum age of unused creation locks before cleanup (prevents memory leak)
+    creation_lock_max_age: Duration,
 }
 
 impl<S: ManagedStream> StreamPool<S> {
@@ -124,6 +161,8 @@ impl<S: ManagedStream> StreamPool<S> {
             creation_locks: Arc::new(DashMap::new()),
             cleanup_check_interval,
             idle_timeout,
+            // Clean up creation locks that haven't been used for 10 minutes
+            creation_lock_max_age: Duration::from_secs(600),
         }
     }
 
@@ -150,12 +189,54 @@ impl<S: ManagedStream> StreamPool<S> {
         &self,
         stream_key: &str,
     ) -> tokio::sync::OwnedMutexGuard<()> {
-        let lock = self
+        let entry = self
             .creation_locks
             .entry(stream_key.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone();
+            .or_insert_with(|| Arc::new(CreationLockEntry::new()));
+        entry.touch();
+        let lock = Arc::clone(&entry.lock);
         lock.lock_owned().await
+    }
+
+    /// Remove the creation lock for a stream key (called when stream is destroyed)
+    pub fn remove_creation_lock(&self, stream_key: &str) {
+        self.creation_locks.remove(stream_key);
+    }
+
+    /// Periodically clean up old unused creation locks to prevent memory leak
+    pub fn cleanup_old_creation_locks(&self) {
+        let max_age = self.creation_lock_max_age;
+        self.creation_locks.retain(|_key, entry| {
+            entry.age_seconds() < max_age.as_secs()
+        });
+    }
+
+    /// Start a background task that periodically cleans up stale creation locks.
+    ///
+    /// This should be called once during initialization to prevent memory leaks
+    /// from failed stream creation attempts that leave orphaned lock entries.
+    pub fn start_creation_lock_cleanup(&self) -> tokio::task::JoinHandle<()> {
+        let creation_locks = Arc::clone(&self.creation_locks);
+        let max_age = self.creation_lock_max_age;
+        let check_interval = self.cleanup_check_interval;
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(check_interval);
+            loop {
+                interval.tick().await;
+                let before = creation_locks.len();
+                creation_locks.retain(|_key, entry| {
+                    entry.age_seconds() < max_age.as_secs()
+                });
+                let after = creation_locks.len();
+                if before != after {
+                    log::debug!(
+                        "Cleaned up {} stale creation lock entries",
+                        before - after
+                    );
+                }
+            }
+        })
     }
 
     /// Insert a stream and spawn the idle cleanup task.
@@ -176,6 +257,7 @@ impl<S: ManagedStream> StreamPool<S> {
         self.streams.insert(stream_key.clone(), Arc::clone(&stream));
 
         let streams = Arc::clone(&self.streams);
+        let creation_locks = Arc::clone(&self.creation_locks);
         let check_interval = self.cleanup_check_interval;
         let idle_timeout = self.idle_timeout;
 
@@ -186,6 +268,7 @@ impl<S: ManagedStream> StreamPool<S> {
                     &stream_key,
                     &stream,
                     &streams,
+                    &creation_locks,
                     check_interval,
                     idle_timeout,
                     &on_idle_cleanup,
@@ -195,6 +278,7 @@ impl<S: ManagedStream> StreamPool<S> {
                     log::error!("Cleanup task failed for {}: {}", stream_key, e);
                     stream.lifecycle().abort_task().await;
                     streams.remove(&stream_key);
+                    creation_locks.remove(&stream_key);
                 }
             }
             .instrument(span),
@@ -205,6 +289,7 @@ impl<S: ManagedStream> StreamPool<S> {
         stream_key: &str,
         stream: &Arc<S>,
         streams: &Arc<DashMap<String, Arc<S>>>,
+        creation_locks: &Arc<DashMap<String, Arc<CreationLockEntry>>>,
         check_interval: Duration,
         idle_timeout: Duration,
         on_idle_cleanup: &F,
@@ -248,6 +333,8 @@ impl<S: ManagedStream> StreamPool<S> {
 
                     // Remove from map and stop
                     streams.remove(stream_key);
+                    // Also remove the creation lock to prevent memory leak
+                    creation_locks.remove(stream_key);
                     stream.lifecycle().abort_task().await;
                     break;
                 }

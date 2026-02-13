@@ -41,11 +41,15 @@ pub struct LivestreamHandle {
     hub_handle: JoinHandle<()>,
     rtmp_handle: JoinHandle<()>,
     publisher_manager_handle: JoinHandle<()>,
+    pull_manager_cleanup: JoinHandle<()>,
+    external_publish_cleanup: JoinHandle<()>,
 }
 
 impl LivestreamHandle {
     /// Abort all spawned tasks in reverse startup order.
     pub fn shutdown(&self) {
+        self.external_publish_cleanup.abort();
+        self.pull_manager_cleanup.abort();
         self.publisher_manager_handle.abort();
         self.rtmp_handle.abort();
         self.hub_handle.abort();
@@ -97,10 +101,14 @@ impl LivestreamServer {
         // Get broadcast receiver BEFORE spawning the hub
         let broadcast_receiver = streams_hub.get_client_event_consumer();
 
-        // 2. Spawn StreamHub event loop
+        // 2. Spawn StreamHub event loop with automatic recovery
         let hub_handle = tokio::spawn(async move {
-            streams_hub.run().await;
-            log::info!("StreamHub event loop ended");
+            loop {
+                log::info!("Starting StreamHub event loop...");
+                streams_hub.run().await;
+                log::warn!("StreamHub event loop exited unexpectedly, restarting in 1 second...");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
         });
 
         // 3. Create and start RTMP server
@@ -124,6 +132,8 @@ impl LivestreamServer {
             self.config.cleanup_check_interval_seconds,
             self.config.stream_timeout_seconds,
         ));
+        // Start periodic cleanup of stale creation locks to prevent memory leaks
+        let pull_manager_cleanup = pull_manager.start_cleanup_task();
 
         // 5. Create ExternalPublishManager
         let external_publish_manager = Arc::new(ExternalPublishManager::with_timeouts(
@@ -133,6 +143,8 @@ impl LivestreamServer {
             self.config.cleanup_check_interval_seconds,
             self.config.stream_timeout_seconds,
         ));
+        // Start periodic cleanup of stale creation locks to prevent memory leaks
+        let external_publish_cleanup = external_publish_manager.start_cleanup_task();
 
         // 6. Start PublisherManager — listens to StreamHub broadcast events
         // and registers/unregisters publishers in Redis for multi-node relay
@@ -167,6 +179,8 @@ impl LivestreamServer {
             hub_handle,
             rtmp_handle,
             publisher_manager_handle,
+            pull_manager_cleanup,
+            external_publish_cleanup,
         })
     }
 }

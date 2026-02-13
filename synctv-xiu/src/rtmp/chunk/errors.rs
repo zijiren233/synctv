@@ -16,6 +16,8 @@ pub enum UnpackErrorValue {
     //IO(io::Error),
     #[fail(display = "cannot parse")]
     CannotParse,
+    #[fail(display = "message size {} exceeds maximum {}", _0, _1)]
+    MessageTooLarge(usize, usize),
 }
 
 #[derive(Debug)]

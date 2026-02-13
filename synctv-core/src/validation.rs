@@ -440,4 +440,160 @@ mod tests {
         assert!(!validator.is_valid());
         assert!(validator.into_result().is_err());
     }
+
+    #[test]
+    fn test_username_edge_cases() {
+        let validator = UsernameValidator::new();
+
+        // Empty username
+        assert!(validator.validate("").is_err());
+
+        // Exactly minimum length
+        assert!(validator.validate("abc").is_ok());
+
+        // Exactly maximum length (50 chars)
+        let max_length = "a".repeat(50);
+        assert!(validator.validate(&max_length).is_ok());
+
+        // Over maximum length
+        let too_long = "a".repeat(51);
+        assert!(validator.validate(&too_long).is_err());
+
+        // Starts with hyphen
+        assert!(validator.validate("-invalid").is_err());
+
+        // Unicode characters (should be valid as they are alphanumeric)
+        assert!(validator.validate("用户名").is_ok());
+
+        // Mixed valid characters
+        assert!(validator.validate("User-Name_123").is_ok());
+    }
+
+    #[test]
+    fn test_password_edge_cases() {
+        let validator = PasswordValidator::new();
+
+        // Empty password
+        assert!(validator.validate("").is_err());
+
+        // Exactly minimum length
+        assert!(validator.validate("Abcd1234").is_ok());
+
+        // Maximum length (128 chars)
+        let max_password = "A".repeat(64) + "a" + &"1".repeat(63);
+        assert!(validator.validate(&max_password).is_ok());
+
+        // Over maximum length
+        let too_long = "A".repeat(64) + "a" + &"1".repeat(64);
+        assert!(validator.validate(&too_long).is_err());
+
+        // With special characters
+        let validator_with_special = PasswordValidator::new().require_special_char(true);
+        assert!(validator_with_special.validate("Password123!").is_ok());
+        assert!(validator_with_special.validate("Password123").is_err());
+
+        // Relaxed requirements
+        let relaxed_validator = PasswordValidator::new()
+            .with_min_length(4)
+            .require_special_char(false);
+        assert!(relaxed_validator.validate("Abc1").is_ok());
+    }
+
+    #[test]
+    fn test_room_name_validation() {
+        let validator = RoomNameValidator::new();
+
+        // Valid room names
+        assert!(validator.validate("My Room").is_ok());
+        assert!(validator.validate("a").is_ok());
+        assert!(validator.validate("Room-123_Test").is_ok());
+
+        // Invalid room names
+        assert!(validator.validate("").is_err()); // Empty
+
+        // Control characters
+        assert!(validator.validate("Room\x00Name").is_err());
+        assert!(validator.validate("Room\nName").is_err());
+
+        // Too long
+        let too_long = "a".repeat(101);
+        assert!(validator.validate(&too_long).is_err());
+    }
+
+    #[test]
+    fn test_email_edge_cases() {
+        let validator = EmailValidator::new();
+
+        // Valid edge cases
+        assert!(validator.validate("a@b.co").is_ok());
+        assert!(validator.validate("user+tag@example.com").is_ok());
+        assert!(validator.validate("user@sub.domain.example.com").is_ok());
+
+        // Invalid edge cases
+        assert!(validator.validate("").is_err());
+        assert!(validator.validate("user@.com").is_err());
+        assert!(validator.validate("user@example").is_err()); // No TLD
+        assert!(validator.validate("user@example.c").is_err()); // TLD too short
+    }
+
+    #[test]
+    fn test_url_edge_cases() {
+        let validator = UrlValidator::new();
+
+        // Both HTTP and HTTPS allowed
+        assert!(validator.validate("http://example.com").is_ok());
+        assert!(validator.validate("https://example.com").is_ok());
+
+        // HTTPS only
+        let https_only = UrlValidator::new().https_only();
+        assert!(https_only.validate("https://example.com").is_ok());
+        assert!(https_only.validate("http://example.com").is_err());
+
+        // Domain whitelist
+        let domain_validator = UrlValidator::new()
+            .with_allowed_domains(vec!["example.com".to_string(), "trusted.org".to_string()]);
+        assert!(domain_validator.validate("https://example.com/path").is_ok());
+        assert!(domain_validator.validate("https://sub.example.com/path").is_ok());
+        assert!(domain_validator.validate("https://other.com").is_err());
+
+        // Invalid URLs
+        assert!(validator.validate("").is_err());
+        assert!(validator.validate("not-a-url").is_err());
+        assert!(validator.validate("ftp://example.com").is_ok()); // ftp is a valid scheme
+    }
+
+    #[test]
+    fn test_validation_error_messages() {
+        let validator = UsernameValidator::new();
+        let err = validator.validate("ab").unwrap_err();
+        assert!(err.to_string().contains("username"));
+        assert!(err.to_string().contains("3"));
+
+        let validator = PasswordValidator::new();
+        let err = validator.validate("weak").unwrap_err();
+        assert!(err.to_string().contains("password"));
+        assert!(err.to_string().contains("8"));
+    }
+
+    #[test]
+    fn test_batch_validation_multiple_errors() {
+        let mut validator = Validator::new();
+
+        validator
+            .validate_field("username", UsernameValidator::new().validate("ab")) // Too short
+            .validate_field("email", EmailValidator::new().validate("invalid")) // Invalid email
+            .validate_field("password", PasswordValidator::new().validate("weak")); // Too short
+
+        let result = validator.into_result();
+        assert!(result.is_err());
+
+        match result {
+            Err(ValidationError::Multiple(msgs)) => {
+                assert!(msgs.contains("username"));
+                assert!(msgs.contains("email"));
+                assert!(msgs.contains("password"));
+            }
+            _ => panic!("Expected Multiple errors"),
+        }
+    }
 }

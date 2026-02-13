@@ -2,10 +2,23 @@
 //!
 //! Provides transactional scope for multi-repository operations.
 
+use anyhow::anyhow;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::ops::Deref;
 
 use crate::Result;
+
+/// Error type for transaction operations
+#[derive(Debug, Clone)]
+pub struct TransactionError(pub &'static str);
+
+impl std::fmt::Display for TransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for TransactionError {}
 
 /// Unit of Work for managing database transactions
 ///
@@ -39,8 +52,26 @@ impl UnitOfWork {
     }
 
     /// Get the transaction for repository operations
+    ///
+    /// # Panics
+    ///
+    /// Panics if the transaction has already been consumed (committed or rolled back).
+    /// For a non-panicking version, use [`try_transaction`](Self::try_transaction).
     pub const fn transaction(&mut self) -> &mut Transaction<'static, Postgres> {
         self.tx.as_mut().expect("Transaction already consumed")
+    }
+
+    /// Try to get the transaction for repository operations
+    ///
+    /// Returns an error if the transaction has already been consumed.
+    pub fn try_transaction(&mut self) -> Result<&mut Transaction<'static, Postgres>> {
+        self.tx.as_mut().ok_or(crate::error::Error::Internal("Transaction already consumed".to_string()))
+    }
+
+    /// Check if the transaction is still active (not consumed)
+    #[must_use]
+    pub const fn is_active(&self) -> bool {
+        self.tx.is_some()
     }
 }
 

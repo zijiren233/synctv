@@ -17,6 +17,11 @@ const TTL_MULTIPLIER: u64 = 5;
 /// This is the Redis key expiration set on publisher entries.
 pub const PUBLISHER_TTL_SECS: i64 = (HEARTBEAT_INTERVAL_SECS * TTL_MULTIPLIER) as i64;
 
+/// Redis key for the global epoch counter used for fencing tokens.
+/// Format: "stream:epoch:{room_id}:{media_id}"
+/// Each publisher registration increments this counter atomically.
+const EPOCH_KEY_PREFIX: &str = "stream:epoch";
+
 // Compile-time safety check: TTL must be at least 3x the heartbeat interval
 // to tolerate transient network issues.
 const _: () = assert!(
@@ -36,6 +41,11 @@ pub struct PublisherInfo {
     pub user_id: String,
     /// When the stream started
     pub started_at: DateTime<Utc>,
+    /// Fencing token (monotonically increasing epoch) for split-brain prevention
+    /// When a new publisher registers (after TTL expiry), this counter increments.
+    /// Pull streams must validate their token matches to prevent stale connections.
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 /// Stream registry for tracking active publishers
@@ -74,11 +84,18 @@ impl StreamRegistry {
         user_id: &str,
     ) -> anyhow::Result<bool> {
         let key = format!("stream:publisher:{room_id}:{media_id}");
+        let epoch_key = format!("{EPOCH_KEY_PREFIX}:{room_id}:{media_id}");
+
+        // Increment epoch counter atomically to get fencing token
+        // INCR returns 1 if key doesn't exist (first publisher), or increments existing value
+        let epoch: u64 = self.redis.incr(&epoch_key, 1).await?;
+
         let info = PublisherInfo {
             node_id: node_id.to_string(),
             app_name: app_name.to_string(),
             user_id: user_id.to_string(),
             started_at: Utc::now(),
+            epoch,
         };
 
         let info_json = serde_json::to_string(&info)?;
@@ -125,14 +142,23 @@ impl StreamRegistry {
         user_id: &str,
     ) -> anyhow::Result<bool> {
         let key = format!("stream:publisher:{room_id}:{media_id}");
+        let epoch_key = format!("{EPOCH_KEY_PREFIX}:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
-        // Create PublisherInfo with default values for registration
+        // Increment epoch counter atomically to get fencing token
+        let epoch: u64 = redis::cmd("INCR")
+            .arg(&epoch_key)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))?;
+
+        // Create PublisherInfo with epoch for registration
         let info = PublisherInfo {
             node_id: node_id.to_string(),
             app_name: "live".to_string(),
             user_id: user_id.to_string(),
             started_at: Utc::now(),
+            epoch,
         };
         let info_json = serde_json::to_string(&info)?;
 
@@ -356,6 +382,41 @@ impl StreamRegistry {
             })
             .collect();
         Ok(streams)
+    }
+
+    /// Validate that the given epoch matches the current publisher's epoch.
+    /// Returns Ok(true) if the epoch is valid, Ok(false) if stale/invalid.
+    /// Used by pull streams to detect split-brain scenarios.
+    pub async fn validate_epoch(&self, room_id: &str, media_id: &str, epoch: u64) -> Result<bool> {
+        let key = format!("stream:publisher:{room_id}:{media_id}");
+        let mut conn = self.redis.clone();
+
+        // Get current publisher info
+        let info_json: Option<String> = redis::cmd("HGET")
+            .arg(&key)
+            .arg("publisher")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))?;
+
+        match info_json {
+            Some(json) => {
+                let info: PublisherInfo = serde_json::from_str(&json)?;
+                // Epoch is valid if it matches the current publisher's epoch
+                Ok(info.epoch == epoch)
+            }
+            None => {
+                // Publisher no longer exists, epoch is invalid
+                Ok(false)
+            }
+        }
+    }
+
+    /// Get the current epoch for a stream without publisher info.
+    /// Returns None if no publisher exists.
+    pub async fn get_current_epoch(&self, room_id: &str, media_id: &str) -> Result<Option<u64>> {
+        let publisher = self.get_publisher_immut(room_id, media_id).await?;
+        Ok(publisher.map(|p| p.epoch))
     }
 }
 

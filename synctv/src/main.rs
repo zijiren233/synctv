@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
 
     // 4.3. Bootstrap root user (if enabled and no root user exists)
     info!("Checking root user bootstrap...");
-    if let Err(e) = bootstrap_root_user(&pool, &config.bootstrap).await {
+    if let Err(e) = bootstrap_root_user(&pool, &config.bootstrap, config.server.development_mode).await {
         error!("Failed to bootstrap root user: {}", e);
         error!("You may need to manually create a root user");
         // Non-fatal: continue startup even if bootstrap fails

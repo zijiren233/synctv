@@ -56,6 +56,7 @@ impl ClusterService for ClusterServer {
             http_address: String::new(),
             last_heartbeat: chrono::Utc::now(),
             metadata: std::collections::HashMap::new(),
+            epoch: 1, // Start with epoch 1 for remote nodes
         };
 
         // Register the remote node in Redis

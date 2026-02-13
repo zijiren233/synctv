@@ -42,6 +42,14 @@ impl ExternalPublishManager {
         Self::with_timeouts(registry, local_node_id, stream_hub_event_sender, 60, 300)
     }
 
+    /// Start the background cleanup task for stale creation locks.
+    ///
+    /// Should be called once after creating the manager to prevent memory leaks
+    /// from failed stream creation attempts.
+    pub fn start_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
+        self.pool.start_creation_lock_cleanup()
+    }
+
     pub fn with_timeouts(
         registry: Arc<dyn StreamRegistryTrait>,
         local_node_id: String,

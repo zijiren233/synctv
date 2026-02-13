@@ -444,10 +444,14 @@ impl BilibiliClient {
         }
 
         let data = &json["result"];
+
+        // Safely access first episode (array may be empty or missing)
+        let first_episode = data["episodes"].as_array().and_then(|arr| arr.first());
+
         Ok(AnimeInfo {
             season_id: data["season_id"].as_u64().unwrap_or(0),
-            ep_id: data["episodes"][0]["ep_id"].as_u64().unwrap_or(0),
-            cid: data["episodes"][0]["cid"].as_u64().unwrap_or(0),
+            ep_id: first_episode.and_then(|ep| ep["ep_id"].as_u64()).unwrap_or(0),
+            cid: first_episode.and_then(|ep| ep["cid"].as_u64()).unwrap_or(0),
             title: data["title"].as_str().unwrap_or("").to_string(),
             cover: data["cover"].as_str().unwrap_or("").to_string(),
         })

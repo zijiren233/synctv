@@ -21,14 +21,16 @@ impl BytesReader {
         Self { buffer: input }
     }
 
-    pub fn extend_from_slice(&mut self, extend: &[u8]) {
+    pub fn extend_from_slice(&mut self, extend: &[u8]) -> Result<(), BytesReadError> {
         let new_len = self.buffer.len() + extend.len();
         if new_len > MAX_BUFFER_SIZE {
-            log::warn!(
-                "BytesReader buffer overflow: {} + {} > {} max, dropping data",
-                self.buffer.len(), extend.len(), MAX_BUFFER_SIZE,
-            );
-            return;
+            return Err(BytesReadError {
+                value: BytesReadErrorValue::BufferOverflow {
+                    current: self.buffer.len(),
+                    additional: extend.len(),
+                    max: MAX_BUFFER_SIZE,
+                },
+            });
         }
 
         let remaining_mut = self.buffer.remaining_mut();
@@ -40,6 +42,7 @@ impl BytesReader {
         }
 
         self.buffer.extend_from_slice(extend);
+        Ok(())
     }
 
     pub fn read_bytes(&mut self, bytes_num: usize) -> Result<BytesMut, BytesReadError> {
@@ -143,7 +146,8 @@ impl BytesReader {
             });
         }
 
-        Ok(*self.buffer.get(index).unwrap())
+        // SAFETY: We've already verified that index < self.len() above
+        Ok(self.buffer[index])
     }
 
     #[must_use] 
@@ -182,7 +186,7 @@ where
 
     pub async fn read(&mut self) -> Result<(), BytesReadError> {
         let data = self.io.lock().await.read().await?;
-        self.bytes_reader.extend_from_slice(&data[..]);
+        self.bytes_reader.extend_from_slice(&data[..])?;
         Ok(())
     }
 
@@ -268,7 +272,7 @@ mod tests {
     fn test_rc_refcell() {
         let reader = Rc::new(RefCell::new(BytesReader::new(BytesMut::new())));
         let xs: [u8; 3] = [1, 2, 3];
-        reader.borrow_mut().extend_from_slice(&xs[..]);
+        reader.borrow_mut().extend_from_slice(&xs[..]).unwrap();
 
         let mut rv = reader.borrow_mut().read_u8().unwrap();
         assert_eq!(rv, 1, "Incorrect value");
@@ -294,7 +298,7 @@ mod tests {
         // }
 
         pub fn extend_from_slice(&mut self, data: &[u8]) {
-            self.reader.borrow_mut().extend_from_slice(data);
+            self.reader.borrow_mut().extend_from_slice(data).unwrap();
         }
     }
 

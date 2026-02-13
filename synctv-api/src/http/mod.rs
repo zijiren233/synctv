@@ -17,6 +17,7 @@ pub mod publish_key;
 pub mod room;
 pub mod room_extra;
 pub mod user;
+pub mod validation;
 pub mod webrtc;
 pub mod websocket;
 
@@ -27,12 +28,13 @@ pub mod providers;
 
 use axum::{
     body::Body,
-    http::Request,
+    http::{Request, Method, HeaderName, HeaderValue},
     middleware as axum_middleware,
     routing::{get, post},
     Router,
 };
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use synctv_cluster::sync::{ClusterEvent, PublishRequest};
@@ -76,6 +78,7 @@ pub struct RouterConfig {
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
+    pub config: Arc<synctv_core::Config>,
     pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
     pub provider_instance_manager: Arc<RemoteProviderManager>,
@@ -159,7 +162,7 @@ fn create_router(
         user_service.clone(),
         room_service.clone(),
         connection_manager.clone(),
-        config,
+        config.clone(),
         sfu_manager,
         publish_key_service.clone(),
         jwt_service.clone(),
@@ -188,6 +191,7 @@ fn create_router(
     };
 
     let state = AppState {
+        config: config.clone(),
         user_service,
         room_service,
         provider_instance_manager,
@@ -445,7 +449,50 @@ fn create_router(
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()));
 
     // Apply layers before state
+    // CORS configuration: use allowed origins from config, or permissive in development mode
+    let cors = if config.server.development_mode || config.server.cors_allowed_origins.is_empty() {
+        // Development mode or no configured origins: allow all (with warning)
+        if !config.server.development_mode && config.server.cors_allowed_origins.is_empty() {
+            tracing::warn!(
+                "CORS: No allowed origins configured, allowing all origins. \
+                 Set server.cors_allowed_origins in production for security."
+            );
+        }
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        // Production: use configured origins only
+        let origins: Vec<HeaderValue> = config
+            .server
+            .cors_allowed_origins
+            .iter()
+            .filter_map(|origin| origin.parse().ok())
+            .collect();
+        tracing::info!(
+            origins = ?origins,
+            "CORS: Configured with {} allowed origin(s)",
+            origins.len()
+        );
+        let x_room_id: HeaderName = "x-room-id".parse().unwrap_or_else(|_| HeaderName::from_static("x-room-id"));
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
+            .allow_headers([
+                axum::http::header::AUTHORIZATION,
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::ACCEPT,
+                x_room_id,
+            ])
+            .allow_credentials(true)
+    };
+
     let router = router
+        // CORS support for cross-origin requests
+        .layer(cors)
+        // Limit request body size to prevent DoS attacks (10MB for general endpoints)
+        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
         .layer(axum_middleware::from_fn(security_headers_middleware))
         .layer(axum_middleware::from_fn(
             crate::observability::metrics_middleware::metrics_layer,
@@ -491,9 +538,53 @@ async fn security_headers_middleware(
 ) -> axum::response::Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
-    headers.insert("X-Frame-Options", "DENY".parse().unwrap());
-    headers.insert("X-XSS-Protection", "1; mode=block".parse().unwrap());
-    headers.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
+
+    // Use const header names to avoid unwrap - these are compile-time validated
+    let _ = headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    let _ = headers.insert(
+        HeaderName::from_static("x-frame-options"),
+        HeaderValue::from_static("DENY"),
+    );
+    let _ = headers.insert(
+        HeaderName::from_static("x-xss-protection"),
+        HeaderValue::from_static("1; mode=block"),
+    );
+    let _ = headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+
+    // Content-Security-Policy - restrictive policy for API server
+    // Since this is an API server, we use a restrictive CSP
+    // - default-src 'none': No content is allowed by default
+    // - frame-ancestors 'none': Prevents embedding in iframes (equivalent to X-Frame-Options: DENY)
+    // - base-uri 'self': Restricts <base> element to same origin
+    // - form-action 'self': Restricts form submissions to same origin
+    let _ = headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"),
+    );
+
+    // HTTP Strict Transport Security (HSTS)
+    // - max-age=31536000: 1 year in seconds
+    // - includeSubDomains: Apply to all subdomains
+    // - preload: Allow inclusion in browser preload lists
+    // Note: Only enable when served over HTTPS in production
+    // This header is added but browsers will only honor it over HTTPS connections
+    let _ = headers.insert(
+        HeaderName::from_static("strict-transport-security"),
+        HeaderValue::from_static("max-age=31536000; includeSubDomains; preload"),
+    );
+
+    // Permissions Policy (formerly Feature Policy)
+    // Disable all browser features for API server
+    let _ = headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"),
+    );
+
     response
 }

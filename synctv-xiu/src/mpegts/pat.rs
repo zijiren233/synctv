@@ -95,3 +95,71 @@ impl PatMuxer {
         Ok(self.bytes_writer.extract_current_bytes())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pat_new() {
+        let pat = Pat::new();
+        assert_eq!(pat.transport_stream_id, 1);
+        assert_eq!(pat.version_number, 0);
+        assert!(pat.pmt.is_empty());
+    }
+
+    #[test]
+    fn test_pat_default() {
+        let pat = Pat::default();
+        assert_eq!(pat.transport_stream_id, 1);
+        assert!(pat.pmt.is_empty());
+    }
+
+    #[test]
+    fn test_pat_muxer_new() {
+        let muxer = PatMuxer::new();
+        assert!(muxer.bytes_writer.get_current_bytes().is_empty());
+    }
+
+    #[test]
+    fn test_pat_muxer_default() {
+        let muxer = PatMuxer::default();
+        assert!(muxer.bytes_writer.get_current_bytes().is_empty());
+    }
+
+    #[test]
+    fn test_pat_muxer_write_empty_pmt() {
+        let mut muxer = PatMuxer::new();
+        let pat = Pat::new();
+        let result = muxer.write(pat);
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        // PAT header: table_id(1) + section_length(2) + transport_stream_id(2) + version(1) + section_nums(2) + crc32(4) = 12 bytes
+        assert_eq!(data.len(), 12);
+        // Check table_id
+        assert_eq!(data[0], epat_pid::PAT_TID_PAS as u8);
+    }
+
+    #[test]
+    fn test_pat_muxer_write_with_pmt() {
+        use super::pmt::Pmt;
+
+        let mut muxer = PatMuxer::new();
+        let mut pat = Pat::new();
+        pat.pmt.push(Pmt {
+            program_number: 1,
+            pid: 0x100,
+            pcr_pid: 0x100,
+            version_number: 0,
+            continuity_counter: 0,
+            program_info: bytes::BytesMut::new(),
+            streams: Vec::new(),
+        });
+
+        let result = muxer.write(pat);
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        // PAT header(12) + PMT entry(4) = 16 bytes
+        assert_eq!(data.len(), 16);
+    }
+}

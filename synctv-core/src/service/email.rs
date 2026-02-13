@@ -1,6 +1,10 @@
 //! Email verification and sending service
 //!
 //! Handles email verification and password reset email sending.
+//!
+//! ## Verification Code Storage
+//! Verification codes are stored in Redis when available (for multi-node deployments).
+//! Falls back to in-memory storage when Redis is not configured.
 
 use chrono::{Duration, Utc};
 use rand::Rng;
@@ -13,10 +17,14 @@ use lettre::{
     message::{header::ContentType, Mailbox, MultiPart},
     transport::smtp::authentication::Credentials,
 };
+use tracing::{debug, warn};
 
 use crate::{Error, Result};
 use super::email_token::{EmailTokenService, EmailTokenType};
 use super::email_templates::EmailTemplateManager;
+
+/// Redis key prefix for email verification codes
+const EMAIL_CODE_KEY_PREFIX: &str = "email:code:";
 
 /// Email verification error
 #[derive(Debug, thiserror::Error)]
@@ -44,7 +52,7 @@ pub enum EmailError {
 }
 
 /// Verification code data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct VerificationCode {
     code: String,
     created_at: chrono::DateTime<Utc>,
@@ -64,13 +72,20 @@ pub struct EmailConfig {
 }
 
 /// Email service for sending verification codes
+///
+/// Storage:
+/// - When Redis is available: codes are stored in Redis with TTL (multi-node safe)
+/// - When Redis is not available: codes are stored in memory (single-node only)
 #[derive(Clone)]
 pub struct EmailService {
     config: Option<EmailConfig>,
-    codes: Arc<RwLock<HashMap<String, VerificationCode>>>,
+    /// In-memory code storage (fallback when Redis is not available)
+    local_codes: Arc<RwLock<HashMap<String, VerificationCode>>>,
     code_ttl_minutes: i64,
     max_attempts: u32,
     template_manager: Arc<EmailTemplateManager>,
+    /// Optional Redis client for distributed code storage
+    redis: Option<Arc<redis::Client>>,
 }
 
 impl std::fmt::Debug for EmailService {
@@ -84,28 +99,137 @@ impl std::fmt::Debug for EmailService {
 }
 
 impl EmailService {
-    /// Create a new email service
+    /// Create a new email service (without Redis - single node only)
     pub fn new(config: Option<EmailConfig>) -> Result<Self> {
         let template_manager = EmailTemplateManager::new()?;
         Ok(Self {
             config,
-            codes: Arc::new(RwLock::new(HashMap::new())),
+            local_codes: Arc::new(RwLock::new(HashMap::new())),
             code_ttl_minutes: 10, // 10 minutes default
             max_attempts: 3,
             template_manager: Arc::new(template_manager),
+            redis: None,
         })
     }
 
-    /// Create with custom TTL
+    /// Create with custom TTL (without Redis - single node only)
     pub fn with_ttl(config: Option<EmailConfig>, code_ttl_minutes: i64) -> Result<Self> {
         let template_manager = EmailTemplateManager::new()?;
         Ok(Self {
             config,
-            codes: Arc::new(RwLock::new(HashMap::new())),
+            local_codes: Arc::new(RwLock::new(HashMap::new())),
             code_ttl_minutes,
             max_attempts: 3,
             template_manager: Arc::new(template_manager),
+            redis: None,
         })
+    }
+
+    /// Create a new email service with Redis support (multi-node safe)
+    pub fn with_redis(config: Option<EmailConfig>, redis: Arc<redis::Client>) -> Result<Self> {
+        let template_manager = EmailTemplateManager::new()?;
+        Ok(Self {
+            config,
+            local_codes: Arc::new(RwLock::new(HashMap::new())),
+            code_ttl_minutes: 10,
+            max_attempts: 3,
+            template_manager: Arc::new(template_manager),
+            redis: Some(redis),
+        })
+    }
+
+    /// Store verification code (Redis if available, otherwise local memory)
+    async fn store_code(&self, email: &str, code: &VerificationCode) -> Result<()> {
+        if let Some(ref redis) = self.redis {
+            let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
+            let value = serde_json::to_string(code)
+                .map_err(|e| Error::Internal(format!("Failed to serialize verification code: {e}")))?;
+
+            let mut conn = redis
+                .get_multiplexed_tokio_connection()
+                .await
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+
+            let ttl_seconds = self.code_ttl_minutes * 60;
+            use redis::AsyncCommands;
+            let _: () = conn
+                .set_ex(&key, value, ttl_seconds as u64)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to store verification code in Redis: {e}")))?;
+
+            debug!("Stored verification code in Redis for email {}", &email[..email.len().min(4)]);
+        } else {
+            let mut codes = self.local_codes.write().await;
+            codes.insert(email.to_string(), code.clone());
+            debug!("Stored verification code in memory for email {}", &email[..email.len().min(4)]);
+        }
+        Ok(())
+    }
+
+    /// Get verification code (Redis if available, otherwise local memory)
+    async fn get_code(&self, email: &str) -> Result<Option<VerificationCode>> {
+        if let Some(ref redis) = self.redis {
+            let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
+
+            let mut conn = redis
+                .get_multiplexed_tokio_connection()
+                .await
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+
+            use redis::AsyncCommands;
+            let value: Option<String> = conn
+                .get(&key)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get verification code from Redis: {e}")))?;
+
+            match value {
+                Some(json) => {
+                    let code: VerificationCode = serde_json::from_str(&json)
+                        .map_err(|e| Error::Internal(format!("Failed to deserialize verification code: {e}")))?;
+                    Ok(Some(code))
+                }
+                None => Ok(None),
+            }
+        } else {
+            let codes = self.local_codes.read().await;
+            Ok(codes.get(email).cloned())
+        }
+    }
+
+    /// Update verification code (Redis if available, otherwise local memory)
+    async fn update_code(&self, email: &str, code: &VerificationCode) -> Result<()> {
+        if let Some(ref redis) = self.redis {
+            // For Redis, we just store the updated code (TTL refresh is implicit)
+            self.store_code(email, code).await
+        } else {
+            let mut codes = self.local_codes.write().await;
+            codes.insert(email.to_string(), code.clone());
+            Ok(())
+        }
+    }
+
+    /// Remove verification code (Redis if available, otherwise local memory)
+    async fn remove_code(&self, email: &str) -> Result<()> {
+        if let Some(ref redis) = self.redis {
+            let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
+
+            let mut conn = redis
+                .get_multiplexed_tokio_connection()
+                .await
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+
+            use redis::AsyncCommands;
+            let _: () = conn
+                .del(&key)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to remove verification code from Redis: {e}")))?;
+
+            debug!("Removed verification code from Redis for email {}", &email[..email.len().min(4)]);
+        } else {
+            let mut codes = self.local_codes.write().await;
+            codes.remove(email);
+        }
+        Ok(())
     }
 
     /// Generate a 6-digit verification code
@@ -230,7 +354,7 @@ impl EmailService {
 
         // Check if service is configured
         if self.config.is_none() {
-            tracing::warn!("Email service not configured, returning code directly");
+            warn!("Email service not configured, returning code directly");
             let code = Self::generate_code();
             // Store code anyway
             let verification_code = VerificationCode {
@@ -238,7 +362,7 @@ impl EmailService {
                 created_at: Utc::now(),
                 attempts: 0,
             };
-            self.codes.write().await.insert(email.to_string(), verification_code);
+            self.store_code(email, &verification_code).await?;
             return Ok(code);
         }
 
@@ -251,7 +375,7 @@ impl EmailService {
             created_at: Utc::now(),
             attempts: 0,
         };
-        self.codes.write().await.insert(email.to_string(), verification_code);
+        self.store_code(email, &verification_code).await?;
 
         // Send email
         if let Some(config) = &self.config {
@@ -266,33 +390,35 @@ impl EmailService {
 
     /// Verify code for email
     pub async fn verify_code(&self, email: &str, code: &str) -> Result<()> {
-        let mut codes = self.codes.write().await;
-
-        let verification_code = codes
-            .get_mut(email)
+        // Get current code
+        let mut verification_code = self
+            .get_code(email)
+            .await?
             .ok_or_else(|| Error::InvalidInput("No verification code found".to_string()))?;
 
         // Check if expired
         let expiration = verification_code.created_at + Duration::minutes(self.code_ttl_minutes);
         if Utc::now() > expiration {
-            codes.remove(email);
+            self.remove_code(email).await?;
             return Err(Error::InvalidInput("Verification code expired".to_string()));
         }
 
         // Check attempts
         verification_code.attempts += 1;
         if verification_code.attempts > self.max_attempts {
-            codes.remove(email);
+            self.remove_code(email).await?;
             return Err(Error::InvalidInput("Too many failed attempts".to_string()));
         }
 
         // Verify code
         if verification_code.code != code {
+            // Update attempts count
+            self.update_code(email, &verification_code).await?;
             return Err(Error::InvalidInput("Invalid verification code".to_string()));
         }
 
         // Remove code after successful verification
-        codes.remove(email);
+        self.remove_code(email).await?;
 
         Ok(())
     }
@@ -554,19 +680,32 @@ impl EmailService {
         Ok(())
     }
 
-    /// Clean up expired codes
+    /// Clean up expired codes (local memory only - Redis handles its own TTL)
     pub async fn cleanup_expired_codes(&self) {
-        let mut codes = self.codes.write().await;
+        // Only clean local codes (Redis handles its own TTL)
+        let mut codes = self.local_codes.write().await;
         let now = Utc::now();
         let expiration_threshold = now - Duration::minutes(self.code_ttl_minutes);
 
+        let initial_count = codes.len();
         codes.retain(|_, code| code.created_at > expiration_threshold);
+        let removed = initial_count - codes.len();
+
+        if removed > 0 {
+            debug!("Cleaned up {} expired verification codes from local memory", removed);
+        }
     }
 
     /// Check if email service is configured
-    #[must_use] 
+    #[must_use]
     pub const fn is_configured(&self) -> bool {
         self.config.is_some()
+    }
+
+    /// Check if Redis is being used for code storage
+    #[must_use]
+    pub fn uses_redis(&self) -> bool {
+        self.redis.is_some()
     }
 }
 

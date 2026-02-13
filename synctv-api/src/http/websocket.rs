@@ -5,27 +5,59 @@
 //!
 //! All business logic (rate limiting, content filtering, permissions, broadcasting)
 //! is handled by `StreamMessageHandler.run()` with the `WebSocketStream` implementation.
+//!
+//! # Security Considerations
+//!
+//! Authentication can be provided via:
+//! 1. Authorization header: `Authorization: Bearer <jwt>` (preferred, more secure)
+//! 2. Query parameter: `?token=<jwt>` (fallback for browser WebSocket API, appears in logs/history)
+//!
+//! For browser clients, query parameter is the only option due to WebSocket API limitations.
+//! To mitigate risks:
+//! - Use short-lived tokens for WebSocket connections
+//! - Consider implementing a ticket-based system where a short-lived ticket is obtained via HTTP first
+//! - Ensure server logs do not log the full URL with tokens
 
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
+    http::HeaderMap,
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::http::{AppError, AppState};
-use crate::impls::messaging::{StreamMessageHandler, StreamMessage, ProtoCodec, MessageSender};
-use synctv_core::models::{RoomId, UserId};
-use synctv_core::service::{RateLimitConfig, ContentFilter, auth::JwtValidator};
+use crate::impls::messaging::{MessageSender, ProtoCodec, StreamMessage, StreamMessageHandler};
 use crate::proto::client::{ClientMessage, ServerMessage};
+use synctv_core::models::{RoomId, UserId};
+use synctv_core::service::{auth::JwtValidator, ContentFilter, RateLimitConfig};
 
 /// Query parameters for WebSocket connection
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
-    /// JWT token for authentication
+    /// JWT token for authentication (fallback method)
+    /// NOTE: Token in URL may appear in server logs and browser history.
+    /// Consider using Authorization header when possible.
     pub token: Option<String>,
+}
+
+/// Extract JWT token from either Authorization header or query parameter
+///
+/// Priority: Authorization header > Query parameter
+fn extract_token(headers: &HeaderMap, query: &WsQuery) -> Option<String> {
+    // First, try Authorization header (more secure)
+    if let Some(auth_header) = headers.get("Authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return Some(token.to_string());
+            }
+        }
+    }
+
+    // Fallback to query parameter (less secure, but standard for browser WebSocket API)
+    query.token.clone()
 }
 
 /// WebSocket stream implementation of `StreamMessage` trait
@@ -84,33 +116,47 @@ impl crate::impls::messaging::MessageSender for WebSocketMessageSender {
 
         // Use try_send to provide backpressure for slow clients
         // If channel is full, drop the message (client is too slow)
-        self.sender
-            .try_send(bytes)
-            .map_err(|e| match e {
-                tokio::sync::mpsc::error::TrySendError::Full(_) => {
-                    "Channel full: WebSocket client too slow to consume messages".to_string()
-                }
-                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
-                    "Channel closed: WebSocket client disconnected".to_string()
-                }
-            })
+        self.sender.try_send(bytes).map_err(|e| match e {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                "Channel full: WebSocket client too slow to consume messages".to_string()
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                "Channel closed: WebSocket client disconnected".to_string()
+            }
+        })
     }
 }
 
 /// WebSocket handler for room real-time updates
 ///
-/// Clients should provide JWT token via query parameter:
-/// <ws://host/ws/room/{room_id}?token={jwt_token>}
+/// Clients can provide JWT token via:
+/// 1. Authorization header: `Authorization: Bearer <token>` (preferred, more secure)
+/// 2. Query parameter: `?token=<jwt>` (fallback for browser WebSocket API)
+///
+/// Example:
+/// - Native clients: `ws://host/ws/room/{room_id}` with `Authorization: Bearer <token>`
+/// - Browser clients: `ws://host/ws/room/{room_id}?token=<jwt>`
 pub async fn websocket_handler(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Query(query): Query<WsQuery>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, AppError> {
-    // Extract and validate JWT token from query parameter
-    let token = query
-        .token
-        .ok_or_else(|| AppError::unauthorized("Missing token query parameter"))?;
+    // Extract token from header (preferred) or query parameter (fallback)
+    let token = extract_token(&headers, &query).ok_or_else(|| {
+        AppError::unauthorized(
+            "Missing authentication: provide token via Authorization header or query parameter",
+        )
+    })?;
+
+    // Log warning if using query parameter (less secure)
+    if query.token.is_some() && !headers.contains_key("Authorization") {
+        warn!(
+            room_id = %room_id,
+            "WebSocket authentication via query parameter (consider using Authorization header for better security)"
+        );
+    }
 
     // Create JWT validator
     let validator = Arc::new(JwtValidator::new(Arc::new(state.jwt_service.clone())));
@@ -127,7 +173,9 @@ pub async fn websocket_handler(
         .member_service()
         .is_member(&rid, &user_id)
         .await
-        .map_err(|e| AppError::internal_server_error(format!("Failed to check membership: {e}")))?;
+        .map_err(|e| {
+            AppError::internal_server_error(format!("Failed to check membership: {e}"))
+        })?;
 
     if !is_member {
         return Err(AppError::forbidden("Not a member of this room"));
@@ -161,7 +209,9 @@ async fn handle_socket(
     );
 
     // Check if cluster_manager is available
-    let cluster_manager = if let Some(cm) = state.cluster_manager { cm } else {
+    let cluster_manager = if let Some(cm) = state.cluster_manager {
+        cm
+    } else {
         error!("ClusterManager not available, WebSocket connection not supported");
         return;
     };

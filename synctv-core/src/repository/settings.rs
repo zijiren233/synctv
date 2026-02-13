@@ -70,6 +70,9 @@ impl SettingsRepository {
     }
 
     /// Update a setting value by key
+    ///
+    /// Also sends a NOTIFY to 'settings_changed' channel so other replicas
+    /// can reload the changed setting from database.
     pub async fn update(&self, key: &str, value: &str) -> Result<SettingsGroup> {
         let row = sqlx::query(
             r"
@@ -84,7 +87,16 @@ impl SettingsRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        debug!("Updated setting '{}'", key);
+        // Notify other replicas to reload this setting
+        // Use the key as the notification payload
+        let _ = sqlx::query(
+            "SELECT pg_notify('settings_changed', $1)"
+        )
+        .bind(key)
+        .execute(&self.pool)
+        .await?;
+
+        debug!("Updated setting '{}' and sent notification", key);
         Ok(SettingsGroup {
             key: row.try_get("key")?,
             group: row.try_get("group_name")?,

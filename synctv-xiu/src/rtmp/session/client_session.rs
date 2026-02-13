@@ -180,7 +180,7 @@ impl ClientSession {
                 None => self.io.lock().await.read().await?,
                 Some(t) => self.io.lock().await.read_timeout(t).await?,
             };
-            self.unpacketizer.extend_data(&data[..]);
+            self.unpacketizer.extend_data(&data[..])?;
 
             loop {
                 match self.unpacketizer.read_chunks() {
@@ -217,7 +217,7 @@ impl ClientSession {
             while bytes_len < handshake::define::RTMP_HANDSHAKE_SIZE * 2 {
                 let data = self.io.lock().await.read().await?;
                 bytes_len += data.len();
-                self.handshaker.extend_data(&data[..]);
+                self.handshaker.extend_data(&data[..])?;
             }
         }
 

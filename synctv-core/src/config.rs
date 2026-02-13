@@ -46,6 +46,18 @@ pub struct ServerConfig {
     pub grpc_port: u16,
     pub http_port: u16,
     pub enable_reflection: bool,
+    /// Development mode enables relaxed security checks for local development.
+    /// WARNING: Never enable in production!
+    pub development_mode: bool,
+    /// Trusted proxy IP addresses/CIDRs for X-Forwarded-For validation.
+    /// When set, X-Forwarded-For/X-Real-IP headers are only trusted from these addresses.
+    /// Example: ["10.0.0.0/8", "192.168.0.0/16"] for internal load balancers.
+    /// If empty, X-Forwarded-For headers are NOT trusted (socket address is used).
+    pub trusted_proxies: Vec<String>,
+    /// CORS allowed origins. In development mode, all origins are allowed.
+    /// In production, this should be set to specific domains.
+    /// Example: ["https://app.example.com", "https://admin.example.com"]
+    pub cors_allowed_origins: Vec<String>,
 }
 
 impl Default for ServerConfig {
@@ -55,7 +67,39 @@ impl Default for ServerConfig {
             grpc_port: 50051,
             http_port: 8080,
             enable_reflection: true,
+            development_mode: false,
+            trusted_proxies: Vec::new(),
+            cors_allowed_origins: Vec::new(),
         }
+    }
+}
+
+impl ServerConfig {
+    /// Check if an IP address is from a trusted proxy.
+    ///
+    /// Returns `true` if the IP matches any of the configured trusted proxies
+    /// (supports both single IPs and CIDR notation like "10.0.0.0/8").
+    /// Returns `false` if no trusted proxies are configured or if the IP doesn't match.
+    pub fn is_trusted_proxy(&self, ip: &std::net::IpAddr) -> bool {
+        if self.trusted_proxies.is_empty() {
+            return false;
+        }
+
+        for proxy in &self.trusted_proxies {
+            // Try parsing as CIDR network first
+            if let Ok(network) = proxy.parse::<ipnet::IpNet>() {
+                if network.contains(ip) {
+                    return true;
+                }
+            }
+            // Try parsing as single IP address
+            if let Ok(proxy_ip) = proxy.parse::<std::net::IpAddr>() {
+                if &proxy_ip == ip {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -482,7 +526,26 @@ impl Config {
         if self.jwt.secret.is_empty() {
             errors.push("JWT secret is empty".to_string());
         } else if self.jwt.secret == "change-me-in-production" {
-            errors.push("JWT secret is set to default value 'change-me-in-production' - this is insecure for production!".to_string());
+            if self.server.development_mode {
+                errors.push("JWT secret is set to default value 'change-me-in-production' - this is only allowed in development mode".to_string());
+            } else {
+                errors.push("JWT secret is set to default value 'change-me-in-production'. Set SYNCTV__JWT__SECRET environment variable or server.development_mode=true for local development".to_string());
+            }
+        }
+
+        // Validate root credentials (only in production mode)
+        if !self.server.development_mode {
+            if self.bootstrap.create_root_user {
+                if self.bootstrap.root_password == "root" {
+                    errors.push("Root password is set to default value 'root'. Set SYNCTV__BOOTSTRAP__ROOT_PASSWORD environment variable or server.development_mode=true for local development".to_string());
+                }
+                if self.bootstrap.root_username.len() < 3 {
+                    errors.push("Root username must be at least 3 characters".to_string());
+                }
+                if self.bootstrap.root_password.len() < 6 {
+                    errors.push("Root password must be at least 6 characters".to_string());
+                }
+            }
         }
 
         // Validate port conflicts: RTMP != HTTP != gRPC (all three must differ)
@@ -633,6 +696,9 @@ mod tests {
                 grpc_port: 50051,
                 http_port: 8080,
                 enable_reflection: true,
+                development_mode: false,
+                trusted_proxies: Vec::new(),
+                cors_allowed_origins: Vec::new(),
             },
             database: DatabaseConfig::default(),
             redis: RedisConfig::default(),

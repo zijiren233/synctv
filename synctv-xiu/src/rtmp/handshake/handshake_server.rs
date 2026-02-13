@@ -42,8 +42,9 @@ impl SimpleHandshakeServer {
             c1_timestamp: 0,
         }
     }
-    pub fn extend_data(&mut self, data: &[u8]) {
-        self.reader.extend_from_slice(data);
+    pub fn extend_data(&mut self, data: &[u8]) -> Result<(), HandshakeError> {
+        self.reader.extend_from_slice(data)?;
+        Ok(())
     }
 
     pub async fn handshake(&mut self) -> Result<(), HandshakeError> {
@@ -95,8 +96,9 @@ impl ComplexHandshakeServer {
         }
     }
 
-    pub fn extend_data(&mut self, data: &[u8]) {
-        self.reader.extend_from_slice(data);
+    pub fn extend_data(&mut self, data: &[u8]) -> Result<(), HandshakeError> {
+        self.reader.extend_from_slice(data)?;
+        Ok(())
     }
 
     pub async fn handshake(&mut self) -> Result<(), HandshakeError> {
@@ -285,13 +287,14 @@ impl HandshakeServer {
         }
     }
 
-    pub fn extend_data(&mut self, data: &[u8]) {
+    pub fn extend_data(&mut self, data: &[u8]) -> Result<(), HandshakeError> {
         if self.is_complex {
-            self.complex_handshaker.extend_data(data);
+            self.complex_handshaker.extend_data(data)?;
             self.saved_data.extend_from_slice(data);
         } else {
-            self.simple_handshaker.extend_data(data);
+            self.simple_handshaker.extend_data(data)?;
         }
+        Ok(())
     }
 
     pub const fn state(&mut self) -> ServerHandshakeState {
@@ -316,7 +319,7 @@ impl HandshakeServer {
                     log::warn!("complex handshake failed.. err:{err}");
                     self.is_complex = false;
                     let data = self.saved_data.clone();
-                    self.extend_data(&data[..]);
+                    self.extend_data(&data[..])?;
                     self.simple_handshaker.handshake().await?;
                 }
             }
