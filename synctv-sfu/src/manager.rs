@@ -427,10 +427,8 @@ impl SfuManager {
         // Collect room IDs and clear the rooms map
         let room_ids: Vec<RoomId> = self.rooms.iter().map(|entry| entry.key().clone()).collect();
         for room_id in &room_ids {
-            if self.rooms.remove(room_id).is_some() {
-                if self.config.max_sfu_rooms > 0 {
-                    self.room_count_atomic.fetch_sub(1, Ordering::SeqCst);
-                }
+            if self.rooms.remove(room_id).is_some() && self.config.max_sfu_rooms > 0 {
+                self.room_count_atomic.fetch_sub(1, Ordering::SeqCst);
             }
             debug!(room_id = %room_id, "Closed room during shutdown");
         }

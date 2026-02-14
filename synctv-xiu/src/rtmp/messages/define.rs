@@ -15,6 +15,7 @@ impl SetPeerBandwidthProperties {
         }
     }
 }
+#[allow(clippy::large_enum_variant)]
 pub enum RtmpMessageData {
     Amf0Command {
         command_name: Amf0ValueType,

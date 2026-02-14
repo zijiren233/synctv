@@ -83,7 +83,6 @@ oauth2 = "4.4"
 aes-gcm = "0.10"
 ammonia = "4.0"
 sha2 = "0.10"
-sha1 = "0.10"
 hmac = "0.12"
 subtle = "2.6"
 
@@ -93,7 +92,7 @@ serde_json = "1.0"
 indexmap = "2"
 
 # Caching
-moka = { version = "0.12", features = ["future"] }
+moka = { version = "0.12", features = ["future", "sync"] }
 dashmap = "6.0"
 lru = "0.12"
 
@@ -107,6 +106,9 @@ hex = "0.4"
 
 # WebRTC
 webrtc = "0.11"
+
+# STUN server (turn-rs, STUN-only mode)
+turn-server = { git = "https://github.com/mycrl/turn-rs", default-features = false, features = ["udp"] }
 
 # Streaming (consolidated xiu crate)
 synctv-xiu = { path = "synctv-xiu" }

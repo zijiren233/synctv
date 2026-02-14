@@ -32,14 +32,18 @@ struct RedisCircuitBreaker {
     is_open: AtomicBool,
     /// Timestamp (seconds since UNIX epoch) when the circuit breaker opened
     opened_at: AtomicU64,
+    /// Whether a single probe request is in flight (half-open state).
+    /// Only one caller may probe at a time to prevent thundering herd.
+    is_probing: AtomicBool,
 }
 
 impl RedisCircuitBreaker {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             consecutive_failures: AtomicU64::new(0),
             is_open: AtomicBool::new(false),
             opened_at: AtomicU64::new(0),
+            is_probing: AtomicBool::new(false),
         }
     }
 
@@ -58,8 +62,11 @@ impl RedisCircuitBreaker {
             .as_secs();
 
         if now.saturating_sub(opened) >= CIRCUIT_BREAKER_COOLDOWN_SECS {
-            // Allow a probe request (half-open state)
-            true
+            // Cooldown elapsed -- attempt to become the single probe caller.
+            // Only one thread wins the compare_exchange; all others are rejected.
+            self.is_probing
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
         } else {
             false
         }
@@ -69,18 +76,24 @@ impl RedisCircuitBreaker {
     fn record_success(&self) {
         self.consecutive_failures.store(0, Ordering::Relaxed);
         self.is_open.store(false, Ordering::Release);
+        self.is_probing.store(false, Ordering::Release);
     }
 
     /// Record a failed Redis operation
     fn record_failure(&self) {
+        // Reset probe flag so that once the cooldown elapses again,
+        // another single caller can attempt a probe.
+        self.is_probing.store(false, Ordering::Release);
+
         let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
         if failures >= CIRCUIT_BREAKER_THRESHOLD {
+            // Re-open the breaker (or keep it open) and restart the cooldown
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            self.opened_at.store(now, Ordering::Relaxed);
             if !self.is_open.swap(true, Ordering::AcqRel) {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                self.opened_at.store(now, Ordering::Relaxed);
                 tracing::warn!(
                     consecutive_failures = failures,
                     "Redis circuit breaker opened after {} consecutive failures",
@@ -244,9 +257,10 @@ impl NodeRegistry {
             ));
         }
         let result = self.get_conn(client).await;
-        match &result {
-            Ok(_) => self.circuit_breaker.record_success(),
-            Err(_) => self.circuit_breaker.record_failure(),
+        if let Ok(_) = &result { self.circuit_breaker.record_success() } else {
+            // Invalidate cached connection so the next attempt creates a fresh one
+            *self.cached_conn.lock().await = None;
+            self.circuit_breaker.record_failure();
         }
         result
     }

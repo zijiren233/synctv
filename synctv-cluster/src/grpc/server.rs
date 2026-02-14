@@ -28,6 +28,7 @@ pub struct ClusterServer {
     node_id: String,
 }
 
+#[allow(clippy::result_large_err)] // tonic::Status is inherently large; required by gRPC API
 impl ClusterServer {
     /// Create a new cluster server
     #[must_use]
@@ -113,6 +114,7 @@ impl ClusterServer {
 }
 
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)] // tonic::Status is inherently large; required by gRPC trait
 impl ClusterService for ClusterServer {
     /// Register a new node in the cluster.
     ///

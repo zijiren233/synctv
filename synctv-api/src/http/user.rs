@@ -6,10 +6,11 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use axum::http::HeaderMap;
 
 use super::{middleware::AuthUser, AppResult, AppState};
 use crate::proto::client::{
-    LogoutRequest, LogoutResponse, GetProfileResponse, SetUsernameRequest,
+    LogoutResponse, GetProfileResponse, SetUsernameRequest,
     SetPasswordRequest, ListParticipatedRoomsResponse,
     DeleteRoomResponse,
     ListCreatedRoomsResponse,
@@ -27,19 +28,28 @@ pub struct UpdateUserRequest {
 }
 
 /// Logout user
+///
+/// Extracts the Bearer token from the Authorization header and blacklists it
+/// server-side, matching gRPC logout behavior.
 pub async fn logout(
     _auth: AuthUser,
+    headers: HeaderMap,
     State(state): State<AppState>,
 ) -> AppResult<Json<LogoutResponse>> {
-    // Note: The user_id is available in auth.user_id but the proto LogoutRequest doesn't use it
-    // Logout is primarily handled client-side by deleting the token
-    let response = state
-        .client_api
-        .logout(LogoutRequest {})
-        .await
-        .map_err(super::AppError::internal_server_error)?;
+    // Extract Bearer token and blacklist it server-side (matching gRPC behavior)
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            let token = auth_str.strip_prefix("Bearer ")
+                .or_else(|| auth_str.strip_prefix("bearer "));
+            if let Some(token) = token {
+                if let Err(e) = state.user_service.logout(token).await {
+                    tracing::warn!(error = %e, "Failed to blacklist token during logout");
+                }
+            }
+        }
+    }
 
-    Ok(Json(response))
+    Ok(Json(LogoutResponse { success: true }))
 }
 
 /// Get current user info

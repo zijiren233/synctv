@@ -88,14 +88,11 @@ prometheus.workspace = true
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "hostname", "tokio1"] }
 handlebars = "5.1"
 
-# WebRTC/TURN credentials
-hmac.workspace = true
-sha1.workspace = true
+# Misc
 base64.workspace = true
 
-# STUN protocol (use mature implementation)
-bytecodec = "0.4"
-stun_codec = "0.3"
+# STUN server (turn-rs with STUN-only config)
+turn-server.workspace = true
 
 [lints]
 workspace = true

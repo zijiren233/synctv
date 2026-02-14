@@ -30,6 +30,7 @@ impl BilibiliProviderGrpcService {
 }
 
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)]
 impl BilibiliProviderService for BilibiliProviderGrpcService {
     async fn parse(&self, request: Request<ParseRequest>) -> Result<Response<ParseResponse>, Status> {
         let req = request.into_inner();

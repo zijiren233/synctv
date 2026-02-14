@@ -442,6 +442,7 @@ impl StreamDataTransceiver {
                         }
                         TransceiverEvent::UnSubscribe { info } => {
                             frame_senders.lock().await.remove(&info.id);
+                            packet_senders.lock().await.remove(&info.id);
                             let mut statistics_data = statistics_data.lock().await;
                             let subscribers = &mut statistics_data.subscribers;
                             subscribers.remove(&info.id);
@@ -739,7 +740,7 @@ impl StreamsHub {
         receiver: DataReceiver,
         handler: Arc<dyn TStreamHandler>,
     ) -> Result<StatisticDataSender, StreamHubError> {
-        if self.streams.get(&identifier).is_some() {
+        if self.streams.contains_key(&identifier) {
             return Err(StreamHubError {
                 value: StreamHubErrorValue::Exists,
             });

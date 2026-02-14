@@ -199,6 +199,7 @@ impl Media {
 
     /// Create a direct URL media with multi-mode playback info
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn from_direct_multimode(
         playlist_id: PlaylistId,
         room_id: RoomId,

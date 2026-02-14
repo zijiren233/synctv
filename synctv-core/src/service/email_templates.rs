@@ -144,6 +144,16 @@ impl EmailTemplateManager {
         action_text: Option<&str>,
         action_url: Option<&str>,
     ) -> Result<(String, String)> {
+        // Validate action_url scheme to prevent XSS via javascript:/data:/vbscript: URIs
+        if let Some(url) = action_url {
+            let lower = url.trim().to_lowercase();
+            if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+                return Err(Error::InvalidInput(
+                    "action_url must use http:// or https:// scheme".to_string(),
+                ));
+            }
+        }
+
         let data = json!({
             "title": title,
             "message": message,
@@ -689,5 +699,73 @@ mod tests {
         let (html, _) = result.unwrap();
         assert!(html.contains("View Message"));
         assert!(html.contains("https://example.com/messages"));
+    }
+
+    #[test]
+    fn test_notification_rejects_javascript_url() {
+        let manager = EmailTemplateManager::new().unwrap();
+
+        // javascript: scheme should be rejected
+        let result = manager.render_notification_email(
+            "Test",
+            "Test message",
+            Some("Click"),
+            Some("javascript:alert(1)"),
+        );
+        assert!(result.is_err());
+
+        // data: scheme should be rejected
+        let result = manager.render_notification_email(
+            "Test",
+            "Test message",
+            Some("Click"),
+            Some("data:text/html,<script>alert(1)</script>"),
+        );
+        assert!(result.is_err());
+
+        // vbscript: scheme should be rejected
+        let result = manager.render_notification_email(
+            "Test",
+            "Test message",
+            Some("Click"),
+            Some("vbscript:MsgBox"),
+        );
+        assert!(result.is_err());
+
+        // Case-insensitive check
+        let result = manager.render_notification_email(
+            "Test",
+            "Test message",
+            Some("Click"),
+            Some("JAVASCRIPT:alert(1)"),
+        );
+        assert!(result.is_err());
+
+        // http:// should be allowed
+        let result = manager.render_notification_email(
+            "Test",
+            "Test message",
+            Some("Click"),
+            Some("http://example.com"),
+        );
+        assert!(result.is_ok());
+
+        // https:// should be allowed
+        let result = manager.render_notification_email(
+            "Test",
+            "Test message",
+            Some("Click"),
+            Some("https://example.com"),
+        );
+        assert!(result.is_ok());
+
+        // None action_url should be allowed
+        let result = manager.render_notification_email(
+            "Test",
+            "Test message",
+            None,
+            None,
+        );
+        assert!(result.is_ok());
     }
 }

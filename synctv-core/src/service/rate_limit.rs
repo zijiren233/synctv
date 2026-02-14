@@ -32,16 +32,16 @@ impl InMemoryRateLimiter {
         }
     }
 
-    /// Check rate limit. Returns Ok(()) if allowed, or the retry_after seconds.
+    /// Check rate limit. Returns Ok(()) if allowed, or the `retry_after` seconds.
     fn check(&self, key: &str, max_requests: u32, window_seconds: u64) -> std::result::Result<(), u64> {
         let now_ms = Self::now_ms();
         let window_start_ms = now_ms.saturating_sub(window_seconds * 1000);
 
-        let mut entry = self.windows.entry(key.to_string()).or_insert_with(VecDeque::new);
+        let mut entry = self.windows.entry(key.to_string()).or_default();
         let timestamps = entry.value_mut();
 
         // Remove expired timestamps from front
-        while timestamps.front().map_or(false, |&ts| ts < window_start_ms) {
+        while timestamps.front().is_some_and(|&ts| ts < window_start_ms) {
             timestamps.pop_front();
         }
 
@@ -62,10 +62,10 @@ impl InMemoryRateLimiter {
         let now_ms = Self::now_ms();
         let window_start_ms = now_ms.saturating_sub(window_seconds * 1000);
 
-        let mut entry = self.windows.entry(key.to_string()).or_insert_with(VecDeque::new);
+        let mut entry = self.windows.entry(key.to_string()).or_default();
         let timestamps = entry.value_mut();
 
-        while timestamps.front().map_or(false, |&ts| ts < window_start_ms) {
+        while timestamps.front().is_some_and(|&ts| ts < window_start_ms) {
             timestamps.pop_front();
         }
 
@@ -94,7 +94,7 @@ impl InMemoryRateLimiter {
 pub struct RateLimiter {
     redis_conn: Option<redis::aio::ConnectionManager>,
     key_prefix: String,
-    /// In-memory fallback (always present, used when redis_conn is None)
+    /// In-memory fallback (always present, used when `redis_conn` is None)
     in_memory: InMemoryRateLimiter,
 }
 

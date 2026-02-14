@@ -45,6 +45,9 @@ impl Default for ClusterConfig {
     }
 }
 
+/// Capacity for the high-priority publish channel for critical events.
+const CRITICAL_CHANNEL_CAPACITY: usize = 1000;
+
 /// Cluster synchronization manager
 ///
 /// This is the main entry point for all cross-cluster functionality.
@@ -53,9 +56,6 @@ impl Default for ClusterConfig {
 /// - Cross-node synchronization via Redis Pub/Sub
 /// - Message deduplication
 /// - Connection lifecycle
-/// Capacity for the high-priority publish channel for critical events.
-const CRITICAL_CHANNEL_CAPACITY: usize = 1000;
-
 pub struct ClusterManager {
     /// Message hub for local broadcasting
     message_hub: Arc<RoomMessageHub>,

@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime};
 use tokio::fs;
 
 /// Check if a filename matches the SHA256 hex hash pattern (exactly 64 hex chars).
-/// This prevents accidentally deleting non-HLS files if base_path is misconfigured.
+/// This prevents accidentally deleting non-HLS files if `base_path` is misconfigured.
 fn is_sha256_filename(name: &str) -> bool {
     name.len() == 64 && name.chars().all(|c| c.is_ascii_hexdigit())
 }

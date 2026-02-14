@@ -14,7 +14,7 @@ use {
 const WRITE_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Maximum number of chunk stream headers to cache in the packetizer.
-/// Matches the unpacketizer's MAX_CACHED_CHUNK_HEADERS for consistency.
+/// Matches the unpacketizer's `MAX_CACHED_CHUNK_HEADERS` for consistency.
 const MAX_CACHED_CHUNK_HEADERS: usize = 256;
 
 #[derive(Eq, PartialEq, Debug)]
@@ -25,7 +25,7 @@ pub enum PackResult {
 
 pub struct ChunkPacketizer {
     /// LRU cache of chunk headers per chunk stream ID.
-    /// Bounded to MAX_CACHED_CHUNK_HEADERS to prevent unbounded memory growth.
+    /// Bounded to `MAX_CACHED_CHUNK_HEADERS` to prevent unbounded memory growth.
     csid_2_chunk_header: lru::LruCache<u32, ChunkHeader>,
     max_chunk_size: usize,
     writer: AsyncBytesWriter,

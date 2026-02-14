@@ -265,7 +265,34 @@ impl ConnectionManager {
     }
 
     /// Associate a connection with a room
+    ///
+    /// If the connection is already in a different room, it is removed from
+    /// the old room first (preventing a double-join / leaked entry).
     pub fn join_room(&self, connection_id: &str, room_id: RoomId) -> Result<(), String> {
+        // Check if connection already belongs to a room and remove it from the old
+        // room's entry before adding to the new one (prevent double-join).
+        {
+            let old_room_id: Option<RoomId> = self
+                .connections
+                .get(connection_id)
+                .and_then(|c| c.room_id.clone());
+
+            if let Some(ref old_room) = old_room_id {
+                if old_room == &room_id {
+                    // Already in the target room -- nothing to do
+                    return Ok(());
+                }
+                // Remove from old room's connection list
+                if let Some(mut old_room_conns) = self.room_connections.get_mut(old_room) {
+                    old_room_conns.retain(|id| id != connection_id);
+                    if old_room_conns.is_empty() {
+                        drop(old_room_conns);
+                        self.room_connections.remove(old_room);
+                    }
+                }
+            }
+        }
+
         // Atomically check per-room limit and add connection.
         // Holding the entry ref-mut prevents concurrent joins from exceeding the limit.
         {

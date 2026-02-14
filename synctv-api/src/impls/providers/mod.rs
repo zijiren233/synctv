@@ -18,7 +18,7 @@ use synctv_core::repository::UserProviderCredentialRepository;
 ///
 /// A generic representation of a saved provider credential, with two
 /// user-identifying fields (`label_key`/`label_value`) whose meaning
-/// varies by provider (e.g. "username" for Alist, "user_id" for Emby).
+/// varies by provider (e.g. "username" for Alist, "`user_id`" for Emby).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProviderBind {
     pub id: String,
@@ -80,6 +80,7 @@ pub async fn get_provider_binds(
 /// Extract `instance_name` from a request field: empty string maps to `None`.
 ///
 /// Eliminates the repetitive 5-line block duplicated across all gRPC provider methods.
+#[must_use] 
 pub fn extract_instance_name(name: &str) -> Option<String> {
     if name.is_empty() {
         None

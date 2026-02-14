@@ -269,47 +269,14 @@ pub struct WebRTCConfig {
     pub mode: WebRTCMode,
 
     // STUN Configuration
-    /// Enable built-in STUN server
+    /// Enable built-in STUN server (powered by turn-rs)
     pub enable_builtin_stun: bool,
-    /// Built-in STUN server port
-    pub builtin_stun_port: u16,
-    /// Built-in STUN server host
-    pub builtin_stun_host: String,
-    /// External STUN server URLs (fallback/backup)
+    /// STUN server port
+    pub stun_port: u16,
+    /// STUN server bind host
+    pub stun_host: String,
+    /// External STUN server URLs (fallback/backup for ICE)
     pub external_stun_servers: Vec<String>,
-
-    // TURN Configuration (optional, for NAT traversal)
-    /// TURN mode: "builtin", "external", or "disabled"
-    pub turn_mode: TurnMode,
-
-    // Built-in TURN server configuration
-    /// Enable built-in TURN server
-    pub enable_builtin_turn: bool,
-    /// Built-in TURN server port (same as STUN by default)
-    pub builtin_turn_port: u16,
-    /// Built-in TURN relay port range (min)
-    pub builtin_turn_min_port: u16,
-    /// Built-in TURN relay port range (max)
-    pub builtin_turn_max_port: u16,
-    /// Maximum concurrent TURN allocations (limit resource usage)
-    pub builtin_turn_max_allocations: usize,
-    /// Default TURN allocation lifetime (seconds)
-    pub builtin_turn_default_lifetime: u32,
-    /// Maximum TURN allocation lifetime (seconds)
-    pub builtin_turn_max_lifetime: u32,
-    /// STUN/TURN max UDP packet size (bytes)
-    pub stun_max_packet_size: usize,
-
-    // External TURN server configuration
-    /// External TURN server URL (e.g., "turn:turn.example.com:3478")
-    pub external_turn_server_url: Option<String>,
-    /// External TURN static secret for generating temporary credentials
-    /// Must match coturn's `static-auth-secret` configuration
-    pub external_turn_static_secret: Option<String>,
-    /// TURN credential TTL in seconds (default 24 hours)
-    pub turn_credential_ttl: u64,
-    /// TURN realm (default "synctv.local")
-    pub turn_realm: Option<String>,
 
     // SFU Configuration (for large rooms)
     /// Room size threshold to switch to SFU mode (only for Hybrid mode)
@@ -327,21 +294,6 @@ pub struct WebRTCConfig {
     /// Enable bandwidth estimation
     pub enable_bandwidth_estimation: bool,
 }
-
-/// TURN server mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-pub enum TurnMode {
-    /// Use built-in TURN server (simple deployment, limited scale)
-    #[default]
-    Builtin,
-    /// Use external TURN server (production, high scale)
-    External,
-    /// Disable TURN (P2P + STUN only, ~85-90% success rate)
-    Disabled,
-}
-
 
 /// WebRTC operation mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,33 +336,14 @@ impl Default for WebRTCConfig {
             // Default to Hybrid mode (balanced)
             mode: WebRTCMode::Hybrid,
 
-            // STUN enabled by default
+            // STUN enabled by default (powered by turn-rs)
             enable_builtin_stun: true,
-            builtin_stun_port: 3478,
-            builtin_stun_host: "0.0.0.0".to_string(),
+            stun_port: 3478,
+            stun_host: "0.0.0.0".to_string(),
             external_stun_servers: vec![
                 "stun:stun.l.google.com:19302".to_string(),
                 "stun:stun1.l.google.com:19302".to_string(),
             ],
-
-            // TURN mode (default to built-in for ease of use)
-            turn_mode: TurnMode::Builtin,
-
-            // Built-in TURN configuration
-            enable_builtin_turn: false, // Disabled by default (higher resource usage)
-            builtin_turn_port: 3478, // Same as STUN by default
-            builtin_turn_min_port: 49152,
-            builtin_turn_max_port: 65535,
-            builtin_turn_max_allocations: 100,
-            builtin_turn_default_lifetime: 600,
-            builtin_turn_max_lifetime: 3600,
-            stun_max_packet_size: 1500,
-
-            // External TURN configuration
-            external_turn_server_url: None,
-            external_turn_static_secret: None,
-            turn_credential_ttl: 86400, // 24 hours
-            turn_realm: None,
 
             // SFU configuration
             sfu_threshold: 5, // Switch to SFU for 5+ participants
@@ -602,16 +535,6 @@ impl Config {
             errors.push(format!(
                 "livestream.rtmp_port ({}) and server.grpc_port ({}) must be different",
                 self.livestream.rtmp_port, self.server.grpc_port
-            ));
-        }
-
-        // Validate TURN port range
-        if self.webrtc.enable_builtin_turn
-            && self.webrtc.builtin_turn_min_port >= self.webrtc.builtin_turn_max_port
-        {
-            errors.push(format!(
-                "webrtc.builtin_turn_min_port ({}) must be less than builtin_turn_max_port ({})",
-                self.webrtc.builtin_turn_min_port, self.webrtc.builtin_turn_max_port
             ));
         }
 

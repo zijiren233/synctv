@@ -15,12 +15,8 @@
 //!   for single-instance deployments but will not work correctly with multiple replicas.
 
 use base64::Engine;
-use redis::{AsyncCommands, Client};
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
-use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use crate::models::UserId;
@@ -42,51 +38,42 @@ pub struct WsTicketData {
     pub created_at: u64,
 }
 
-/// In-memory ticket entry with expiration
-#[derive(Debug, Clone)]
-struct MemoryTicketEntry {
-    data: WsTicketData,
-    expires_at: Instant,
-}
-
-/// In-memory ticket storage for single-replica deployments
-#[derive(Debug, Default)]
+/// In-memory ticket storage for single-replica deployments using moka cache with TTL
+#[derive(Clone)]
 struct MemoryTicketStore {
-    tickets: HashMap<String, MemoryTicketEntry>,
+    cache: moka::future::Cache<String, WsTicketData>,
 }
 
 impl MemoryTicketStore {
-    fn new() -> Self {
+    fn new(ttl_secs: u64) -> Self {
         Self {
-            tickets: HashMap::new(),
+            cache: moka::future::Cache::builder()
+                .time_to_live(std::time::Duration::from_secs(ttl_secs))
+                .max_capacity(10_000)
+                .build(),
         }
     }
 
-    fn insert(&mut self, ticket: String, data: WsTicketData, ttl_secs: u64) {
-        let entry = MemoryTicketEntry {
-            data,
-            expires_at: Instant::now() + std::time::Duration::from_secs(ttl_secs),
-        };
-        self.tickets.insert(ticket, entry);
+    async fn insert(&self, ticket: String, data: WsTicketData) {
+        self.cache.insert(ticket, data).await;
     }
 
-    fn get_and_remove(&mut self, ticket: &str) -> Option<WsTicketData> {
-        // First, clean up expired tickets
-        let now = Instant::now();
-        self.tickets.retain(|_, entry| entry.expires_at > now);
-
-        // Then get and remove the requested ticket
-        self.tickets.remove(ticket).map(|entry| entry.data)
+    async fn get_and_remove(&self, ticket: &str) -> Option<WsTicketData> {
+        // Check if the ticket exists and hasn't expired (get() respects TTL)
+        let data = self.cache.get(ticket).await?;
+        // Remove it so it can't be used again
+        self.cache.remove(ticket).await;
+        Some(data)
     }
 }
 
 /// Service for creating and validating WebSocket tickets
 #[derive(Clone)]
 pub struct WsTicketService {
-    /// Redis client for ticket storage (multi-replica mode)
-    redis_client: Option<Client>,
+    /// Redis connection manager for ticket storage (multi-replica mode)
+    redis_conn: Option<redis::aio::ConnectionManager>,
     /// In-memory store for single-replica mode
-    memory_store: Option<Arc<RwLock<MemoryTicketStore>>>,
+    memory_store: Option<MemoryTicketStore>,
     /// Ticket TTL in seconds
     ticket_ttl_secs: u64,
 }
@@ -94,7 +81,7 @@ pub struct WsTicketService {
 impl std::fmt::Debug for WsTicketService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WsTicketService")
-            .field("redis_enabled", &self.redis_client.is_some())
+            .field("redis_enabled", &self.redis_conn.is_some())
             .field("memory_mode", &self.memory_store.is_some())
             .field("ticket_ttl_secs", &self.ticket_ttl_secs)
             .finish()
@@ -102,21 +89,21 @@ impl std::fmt::Debug for WsTicketService {
 }
 
 impl WsTicketService {
-    /// Create a new WebSocket ticket service
+    /// Create a new WebSocket ticket service with a Redis connection manager
     ///
     /// # Arguments
-    /// * `redis_client` - Redis client for distributed ticket storage (recommended for multi-replica)
+    /// * `redis_conn` - Redis connection manager for distributed ticket storage (recommended for multi-replica)
     /// * `ticket_ttl_secs` - Ticket lifetime in seconds (default: 30)
     ///
     /// # Note
-    /// If `redis_client` is `None`, the service will use in-memory storage,
+    /// If `redis_conn` is `None`, the service will use in-memory storage,
     /// which is only suitable for single-replica deployments.
-    pub fn new(redis_client: Option<Client>, ticket_ttl_secs: Option<u64>) -> Self {
+    pub fn new(redis_conn: Option<redis::aio::ConnectionManager>, ticket_ttl_secs: Option<u64>) -> Self {
         let ttl = ticket_ttl_secs.unwrap_or(DEFAULT_TICKET_TTL_SECS);
 
-        if redis_client.is_some() {
+        if redis_conn.is_some() {
             Self {
-                redis_client,
+                redis_conn,
                 memory_store: None,
                 ticket_ttl_secs: ttl,
             }
@@ -128,26 +115,27 @@ impl WsTicketService {
                  For multi-replica setups, configure Redis."
             );
             Self {
-                redis_client: None,
-                memory_store: Some(Arc::new(RwLock::new(MemoryTicketStore::new()))),
+                redis_conn: None,
+                memory_store: Some(MemoryTicketStore::new(ttl)),
                 ticket_ttl_secs: ttl,
             }
         }
     }
 
     /// Create a new WebSocket ticket service with Redis (multi-replica mode)
-    #[must_use] 
-    pub fn with_redis(redis_client: Client, ticket_ttl_secs: Option<u64>) -> Self {
-        Self::new(Some(redis_client), ticket_ttl_secs)
+    #[must_use]
+    pub fn with_redis(redis_conn: redis::aio::ConnectionManager, ticket_ttl_secs: Option<u64>) -> Self {
+        Self::new(Some(redis_conn), ticket_ttl_secs)
     }
 
     /// Create a new WebSocket ticket service with memory storage (single-replica mode)
-    #[must_use] 
+    #[must_use]
     pub fn with_memory(ticket_ttl_secs: Option<u64>) -> Self {
+        let ttl = ticket_ttl_secs.unwrap_or(DEFAULT_TICKET_TTL_SECS);
         Self {
-            redis_client: None,
-            memory_store: Some(Arc::new(RwLock::new(MemoryTicketStore::new()))),
-            ticket_ttl_secs: ticket_ttl_secs.unwrap_or(DEFAULT_TICKET_TTL_SECS),
+            redis_conn: None,
+            memory_store: Some(MemoryTicketStore::new(ttl)),
+            ticket_ttl_secs: ttl,
         }
     }
 
@@ -167,17 +155,14 @@ impl WsTicketService {
                 .as_secs(),
         };
 
-        if let Some(ref client) = self.redis_client {
+        if let Some(ref conn) = self.redis_conn {
             // Store in Redis with TTL (multi-replica mode)
             let key = format!("{WS_TICKET_PREFIX}{ticket}");
             let json = serde_json::to_string(&ticket_data).map_err(|e| {
                 Error::Internal(format!("Failed to serialize ticket data: {e}"))
             })?;
 
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+            let mut conn = conn.clone();
 
             let _: () = conn
                 .set_ex(&key, json, self.ticket_ttl_secs)
@@ -192,8 +177,7 @@ impl WsTicketService {
             );
         } else if let Some(ref store) = self.memory_store {
             // Store in memory (single-replica mode)
-            let mut store = store.write().await;
-            store.insert(ticket.clone(), ticket_data, self.ticket_ttl_secs);
+            store.insert(ticket.clone(), ticket_data).await;
 
             debug!(
                 user_id = %user_id.as_str(),
@@ -217,12 +201,9 @@ impl WsTicketService {
     /// The ticket is deleted after use (one-time use).
     pub async fn validate_and_consume(&self, ticket: &str) -> Result<UserId> {
         // Try Redis first (multi-replica mode)
-        if let Some(ref client) = self.redis_client {
+        if let Some(ref conn) = self.redis_conn {
             let key = format!("{WS_TICKET_PREFIX}{ticket}");
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+            let mut conn = conn.clone();
 
             // Get and delete atomically using Lua script
             let lua_script = redis::Script::new(r#"
@@ -259,9 +240,7 @@ impl WsTicketService {
 
         // Try memory storage (single-replica mode)
         if let Some(ref store) = self.memory_store {
-            let mut store = store.write().await;
-
-            let Some(ticket_data) = store.get_and_remove(ticket) else {
+            let Some(ticket_data) = store.get_and_remove(ticket).await else {
                 debug!(ticket = %ticket, mode = "memory", "WebSocket ticket not found or expired");
                 return Err(Error::Authorization("Invalid or expired ticket".to_string()));
             };

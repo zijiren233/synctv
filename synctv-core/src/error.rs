@@ -73,15 +73,15 @@ impl From<sqlx::Error> for Error {
 impl From<Error> for tonic::Status {
     fn from(err: Error) -> Self {
         match err {
-            Error::NotFound(msg) => tonic::Status::not_found(msg),
-            Error::Authentication(msg) => tonic::Status::unauthenticated(msg),
-            Error::Authorization(msg) => tonic::Status::permission_denied(msg),
-            Error::InvalidInput(msg) => tonic::Status::invalid_argument(msg),
-            Error::AlreadyExists(msg) => tonic::Status::already_exists(msg),
-            Error::OptimisticLockConflict => tonic::Status::aborted("Resource modified concurrently"),
+            Error::NotFound(msg) => Self::not_found(msg),
+            Error::Authentication(msg) => Self::unauthenticated(msg),
+            Error::Authorization(msg) => Self::permission_denied(msg),
+            Error::InvalidInput(msg) => Self::invalid_argument(msg),
+            Error::AlreadyExists(msg) => Self::already_exists(msg),
+            Error::OptimisticLockConflict => Self::aborted("Resource modified concurrently"),
             other => {
                 tracing::error!("Internal error: {other}");
-                tonic::Status::internal("Internal error")
+                Self::internal("Internal error")
             }
         }
     }

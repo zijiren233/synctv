@@ -34,7 +34,7 @@ use crate::impls::AdminApiImpl;
 /// Convert a String error from `AdminApiImpl` into a gRPC Status.
 ///
 /// Uses the same keyword-based mapping as `impls_err_to_status` in
-/// client_service.rs. Once the impls layer migrates to typed errors,
+/// `client_service.rs`. Once the impls layer migrates to typed errors,
 /// this should use `From<synctv_core::Error> for tonic::Status` instead.
 fn api_err(err: String) -> Status {
     let lower = err.to_lowercase();
@@ -184,6 +184,7 @@ impl AdminServiceImpl {
 }
 
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)]
 impl AdminService for AdminServiceImpl {
     // =========================
     // System Settings Management

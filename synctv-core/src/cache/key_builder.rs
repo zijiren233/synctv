@@ -19,6 +19,12 @@ pub struct KeyBuilder {
     prefix: String,
 }
 
+impl Default for KeyBuilder {
+    fn default() -> Self {
+        Self::new("synctv")
+    }
+}
+
 impl KeyBuilder {
     /// Create a new `KeyBuilder` with the given prefix
     pub fn new(prefix: impl Into<String>) -> Self {
@@ -28,15 +34,9 @@ impl KeyBuilder {
     }
 
     /// Create `KeyBuilder` from configuration
-    #[must_use] 
+    #[must_use]
     pub fn from_config(config: &Config) -> Self {
         Self::new(config.redis.key_prefix.clone())
-    }
-
-    /// Create default `KeyBuilder` (for testing)
-    #[must_use] 
-    pub fn default() -> Self {
-        Self::new("synctv")
     }
 
     // ==================== Cluster Management ====================
@@ -45,7 +45,7 @@ impl KeyBuilder {
     ///
     /// Type: String + TTL (60s)
     /// Value: JSON { `node_id`, addr, ports, status, `last_heartbeat` }
-    #[must_use] 
+    #[must_use]
     pub fn cluster_node(&self, node_id: &str) -> String {
         format!("{}:cluster:nodes:{}", self.prefix, node_id)
     }
@@ -55,7 +55,7 @@ impl KeyBuilder {
     /// Type: Sorted Set
     /// Member: `node_id`
     /// Score: timestamp (for cleanup)
-    #[must_use] 
+    #[must_use]
     pub fn cluster_nodes_active(&self) -> String {
         format!("{}:cluster:nodes:active", self.prefix)
     }
@@ -66,7 +66,7 @@ impl KeyBuilder {
     ///
     /// Type: Hash + TTL (300s)
     /// Fields: `node_id`, `started_at`, status, `viewer_count`
-    #[must_use] 
+    #[must_use]
     pub fn stream_info(&self, stream_key: &str) -> String {
         format!("{}:stream:info:{}", self.prefix, stream_key)
     }
@@ -75,7 +75,7 @@ impl KeyBuilder {
     ///
     /// Type: Set + TTL (300s)
     /// Members: `node_id` (nodes that are pulling this stream)
-    #[must_use] 
+    #[must_use]
     pub fn stream_subscribers(&self, stream_key: &str) -> String {
         format!("{}:stream:subscribers:{}", self.prefix, stream_key)
     }
@@ -84,7 +84,7 @@ impl KeyBuilder {
     ///
     /// Type: Hash + TTL (600s)
     /// Fields: viewers, bitrate, packets, bytes
-    #[must_use] 
+    #[must_use]
     pub fn stream_stats(&self, stream_key: &str) -> String {
         format!("{}:stream:stats:{}", self.prefix, stream_key)
     }
@@ -95,7 +95,7 @@ impl KeyBuilder {
     ///
     /// Type: Hash
     /// Fields: `room_id`, `playing_media_id`, position, speed, `is_playing`, `updated_at`, version
-    #[must_use] 
+    #[must_use]
     pub fn room_state(&self, room_id: &str) -> String {
         format!("{}:room:{}:state", self.prefix, room_id)
     }
@@ -104,7 +104,7 @@ impl KeyBuilder {
     ///
     /// Type: Set
     /// Members: `user_id`
-    #[must_use] 
+    #[must_use]
     pub fn room_members(&self, room_id: &str) -> String {
         format!("{}:room:{}:members", self.prefix, room_id)
     }
@@ -114,7 +114,7 @@ impl KeyBuilder {
     /// Type: Sorted Set
     /// Members: `user_id`
     /// Score: `last_activity_timestamp`
-    #[must_use] 
+    #[must_use]
     pub fn room_online_users(&self, room_id: &str) -> String {
         format!("{}:room:{}:online", self.prefix, room_id)
     }
@@ -123,7 +123,7 @@ impl KeyBuilder {
     ///
     /// Type: String + TTL (60s)
     /// Value: number (count)
-    #[must_use] 
+    #[must_use]
     pub fn room_viewers(&self, room_id: &str) -> String {
         format!("{}:room:{}:viewers", self.prefix, room_id)
     }
@@ -134,7 +134,7 @@ impl KeyBuilder {
     ///
     /// Type: String + TTL (dynamic)
     /// Value: JSON with playback state
-    #[must_use] 
+    #[must_use]
     pub fn playback_cache(&self, cache_key: &str) -> String {
         format!("{}:playback:{}", self.prefix, cache_key)
     }
@@ -145,7 +145,7 @@ impl KeyBuilder {
     ///
     /// Type: String + TTL (dynamic)
     /// Value: JSON with session data
-    #[must_use] 
+    #[must_use]
     pub fn user_session(&self, session_id: &str) -> String {
         format!("{}:session:{}", self.prefix, session_id)
     }
@@ -159,7 +159,7 @@ impl KeyBuilder {
     ///
     /// identifier: `user_id`, IP, etc.
     /// window: "1s", "1m", "1h", etc.
-    #[must_use] 
+    #[must_use]
     pub fn rate_limit(&self, identifier: &str, window: &str) -> String {
         format!("{}:ratelimit:{}:{}", self.prefix, identifier, window)
     }
@@ -169,7 +169,7 @@ impl KeyBuilder {
     /// Cache invalidation pub/sub channel
     ///
     /// Used for cross-node cache invalidation
-    #[must_use] 
+    #[must_use]
     pub fn cache_invalidation_channel(&self) -> String {
         format!("{}:cache:invalidate", self.prefix)
     }
@@ -179,7 +179,7 @@ impl KeyBuilder {
     /// Cluster events pub/sub channel
     ///
     /// Used for cross-cluster message broadcasting
-    #[must_use] 
+    #[must_use]
     pub fn cluster_events_channel(&self) -> String {
         format!("{}:cluster:events", self.prefix)
     }
@@ -187,7 +187,7 @@ impl KeyBuilder {
     /// Room-specific messages channel
     ///
     /// Used for room message broadcasting (chat, danmaku, etc.)
-    #[must_use] 
+    #[must_use]
     pub fn room_messages_channel(&self, room_id: &str) -> String {
         format!("{}:room:{}:messages", self.prefix, room_id)
     }

@@ -57,6 +57,7 @@ impl StreamRelayServiceImpl {
 
     /// Authenticate a gRPC request using the cluster shared secret.
     /// Uses constant-time comparison to prevent timing attacks.
+    #[allow(clippy::result_large_err)]
     fn authenticate<T>(&self, request: &Request<T>) -> Result<(), Status> {
         let Some(expected) = &self.cluster_secret else {
             return Ok(()); // No secret configured, skip auth
@@ -77,6 +78,7 @@ impl StreamRelayServiceImpl {
 }
 
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)] // tonic::Status is inherently large; required by gRPC trait
 impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl {
     /// Pull RTMP stream from publisher node (server streaming)
     /// Subscribe to `StreamHub` and forward data — GOP is sent automatically by `StreamHub`.

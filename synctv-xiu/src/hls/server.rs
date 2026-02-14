@@ -64,7 +64,7 @@ impl HlsServer {
         let port = self.port;
         let segment_manager_clone = Arc::clone(&self.segment_manager);
         let stream_registry_clone = self.stream_registry.clone();
-        let http_shutdown = shutdown_token.clone();
+        let http_shutdown = shutdown_token;
         tokio::spawn(async move {
             if let Err(e) = start_http_server(port, segment_manager_clone, stream_registry_clone, http_shutdown).await {
                 tracing::error!("HLS HTTP server error: {}", e);

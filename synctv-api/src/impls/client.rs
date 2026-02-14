@@ -89,6 +89,37 @@ impl ClientApiImpl {
         self
     }
 
+    /// Kick a stream both locally and cluster-wide via Redis Pub/Sub.
+    ///
+    /// Used after media deletion to terminate any active RTMP stream.
+    fn kick_stream_cluster(&self, room_id: &str, media_id: &str, reason: &str) {
+        use synctv_cluster::sync::{ClusterEvent, PublishRequest};
+        use synctv_core::models::{RoomId as Rid, MediaId as Mid};
+
+        // 1. Local kick (no-op if stream not on this node)
+        if let Some(infra) = &self.live_streaming_infrastructure {
+            if let Err(e) = infra.kick_publisher(room_id, media_id) {
+                tracing::warn!(room_id, media_id, error = %e, "Failed to kick local publisher");
+            }
+        }
+
+        // 2. Cluster-wide via Redis
+        if let Some(tx) = &self.redis_publish_tx {
+            if tx.try_send(PublishRequest {
+                room_id: Some(Rid::from_string(room_id.to_string())),
+                event: ClusterEvent::KickPublisher {
+                    event_id: nanoid::nanoid!(16),
+                    room_id: Rid::from_string(room_id.to_string()),
+                    media_id: Mid::from_string(media_id.to_string()),
+                    reason: reason.to_string(),
+                    timestamp: chrono::Utc::now(),
+                },
+            }).is_err() {
+                tracing::warn!(room_id, media_id, "Failed to send cluster-wide kick event (Redis channel closed or full)");
+            }
+        }
+    }
+
     /// Publish a permission change event to other cluster replicas
     fn publish_permission_changed(
         &self,
@@ -691,7 +722,7 @@ impl ClientApiImpl {
         }
 
         // Sort by online count (descending)
-        room_stats.sort_by(|a, b| b.1.cmp(&a.1));
+        room_stats.sort_by_key(|item| std::cmp::Reverse(item.1));
 
         // Take top N rooms
         let mut hot_rooms: Vec<crate::proto::client::RoomWithStats> = Vec::new();
@@ -830,10 +861,14 @@ impl ClientApiImpl {
     ) -> Result<crate::proto::client::RemoveMediaResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
+        let media_id_str = req.media_id.clone();
         let mid = synctv_core::models::MediaId::from_string(req.media_id);
 
         self.room_service.remove_media(rid, uid, mid).await
             .map_err(|e| e.to_string())?;
+
+        // Kick active stream for deleted media (local + cluster-wide)
+        self.kick_stream_cluster(room_id, &media_id_str, "media_deleted");
 
         Ok(crate::proto::client::RemoveMediaResponse {
             success: true,
@@ -956,6 +991,7 @@ impl ClientApiImpl {
 
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
+        let media_id_strings: Vec<String> = req.media_ids.clone();
         let mids: Vec<synctv_core::models::MediaId> = req.media_ids
             .into_iter()
             .map(synctv_core::models::MediaId::from_string)
@@ -966,6 +1002,11 @@ impl ClientApiImpl {
             .remove_media_batch(rid, uid, mids)
             .await
             .map_err(|e| e.to_string())?;
+
+        // Kick active streams for deleted media (local + cluster-wide)
+        for media_id in &media_id_strings {
+            self.kick_stream_cluster(room_id, media_id, "media_deleted");
+        }
 
         Ok(crate::proto::client::RemoveMediaBatchResponse {
             deleted_count: deleted_count as i32,
@@ -1910,7 +1951,7 @@ impl ClientApiImpl {
 
 // === Helper Functions ===
 
-fn user_role_to_proto(role: synctv_core::models::UserRole) -> i32 {
+const fn user_role_to_proto(role: synctv_core::models::UserRole) -> i32 {
     match role {
         synctv_core::models::UserRole::Root => synctv_proto::common::UserRole::Root as i32,
         synctv_core::models::UserRole::Admin => synctv_proto::common::UserRole::Admin as i32,
@@ -1918,7 +1959,7 @@ fn user_role_to_proto(role: synctv_core::models::UserRole) -> i32 {
     }
 }
 
-fn user_status_to_proto(status: synctv_core::models::UserStatus) -> i32 {
+const fn user_status_to_proto(status: synctv_core::models::UserStatus) -> i32 {
     match status {
         synctv_core::models::UserStatus::Active => synctv_proto::common::UserStatus::Active as i32,
         synctv_core::models::UserStatus::Pending => synctv_proto::common::UserStatus::Pending as i32,
@@ -1945,7 +1986,8 @@ pub fn proto_role_to_user_role(role_i32: i32) -> Result<synctv_core::models::Use
     }
 }
 
-pub fn room_role_to_proto(role: synctv_core::models::RoomRole) -> i32 {
+#[must_use] 
+pub const fn room_role_to_proto(role: synctv_core::models::RoomRole) -> i32 {
     match role {
         synctv_core::models::RoomRole::Creator => synctv_proto::common::RoomMemberRole::Creator as i32,
         synctv_core::models::RoomRole::Admin => synctv_proto::common::RoomMemberRole::Admin as i32,
@@ -2059,14 +2101,13 @@ fn room_member_to_proto(member: synctv_core::models::RoomMemberWithUser) -> sync
 impl ClientApiImpl {
     // === WebRTC Operations ===
 
-    /// Get ICE servers configuration for WebRTC
+    /// Get ICE servers configuration for WebRTC (STUN only, no TURN)
     pub async fn get_ice_servers(
         &self,
         room_id: &RoomId,
         user_id: &UserId,
     ) -> Result<crate::proto::client::GetIceServersResponse, anyhow::Error> {
         use crate::proto::client::{IceServer, GetIceServersResponse};
-        use synctv_core::config::TurnMode;
 
         // Check membership
         self.room_service.check_membership(room_id, user_id).await
@@ -2080,7 +2121,7 @@ impl ClientApiImpl {
             let stun_url = format!(
                 "stun:{}:{}",
                 self.config.server.host,
-                webrtc_config.builtin_stun_port
+                webrtc_config.stun_port
             );
             servers.push(IceServer {
                 urls: vec![stun_url],
@@ -2096,71 +2137,6 @@ impl ClientApiImpl {
                 username: None,
                 credential: None,
             });
-        }
-
-        // Add TURN server based on configured mode
-        match webrtc_config.turn_mode {
-            TurnMode::Builtin => {
-                if webrtc_config.enable_builtin_turn {
-                    // Use built-in TURN server
-                    let turn_url = format!(
-                        "turn:{}:{}",
-                        self.config.server.host,
-                        webrtc_config.builtin_turn_port
-                    );
-
-                    // Get static secret for credential generation
-                    if let Some(turn_secret) = &webrtc_config.external_turn_static_secret {
-                        let turn_config = synctv_core::service::TurnConfig {
-                            server_url: turn_url.clone(),
-                            static_secret: turn_secret.clone(),
-                            credential_ttl: std::time::Duration::from_secs(webrtc_config.turn_credential_ttl),
-                            use_tls: false,
-                        };
-                        let turn_service = synctv_core::service::TurnCredentialService::new(turn_config);
-
-                        // Generate time-limited credentials
-                        let credential = turn_service.generate_credential(user_id.as_str())?;
-
-                        servers.push(IceServer {
-                            urls: vec![turn_url],
-                            username: Some(credential.username),
-                            credential: Some(credential.password),
-                        });
-                    }
-                }
-            }
-            TurnMode::External => {
-                // Use external TURN server (coturn)
-                if let (Some(turn_url), Some(turn_secret)) = (
-                    &webrtc_config.external_turn_server_url,
-                    &webrtc_config.external_turn_static_secret,
-                ) {
-                    let turn_config = synctv_core::service::TurnConfig {
-                        server_url: turn_url.clone(),
-                        static_secret: turn_secret.clone(),
-                        credential_ttl: std::time::Duration::from_secs(webrtc_config.turn_credential_ttl),
-                        use_tls: false,
-                    };
-                    let turn_service = synctv_core::service::TurnCredentialService::new(turn_config);
-
-                    // Generate time-limited credentials
-                    let credential = turn_service.generate_credential(user_id.as_str())?;
-
-                    // Get all TURN URLs (including TLS variant if enabled)
-                    let urls = turn_service.get_urls();
-
-                    servers.push(IceServer {
-                        urls,
-                        username: Some(credential.username),
-                        credential: Some(credential.password),
-                    });
-                }
-            }
-            TurnMode::Disabled => {
-                // TURN disabled - rely on STUN only for NAT traversal
-                // This may result in ~85-90% connection success rate instead of ~99%
-            }
         }
 
         Ok(GetIceServersResponse { servers })

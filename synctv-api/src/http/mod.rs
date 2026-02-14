@@ -37,8 +37,7 @@ use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
-use synctv_cluster::sync::{ClusterEvent, PublishRequest};
-use synctv_core::models::{RoomId, MediaId};
+use synctv_cluster::sync::PublishRequest;
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::repository::UserProviderCredentialRepository;
 use synctv_core::service::{RemoteProviderManager, RoomService, UserService};
@@ -109,34 +108,6 @@ pub struct AppState {
     pub admin_api: Option<Arc<crate::impls::AdminApiImpl>>,
 }
 
-/// Kick a stream both locally and cluster-wide via Redis Pub/Sub.
-///
-/// Used by HTTP handlers that delete media to terminate any active RTMP stream.
-pub(crate) fn kick_stream_cluster(state: &AppState, room_id: &str, media_id: &str, reason: &str) {
-    // 1. Local kick (no-op if stream not on this node)
-    if let Some(infra) = &state.live_streaming_infrastructure {
-        if let Err(e) = infra.kick_publisher(room_id, media_id) {
-            tracing::warn!(room_id, media_id, error = %e, "Failed to kick local publisher");
-        }
-    }
-
-    // 2. Cluster-wide via Redis
-    if let Some(tx) = &state.redis_publish_tx {
-        if tx.try_send(PublishRequest {
-            room_id: Some(RoomId::from_string(room_id.to_string())),
-            event: ClusterEvent::KickPublisher {
-                event_id: nanoid::nanoid!(16),
-                room_id: RoomId::from_string(room_id.to_string()),
-                media_id: MediaId::from_string(media_id.to_string()),
-                reason: reason.to_string(),
-                timestamp: chrono::Utc::now(),
-            },
-        }).is_err() {
-            tracing::warn!(room_id, media_id, "Failed to send cluster-wide kick event (Redis channel closed or full)");
-        }
-    }
-}
-
 /// Create the HTTP router with all routes
 #[allow(clippy::too_many_arguments)]
 fn create_router(
@@ -178,24 +149,25 @@ fn create_router(
         settings_registry.clone(),
     ).with_redis_publish_tx(redis_publish_tx.clone()));
 
-    // AdminApi requires SettingsService and EmailService
-    // If they're not configured, we need to handle this appropriately
-    // For now, we'll skip creating admin_api if these aren't available
-    let admin_api = if let (Some(settings_svc), Some(email_svc)) = (&settings_service, &email_service) {
-        Some(Arc::new(crate::impls::AdminApiImpl::new(
+    // AdminApi requires SettingsService; EmailService is optional (send_test_email
+    // will fail gracefully when email is not configured, matching gRPC behavior).
+    let admin_api = settings_service.as_ref().map(|settings_svc| {
+        let email_svc = email_service.clone().unwrap_or_else(|| {
+            Arc::new(synctv_core::service::EmailService::new(None)
+                .expect("EmailService::new(None) should not fail"))
+        });
+        Arc::new(crate::impls::AdminApiImpl::new(
             room_service.clone(),
             user_service.clone(),
             settings_svc.clone(),
             settings_registry.clone(),
-            email_svc.clone(),
+            email_svc,
             connection_manager.clone(),
             provider_instance_manager.clone(),
             live_streaming_infrastructure.clone(),
             redis_publish_tx.clone(),
-        )))
-    } else {
-        None
-    };
+        ))
+    });
 
     let state = AppState {
         config: config.clone(),

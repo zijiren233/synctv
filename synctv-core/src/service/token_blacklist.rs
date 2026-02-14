@@ -18,9 +18,9 @@ fn hash_token(token: &str) -> String {
 #[derive(Clone)]
 pub struct TokenBlacklistService {
     redis_conn: Option<redis::aio::ConnectionManager>,
-    /// In-memory token blacklist: token_hash -> expiry_timestamp_secs
+    /// In-memory token blacklist: `token_hash` -> `expiry_timestamp_secs`
     local_blacklist: Arc<moka::future::Cache<String, i64>>,
-    /// In-memory user invalidation timestamps: user_key -> password_changed_at
+    /// In-memory user invalidation timestamps: `user_key` -> `password_changed_at`
     local_user_invalidations: Arc<moka::future::Cache<String, i64>>,
 }
 
@@ -42,14 +42,14 @@ impl TokenBlacklistService {
             local_blacklist: Arc::new(
                 moka::future::Cache::builder()
                     .max_capacity(100_000)
-                    .time_to_live(Duration::from_secs(30 * 24 * 3600))
+                    .time_to_live(Duration::from_hours(720))
                     .build(),
             ),
             // Max 50K user invalidation entries; 30-day max TTL
             local_user_invalidations: Arc::new(
                 moka::future::Cache::builder()
                     .max_capacity(50_000)
-                    .time_to_live(Duration::from_secs(30 * 24 * 3600))
+                    .time_to_live(Duration::from_hours(720))
                     .build(),
             ),
         }

@@ -67,7 +67,7 @@ pub struct GrpcServerConfig<'a> {
 }
 
 /// Build and start the gRPC server
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::result_large_err)]
 pub async fn serve(
     config: &Config,
     jwt_service: JwtService,

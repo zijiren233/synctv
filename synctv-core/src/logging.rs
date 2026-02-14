@@ -61,9 +61,8 @@ pub fn init_logging(config: &LoggingConfig) -> anyhow::Result<Option<tracing_app
             registry.with(file_layer).init();
 
             return Ok(Some(guard));
-        } else {
-            registry.with(json_layer).init();
         }
+        registry.with(json_layer).init();
     } else {
         // Pretty format for development (human-readable)
         let pretty_layer = fmt::layer()
@@ -91,9 +90,8 @@ pub fn init_logging(config: &LoggingConfig) -> anyhow::Result<Option<tracing_app
             registry.with(file_layer).init();
 
             return Ok(Some(guard));
-        } else {
-            registry.with(pretty_layer).init();
         }
+        registry.with(pretty_layer).init();
     }
 
     Ok(None)

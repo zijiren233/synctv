@@ -3,7 +3,7 @@
 //! Handles playlist browsing operations.
 //!
 //! Uses gRPC proto types for all requests/responses to maintain consistency.
-//! Delegates to ClientApiImpl for shared business logic.
+//! Delegates to `ClientApiImpl` for shared business logic.
 
 use axum::{
     extract::{Path, Query, State},

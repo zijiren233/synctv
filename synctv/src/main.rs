@@ -263,17 +263,17 @@ async fn main() -> Result<()> {
         }
     };
 
-    // 9.5. Initialize STUN server (if enabled)
+    // 9.5. Initialize STUN server (if enabled, powered by turn-rs)
     let stun_server = if config.webrtc.enable_builtin_stun {
-        info!("Starting built-in STUN server...");
+        info!("Starting built-in STUN server (turn-rs)...");
+        let bind_addr = format!("{}:{}", config.webrtc.stun_host, config.webrtc.stun_port);
         let stun_config = synctv_core::service::StunServerConfig {
-            bind_addr: format!("{}:{}", config.webrtc.builtin_stun_host, config.webrtc.builtin_stun_port),
-            max_packet_size: config.webrtc.stun_max_packet_size,
+            bind_addr: bind_addr.clone(),
+            external_addr: bind_addr,
         };
         match synctv_core::service::StunServer::start(stun_config).await {
             Ok(server) => {
-                let addr = server.local_addr()?;
-                info!("Built-in STUN server started on {}", addr);
+                info!("Built-in STUN server started on {}", server.local_addr());
                 Some(server)
             }
             Err(e) => {
@@ -285,83 +285,6 @@ async fn main() -> Result<()> {
     } else {
         info!("Built-in STUN server disabled");
         None
-    };
-
-    // 9.6. Initialize TURN server (if enabled)
-    let turn_server = match config.webrtc.turn_mode {
-        synctv_core::config::TurnMode::Builtin => {
-            if config.webrtc.enable_builtin_turn {
-                info!("Starting built-in TURN server...");
-                let turn_config = synctv_core::service::TurnBuiltinServerConfig {
-                    bind_addr: format!("{}:{}", config.webrtc.builtin_stun_host, config.webrtc.builtin_turn_port),
-                    relay_min_port: config.webrtc.builtin_turn_min_port,
-                    relay_max_port: config.webrtc.builtin_turn_max_port,
-                    max_allocations: config.webrtc.builtin_turn_max_allocations,
-                    default_lifetime: config.webrtc.builtin_turn_default_lifetime,
-                    max_lifetime: config.webrtc.builtin_turn_max_lifetime,
-                    static_secret: config.webrtc.external_turn_static_secret
-                        .clone()
-                        .unwrap_or_else(|| {
-                            warn!("No TURN static_secret configured! Please set webrtc.external_turn_static_secret in config. Using ephemeral random secret (will change on restart).");
-                            nanoid::nanoid!(48)
-                        }),
-                    realm: config.webrtc.turn_realm
-                        .clone()
-                        .unwrap_or_else(|| "synctv.local".to_string()),
-                };
-                match synctv_core::service::TurnServer::start(turn_config).await {
-                    Ok(server) => {
-                        let addr = server.local_addr()?;
-                        info!("Built-in TURN server started on {}", addr);
-                        info!("TURN relay port range: {}-{}",
-                            config.webrtc.builtin_turn_min_port,
-                            config.webrtc.builtin_turn_max_port);
-                        Some(server)
-                    }
-                    Err(e) => {
-                        warn!("Failed to start TURN server: {}", e);
-                        warn!("WebRTC connectivity may fail in restrictive networks without TURN");
-                        None
-                    }
-                }
-            } else {
-                info!("Built-in TURN server available but disabled in config");
-                None
-            }
-        }
-        synctv_core::config::TurnMode::External => {
-            info!("Using external TURN server (coturn)");
-            if let (Some(url), Some(secret)) = (
-                &config.webrtc.external_turn_server_url,
-                &config.webrtc.external_turn_static_secret,
-            ) {
-                // Validate external TURN configuration
-                let turn_config = synctv_core::service::TurnConfig {
-                    server_url: url.clone(),
-                    static_secret: secret.clone(),
-                    credential_ttl: std::time::Duration::from_secs(config.webrtc.turn_credential_ttl),
-                    use_tls: false,
-                };
-                let turn_service = synctv_core::service::TurnCredentialService::new(turn_config);
-                if let Err(e) = turn_service.validate_config() {
-                    warn!("External TURN configuration is invalid: {}", e);
-                    warn!("Please check webrtc.external_turn_server_url and webrtc.external_turn_static_secret");
-                } else {
-                    info!("External TURN server configured: {}", url);
-                    info!("TURN credential TTL: {} seconds", config.webrtc.turn_credential_ttl);
-                    info!("Note: Ensure coturn is deployed and static-auth-secret matches");
-                }
-            } else {
-                warn!("External TURN mode selected but server URL or secret not configured");
-                warn!("Set webrtc.external_turn_server_url and webrtc.external_turn_static_secret in config");
-            }
-            None
-        }
-        synctv_core::config::TurnMode::Disabled => {
-            info!("TURN server disabled (P2P + STUN only)");
-            info!("Connection success rate may be lower (~85-90%) without TURN");
-            None
-        }
     };
 
     // 9.7. Initialize SFU manager (if needed for WebRTC mode)
@@ -424,7 +347,6 @@ async fn main() -> Result<()> {
         notification_service: Some(synctv_services.notification_service.clone()),
         live_streaming_infrastructure,
         stun_server,
-        turn_server,
         sfu_manager,
     };
 

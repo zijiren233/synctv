@@ -457,10 +457,10 @@ impl MediaProvider for BilibiliProvider {
                     format!("video:{}:{}:{}", bvid.as_deref().unwrap_or(""), aid.unwrap_or(0), cid)
                 }
                 BilibiliSourceConfig::Pgc { epid, cid, .. } => {
-                    format!("pgc:{}:{}", epid, cid)
+                    format!("pgc:{epid}:{cid}")
                 }
                 BilibiliSourceConfig::Live { room_id, .. } => {
-                    format!("live:{}", room_id)
+                    format!("live:{room_id}")
                 }
             };
             format!("bilibili:{:x}", Sha256::digest(identifier.as_bytes()))

@@ -11,7 +11,7 @@ use crate::{
     cache::UsernameCache,
     models::{ChatMessage, RoomId, SendDanmakuRequest, UserId},
     repository::ChatRepository,
-    service::{ContentFilter, RateLimiter},
+    service::{ContentFilter, RateLimitConfig, RateLimiter},
     Error, Result,
 };
 
@@ -20,6 +20,7 @@ use crate::{
 pub struct ChatService {
     pub(crate) chat_repository: Arc<ChatRepository>,
     rate_limiter: RateLimiter,
+    rate_limit_config: RateLimitConfig,
     content_filter: ContentFilter,
     username_cache: UsernameCache,
 }
@@ -33,16 +34,18 @@ impl std::fmt::Debug for ChatService {
 
 impl ChatService {
     /// Create a new chat service
-    #[must_use] 
+    #[must_use]
     pub const fn new(
         chat_repository: Arc<ChatRepository>,
         rate_limiter: RateLimiter,
+        rate_limit_config: RateLimitConfig,
         content_filter: ContentFilter,
         username_cache: UsernameCache,
     ) -> Self {
         Self {
             chat_repository,
             rate_limiter,
+            rate_limit_config,
             content_filter,
             username_cache,
         }
@@ -63,11 +66,11 @@ impl ChatService {
         user_id: UserId,
         content: String,
     ) -> Result<ChatMessage> {
-        // Rate limiting: 10 messages per second per room per user
+        // Rate limiting: use configured chat_per_second from RateLimitConfig
         let rate_key = format!("chat:rate:{}:{}", room_id.as_str(), user_id.as_str());
         if let Err(e) = self
             .rate_limiter
-            .check_rate_limit(&rate_key, 10, 1)
+            .check_rate_limit(&rate_key, self.rate_limit_config.chat_per_second, self.rate_limit_config.window_seconds)
             .await
         {
             return Err(Error::InvalidInput(format!("Rate limit exceeded: {e}")));
@@ -182,11 +185,11 @@ impl ChatService {
     ) -> Result<crate::models::DanmakuMessage> {
         use crate::models::DanmakuMessage;
 
-        // Rate limiting: 20 danmaku per second per room per user
+        // Rate limiting: use configured danmaku_per_second from RateLimitConfig
         let rate_key = format!("danmaku:rate:{}:{}", room_id.as_str(), user_id.as_str());
         if let Err(e) = self
             .rate_limiter
-            .check_rate_limit(&rate_key, 20, 1)
+            .check_rate_limit(&rate_key, self.rate_limit_config.danmaku_per_second, self.rate_limit_config.window_seconds)
             .await
         {
             return Err(Error::InvalidInput(format!("Rate limit exceeded: {e}")));
@@ -203,9 +206,12 @@ impl ChatService {
             ));
         }
 
-        // Validate color format (hex color)
+        // Validate color format (hex color: #RRGGBB with hex digits only)
         if !request.color.starts_with('#') || request.color.len() != 7 {
             return Err(Error::InvalidInput("Invalid color format".to_string()));
+        }
+        if !request.color[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(Error::InvalidInput("Invalid color format: must be hex digits".to_string()));
         }
 
         // Filter content
@@ -363,5 +369,57 @@ mod tests {
     fn test_validate_content() {
         // Test placeholder
         assert!("hello".len() < 500);
+    }
+
+    /// Test color validation logic extracted from send_danmaku
+    fn validate_color(color: &str) -> Result<(), &'static str> {
+        if !color.starts_with('#') || color.len() != 7 {
+            return Err("Invalid color format");
+        }
+        if !color[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("Invalid color format: must be hex digits");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_color_validation_valid() {
+        assert!(validate_color("#000000").is_ok());
+        assert!(validate_color("#FFFFFF").is_ok());
+        assert!(validate_color("#ff00ff").is_ok());
+        assert!(validate_color("#aAbBcC").is_ok());
+        assert!(validate_color("#123456").is_ok());
+        assert!(validate_color("#7890ab").is_ok());
+    }
+
+    #[test]
+    fn test_color_validation_missing_hash() {
+        assert!(validate_color("000000").is_err());
+        assert!(validate_color("FFFFFF").is_err());
+    }
+
+    #[test]
+    fn test_color_validation_wrong_length() {
+        assert!(validate_color("#FFF").is_err());
+        assert!(validate_color("#FFFFFFFF").is_err());
+        assert!(validate_color("#").is_err());
+        assert!(validate_color("").is_err());
+    }
+
+    #[test]
+    fn test_color_validation_non_hex_chars() {
+        // XSS-like payloads that pass starts_with('#') && len()==7
+        assert!(validate_color("#<scrip").is_err());
+        assert!(validate_color("#ghijkl").is_err());
+        assert!(validate_color("#ZZZZZZ").is_err());
+        assert!(validate_color("#12345g").is_err());
+        assert!(validate_color("#00000!").is_err());
+        assert!(validate_color("# space").is_err());
+    }
+
+    #[test]
+    fn test_color_validation_special_chars() {
+        assert!(validate_color("#<>\"'&;").is_err());
+        assert!(validate_color("#script").is_err());
     }
 }

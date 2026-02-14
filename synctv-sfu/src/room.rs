@@ -382,6 +382,7 @@ impl SfuRoom {
     }
 
     /// Forward track packets to subscribers (background task)
+    #[allow(clippy::too_many_arguments)]
     async fn forward_track_packets(
         room_id: RoomId,
         track_id: TrackId,

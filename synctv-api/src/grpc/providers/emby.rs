@@ -29,6 +29,7 @@ impl EmbyProviderGrpcService {
 }
 
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)]
 impl EmbyProviderService for EmbyProviderGrpcService {
     async fn login(&self, request: Request<LoginRequest>) -> Result<Response<LoginResponse>, Status> {
         let req = request.into_inner();

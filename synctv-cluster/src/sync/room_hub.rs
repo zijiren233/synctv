@@ -232,11 +232,14 @@ impl RoomMessageHub {
         connection_id: &str,
         event: ClusterEvent,
     ) -> usize {
+        let mut result = 0;
+        let mut failed_connection: Option<ConnectionId> = None;
+
         if let Some(subscribers) = self.rooms.get(room_id) {
             for subscriber in subscribers.iter() {
                 if subscriber.connection_id == connection_id {
                     let event_type = event.event_type().to_string();
-                    return match subscriber.sender.try_send(event) {
+                    match subscriber.sender.try_send(event) {
                         Ok(()) => {
                             debug!(
                                 room_id = %room_id.as_str(),
@@ -244,7 +247,7 @@ impl RoomMessageHub {
                                 event_type = %event_type,
                                 "Event sent to specific connection"
                             );
-                            1
+                            result = 1;
                         }
                         Err(mpsc::error::TrySendError::Full(_)) => {
                             warn!(
@@ -252,7 +255,6 @@ impl RoomMessageHub {
                                 connection_id = %connection_id,
                                 "Subscriber channel full, dropping targeted event"
                             );
-                            0
                         }
                         Err(mpsc::error::TrySendError::Closed(_)) => {
                             warn!(
@@ -260,13 +262,22 @@ impl RoomMessageHub {
                                 connection_id = %connection_id,
                                 "Subscriber channel closed for targeted event"
                             );
-                            0
+                            failed_connection = Some(subscriber.connection_id.clone());
                         }
-                    };
+                    }
+                    break;
                 }
             }
         }
-        0
+        // Drop the DashMap read guard above before calling unsubscribe(),
+        // which takes a write lock, to avoid deadlock on the same shard.
+
+        // Clean up closed connection
+        if let Some(conn_id) = failed_connection {
+            self.unsubscribe(&conn_id);
+        }
+
+        result
     }
 
     /// Get the number of subscribers in a room

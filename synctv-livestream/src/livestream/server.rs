@@ -79,35 +79,35 @@ impl LivestreamHandle {
 
         // 1. Stop external publish cleanup
         self.external_publish_cleanup.abort();
-        if let Ok(_) = timeout(timeout_duration, &mut self.external_publish_cleanup).await { info!("External publish cleanup stopped") } else {
+        if timeout(timeout_duration, &mut self.external_publish_cleanup).await.is_ok() { info!("External publish cleanup stopped") } else {
             warn!("External publish cleanup shutdown timed out");
             all_graceful = false;
         }
 
         // 2. Stop pull manager cleanup
         self.pull_manager_cleanup.abort();
-        if let Ok(_) = timeout(timeout_duration, &mut self.pull_manager_cleanup).await { info!("Pull manager cleanup stopped") } else {
+        if timeout(timeout_duration, &mut self.pull_manager_cleanup).await.is_ok() { info!("Pull manager cleanup stopped") } else {
             warn!("Pull manager cleanup shutdown timed out");
             all_graceful = false;
         }
 
         // 3. Stop publisher manager
         self.publisher_manager_handle.abort();
-        if let Ok(_) = timeout(timeout_duration, &mut self.publisher_manager_handle).await { info!("Publisher manager stopped") } else {
+        if timeout(timeout_duration, &mut self.publisher_manager_handle).await.is_ok() { info!("Publisher manager stopped") } else {
             warn!("Publisher manager shutdown timed out");
             all_graceful = false;
         }
 
         // 4. Stop RTMP server
         self.rtmp_handle.abort();
-        if let Ok(_) = timeout(timeout_duration, &mut self.rtmp_handle).await { info!("RTMP server stopped") } else {
+        if timeout(timeout_duration, &mut self.rtmp_handle).await.is_ok() { info!("RTMP server stopped") } else {
             warn!("RTMP server shutdown timed out");
             all_graceful = false;
         }
 
         // 5. Stop StreamHub (last, as other components depend on it)
         self.hub_handle.abort();
-        if let Ok(_) = timeout(timeout_duration, &mut self.hub_handle).await { info!("StreamHub stopped") } else {
+        if timeout(timeout_duration, &mut self.hub_handle).await.is_ok() { info!("StreamHub stopped") } else {
             warn!("StreamHub shutdown timed out");
             all_graceful = false;
         }
@@ -172,8 +172,11 @@ impl LivestreamServer {
         let node_id_for_cleanup = self.config.node_id.clone();
 
         // Cancellation token for RTMP sessions — cancelled on StreamHub restart
-        // to actively terminate all sessions instead of waiting for broken pipe detection
+        // to actively terminate all sessions instead of waiting for broken pipe detection.
+        // The RTMP server's shutdown_token is a child of this, so cancelling it
+        // propagates to the server and all its sessions.
         let rtmp_session_token = CancellationToken::new();
+        let rtmp_session_token_for_server = rtmp_session_token.clone();
         let rtmp_session_token_for_hub = rtmp_session_token;
 
         // 2. Spawn StreamHub event loop with automatic recovery
@@ -222,13 +225,15 @@ impl LivestreamServer {
             }
         });
 
-        // 3. Create and start RTMP server
+        // 3. Create and start RTMP server, connected to rtmp_session_token so
+        //    cancelling that token (on StreamHub crash) terminates all RTMP sessions.
         let mut rtmp_server = synctv_xiu::rtmp::rtmp::RtmpServer::new(
             self.config.rtmp_address.clone(),
             event_sender.clone(),
             self.config.gop_cache_size,
             self.auth,
-        );
+        )
+        .with_cancellation_token(rtmp_session_token_for_server);
         let rtmp_handle = tokio::spawn(async move {
             if let Err(e) = rtmp_server.run().await {
                 error!("RTMP server error: {}", e);

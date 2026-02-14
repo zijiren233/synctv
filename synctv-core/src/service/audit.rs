@@ -162,7 +162,6 @@ impl AuditService {
 
         let action_str = audit_log.action.as_str();
         let target_str = audit_log.target_type.as_str();
-        let details_str = serde_json::to_string(&audit_log.details)?;
 
         sqlx::query(query)
             .bind(&audit_log.id)
@@ -171,7 +170,7 @@ impl AuditService {
             .bind(action_str)
             .bind(target_str)
             .bind(&audit_log.target_id)
-            .bind(&details_str)
+            .bind(&audit_log.details)
             .bind(&audit_log.ip_address)
             .bind(&audit_log.user_agent)
             .bind(audit_log.created_at)

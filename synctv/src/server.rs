@@ -55,7 +55,6 @@ pub struct Services {
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     pub stun_server: Option<Arc<synctv_core::service::StunServer>>,
-    pub turn_server: Option<Arc<synctv_core::service::TurnServer>>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
 }
 
@@ -107,9 +106,6 @@ impl SyncTvServer {
         }
         if self.services.stun_server.is_some() {
             info!("STUN server: enabled");
-        }
-        if self.services.turn_server.is_some() {
-            info!("TURN server: enabled");
         }
         if self.services.sfu_manager.is_some() {
             info!("SFU manager: enabled");
@@ -237,12 +233,11 @@ impl SyncTvServer {
             sfu.shutdown().await;
         }
 
-        // 3. STUN/TURN servers shut down when their Arc references are dropped
-        if self.services.stun_server.is_some() {
-            info!("STUN server shutting down");
-        }
-        if self.services.turn_server.is_some() {
-            info!("TURN server shutting down");
+        // 3. Shut down STUN server
+        if let Some(ref stun) = self.services.stun_server {
+            info!("Shutting down STUN server...");
+            stun.shutdown().await;
+            info!("STUN server shut down");
         }
 
         // 4. Stop livestream: abort the StreamHub event loop
@@ -370,10 +365,18 @@ impl SyncTvServer {
         } else {
             match redis::Client::open(self.config.redis.url.clone()) {
                 Ok(redis_client) => {
-                    Some(Arc::new(synctv_core::service::WsTicketService::new(
-                        Some(redis_client),
-                        None,
-                    )))
+                    match redis::aio::ConnectionManager::new(redis_client).await {
+                        Ok(conn) => {
+                            Some(Arc::new(synctv_core::service::WsTicketService::new(
+                                Some(conn),
+                                None,
+                            )))
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to create Redis ConnectionManager for ws_ticket_service: {}", e);
+                            None
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("Failed to create Redis client for ws_ticket_service: {}", e);

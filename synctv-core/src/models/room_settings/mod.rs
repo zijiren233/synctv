@@ -407,8 +407,8 @@ impl RoomSettings {
 
     /// Validate that permission overrides don't escalate beyond role ceilings
     ///
-    /// - Guest added permissions cannot exceed DEFAULT_MEMBER
-    /// - Member added permissions cannot exceed DEFAULT_ADMIN
+    /// - Guest added permissions cannot exceed `DEFAULT_MEMBER`
+    /// - Member added permissions cannot exceed `DEFAULT_ADMIN`
     pub fn validate_permissions(&self) -> Result<()> {
         let guest_overflow = self.guest_added_permissions.0 & !PermissionBits::DEFAULT_MEMBER;
         if guest_overflow != 0 {

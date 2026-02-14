@@ -26,6 +26,7 @@ pub struct AdminApiImpl {
 
 impl AdminApiImpl {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         room_service: Arc<RoomService>,
         user_service: Arc<UserService>,
@@ -204,10 +205,27 @@ impl AdminApiImpl {
         let page = if req.page > 0 { req.page } else { 1 };
         let page_size = if req.page_size > 0 { req.page_size } else { 50 };
 
+        // Convert proto enum i32 values to Option<String> for UserListQuery
+        let status = match synctv_proto::common::UserStatus::try_from(req.status) {
+            Ok(synctv_proto::common::UserStatus::Active) => Some("active".to_owned()),
+            Ok(synctv_proto::common::UserStatus::Pending) => Some("pending".to_owned()),
+            Ok(synctv_proto::common::UserStatus::Banned) => Some("banned".to_owned()),
+            _ => None, // Unspecified or unknown => no filter
+        };
+        let role = match synctv_proto::common::UserRole::try_from(req.role) {
+            Ok(synctv_proto::common::UserRole::Root) => Some("root".to_owned()),
+            Ok(synctv_proto::common::UserRole::Admin) => Some("admin".to_owned()),
+            Ok(synctv_proto::common::UserRole::User) => Some("user".to_owned()),
+            _ => None, // Unspecified or unknown => no filter
+        };
+        let search = if req.search.is_empty() { None } else { Some(req.search) };
+
         let query = synctv_core::models::UserListQuery {
             page,
             page_size,
-            ..Default::default()
+            search,
+            status,
+            role,
         };
 
         let (users, total) = self.user_service.list_users(&query).await

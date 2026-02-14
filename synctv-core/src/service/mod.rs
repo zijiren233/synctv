@@ -26,8 +26,6 @@ pub mod audit_partition_manager;
 pub mod distributed_lock;
 pub mod email;
 pub mod email_templates;
-pub mod stun;
-pub mod turn;
 pub mod turn_server;
 pub mod ws_ticket;
 
@@ -62,7 +60,5 @@ pub use audit_partition_manager::{
 pub use distributed_lock::{DistributedLock, LockGuard};
 pub use email::{EmailService, EmailConfig};
 pub use email_templates::{EmailTemplateManager, EmailTemplateType};
-pub use stun::{StunServer, StunServerConfig, StunMetrics};
-pub use turn::{TurnCredentialService, TurnConfig, TurnCredential, COTURN_DEPLOYMENT_GUIDE};
-pub use turn_server::{TurnServer, TurnServerConfig as TurnBuiltinServerConfig, TurnMetrics};
+pub use turn_server::{StunServer, StunServerConfig};
 pub use ws_ticket::{WsTicketService, WsTicketData};

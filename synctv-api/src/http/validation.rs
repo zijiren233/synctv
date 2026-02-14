@@ -312,7 +312,7 @@ pub fn validate_url(url: &str) -> ValidationResult<String> {
 
     // SSRF protection: delegate to the authoritative SSRFValidator in synctv-core
     // which properly parses IPs (no false positives from substring matching)
-    if let Err(_) = synctv_core::validation::validate_url_for_ssrf(&sanitized) {
+    if synctv_core::validation::validate_url_for_ssrf(&sanitized).is_err() {
         tracing::warn!(
             url = %sanitized,
             "SSRF attempt blocked by SSRFValidator"

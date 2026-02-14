@@ -29,7 +29,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::hash::BuildHasherDefault;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 use super::SettingsService;
 use anyhow::Result;
@@ -82,10 +83,9 @@ macro_rules! setting {
 
 /// Raw settings storage - shared across all settings
 ///
-/// Uses `std::sync::RwLock` (not `tokio::sync::RwLock`) because all lock-guarded
+/// Uses `parking_lot::RwLock` (not `tokio::sync::RwLock`) because all lock-guarded
 /// operations are fast, synchronous `HashMap` lookups/inserts with no `.await` points.
-/// This avoids the overhead of async `RwLock` and is safe since the lock is never
-/// held across an await point.
+/// `parking_lot::RwLock` does not poison on panic, avoiding lock-poisoning errors.
 #[derive(Clone)]
 pub struct SettingsStorage {
     inner: Arc<RwLock<HashMap<String, String, BuildHasherDefault<DefaultHasher>>>>,
@@ -105,15 +105,13 @@ impl SettingsStorage {
 
     /// Register a setting provider for a key
     fn register_provider(&self, key: &'static str, provider: Arc<dyn SettingProvider>) {
-        if let Ok(mut providers) = self.setting_providers.write() {
-            providers.insert(key.to_string(), provider);
-        }
+        self.setting_providers.write().insert(key.to_string(), provider);
     }
 
     /// Get a provider by key
-    #[must_use] 
+    #[must_use]
     pub fn get_provider(&self, key: &str) -> Option<Arc<dyn SettingProvider>> {
-        self.setting_providers.read().ok()?.get(key).cloned()
+        self.setting_providers.read().get(key).cloned()
     }
 
     /// Initialize all settings from database
@@ -125,20 +123,16 @@ impl SettingsStorage {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to load settings: {e}"))?;
 
-        let mut storage = self
-            .inner
-            .write()
-            .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+        let mut storage = self.inner.write();
         *storage = all_values.into_iter().collect();
 
         Ok(())
     }
 
     /// Get raw string value for a key
-    #[must_use] 
+    #[must_use]
     pub fn get_raw(&self, key: &str) -> Option<String> {
-        let storage = self.inner.read().ok()?;
-        storage.get(key).cloned()
+        self.inner.read().get(key).cloned()
     }
 
     /// Set raw string value for a key, persisting to database before updating cache.
@@ -150,13 +144,7 @@ impl SettingsStorage {
             .map_err(|e| anyhow::anyhow!("Failed to persist setting '{key}': {e}"))?;
 
         // Only update in-memory cache after successful DB write
-        {
-            let mut storage = self
-                .inner
-                .write()
-                .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
-            storage.insert(key.to_string(), value);
-        }
+        self.inner.write().insert(key.to_string(), value);
 
         Ok(())
     }
@@ -176,8 +164,9 @@ impl SettingsStorage {
 /// - `Display` - for formatting to string (via `to_string()`)
 /// - `std::str::FromStr` - for parsing from string
 ///
-/// Uses `std::sync::RwLock` for cache fields because `get()` is synchronous
+/// Uses `parking_lot::RwLock` for cache fields because `get()` is synchronous
 /// and only performs fast in-memory operations (no `.await` while lock is held).
+/// `parking_lot::RwLock` does not poison on panic.
 pub struct Setting<T>
 where
     T: Clone + Display + std::str::FromStr + Send + Sync + 'static,
@@ -257,9 +246,7 @@ where
     where
         F: Fn(&T) -> Result<()> + Send + Sync + 'static,
     {
-        if let Ok(mut v) = self.validator.write() {
-            *v = Some(Arc::new(validator));
-        }
+        *self.validator.write() = Some(Arc::new(validator));
         self
     }
 
@@ -270,10 +257,7 @@ where
 
         // Check if we need to update cache
         let needs_update = {
-            let raw_cache = self
-                .raw_cache
-                .read()
-                .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+            let raw_cache = self.raw_cache.read();
             match (&*raw_cache, &new_raw) {
                 (Some(cached), Some(new)) => cached != new,
                 (None, None) => false,
@@ -290,43 +274,22 @@ where
                 });
 
             // Update both caches
-            {
-                let mut cache = self
-                    .cache
-                    .write()
-                    .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
-                *cache = Some(value.clone());
-            }
-            {
-                let mut raw_cache = self
-                    .raw_cache
-                    .write()
-                    .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
-                *raw_cache = new_raw;
-            }
+            *self.cache.write() = Some(value.clone());
+            *self.raw_cache.write() = new_raw;
 
             Ok(value)
         } else {
             // Raw value unchanged, return cached value
-            let cache = self
-                .cache
-                .read()
-                .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
-            (*cache)
-                .as_ref()
-                .map_or_else(|| Ok(self.default_value.clone()), |value| {
-                    Ok(value.clone())
-                })
+            let cache = self.cache.read();
+            Ok(cache.as_ref().cloned().unwrap_or_else(|| self.default_value.clone()))
         }
     }
 
     /// Set a new value and persist to database
     pub async fn set(&self, value: T) -> Result<()> {
         // Validate if validator is set
-        if let Ok(validators) = self.validator.read() {
-            if let Some(validator) = validators.as_ref() {
-                validator(&value)?;
-            }
+        if let Some(validator) = self.validator.read().as_ref() {
+            validator(&value)?;
         }
         // Convert to string using standard Display trait
         let str_value = value.to_string();
@@ -341,10 +304,8 @@ where
             .map_err(|_| anyhow::anyhow!("Invalid value for setting '{}'", self.key))?;
 
         // Run custom validator if set
-        if let Ok(validators) = self.validator.read() {
-            if let Some(validator) = validators.as_ref() {
-                validator(&v)?;
-            }
+        if let Some(validator) = self.validator.read().as_ref() {
+            validator(&v)?;
         }
 
         Ok(())
@@ -376,10 +337,8 @@ where
         let v = value.parse::<T>()?;
 
         // Run custom validator if set
-        if let Ok(validators) = self.validator.read() {
-            if let Some(validator) = validators.as_ref() {
-                validator(&v)?;
-            }
+        if let Some(validator) = self.validator.read().as_ref() {
+            validator(&v)?;
         }
 
         Ok(())

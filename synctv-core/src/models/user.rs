@@ -33,11 +33,7 @@ impl UserRole {
     /// Check if this role can manage another role
     #[must_use] 
     pub const fn can_manage(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Root, _) => true,
-            (Self::Admin, Self::User) => true,
-            _ => false,
-        }
+        matches!((self, other), (Self::Root, _) | (Self::Admin, Self::User))
     }
 
     /// Check if this role is admin or above

@@ -152,15 +152,12 @@ pub async fn remove_media(
     State(state): State<AppState>,
     Path((room_id, media_id)): Path<(String, String)>,
 ) -> AppResult<Json<RemoveMediaResponse>> {
-    let proto_req = RemoveMediaRequest { media_id: media_id.clone() };
+    let proto_req = RemoveMediaRequest { media_id };
     let response = state
         .client_api
         .remove_media(&auth.user_id.to_string(), &room_id, proto_req)
         .await
         .map_err(super::AppError::internal_server_error)?;
-
-    // Kick active stream for deleted media (local + cluster-wide)
-    super::kick_stream_cluster(&state, &room_id, &media_id, "media_deleted");
 
     Ok(Json(response))
 }
@@ -173,8 +170,6 @@ pub async fn remove_media_batch(
     Path(room_id): Path<String>,
     Json(req): Json<RemoveMediaBatchRequest>,
 ) -> AppResult<Json<RemoveMediaBatchResponse>> {
-    let media_ids_for_kick = req.media_ids.clone();
-
     let response = state
         .client_api
         .remove_media_batch(&auth.user_id.to_string(), &room_id, req)
@@ -183,11 +178,6 @@ pub async fn remove_media_batch(
             tracing::error!(user_id = %auth.user_id, room_id = %room_id, error = %e, "Failed to remove media batch");
             super::AppError::internal_server_error(e)
         })?;
-
-    // Kick active streams for deleted media (local + cluster-wide)
-    for media_id in &media_ids_for_kick {
-        super::kick_stream_cluster(&state, &room_id, media_id, "media_deleted");
-    }
 
     Ok(Json(response))
 }

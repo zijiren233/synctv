@@ -68,6 +68,7 @@ const fn is_ipv4_mapped_private(v6: &std::net::Ipv6Addr) -> bool {
 /// - Scheme is http or https only
 /// - Host is not a private IP range
 /// - Host is not a known internal hostname
+#[allow(clippy::result_large_err)] // tonic::Status is inherently large; boxing would break gRPC API
 pub fn validate_host(host: &str) -> Result<(), Status> {
     if host.is_empty() {
         return Err(Status::invalid_argument("host must not be empty"));
@@ -132,6 +133,7 @@ pub fn validate_host(host: &str) -> Result<(), Status> {
 }
 
 /// Validate that a required string field is non-empty.
+#[allow(clippy::result_large_err)] // tonic::Status is inherently large; boxing would break gRPC API
 pub fn validate_required(field_name: &str, value: &str) -> Result<(), Status> {
     if value.is_empty() {
         return Err(Status::invalid_argument(format!(

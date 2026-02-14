@@ -210,6 +210,38 @@ fn require_admin_api(state: &AppState) -> Result<&Arc<crate::impls::AdminApiImpl
         .ok_or_else(|| AppError::internal("Admin service not configured"))
 }
 
+/// Map impls-layer error strings to appropriate HTTP status codes.
+///
+/// Mirrors the keyword matching in `impls_err_to_status` (gRPC) so that
+/// admin HTTP endpoints return semantically correct status codes instead
+/// of mapping everything to 500 Internal Server Error.
+fn admin_err_to_app_error(err: String) -> AppError {
+    let lower = err.to_lowercase();
+    if lower.contains("not found") {
+        AppError::not_found(err)
+    } else if lower.contains("unauthenticated") || lower.contains("invalid token")
+        || lower.contains("token expired") || lower.contains("not authenticated")
+    {
+        AppError::unauthorized(err)
+    } else if lower.contains("permission") || lower.contains("forbidden")
+        || lower.contains("not allowed") || lower.contains("banned")
+    {
+        AppError::forbidden(err)
+    } else if lower.contains("already exists") || lower.contains("already taken")
+        || lower.contains("already registered")
+    {
+        AppError::conflict(err)
+    } else if lower.contains("invalid") || lower.contains("too short") || lower.contains("too long")
+        || lower.contains("cannot be empty") || lower.contains("too many")
+        || lower.contains("required") || lower.contains("must be")
+    {
+        AppError::bad_request(err)
+    } else {
+        tracing::error!("Admin internal error: {err}");
+        AppError::internal("Internal error")
+    }
+}
+
 // ------------------------------------------------------------------
 // Router
 // ------------------------------------------------------------------
@@ -269,7 +301,7 @@ async fn get_system_stats(
     let resp = api
         .get_system_stats(admin::GetSystemStatsRequest {})
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -285,7 +317,7 @@ async fn get_settings(
     let resp = api
         .get_settings(admin::GetSettingsRequest {})
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -298,7 +330,7 @@ async fn get_settings_group(
     let resp = api
         .get_settings_group(admin::GetSettingsGroupRequest { group })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -308,7 +340,7 @@ async fn set_settings(
     Json(req): Json<admin::UpdateSettingsRequest>,
 ) -> AppResult<Json<admin::UpdateSettingsResponse>> {
     let api = require_admin_api(&state)?;
-    let resp = api.update_settings(req).await.map_err(AppError::internal)?;
+    let resp = api.update_settings(req).await.map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -322,7 +354,7 @@ async fn send_test_email(
     Json(req): Json<admin::SendTestEmailRequest>,
 ) -> AppResult<Json<admin::SendTestEmailResponse>> {
     let api = require_admin_api(&state)?;
-    let resp = api.send_test_email(req).await.map_err(AppError::internal)?;
+    let resp = api.send_test_email(req).await.map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -367,7 +399,7 @@ async fn list_users(
             search: q.search.unwrap_or_default(),
         })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -380,7 +412,7 @@ async fn get_user(
     let resp = api
         .get_user(admin::GetUserRequest { user_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -390,7 +422,7 @@ async fn create_user(
     Json(req): Json<admin::CreateUserRequest>,
 ) -> AppResult<Json<admin::CreateUserResponse>> {
     let api = require_admin_api(&state)?;
-    let resp = api.create_user(req, auth.role).await.map_err(AppError::internal)?;
+    let resp = api.create_user(req, auth.role).await.map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -403,7 +435,7 @@ async fn delete_user(
     let resp = api
         .delete_user(admin::DeleteUserRequest { user_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -424,7 +456,7 @@ async fn set_user_role(
     let resp = api
         .update_user_role(admin::UpdateUserRoleRequest { user_id, role: role_i32 }, auth.role)
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -441,7 +473,7 @@ async fn set_user_password(
             new_password: req.password,
         })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -458,7 +490,7 @@ async fn set_user_username(
             new_username: req.username,
         })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -476,7 +508,7 @@ async fn ban_user(
     let resp = api
         .ban_user(admin::BanUserRequest { user_id, reason: req.reason }, auth.role)
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -489,7 +521,7 @@ async fn unban_user(
     let resp = api
         .unban_user(admin::UnbanUserRequest { user_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -502,7 +534,7 @@ async fn approve_user(
     let resp = api
         .approve_user(admin::ApproveUserRequest { user_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -515,7 +547,7 @@ async fn get_user_rooms(
     let resp = api
         .get_user_rooms(admin::GetUserRoomsRequest { user_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -547,7 +579,7 @@ async fn list_rooms(
             creator_id: q.creator_id.unwrap_or_default(),
         })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -560,7 +592,7 @@ async fn get_room(
     let resp = api
         .get_room(admin::GetRoomRequest { room_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -573,7 +605,7 @@ async fn delete_room(
     let resp = api
         .delete_room(admin::DeleteRoomRequest { room_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -590,7 +622,7 @@ async fn set_room_password(
             new_password: req.password,
         })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -603,7 +635,7 @@ async fn get_room_members(
     let resp = api
         .get_room_members(admin::GetRoomMembersRequest { room_id, page: 1, page_size: 100 })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -621,7 +653,7 @@ async fn ban_room(
     let resp = api
         .ban_room(admin::BanRoomRequest { room_id, reason: req.reason })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -634,7 +666,7 @@ async fn unban_room(
     let resp = api
         .unban_room(admin::UnbanRoomRequest { room_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -647,7 +679,7 @@ async fn approve_room(
     let resp = api
         .approve_room(admin::ApproveRoomRequest { room_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -660,7 +692,7 @@ async fn get_room_settings(
     let resp = api
         .get_room_settings(admin::GetRoomSettingsRequest { room_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -677,7 +709,7 @@ async fn set_room_settings(
     let resp = api
         .update_room_settings(admin::UpdateRoomSettingsRequest { room_id, settings })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -690,7 +722,7 @@ async fn reset_room_settings(
     let resp = api
         .reset_room_settings(admin::ResetRoomSettingsRequest { room_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -708,7 +740,7 @@ async fn list_providers(
             provider_type: String::new(),
         })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -721,7 +753,7 @@ async fn add_provider(
     let resp = api
         .add_provider_instance(req)
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -736,7 +768,7 @@ async fn update_provider(
     let resp = api
         .update_provider_instance(req)
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -749,7 +781,7 @@ async fn delete_provider(
     let resp = api
         .delete_provider_instance(admin::DeleteProviderInstanceRequest { name })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -762,7 +794,7 @@ async fn reconnect_provider(
     let resp = api
         .reconnect_provider_instance(admin::ReconnectProviderInstanceRequest { name })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -775,7 +807,7 @@ async fn enable_provider(
     let resp = api
         .enable_provider_instance(admin::EnableProviderInstanceRequest { name })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -788,7 +820,7 @@ async fn disable_provider(
     let resp = api
         .disable_provider_instance(admin::DisableProviderInstanceRequest { name })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -851,7 +883,7 @@ async fn list_admins(
     let resp = api
         .list_admins(admin::ListAdminsRequest {})
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -864,7 +896,7 @@ async fn add_admin(
     let resp = api
         .add_admin(admin::AddAdminRequest { user_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }
 
@@ -877,6 +909,6 @@ async fn remove_admin(
     let resp = api
         .remove_admin(admin::RemoveAdminRequest { user_id })
         .await
-        .map_err(AppError::internal)?;
+        .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))
 }

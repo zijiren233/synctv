@@ -87,17 +87,21 @@ pub struct Mpeg4Avc {
 }
 
 pub fn print(data: BytesMut) {
-    println!("==========={}", data.len());
+    tracing::trace!("==========={}", data.len());
     let mut idx = 0;
+    let mut line = String::new();
     for i in data {
-        print!("{i:02X} ");
+        line.push_str(&format!("{i:02X} "));
         idx += 1;
         if idx % 16 == 0 {
-            println!();
+            tracing::trace!("{}", line);
+            line.clear();
         }
     }
-
-    println!("===========");
+    if !line.is_empty() {
+        tracing::trace!("{}", line);
+    }
+    tracing::trace!("===========");
 }
 
 impl Mpeg4Avc {

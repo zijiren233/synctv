@@ -234,6 +234,7 @@ impl ClientServiceImpl {
 
 // ==================== AuthService Implementation ====================
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)]
 impl AuthService for ClientServiceImpl {
     async fn register(
         &self,
@@ -265,6 +266,7 @@ impl AuthService for ClientServiceImpl {
 
 // ==================== UserService Implementation ====================
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)]
 impl UserService for ClientServiceImpl {
     async fn logout(
         &self,
@@ -346,6 +348,7 @@ impl UserService for ClientServiceImpl {
 
 // ==================== RoomService Implementation ====================
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)]
 impl RoomService for ClientServiceImpl {
     async fn create_room(
         &self,
@@ -708,6 +711,7 @@ impl MessageSender for GrpcMessageSender {
 
 // ==================== MediaService Implementation ====================
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)]
 impl MediaService for ClientServiceImpl {
     async fn add_media(
         &self,
@@ -980,6 +984,7 @@ impl MediaService for ClientServiceImpl {
 
 // ==================== PublicService Implementation ====================
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)]
 impl PublicService for ClientServiceImpl {
     async fn check_room(
         &self,
@@ -1020,6 +1025,7 @@ impl PublicService for ClientServiceImpl {
 // ==================== EmailService Implementation ====================
 // Delegates to shared EmailApiImpl to avoid duplicating logic with HTTP handlers.
 #[tonic::async_trait]
+#[allow(clippy::result_large_err)]
 impl EmailService for ClientServiceImpl {
     async fn send_verification_email(
         &self,

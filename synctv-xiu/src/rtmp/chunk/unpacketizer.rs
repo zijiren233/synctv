@@ -83,7 +83,7 @@ pub struct ChunkUnpacketizer {
     //
     pub current_chunk_info: ChunkInfo,
     /// LRU cache of chunk message headers per chunk stream ID.
-    /// Bounded to MAX_CACHED_CHUNK_HEADERS; least-recently-used entries
+    /// Bounded to `MAX_CACHED_CHUNK_HEADERS`; least-recently-used entries
     /// are automatically evicted, avoiding the random-eviction problem
     /// of the previous HashMap-based pruning approach.
     chunk_message_headers: lru::LruCache<u32, ChunkMessageHeader>,
