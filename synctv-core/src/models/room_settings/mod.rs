@@ -293,7 +293,10 @@ impl RoomSetting for AutoPlay {
     }
 
     fn format_value(value: &AutoPlaySettings) -> String {
-        serde_json::to_string(value).unwrap_or_default()
+        serde_json::to_string(value).unwrap_or_else(|e| {
+            tracing::warn!("Failed to serialize AutoPlaySettings: {e}");
+            String::from("{}")
+        })
     }
 
     fn default_value() -> AutoPlaySettings {

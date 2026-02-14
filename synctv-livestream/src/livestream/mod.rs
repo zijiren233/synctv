@@ -5,6 +5,7 @@
 
 pub mod server;
 pub mod managed_stream;
+pub mod pull_stream;
 pub mod pull_manager;
 pub mod external_publish_manager;
 pub mod segment_manager;

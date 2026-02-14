@@ -81,10 +81,22 @@ impl Amf0Reader {
         }
     }
 
-    pub fn read_raw_string(&mut self) -> Result<String, Amf0ReadError> {
-        let l = self.reader.read_u16::<BigEndian>()?;
+    /// Maximum length for AMF0 short strings (64 KB)
+    const MAX_SHORT_STRING_LENGTH: usize = 64 * 1024;
 
-        let bytes = self.reader.read_bytes(l as usize)?;
+    pub fn read_raw_string(&mut self) -> Result<String, Amf0ReadError> {
+        let l = self.reader.read_u16::<BigEndian>()? as usize;
+
+        if l > Self::MAX_SHORT_STRING_LENGTH {
+            return Err(Amf0ReadError {
+                value: Amf0ReadErrorValue::StringTooLong {
+                    length: l,
+                    max: Self::MAX_SHORT_STRING_LENGTH,
+                },
+            });
+        }
+
+        let bytes = self.reader.read_bytes(l)?;
         let val = String::from_utf8(bytes.to_vec())?;
 
         Ok(val)
@@ -147,10 +159,22 @@ impl Amf0Reader {
         Ok(Amf0ValueType::Object(properties))
     }
 
-    pub fn read_long_string(&mut self) -> Result<Amf0ValueType, Amf0ReadError> {
-        let l = self.reader.read_u32::<BigEndian>()?;
+    /// Maximum length for AMF0 long strings (16 MB)
+    const MAX_LONG_STRING_LENGTH: usize = 16 * 1024 * 1024;
 
-        let buff = self.reader.read_bytes(l as usize)?;
+    pub fn read_long_string(&mut self) -> Result<Amf0ValueType, Amf0ReadError> {
+        let l = self.reader.read_u32::<BigEndian>()? as usize;
+
+        if l > Self::MAX_LONG_STRING_LENGTH {
+            return Err(Amf0ReadError {
+                value: Amf0ReadErrorValue::StringTooLong {
+                    length: l,
+                    max: Self::MAX_LONG_STRING_LENGTH,
+                },
+            });
+        }
+
+        let buff = self.reader.read_bytes(l)?;
 
         let val = String::from_utf8(buff.to_vec())?;
         Ok(Amf0ValueType::LongUTF8String(val))

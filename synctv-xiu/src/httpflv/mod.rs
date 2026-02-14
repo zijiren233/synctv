@@ -1,4 +1,4 @@
-// HTTP-FLV session: subscribes to StreamHub and sends FLV data over an unbounded channel
+// HTTP-FLV session: subscribes to StreamHub and sends FLV data over a bounded channel
 //
 // This is a generic, reusable component. The HTTP routing layer
 // (which may depend on application-specific state like Redis) lives
@@ -18,13 +18,17 @@ use tracing::{error, info, warn};
 use crate::flv::amf0::amf0_writer::Amf0Writer;
 use crate::flv::muxer::{FlvMuxer, HEADER_LENGTH};
 
+/// Capacity for the HTTP response channel (bounded to prevent OOM with slow clients).
+/// At ~8KB per FLV tag (typical video frame), 512 entries ≈ 4MB buffer per client.
+pub const FLV_RESPONSE_CHANNEL_CAPACITY: usize = 512;
+
 /// HTTP-FLV session (per-client connection)
 pub struct HttpFlvSession {
     pub app_name: String,
     pub stream_name: String,
     event_producer: StreamHubEventSender,
     data_receiver: FrameDataReceiver,
-    response_producer: mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
+    response_producer: mpsc::Sender<Result<bytes::Bytes, std::io::Error>>,
     subscriber_id: Uuid,
     muxer: FlvMuxer,
     pub has_audio: bool,
@@ -38,7 +42,7 @@ impl HttpFlvSession {
         app_name: String,
         stream_name: String,
         event_producer: StreamHubEventSender,
-        response_producer: mpsc::UnboundedSender<Result<bytes::Bytes, std::io::Error>>,
+        response_producer: mpsc::Sender<Result<bytes::Bytes, std::io::Error>>,
     ) -> Self {
         let (_, data_receiver) = mpsc::channel(FRAME_DATA_CHANNEL_CAPACITY);
         let subscriber_id = Uuid::new(RandomDigitCount::Four);
@@ -180,9 +184,17 @@ impl HttpFlvSession {
         let data = self.muxer.writer.extract_current_bytes();
         let bytes = bytes::Bytes::from(data.to_vec());
 
-        self.response_producer
-            .send(Ok(bytes))
-            .map_err(|_| anyhow::anyhow!("Response channel closed"))?;
+        // Use try_send to apply backpressure: if the client is too slow and the
+        // channel is full, drop the frame rather than accumulating unbounded memory.
+        match self.response_producer.try_send(Ok(bytes)) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!(stream = %self.stream_name, "FLV response channel full, dropping frame (slow client)");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                return Err(anyhow::anyhow!("Response channel closed"));
+            }
+        }
 
         Ok(())
     }
@@ -275,7 +287,7 @@ mod tests {
     #[test]
     fn test_http_flv_session_creation() {
         let (event_sender, _) = tokio::sync::mpsc::channel(64);
-        let (response_tx, _response_rx) = mpsc::unbounded_channel();
+        let (response_tx, _response_rx) = mpsc::channel(FLV_RESPONSE_CHANNEL_CAPACITY);
 
         let session = HttpFlvSession::new(
             "live".to_string(),
@@ -294,7 +306,7 @@ mod tests {
     #[test]
     fn test_flv_session_defaults() {
         let (event_sender, _) = tokio::sync::mpsc::channel(64);
-        let (response_tx, _response_rx) = mpsc::unbounded_channel();
+        let (response_tx, _response_rx) = mpsc::channel(FLV_RESPONSE_CHANNEL_CAPACITY);
 
         let session = HttpFlvSession::new(
             "live".to_string(),

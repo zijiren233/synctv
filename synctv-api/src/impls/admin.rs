@@ -249,6 +249,16 @@ impl AdminApiImpl {
             return Err("Only root users can promote to root".to_string());
         }
 
+        // Only root can change another root user's role
+        if user.role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
+            return Err("Only root users can change root user roles".to_string());
+        }
+
+        // Only root can change admin user roles
+        if user.role == synctv_core::models::UserRole::Admin && caller_role != synctv_core::models::UserRole::Root {
+            return Err("Only root users can change admin user roles".to_string());
+        }
+
         let updated_user = synctv_core::models::User {
             role: new_role,
             ..user
@@ -636,13 +646,26 @@ impl AdminApiImpl {
     pub async fn ban_user(
         &self,
         req: crate::proto::admin::BanUserRequest,
+        caller_role: synctv_core::models::UserRole,
     ) -> Result<crate::proto::admin::BanUserResponse, String> {
         let uid = UserId::from_string(req.user_id);
-        let mut user = self.user_service.get_user(&uid).await.map_err(|e| e.to_string())?;
+        let user = self.user_service.get_user(&uid).await.map_err(|e| e.to_string())?;
+
+        // Prevent admin from banning root users (only root can ban root)
+        if user.role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
+            return Err("Only root users can ban other root users".to_string());
+        }
+
+        // Prevent admin from banning other admins (only root can ban admins)
+        if user.role == synctv_core::models::UserRole::Admin && caller_role != synctv_core::models::UserRole::Root {
+            return Err("Only root users can ban admin users".to_string());
+        }
 
         if user.status == UserStatus::Banned {
             return Err("User is already banned".to_string());
         }
+
+        let mut user = user;
 
         user.status = UserStatus::Banned;
         let updated = self.user_service.update_user(&user).await.map_err(|e| e.to_string())?;

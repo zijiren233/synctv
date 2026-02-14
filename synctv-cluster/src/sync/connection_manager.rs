@@ -386,29 +386,35 @@ impl ConnectionManager {
     }
 
     /// Get all connections for a user
-    #[must_use] 
+    #[must_use]
     pub fn get_user_connections(&self, user_id: &UserId) -> Vec<ConnectionInfo> {
-        if let Some(conn_ids) = self.user_connections.get(user_id) {
-            conn_ids
-                .iter()
-                .filter_map(|id| self.connections.get(id).map(|c| c.clone()))
-                .collect()
-        } else {
-            Vec::new()
-        }
+        // Collect IDs first, then release the index DashMap lock before accessing
+        // `connections` to avoid cross-DashMap lock ordering issues.
+        let conn_ids: Vec<String> = self.user_connections
+            .get(user_id)
+            .map(|ids| ids.clone())
+            .unwrap_or_default();
+
+        conn_ids
+            .iter()
+            .filter_map(|id| self.connections.get(id).map(|c| c.clone()))
+            .collect()
     }
 
     /// Get all connections in a room
-    #[must_use] 
+    #[must_use]
     pub fn get_room_connections(&self, room_id: &RoomId) -> Vec<ConnectionInfo> {
-        if let Some(conn_ids) = self.room_connections.get(room_id) {
-            conn_ids
-                .iter()
-                .filter_map(|id| self.connections.get(id).map(|c| c.clone()))
-                .collect()
-        } else {
-            Vec::new()
-        }
+        // Collect IDs first, then release the index DashMap lock before accessing
+        // `connections` to avoid cross-DashMap lock ordering issues.
+        let conn_ids: Vec<String> = self.room_connections
+            .get(room_id)
+            .map(|ids| ids.clone())
+            .unwrap_or_default();
+
+        conn_ids
+            .iter()
+            .filter_map(|id| self.connections.get(id).map(|c| c.clone()))
+            .collect()
     }
 
     /// Get metrics summary
@@ -429,14 +435,17 @@ impl ConnectionManager {
     /// For WebRTC, this allows us to identify which connection a user is using in a room.
     #[must_use]
     pub fn get_connection_id(&self, room_id: &RoomId, user_id: &UserId) -> Option<String> {
-        // Get all connections for this user
-        if let Some(conn_ids) = self.user_connections.get(user_id) {
-            // Find the first connection that's in the specified room
-            for conn_id in conn_ids.iter() {
-                if let Some(conn) = self.connections.get(conn_id) {
-                    if conn.room_id.as_ref() == Some(room_id) {
-                        return Some(conn.connection_id.clone());
-                    }
+        // Collect IDs first to avoid holding cross-DashMap locks
+        let conn_ids: Vec<String> = self.user_connections
+            .get(user_id)
+            .map(|ids| ids.clone())
+            .unwrap_or_default();
+
+        // Find the first connection that's in the specified room
+        for conn_id in &conn_ids {
+            if let Some(conn) = self.connections.get(conn_id) {
+                if conn.room_id.as_ref() == Some(room_id) {
+                    return Some(conn.connection_id.clone());
                 }
             }
         }
@@ -465,15 +474,17 @@ impl ConnectionManager {
     /// Get all connections in a room that have joined WebRTC
     #[must_use]
     pub fn get_rtc_connections(&self, room_id: &RoomId) -> Vec<ConnectionInfo> {
-        if let Some(conn_ids) = self.room_connections.get(room_id) {
-            conn_ids
-                .iter()
-                .filter_map(|id| self.connections.get(id).map(|c| c.clone()))
-                .filter(|conn| conn.rtc_joined)
-                .collect()
-        } else {
-            Vec::new()
-        }
+        // Collect IDs first to avoid holding cross-DashMap locks
+        let conn_ids: Vec<String> = self.room_connections
+            .get(room_id)
+            .map(|ids| ids.clone())
+            .unwrap_or_default();
+
+        conn_ids
+            .iter()
+            .filter_map(|id| self.connections.get(id).map(|c| c.clone()))
+            .filter(|conn| conn.rtc_joined)
+            .collect()
     }
 
     /// Spawn a background task that periodically checks for idle/expired connections

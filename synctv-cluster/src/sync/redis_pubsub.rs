@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use futures::stream::StreamExt;
 use redis::{AsyncCommands, Client as RedisClient};
+use redis::streams::StreamReadReply;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{timeout, Duration};
@@ -180,9 +181,14 @@ impl RedisPubSub {
         // Spawn task to handle subscribing with exponential backoff on reconnection
         tokio::spawn(async move {
             let mut backoff_secs = INITIAL_BACKOFF_SECS;
+            // Track the last processed Redis Stream ID across reconnections.
+            // "$" means "start from latest" on first connection (no catch-up for
+            // events before the process existed). After processing real entries
+            // this is updated to the actual stream ID so reconnections can catch up.
+            let mut last_stream_id = "$".to_string();
 
             loop {
-                match self_clone.run_subscriber().await {
+                match self_clone.run_subscriber(&mut last_stream_id).await {
                     SubscriberExit::Disconnected => {
                         // Connection was healthy before it dropped.
                         // Reset backoff since the server was reachable.
@@ -214,10 +220,16 @@ impl RedisPubSub {
 
     /// Run the subscriber task.
     ///
+    /// `last_stream_id` tracks the last processed Redis Stream entry ID. On
+    /// first connection it should be `"$"` (start from latest). After
+    /// reconnection the subscriber uses it to catch up on missed events. The
+    /// value is updated in-place as stream entries are processed so it persists
+    /// across reconnections.
+    ///
     /// Returns `SubscriberExit::Disconnected` if the connection was established but then
     /// the stream ended (Redis disconnected). Returns `SubscriberExit::ConnectFailed` if
     /// the initial connection or subscription failed.
-    async fn run_subscriber(&self) -> SubscriberExit {
+    async fn run_subscriber(&self, last_stream_id: &mut String) -> SubscriberExit {
         let mut pubsub = match timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
             self.redis_client.get_async_pubsub(),
@@ -259,6 +271,52 @@ impl RedisPubSub {
 
         info!("Redis subscriber connected, listening to room:* and admin:* channels");
 
+        if *last_stream_id == "$" {
+            // First connection: snapshot the current stream tip so we can catch
+            // up from this point if the connection drops later.
+            match self.get_latest_stream_id().await {
+                Ok(Some(id)) => {
+                    info!(stream_id = %id, "Initialized stream cursor from current tip");
+                    *last_stream_id = id;
+                }
+                Ok(None) => {
+                    // Stream is empty or doesn't exist yet; use "0" so any
+                    // future entries will be caught on reconnection.
+                    *last_stream_id = "0".to_string();
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Failed to read latest stream ID, using '0' as fallback"
+                    );
+                    *last_stream_id = "0".to_string();
+                }
+            }
+        } else {
+            // Reconnection: catch up on events missed during disconnection.
+            match self.read_missed_events(last_stream_id).await {
+                Ok(events) => {
+                    if !events.is_empty() {
+                        info!(
+                            count = events.len(),
+                            from_id = %last_stream_id,
+                            "Catching up on missed events from Redis Stream"
+                        );
+                        for (stream_id, channel, event) in events {
+                            self.dispatch_event(&channel, event).await;
+                            *last_stream_id = stream_id;
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Failed to read missed events from Redis Stream, continuing with live events"
+                    );
+                }
+            }
+        }
+
         // Process incoming messages
         let mut stream = pubsub.on_message();
 
@@ -286,70 +344,7 @@ impl RedisPubSub {
                         continue;
                     }
 
-                    debug!(
-                        channel = %channel,
-                        from_node = %envelope.node_id,
-                        event_type = %envelope.event.event_type(),
-                        "Received event from Redis"
-                    );
-
-                    // Handle admin channel events (no room_id)
-                    if channel.starts_with("admin:") {
-                        // Forward admin events (KickUser, etc.) to admin channel
-                        let _ = self.admin_event_tx.send(envelope.event);
-                        continue;
-                    }
-
-                    // Extract room_id from channel name (room:{room_id})
-                    if let Some(room_id_str) = channel.strip_prefix("room:") {
-                        let room_id = RoomId::from_string(room_id_str.to_string());
-
-                        // Forward KickPublisher events to admin channel
-                        if matches!(&envelope.event, ClusterEvent::KickPublisher { .. }) {
-                            let _ = self.admin_event_tx.send(envelope.event.clone());
-                        }
-
-                        // Invalidate local permission cache for cross-replica consistency
-                        if let Some(ref perm_svc) = self.permission_service {
-                            match &envelope.event {
-                                ClusterEvent::PermissionChanged { target_user_id, .. } => {
-                                    perm_svc.invalidate_cache(&room_id, target_user_id).await;
-                                    debug!(
-                                        room_id = %room_id.as_str(),
-                                        user_id = %target_user_id.as_str(),
-                                        "Invalidated permission cache (cross-replica)"
-                                    );
-                                }
-                                ClusterEvent::UserLeft { user_id, .. } => {
-                                    perm_svc.invalidate_cache(&room_id, user_id).await;
-                                    debug!(
-                                        room_id = %room_id.as_str(),
-                                        user_id = %user_id.as_str(),
-                                        "Invalidated permission cache on UserLeft (cross-replica)"
-                                    );
-                                }
-                                ClusterEvent::RoomSettingsChanged { .. } => {
-                                    perm_svc.invalidate_room_cache(&room_id).await;
-                                    debug!(
-                                        room_id = %room_id.as_str(),
-                                        "Invalidated room permission cache (cross-replica)"
-                                    );
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        // Broadcast to local subscribers
-                        let sent_count = self.message_hub.broadcast(&room_id, envelope.event);
-
-                        debug!(
-                            room_id = %room_id.as_str(),
-                            local_subscribers = sent_count,
-                            "Forwarded Redis event to local subscribers"
-                        );
-                    } else {
-                        warn!(channel = %channel, "Invalid channel format");
-                    }
+                    self.dispatch_event(&channel, envelope.event).await;
                 }
                 Err(e) => {
                     warn!(
@@ -364,6 +359,75 @@ impl RedisPubSub {
 
         // Stream returned None -- the Redis connection was lost
         SubscriberExit::Disconnected
+    }
+
+    /// Dispatch a single event received from Redis (either live or from catch-up).
+    ///
+    /// Handles admin channel routing, permission cache invalidation, and local
+    /// broadcast to room subscribers.
+    async fn dispatch_event(&self, channel: &str, event: ClusterEvent) {
+        debug!(
+            channel = %channel,
+            event_type = %event.event_type(),
+            "Dispatching event from Redis"
+        );
+
+        // Handle admin channel events (no room_id)
+        if channel.starts_with("admin:") {
+            let _ = self.admin_event_tx.send(event);
+            return;
+        }
+
+        // Extract room_id from channel name (room:{room_id})
+        if let Some(room_id_str) = channel.strip_prefix("room:") {
+            let room_id = RoomId::from_string(room_id_str.to_string());
+
+            // Forward KickPublisher events to admin channel
+            if matches!(&event, ClusterEvent::KickPublisher { .. }) {
+                let _ = self.admin_event_tx.send(event.clone());
+            }
+
+            // Invalidate local permission cache for cross-replica consistency
+            if let Some(ref perm_svc) = self.permission_service {
+                match &event {
+                    ClusterEvent::PermissionChanged { target_user_id, .. } => {
+                        perm_svc.invalidate_cache(&room_id, target_user_id).await;
+                        debug!(
+                            room_id = %room_id.as_str(),
+                            user_id = %target_user_id.as_str(),
+                            "Invalidated permission cache (cross-replica)"
+                        );
+                    }
+                    ClusterEvent::UserLeft { user_id, .. } => {
+                        perm_svc.invalidate_cache(&room_id, user_id).await;
+                        debug!(
+                            room_id = %room_id.as_str(),
+                            user_id = %user_id.as_str(),
+                            "Invalidated permission cache on UserLeft (cross-replica)"
+                        );
+                    }
+                    ClusterEvent::RoomSettingsChanged { .. } => {
+                        perm_svc.invalidate_room_cache(&room_id).await;
+                        debug!(
+                            room_id = %room_id.as_str(),
+                            "Invalidated room permission cache (cross-replica)"
+                        );
+                    }
+                    _ => {}
+                }
+            }
+
+            // Broadcast to local subscribers
+            let sent_count = self.message_hub.broadcast(&room_id, event);
+
+            debug!(
+                room_id = %room_id.as_str(),
+                local_subscribers = sent_count,
+                "Forwarded Redis event to local subscribers"
+            );
+        } else {
+            warn!(channel = %channel, "Invalid channel format");
+        }
     }
 
     /// Publish an event to Redis
@@ -421,22 +485,47 @@ impl RedisPubSub {
         Ok(subscribers)
     }
 
-    /// Read missed events from Redis Stream after reconnection
-    ///
-    /// This should be called after subscriber reconnects to catch up on any
-    /// events that were missed during the disconnection period.
-    #[allow(dead_code)]
-    async fn read_missed_events(
-        &self,
-        last_id: &str,
-    ) -> Result<Vec<(String, ClusterEvent)>> {
+    /// Get the ID of the latest entry in the Redis Stream, or `None` if the
+    /// stream is empty / does not exist. Used on first connection to snapshot
+    /// the cursor so subsequent reconnections can catch up.
+    async fn get_latest_stream_id(&self) -> Result<Option<String>> {
+        use redis::streams::StreamRangeReply;
+
         let mut conn = self.redis_client
             .get_multiplexed_async_connection()
             .await
-            .context("Failed to get Redis connection")?;
+            .context("Failed to get Redis connection for stream info")?;
 
-        // Read from stream starting after last_id
-        let entries: Vec<(String, Vec<(String, String)>)> = timeout(
+        // XREVRANGE key + - COUNT 1  →  returns the single newest entry
+        let reply: StreamRangeReply = timeout(
+            Duration::from_secs(REDIS_TIMEOUT_SECS),
+            conn.xrevrange_count(EVENT_STREAM_KEY, "+", "-", 1usize),
+        )
+        .await
+        .context("Timed out reading latest stream ID")?
+        .context("Failed to read latest stream ID")?;
+
+        Ok(reply.ids.into_iter().next().map(|entry| entry.id))
+    }
+
+    /// Read missed events from Redis Stream after reconnection.
+    ///
+    /// Returns a list of `(stream_id, channel, event)` tuples for events that
+    /// occurred after `last_id`. The caller should update its tracked stream ID
+    /// to the last returned `stream_id`.
+    async fn read_missed_events(
+        &self,
+        last_id: &str,
+    ) -> Result<Vec<(String, String, ClusterEvent)>> {
+        let mut conn = self.redis_client
+            .get_multiplexed_async_connection()
+            .await
+            .context("Failed to get Redis connection for catch-up")?;
+
+        // XREAD returns StreamReadReply { keys: Vec<StreamKey> }
+        // Each StreamKey has `key` (the stream name) and `ids: Vec<StreamId>`.
+        // Each StreamId has `id` (e.g. "1234567890-0") and `map: HashMap<String, Value>`.
+        let reply: StreamReadReply = timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
             conn.xread(
                 &[EVENT_STREAM_KEY],
@@ -448,28 +537,25 @@ impl RedisPubSub {
         .context("Failed to read from Redis Stream")?;
 
         let mut events = Vec::new();
-        for (id, fields) in entries {
-            // Parse the fields
-            let mut channel = None;
-            let mut payload = None;
-            for (key, value) in fields {
-                match key.as_str() {
-                    "channel" => channel = Some(value),
-                    "payload" => payload = Some(value),
-                    _ => {}
-                }
-            }
+        for stream_key in reply.keys {
+            for entry in stream_key.ids {
+                // Extract "channel" and "payload" fields from the stream entry
+                let channel = entry.map.get("channel")
+                    .and_then(|v| redis::from_redis_value::<String>(v).ok());
+                let payload = entry.map.get("payload")
+                    .and_then(|v| redis::from_redis_value::<String>(v).ok());
 
-            if let (Some(_chan), Some(payload_str)) = (channel, payload) {
-                match serde_json::from_str::<EventEnvelope>(&payload_str) {
-                    Ok(envelope) => {
-                        // Skip events from this node
-                        if envelope.node_id != self.node_id {
-                            events.push((id, envelope.event));
+                if let (Some(chan), Some(payload_str)) = (channel, payload) {
+                    match serde_json::from_str::<EventEnvelope>(&payload_str) {
+                        Ok(envelope) => {
+                            // Skip events from this node
+                            if envelope.node_id != self.node_id {
+                                events.push((entry.id, chan, envelope.event));
+                            }
                         }
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Failed to parse event envelope from stream");
+                        Err(e) => {
+                            warn!(error = %e, "Failed to parse event envelope from stream");
+                        }
                     }
                 }
             }

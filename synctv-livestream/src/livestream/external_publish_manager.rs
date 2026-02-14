@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use synctv_xiu::streamhub::define::{StreamHubEvent, StreamHubEventSender};
 use synctv_xiu::streamhub::stream::StreamIdentifier;
-use tracing::{self as log};
+use tracing::{debug, error, info, warn};
 
 /// Manages external pull-to-publish streams.
 ///
@@ -92,7 +92,7 @@ impl ExternalPublishManager {
 
         // Re-check after acquiring lock
         if let Some(stream) = self.pool.get_existing(&stream_key).await {
-            log::debug!(
+            debug!(
                 "Reusing external publish stream created by concurrent request for {}/{}",
                 room_id,
                 media_id,
@@ -100,7 +100,7 @@ impl ExternalPublishManager {
             return Ok(stream);
         }
 
-        log::info!(
+        info!(
             "Lazy-load: Creating external publish stream for {}/{} from {}",
             room_id,
             media_id,
@@ -123,7 +123,7 @@ impl ExternalPublishManager {
             .try_register_publisher(room_id, media_id, &self.local_node_id, "external_puller")
             .await
         {
-            log::error!("Failed to register external publisher in Redis, rolling back: {e}");
+            error!("Failed to register external publisher in Redis, rolling back: {e}");
             stream.stop().await.ok();
             return Err(crate::error::StreamError::RegistryError(
                 format!("Failed to register publisher in Redis: {e}"),
@@ -151,11 +151,11 @@ impl ExternalPublishManager {
                         match registry.get_publisher(room_id, media_id).await {
                             Ok(Some(info)) if info.node_id == local_node_id => {
                                 if let Err(e) = registry.unregister_publisher(room_id, media_id).await {
-                                    log::warn!("Failed to unregister external publisher from Redis: {e}");
+                                    warn!("Failed to unregister external publisher from Redis: {e}");
                                 }
                             }
                             Ok(Some(_)) => {
-                                log::info!("Skipping Redis unregister for {} — publisher owned by another node", stream_key);
+                                info!("Skipping Redis unregister for {} — publisher owned by another node", stream_key);
                             }
                             _ => {}
                         }
@@ -166,7 +166,7 @@ impl ExternalPublishManager {
                             stream_name: format!("{room_id}/{media_id}"),
                         };
                         if let Err(e) = hub_sender.try_send(StreamHubEvent::UnPublish { identifier }) {
-                            log::warn!("Failed to send UnPublish for {}: {}", stream_key, e);
+                            warn!("Failed to send UnPublish for {}: {}", stream_key, e);
                         }
                     }
                 })
@@ -227,7 +227,7 @@ impl ExternalPublishStream {
         let stream_hub_sender = self.stream_hub_event_sender.clone();
 
         let handle = tokio::spawn(async move {
-            log::info!("External publish task started for {}/{}", room_id, media_id);
+            info!("External publish task started for {}/{}", room_id, media_id);
             let puller = ExternalStreamPuller::new(
                 room_id.clone(),
                 media_id.clone(),
@@ -236,7 +236,7 @@ impl ExternalPublishStream {
             )?;
             let result = puller.run().await;
             if let Err(ref e) = result {
-                log::error!(
+                error!(
                     "External publish task failed for {}/{}: {}",
                     room_id,
                     media_id,
@@ -247,7 +247,7 @@ impl ExternalPublishStream {
         });
 
         self.lifecycle.set_task_handle(handle).await;
-        log::info!(
+        info!(
             "External publish stream started for {}/{}",
             self.room_id,
             self.media_id
@@ -268,11 +268,11 @@ impl ExternalPublishStream {
             stream_name,
         };
         if let Err(e) = self.stream_hub_event_sender.try_send(StreamHubEvent::UnPublish { identifier }) {
-            log::warn!("Failed to send UnPublish for {}/{}: {}", self.room_id, self.media_id, e);
+            warn!("Failed to send UnPublish for {}/{}: {}", self.room_id, self.media_id, e);
         }
 
         self.lifecycle.abort_task().await;
-        log::info!(
+        info!(
             "External publish stream stopped for {}/{}",
             self.room_id,
             self.media_id

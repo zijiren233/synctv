@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tracing::{self as log, Instrument};
+use tracing::{debug, error, info, info_span, warn, Instrument};
 
 /// Common lifecycle state shared by all managed streams.
 ///
@@ -52,7 +52,7 @@ impl StreamLifecycle {
                 if v > 0 { Some(v - 1) } else { None }
             });
         if result.is_err() {
-            tracing::warn!("Attempted to decrement subscriber count below zero");
+            warn!("Attempted to decrement subscriber count below zero");
         }
     }
 
@@ -255,7 +255,7 @@ impl<S: ManagedStream> StreamPool<S> {
                 });
                 let after = creation_locks.len();
                 if before != after {
-                    log::debug!(
+                    debug!(
                         "Cleaned up {} stale creation lock entries",
                         before - after
                     );
@@ -286,7 +286,7 @@ impl<S: ManagedStream> StreamPool<S> {
         let check_interval = self.cleanup_check_interval;
         let idle_timeout = self.idle_timeout;
 
-        let span = tracing::info_span!("stream_cleanup", stream_key = %stream_key);
+        let span = info_span!("stream_cleanup", stream_key = %stream_key);
         tokio::spawn(
             async move {
                 let result = Self::cleanup_loop(
@@ -300,7 +300,7 @@ impl<S: ManagedStream> StreamPool<S> {
                 )
                 .await;
                 if let Err(e) = result {
-                    log::error!("Cleanup task failed for {}: {}", stream_key, e);
+                    error!("Cleanup task failed for {}: {}", stream_key, e);
                     stream.lifecycle().abort_task().await;
                     streams.remove(&stream_key);
                     creation_locks.remove(&stream_key);
@@ -339,7 +339,7 @@ impl<S: ManagedStream> StreamPool<S> {
 
                     // Re-check: a concurrent viewer may have incremented after our check
                     if stream.lifecycle().subscriber_count() > 0 {
-                        log::debug!(
+                        debug!(
                             "Cleanup aborted for {}: late subscriber detected",
                             stream_key,
                         );
@@ -347,7 +347,7 @@ impl<S: ManagedStream> StreamPool<S> {
                         continue;
                     }
 
-                    log::info!(
+                    info!(
                         "Auto cleanup: Stopping stream {} (idle for {:?})",
                         stream_key,
                         idle_time

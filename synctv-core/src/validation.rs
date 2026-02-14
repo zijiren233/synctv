@@ -185,8 +185,9 @@ impl PasswordValidator {
 
 /// Pre-compiled email validation regex
 static EMAIL_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    // SAFETY: This is a compile-time constant regex literal that is known to be valid.
     regex::Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-        .expect("email validation regex is invalid")
+        .expect("email validation regex is a compile-time constant and always valid")
 });
 
 /// Email validator
@@ -355,7 +356,14 @@ impl Validator {
         let mut errors = self.errors;
         match errors.len() {
             0 => Ok(()),
-            1 => Err(errors.pop().expect("length checked")),
+            1 => {
+                // Vec has exactly 1 element so pop() always returns Some
+                if let Some(err) = errors.pop() {
+                    Err(err)
+                } else {
+                    Ok(())
+                }
+            }
             _ => {
                 let messages: Vec<String> = errors.iter()
                     .map(std::string::ToString::to_string)

@@ -159,7 +159,7 @@ impl TsMuxer {
         /*payload data*/
         self.bytes_writer.write(&payload)?;
 
-        let left_size = ts::TS_PACKET_SIZE - payload.len() as u8 - 5;
+        let left_size = ts::TS_PACKET_SIZE.saturating_sub(payload.len() as u8).saturating_sub(5);
         for _ in 0..left_size {
             self.bytes_writer.write_u8(0xFF)?;
         }
@@ -331,7 +331,7 @@ impl TsMuxer {
                 ts_header.write_u8(0xFF)?;
             }
         } else {
-            return Ok(define::TS_PACKET_SIZE - ts_header_length - pes_header_length);
+            return Ok(define::TS_PACKET_SIZE.saturating_sub(ts_header_length).saturating_sub(pes_header_length));
         }
 
         Ok(payload_data_length)
@@ -416,7 +416,7 @@ impl TsMuxer {
 
         self.reset();
 
-        Ok(self.pid - 1)
+        Ok(self.pid.saturating_sub(1))
     }
 
     pub fn add_program(&mut self, program_number: u16, info: BytesMut) -> Result<(), MpegTsError> {

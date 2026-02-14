@@ -845,6 +845,31 @@ impl RoomService {
         self.media_service.add_media(room_id, user_id, request).await
     }
 
+    /// Add multiple media items atomically (all-or-nothing via transaction)
+    pub async fn add_media_batch(
+        &self,
+        room_id: RoomId,
+        user_id: UserId,
+        items: Vec<(String, serde_json::Value, String)>, // (provider_instance_name, source_config, title)
+    ) -> Result<Vec<Media>> {
+        use crate::service::media::AddMediaRequest;
+
+        // Get room's root playlist
+        let root_playlist = self.playlist_service.get_root_playlist(&room_id).await?;
+
+        let requests: Vec<AddMediaRequest> = items
+            .into_iter()
+            .map(|(provider_instance_name, source_config, title)| AddMediaRequest {
+                playlist_id: root_playlist.id.clone(),
+                name: title,
+                provider_instance_name,
+                source_config,
+            })
+            .collect();
+
+        self.media_service.add_media_batch(room_id, user_id, root_playlist.id, requests).await
+    }
+
     /// Remove media from playlist
     pub async fn remove_media(
         &self,

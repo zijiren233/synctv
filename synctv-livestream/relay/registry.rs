@@ -3,7 +3,7 @@ use redis::aio::ConnectionManager as RedisConnectionManager;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use tracing as log;
+use tracing::info;
 
 /// Heartbeat interval in seconds for publisher liveness.
 /// The publisher manager sends a heartbeat every this many seconds.
@@ -35,6 +35,10 @@ const _: () = assert!(
 pub struct PublisherInfo {
     /// Node ID of the publisher
     pub node_id: String,
+    /// gRPC address of the publisher node (e.g., "10.0.0.1:50051")
+    /// Used by pull streams to connect to the publisher
+    #[serde(default)]
+    pub grpc_address: String,
     /// RTMP app name
     pub app_name: String,
     /// User ID of the publisher (for reverse-index lookups)
@@ -93,6 +97,7 @@ impl StreamRegistry {
 
         let info = PublisherInfo {
             node_id: node_id.to_string(),
+            grpc_address: String::new(), // Will be populated when gRPC address is known
             app_name: app_name.to_string(),
             user_id: user_id.to_string(),
             started_at: Utc::now(),
@@ -156,6 +161,7 @@ impl StreamRegistry {
         // Create PublisherInfo with epoch for registration
         let info = PublisherInfo {
             node_id: node_id.to_string(),
+            grpc_address: String::new(), // Will be populated when gRPC address is known
             app_name: "live".to_string(),
             user_id: user_id.to_string(),
             started_at: Utc::now(),
@@ -499,7 +505,7 @@ impl StreamRegistry {
                                     .map_err(|e| anyhow!(e.to_string()))?;
                             }
 
-                            log::info!(
+                            info!(
                                 "Cleaned up stale publisher entry for node {} (room: {}, media: {})",
                                 node_id,
                                 room_id,

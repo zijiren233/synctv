@@ -16,7 +16,7 @@ use synctv_xiu::streamhub::{
 };
 use std::sync::Arc;
 use tokio::time::{interval, sleep, Duration};
-use tracing as log;
+use tracing::{debug, error, info, trace, warn};
 use dashmap::DashMap;
 
 /// Maximum number of retry attempts for heartbeat failures
@@ -44,7 +44,7 @@ impl PublisherManager {
 
     /// Start listening to `StreamHub` broadcast events
     pub async fn start(self: Arc<Self>, mut event_receiver: BroadcastEventReceiver) {
-        log::info!("Publisher manager started");
+        info!("Publisher manager started");
 
         // Start heartbeat maintenance task
         let heartbeat_manager = Arc::clone(&self);
@@ -57,17 +57,17 @@ impl PublisherManager {
             match event_receiver.recv().await {
                 Ok(event) => {
                     if let Err(e) = self.handle_broadcast_event(event).await {
-                        log::error!("Failed to handle broadcast event: {}", e);
+                        error!("Failed to handle broadcast event: {}", e);
                     }
                 }
                 Err(e) => {
-                    log::error!("Error receiving broadcast event: {}", e);
+                    error!("Error receiving broadcast event: {}", e);
                     break;
                 }
             }
         }
 
-        log::warn!("Publisher manager stopped");
+        warn!("Publisher manager stopped");
     }
 
     /// Handle `StreamHub` broadcast events
@@ -83,7 +83,7 @@ impl PublisherManager {
             synctv_xiu::streamhub::define::BroadcastEvent::Publish { identifier } => {
                 if let Err(e) = self.handle_publish(identifier.clone()).await {
                     // Log detailed error for monitoring
-                    log::error!(
+                    error!(
                         error = %e,
                         identifier = ?identifier,
                         "Publisher registration failed - stream will continue locally but not be globally registered. \
@@ -103,11 +103,11 @@ impl PublisherManager {
     async fn handle_publish(&self, identifier: StreamIdentifier) -> anyhow::Result<()> {
         // Extract app_name and stream_name from RTMP identifier
         let (app_name, stream_name) = if let StreamIdentifier::Rtmp { app_name, stream_name } = identifier { (app_name, stream_name) } else {
-            log::warn!("Ignoring non-RTMP publish event: {:?}", identifier);
+            warn!("Ignoring non-RTMP publish event: {:?}", identifier);
             return Ok(());
         };
 
-        log::info!(
+        info!(
             "RTMP Publish event: app_name={}, stream_name={}",
             app_name,
             stream_name
@@ -119,14 +119,14 @@ impl PublisherManager {
         let (room_id, media_id) = if let Some((r, m)) = stream_name.split_once('/') {
             (r.to_string(), m.to_string())
         } else {
-            log::error!("Invalid stream_name format, expected 'room_id/media_id': {}", stream_name);
+            error!("Invalid stream_name format, expected 'room_id/media_id': {}", stream_name);
             return Err(anyhow!("Invalid stream_name format, expected 'room_id/media_id'"));
         };
 
         // Try to register as publisher (atomic HSETNX)
         match self.registry.try_register_publisher(&room_id, &media_id, &self.local_node_id, "").await {
             Ok(true) => {
-                log::info!(
+                info!(
                     "Successfully registered as publisher for room {} / media {} (stream: {})",
                     room_id,
                     media_id,
@@ -137,7 +137,7 @@ impl PublisherManager {
                 self.active_publishers.insert(stream_name.clone(), publisher_key);
             }
             Ok(false) => {
-                log::warn!(
+                warn!(
                     "Publisher already exists for room {} / media {} (stream: {})",
                     room_id,
                     media_id,
@@ -147,7 +147,7 @@ impl PublisherManager {
                 return Err(anyhow!("Publisher already exists for room {room_id} / media {media_id}"));
             }
             Err(e) => {
-                log::error!("Failed to register publisher: {}", e);
+                error!("Failed to register publisher: {}", e);
                 return Err(e);
             }
         }
@@ -164,7 +164,7 @@ impl PublisherManager {
             }
         };
 
-        log::info!(
+        info!(
             "RTMP UnPublish event: app_name={}, stream_name={}",
             app_name,
             stream_name
@@ -176,9 +176,9 @@ impl PublisherManager {
             if let Some((room_id, media_id)) = publisher_key.split_once(':') {
                 // Unregister from Redis
                 if let Err(e) = self.registry.unregister_publisher(room_id, media_id).await {
-                    log::error!("Failed to unregister publisher for room {} / media {}: {}", room_id, media_id, e);
+                    error!("Failed to unregister publisher for room {} / media {}: {}", room_id, media_id, e);
                 } else {
-                    log::info!("Unregistered publisher for room {} / media {}", room_id, media_id);
+                    info!("Unregistered publisher for room {} / media {}", room_id, media_id);
                 }
             }
         }
@@ -210,13 +210,13 @@ impl PublisherManager {
                                 if attempt < MAX_HEARTBEAT_RETRIES - 1 {
                                     // Exponential backoff: 100ms, 200ms, 400ms...
                                     let delay_ms = HEARTBEAT_RETRY_BASE_DELAY_MS * (1 << attempt);
-                                    log::warn!(
+                                    warn!(
                                         "Heartbeat attempt {} failed for room {} / media {}: {}. Retrying in {}ms",
                                         attempt + 1, room_id, media_id, e, delay_ms
                                     );
                                     sleep(Duration::from_millis(delay_ms)).await;
                                 } else {
-                                    log::error!(
+                                    error!(
                                         "All {} heartbeat attempts failed for room {} / media {}: {}. Publisher may be lost.",
                                         MAX_HEARTBEAT_RETRIES, room_id, media_id, e
                                     );
@@ -228,13 +228,13 @@ impl PublisherManager {
                     // Log success at trace level (tracing::trace handles level check internally)
                     #[allow(clippy::if_same_then_else)]
                     if success {
-                        log::trace!("Heartbeat refreshed for room {} / media {}", room_id, media_id);
+                        trace!("Heartbeat refreshed for room {} / media {}", room_id, media_id);
                     }
                 }
             }
 
             if !self.active_publishers.is_empty() {
-                log::debug!(
+                debug!(
                     "Heartbeat: {} active publishers",
                     self.active_publishers.len()
                 );

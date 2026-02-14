@@ -198,7 +198,7 @@ impl EmailService {
 
     /// Update verification code (Redis if available, otherwise local memory)
     async fn update_code(&self, email: &str, code: &VerificationCode) -> Result<()> {
-        if let Some(ref redis) = self.redis {
+        if self.redis.is_some() {
             // For Redis, we just store the updated code (TTL refresh is implicit)
             self.store_code(email, code).await
         } else {
@@ -642,7 +642,9 @@ impl EmailService {
         email: Message,
     ) -> std::result::Result<(), EmailError> {
         // Get recipient before consuming email
-        let recipient = email.envelope().to()[0].clone();
+        let recipient = email.envelope().to().first()
+            .ok_or_else(|| EmailError::SendError("No recipients in email envelope".to_string()))?
+            .clone();
 
         // Create SMTP credentials
         let creds = Credentials::new(

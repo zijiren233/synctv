@@ -1,0 +1,190 @@
+// Pull stream instance — single gRPC relay stream with lifecycle management
+//
+// Pulls RTMP data from a publisher node via gRPC and publishes it into
+// the local StreamHub. GOP cache is handled by StreamHub internally.
+
+use crate::{
+    relay::registry_trait::StreamRegistryTrait,
+    error::StreamResult,
+    grpc::GrpcStreamPuller,
+    livestream::managed_stream::{ManagedStream, StreamLifecycle},
+};
+use synctv_xiu::streamhub::define::{StreamHubEvent, StreamHubEventSender};
+use synctv_xiu::streamhub::stream::StreamIdentifier;
+use tracing::{debug, error, info, warn};
+use std::sync::Arc;
+
+/// Pull stream instance (pulls RTMP from publisher via gRPC, serves FLV to local clients)
+///
+/// GOP cache is handled by xiu's `StreamHub` — when the gRPC puller publishes
+/// frames to the local `StreamHub`, and a new subscriber joins, `StreamHub`
+/// automatically sends cached GOP frames via `send_prior_data`.
+pub struct PullStream {
+    pub(crate) room_id: String,
+    pub(crate) media_id: String,
+    pub(crate) publisher_node: String,
+    local_node_id: String,
+    registry: Arc<dyn StreamRegistryTrait>,
+    stream_hub_event_sender: StreamHubEventSender,
+    lifecycle: StreamLifecycle,
+    /// Fencing token (epoch) from when the stream was created.
+    /// Used to detect split-brain when publisher changes during network partition.
+    epoch: u64,
+}
+
+impl ManagedStream for PullStream {
+    fn lifecycle(&self) -> &StreamLifecycle {
+        &self.lifecycle
+    }
+
+    fn stream_key(&self) -> String {
+        format!("{}:{}", self.room_id, self.media_id)
+    }
+}
+
+impl PullStream {
+    pub fn new(
+        room_id: String,
+        media_id: String,
+        publisher_node: String,
+        local_node_id: String,
+        registry: Arc<dyn StreamRegistryTrait>,
+        stream_hub_event_sender: StreamHubEventSender,
+        epoch: u64,
+    ) -> Self {
+        Self {
+            room_id,
+            media_id,
+            publisher_node,
+            local_node_id,
+            registry,
+            stream_hub_event_sender,
+            lifecycle: StreamLifecycle::new(),
+            epoch,
+        }
+    }
+
+    /// Start the pull stream - connects to publisher via gRPC
+    pub async fn start(&self) -> StreamResult<()> {
+        // Validate epoch before starting to detect split-brain
+        match self.registry.validate_epoch(&self.room_id, &self.media_id, self.epoch).await {
+            Ok(true) => {
+                debug!(
+                    "Epoch {} validated for pull stream {}/{}",
+                    self.epoch,
+                    self.room_id,
+                    self.media_id
+                );
+            }
+            Ok(false) => {
+                warn!(
+                    "Epoch {} is stale for pull stream {}/{}, publisher may have changed. Stopping.",
+                    self.epoch,
+                    self.room_id,
+                    self.media_id
+                );
+                return Err(crate::error::StreamError::StaleEpoch(format!(
+                    "{} / {}",
+                    self.room_id, self.media_id
+                )));
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to validate epoch for pull stream {}/{}: {}. Continuing optimistically.",
+                    self.room_id,
+                    self.media_id,
+                    e
+                );
+                // Continue on error - fail open to avoid blocking streams during Redis issues
+            }
+        }
+
+        self.lifecycle.set_running();
+        self.lifecycle.update_last_active_time().await;
+
+        let room_id = self.room_id.clone();
+        let media_id = self.media_id.clone();
+        // Clone the is_running flag to mark failure in the spawned task
+        let is_running_flag = self.lifecycle.is_running_clone();
+
+        let grpc_puller = GrpcStreamPuller::new(
+            self.room_id.clone(),
+            self.media_id.clone(),
+            self.publisher_node.clone(),
+            self.local_node_id.clone(),
+            self.stream_hub_event_sender.clone(),
+            self.registry.clone(),
+        );
+
+        let handle = tokio::spawn(async move {
+            info!("gRPC puller task started for {} / {}", room_id, media_id);
+            let result = grpc_puller.run().await;
+            if let Err(ref e) = result {
+                error!("gRPC puller task failed for {} / {}: {}", room_id, media_id, e);
+                // Mark is_running as false so is_healthy() returns false
+                // This ensures the stream will be removed from the pool on next access
+                is_running_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+            result
+        });
+
+        self.lifecycle.set_task_handle(handle).await;
+
+        info!("Pull stream started for room {} / media {}", self.room_id, self.media_id);
+        Ok(())
+    }
+
+    /// Stop the pull stream
+    ///
+    /// Sends `UnPublish` to the local `StreamHub` BEFORE aborting the puller task,
+    /// because the puller's own cleanup path won't run on abort.
+    pub async fn stop(&self) -> StreamResult<()> {
+        self.lifecycle.mark_stopping();
+
+        let stream_name = format!("{}/{}", self.room_id, self.media_id);
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name,
+        };
+        if let Err(e) = self.stream_hub_event_sender.try_send(StreamHubEvent::UnPublish { identifier }) {
+            warn!("Failed to send UnPublish to StreamHub for {} / {}: {}", self.room_id, self.media_id, e);
+        }
+
+        self.lifecycle.abort_task().await;
+        info!("Pull stream stopped for room {} / media {}", self.room_id, self.media_id);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn subscriber_count(&self) -> usize {
+        self.lifecycle.subscriber_count()
+    }
+
+    pub fn increment_subscriber_count(&self) {
+        self.lifecycle.increment_subscriber_count();
+    }
+
+    pub fn decrement_subscriber_count(&self) {
+        self.lifecycle.decrement_subscriber_count();
+    }
+
+    pub async fn is_healthy(&self) -> bool {
+        self.lifecycle.is_healthy().await
+    }
+
+    pub async fn last_active_time(&self) -> std::time::Instant {
+        self.lifecycle.last_active_time().await
+    }
+
+    pub async fn update_last_active_time(&self) {
+        self.lifecycle.update_last_active_time().await;
+    }
+
+    pub fn mark_stopping(&self) {
+        self.lifecycle.mark_stopping();
+    }
+
+    pub fn restore_running(&self) {
+        self.lifecycle.restore_running();
+    }
+}

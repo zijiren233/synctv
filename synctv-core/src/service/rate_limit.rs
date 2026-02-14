@@ -19,25 +19,19 @@ pub enum RateLimitError {
 /// that works across multiple replicas.
 #[derive(Clone)]
 pub struct RateLimiter {
-    redis_client: Option<redis::Client>,
+    redis_conn: Option<redis::aio::ConnectionManager>,
     key_prefix: String,
 }
 
 impl RateLimiter {
     /// Create a new `RateLimiter`
     ///
-    /// If `redis_url` is None, rate limiting is disabled (allows all requests)
-    pub fn new(redis_url: Option<String>, key_prefix: String) -> Result<Self> {
-        let redis_client = if let Some(url) = redis_url {
-            Some(redis::Client::open(url)?)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            redis_client,
+    /// If `redis_conn` is None, rate limiting is disabled (allows all requests)
+    pub fn new(redis_conn: Option<redis::aio::ConnectionManager>, key_prefix: String) -> Self {
+        Self {
+            redis_conn,
             key_prefix,
-        })
+        }
     }
 
     /// Create a disabled `RateLimiter` (no Redis, allows all requests)
@@ -45,9 +39,9 @@ impl RateLimiter {
     /// This is a convenience constructor that never fails, useful as a fallback
     /// when `RateLimiter::new` cannot be used with `?`.
     #[must_use]
-    pub const fn disabled(key_prefix: String) -> Self {
+    pub fn disabled(key_prefix: String) -> Self {
         Self {
-            redis_client: None,
+            redis_conn: None,
             key_prefix,
         }
     }
@@ -67,14 +61,11 @@ impl RateLimiter {
         window_seconds: u64,
     ) -> Result<(), RateLimitError> {
         // If Redis not configured, allow all requests
-        let Some(ref client) = self.redis_client else {
+        let Some(ref conn) = self.redis_conn else {
             return Ok(());
         };
 
-        let mut conn = client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(RateLimitError::RedisError)?;
+        let mut conn = conn.clone();
 
         let redis_key = format!("{}{}", self.key_prefix, key);
         let now = Self::current_timestamp_millis();
@@ -138,11 +129,11 @@ impl RateLimiter {
         window_seconds: u64,
     ) -> Result<(u32, u64)> {
         // If Redis not configured, return unlimited
-        let Some(ref client) = self.redis_client else {
+        let Some(ref conn) = self.redis_conn else {
             return Ok((max_requests, 0));
         };
 
-        let mut conn = client.get_multiplexed_async_connection().await?;
+        let mut conn = conn.clone();
 
         let redis_key = format!("{}{}", self.key_prefix, key);
         let now = Self::current_timestamp_millis();
@@ -180,8 +171,8 @@ impl RateLimiter {
 
     /// Reset rate limit for a key (for testing or admin purposes)
     pub async fn reset(&self, key: &str) -> Result<()> {
-        if let Some(ref client) = self.redis_client {
-            let mut conn = client.get_multiplexed_async_connection().await?;
+        if let Some(ref conn) = self.redis_conn {
+            let mut conn = conn.clone();
             let redis_key = format!("{}{}", self.key_prefix, key);
             let _: () = redis::cmd("DEL")
                 .arg(&redis_key)
@@ -226,18 +217,16 @@ mod tests {
 
     #[test]
     fn test_rate_limiter_without_redis() {
-        let limiter = RateLimiter::new(None, "test:".to_string()).unwrap();
-        assert!(limiter.redis_client.is_none());
+        let limiter = RateLimiter::new(None, "test:".to_string());
+        assert!(limiter.redis_conn.is_none());
     }
 
     #[tokio::test]
     #[ignore = "Requires Redis server"]
     async fn test_rate_limit_basic() {
-        let limiter = RateLimiter::new(
-            Some("redis://127.0.0.1:6379".to_string()),
-            "test:".to_string(),
-        )
-        .unwrap();
+        let client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+        let conn = redis::aio::ConnectionManager::new(client).await.unwrap();
+        let limiter = RateLimiter::new(Some(conn), "test:".to_string());
 
         let key = "user:test1:chat";
 
@@ -269,11 +258,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires Redis server"]
     async fn test_rate_limit_sliding_window() {
-        let limiter = RateLimiter::new(
-            Some("redis://127.0.0.1:6379".to_string()),
-            "test:".to_string(),
-        )
-        .unwrap();
+        let client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+        let conn = redis::aio::ConnectionManager::new(client).await.unwrap();
+        let limiter = RateLimiter::new(Some(conn), "test:".to_string());
 
         let key = "user:test2:chat";
         limiter.reset(key).await.unwrap();
@@ -302,11 +289,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires Redis server"]
     async fn test_get_quota() {
-        let limiter = RateLimiter::new(
-            Some("redis://127.0.0.1:6379".to_string()),
-            "test:".to_string(),
-        )
-        .unwrap();
+        let client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+        let conn = redis::aio::ConnectionManager::new(client).await.unwrap();
+        let limiter = RateLimiter::new(Some(conn), "test:".to_string());
 
         let key = "user:test3:chat";
         limiter.reset(key).await.unwrap();
@@ -328,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_without_redis_allows_all() {
-        let limiter = RateLimiter::new(None, "test:".to_string()).unwrap();
+        let limiter = RateLimiter::new(None, "test:".to_string());
 
         // Should allow unlimited requests
         for _ in 0..1000 {

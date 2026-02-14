@@ -9,14 +9,34 @@
 use crate::{
     relay::registry_trait::StreamRegistryTrait,
     error::StreamResult,
-    grpc::GrpcStreamPuller,
-    livestream::managed_stream::{ManagedStream, StreamLifecycle, StreamPool},
+    livestream::pull_stream::PullStream,
+    livestream::managed_stream::{ManagedStream, StreamPool},
 };
-use synctv_xiu::streamhub::define::{StreamHubEvent, StreamHubEventSender};
-use synctv_xiu::streamhub::stream::StreamIdentifier;
-use tracing::{self as log};
+use synctv_xiu::streamhub::define::StreamHubEventSender;
+use tracing::{debug, info, error, warn};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Default gRPC port for inter-node streaming
+const DEFAULT_GRPC_PORT: u16 = 50051;
+
+/// Extract IP address from node_id and construct gRPC address.
+/// node_id format is "{hostname}_{ip}-{suffix}", e.g., "server1_192.168.1.1-abc123"
+/// Returns "ip:port" if IP is found, None otherwise.
+fn extract_address_from_node_id(node_id: &str) -> Option<String> {
+    // Split by '_' to get the part containing IP
+    let after_underscore = node_id.split('_').nth(1)?;
+
+    // Extract IP before the '-' suffix
+    let ip_part = after_underscore.split('-').next()?;
+
+    // Validate it looks like an IP address
+    if ip_part.parse::<std::net::IpAddr>().is_ok() {
+        Some(format!("{}:{}", ip_part, DEFAULT_GRPC_PORT))
+    } else {
+        None
+    }
+}
 
 pub struct PullStreamManager {
     pool: StreamPool<PullStream>,
@@ -73,7 +93,7 @@ impl PullStreamManager {
 
         // Fast path: Check if healthy pull stream already exists (no lock needed)
         if let Some(stream) = self.pool.get_existing(&stream_key).await {
-            log::debug!(
+            debug!(
                 "Reusing existing pull stream for {}/{}, subscribers: {}",
                 room_id,
                 media_id,
@@ -87,7 +107,7 @@ impl PullStreamManager {
 
         // Re-check after acquiring lock
         if let Some(stream) = self.pool.get_existing(&stream_key).await {
-            log::debug!(
+            debug!(
                 "Reusing pull stream created by concurrent request for {}/{}",
                 room_id,
                 media_id,
@@ -96,7 +116,7 @@ impl PullStreamManager {
         }
 
         // Lazy-load: Create new pull stream on first FLV request
-        log::info!(
+        info!(
             "Lazy-load: Creating pull stream for room {} / media {} from publisher",
             room_id,
             media_id
@@ -105,22 +125,33 @@ impl PullStreamManager {
         // Get publisher node address from registry
         let publisher_info = self.registry.get_publisher(room_id, media_id).await
             .map_err(|e| {
-                log::error!("Failed to get publisher for {} / {}: {}", room_id, media_id, e);
+                error!("Failed to get publisher for {} / {}: {}", room_id, media_id, e);
                 crate::error::StreamError::RegistryError(format!("Failed to get publisher: {e}"))
             })?
             .ok_or_else(|| {
-                log::warn!("No publisher found for {} / {}", room_id, media_id);
+                warn!("No publisher found for {} / {}", room_id, media_id);
                 crate::error::StreamError::NoPublisher(format!("{room_id} / {media_id}"))
             })?;
 
         // Create pull stream with gRPC puller
         // Store the epoch from publisher info for split-brain detection
         let epoch = publisher_info.epoch;
+
+        // Use grpc_address if available, otherwise extract IP from node_id
+        // node_id format is "{hostname}_{ip}-{suffix}", e.g., "server1_192.168.1.1-abc123"
+        let publisher_address = if !publisher_info.grpc_address.is_empty() {
+            publisher_info.grpc_address.clone()
+        } else {
+            // Fallback: extract IP from node_id and use default gRPC port
+            extract_address_from_node_id(&publisher_info.node_id)
+                .unwrap_or_else(|| publisher_info.node_id.clone())
+        };
+
         let pull_stream = Arc::new(
             PullStream::new(
                 room_id.to_string(),
                 media_id.to_string(),
-                publisher_info.node_id.clone(),
+                publisher_address,
                 self.local_node_id.clone(),
                 Arc::clone(&self.registry),
                 self.stream_hub_event_sender.clone(),
@@ -145,185 +176,11 @@ impl PullStreamManager {
     }
 }
 
-/// Pull stream instance (pulls RTMP from publisher via gRPC, serves FLV to local clients)
-///
-/// GOP cache is handled by xiu's `StreamHub` — when the gRPC puller publishes
-/// frames to the local `StreamHub`, and a new subscriber joins, `StreamHub`
-/// automatically sends cached GOP frames via `send_prior_data`.
-pub struct PullStream {
-    pub(crate) room_id: String,
-    pub(crate) media_id: String,
-    pub(crate) publisher_node: String,
-    local_node_id: String,
-    registry: Arc<dyn StreamRegistryTrait>,
-    stream_hub_event_sender: StreamHubEventSender,
-    lifecycle: StreamLifecycle,
-    /// Fencing token (epoch) from when the stream was created.
-    /// Used to detect split-brain when publisher changes during network partition.
-    epoch: u64,
-}
-
-impl ManagedStream for PullStream {
-    fn lifecycle(&self) -> &StreamLifecycle {
-        &self.lifecycle
-    }
-
-    fn stream_key(&self) -> String {
-        format!("{}:{}", self.room_id, self.media_id)
-    }
-}
-
-impl PullStream {
-    pub fn new(
-        room_id: String,
-        media_id: String,
-        publisher_node: String,
-        local_node_id: String,
-        registry: Arc<dyn StreamRegistryTrait>,
-        stream_hub_event_sender: StreamHubEventSender,
-        epoch: u64,
-    ) -> Self {
-        Self {
-            room_id,
-            media_id,
-            publisher_node,
-            local_node_id,
-            registry,
-            stream_hub_event_sender,
-            lifecycle: StreamLifecycle::new(),
-            epoch,
-        }
-    }
-
-    /// Start the pull stream - connects to publisher via gRPC
-    pub async fn start(&self) -> StreamResult<()> {
-        // Validate epoch before starting to detect split-brain
-        match self.registry.validate_epoch(&self.room_id, &self.media_id, self.epoch).await {
-            Ok(true) => {
-                log::debug!(
-                    "Epoch {} validated for pull stream {}/{}",
-                    self.epoch,
-                    self.room_id,
-                    self.media_id
-                );
-            }
-            Ok(false) => {
-                log::warn!(
-                    "Epoch {} is stale for pull stream {}/{}, publisher may have changed. Stopping.",
-                    self.epoch,
-                    self.room_id,
-                    self.media_id
-                );
-                return Err(crate::error::StreamError::StaleEpoch(format!(
-                    "{} / {}",
-                    self.room_id, self.media_id
-                )));
-            }
-            Err(e) => {
-                log::warn!(
-                    "Failed to validate epoch for pull stream {}/{}: {}. Continuing optimistically.",
-                    self.room_id,
-                    self.media_id,
-                    e
-                );
-                // Continue on error - fail open to avoid blocking streams during Redis issues
-            }
-        }
-
-        self.lifecycle.set_running();
-        self.lifecycle.update_last_active_time().await;
-
-        let room_id = self.room_id.clone();
-        let media_id = self.media_id.clone();
-        // Clone the is_running flag to mark failure in the spawned task
-        let is_running_flag = self.lifecycle.is_running_clone();
-
-        let grpc_puller = GrpcStreamPuller::new(
-            self.room_id.clone(),
-            self.media_id.clone(),
-            self.publisher_node.clone(),
-            self.local_node_id.clone(),
-            self.stream_hub_event_sender.clone(),
-            self.registry.clone(),
-        );
-
-        let handle = tokio::spawn(async move {
-            log::info!("gRPC puller task started for {} / {}", room_id, media_id);
-            let result = grpc_puller.run().await;
-            if let Err(ref e) = result {
-                log::error!("gRPC puller task failed for {} / {}: {}", room_id, media_id, e);
-                // Mark is_running as false so is_healthy() returns false
-                // This ensures the stream will be removed from the pool on next access
-                is_running_flag.store(false, std::sync::atomic::Ordering::SeqCst);
-            }
-            result
-        });
-
-        self.lifecycle.set_task_handle(handle).await;
-
-        log::info!("Pull stream started for room {} / media {}", self.room_id, self.media_id);
-        Ok(())
-    }
-
-    /// Stop the pull stream
-    ///
-    /// Sends `UnPublish` to the local `StreamHub` BEFORE aborting the puller task,
-    /// because the puller's own cleanup path won't run on abort.
-    pub async fn stop(&self) -> StreamResult<()> {
-        self.lifecycle.mark_stopping();
-
-        let stream_name = format!("{}/{}", self.room_id, self.media_id);
-        let identifier = StreamIdentifier::Rtmp {
-            app_name: "live".to_string(),
-            stream_name,
-        };
-        if let Err(e) = self.stream_hub_event_sender.try_send(StreamHubEvent::UnPublish { identifier }) {
-            log::warn!("Failed to send UnPublish to StreamHub for {} / {}: {}", self.room_id, self.media_id, e);
-        }
-
-        self.lifecycle.abort_task().await;
-        log::info!("Pull stream stopped for room {} / media {}", self.room_id, self.media_id);
-        Ok(())
-    }
-
-    #[must_use]
-    pub fn subscriber_count(&self) -> usize {
-        self.lifecycle.subscriber_count()
-    }
-
-    pub fn increment_subscriber_count(&self) {
-        self.lifecycle.increment_subscriber_count();
-    }
-
-    pub fn decrement_subscriber_count(&self) {
-        self.lifecycle.decrement_subscriber_count();
-    }
-
-    pub async fn is_healthy(&self) -> bool {
-        self.lifecycle.is_healthy().await
-    }
-
-    pub async fn last_active_time(&self) -> std::time::Instant {
-        self.lifecycle.last_active_time().await
-    }
-
-    pub async fn update_last_active_time(&self) {
-        self.lifecycle.update_last_active_time().await;
-    }
-
-    pub fn mark_stopping(&self) {
-        self.lifecycle.mark_stopping();
-    }
-
-    pub fn restore_running(&self) {
-        self.lifecycle.restore_running();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::relay::MockStreamRegistry;
+    use crate::livestream::managed_stream::ManagedStream;
 
     #[tokio::test]
     async fn test_pull_stream_manager_creation() {
@@ -358,7 +215,6 @@ mod tests {
         assert_eq!(pull_stream.room_id, "room-123");
         assert_eq!(pull_stream.media_id, "media-456");
         assert_eq!(pull_stream.publisher_node, "publisher-node");
-        assert_eq!(pull_stream.epoch, 1);
     }
 
     #[tokio::test]

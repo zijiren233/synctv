@@ -2,7 +2,6 @@
 //!
 //! Provides transactional scope for multi-repository operations.
 
-use anyhow::anyhow;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::ops::Deref;
 

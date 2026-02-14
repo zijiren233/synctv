@@ -373,7 +373,7 @@ async fn set_user_username(
 }
 
 async fn ban_user(
-    _auth: AuthAdmin,
+    auth: AuthAdmin,
     State(state): State<AppState>,
     Path(user_id): Path<String>,
     Json(req): Json<serde_json::Value>,
@@ -390,7 +390,7 @@ async fn ban_user(
 
     let api = require_admin_api(&state)?;
     let resp = api
-        .ban_user(admin::BanUserRequest { user_id, reason })
+        .ban_user(admin::BanUserRequest { user_id, reason }, auth.role)
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))

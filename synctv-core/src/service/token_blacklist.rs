@@ -1,23 +1,17 @@
-use redis::{AsyncCommands, Client};
+use redis::AsyncCommands;
 use crate::{models::UserId, Error, Result};
 
 /// Token blacklist service for managing revoked JWT tokens
 #[derive(Clone)]
 pub struct TokenBlacklistService {
-    redis_client: Option<Client>,
+    redis_conn: Option<redis::aio::ConnectionManager>,
 }
 
 impl TokenBlacklistService {
     /// Create a new `TokenBlacklistService`
-    /// If `redis_url` is None, token blacklist will be disabled (logout becomes no-op)
-    pub fn new(redis_url: Option<String>) -> Result<Self> {
-        let redis_client = if let Some(url) = redis_url {
-            Some(Client::open(url).map_err(|e| Error::Internal(format!("Failed to connect to Redis: {e}")))?)
-        } else {
-            None
-        };
-
-        Ok(Self { redis_client })
+    /// If `redis_conn` is None, token blacklist will be disabled (logout becomes no-op)
+    pub fn new(redis_conn: Option<redis::aio::ConnectionManager>) -> Self {
+        Self { redis_conn }
     }
 
     /// Add a token to the blacklist
@@ -28,10 +22,8 @@ impl TokenBlacklistService {
             return Ok(());
         }
 
-        if let Some(client) = &self.redis_client {
-            let mut conn = client.get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+        if let Some(ref conn) = self.redis_conn {
+            let mut conn = conn.clone();
 
             let key = format!("token:blacklist:{token}");
 
@@ -49,10 +41,8 @@ impl TokenBlacklistService {
 
     /// Check if a token is blacklisted
     pub async fn is_blacklisted(&self, token: &str) -> Result<bool> {
-        if let Some(client) = &self.redis_client {
-            let mut conn = client.get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+        if let Some(ref conn) = self.redis_conn {
+            let mut conn = conn.clone();
 
             let key = format!("token:blacklist:{token}");
 
@@ -69,10 +59,8 @@ impl TokenBlacklistService {
 
     /// Remove a token from the blacklist (rarely needed, for testing)
     pub async fn remove_token(&self, token: &str) -> Result<()> {
-        if let Some(client) = &self.redis_client {
-            let mut conn = client.get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+        if let Some(ref conn) = self.redis_conn {
+            let mut conn = conn.clone();
 
             let key = format!("token:blacklist:{token}");
 
@@ -101,10 +89,8 @@ impl TokenBlacklistService {
             return Ok(());
         }
 
-        if let Some(client) = &self.redis_client {
-            let mut conn = client.get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+        if let Some(ref conn) = self.redis_conn {
+            let mut conn = conn.clone();
 
             let key = format!("user:password_changed:{}", user_id.as_str());
             let now = chrono::Utc::now().timestamp();
@@ -130,10 +116,8 @@ impl TokenBlacklistService {
     /// Returns `true` if the token should be rejected (i.e. it was issued
     /// before the most recent password change).
     pub async fn are_user_tokens_invalidated(&self, user_id: &UserId, token_iat: i64) -> Result<bool> {
-        if let Some(client) = &self.redis_client {
-            let mut conn = client.get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+        if let Some(ref conn) = self.redis_conn {
+            let mut conn = conn.clone();
 
             let key = format!("user:password_changed:{}", user_id.as_str());
 
@@ -159,15 +143,15 @@ impl TokenBlacklistService {
 
     /// Check if the service is enabled (Redis configured)
     #[must_use]
-    pub const fn is_enabled(&self) -> bool {
-        self.redis_client.is_some()
+    pub fn is_enabled(&self) -> bool {
+        self.redis_conn.is_some()
     }
 }
 
 impl std::fmt::Debug for TokenBlacklistService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TokenBlacklistService")
-            .field("enabled", &self.is_enabled())
+            .field("enabled", &self.redis_conn.is_some())
             .finish()
     }
 }
@@ -179,7 +163,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires Redis"]
     async fn test_blacklist_token() {
-        let service = TokenBlacklistService::new(Some("redis://localhost:6379".to_string())).unwrap();
+        let client = redis::Client::open("redis://localhost:6379").unwrap();
+        let conn = redis::aio::ConnectionManager::new(client).await.unwrap();
+        let service = TokenBlacklistService::new(Some(conn));
 
         let token = "test_token_12345";
 
@@ -201,7 +187,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_disabled_blacklist() {
-        let service = TokenBlacklistService::new(None).unwrap();
+        let service = TokenBlacklistService::new(None);
 
         assert!(!service.is_enabled());
 
@@ -217,7 +203,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_disabled_user_token_invalidation() {
-        let service = TokenBlacklistService::new(None).unwrap();
+        let service = TokenBlacklistService::new(None);
         let user_id = UserId::from_string("test_user".to_string());
 
         // Invalidation should be no-op when disabled
@@ -230,7 +216,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires Redis"]
     async fn test_user_token_invalidation() {
-        let service = TokenBlacklistService::new(Some("redis://localhost:6379".to_string())).unwrap();
+        let client = redis::Client::open("redis://localhost:6379").unwrap();
+        let conn = redis::aio::ConnectionManager::new(client).await.unwrap();
+        let service = TokenBlacklistService::new(Some(conn));
         let user_id = UserId::from_string("test_invalidation_user".to_string());
 
         // Initially no invalidation

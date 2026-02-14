@@ -65,6 +65,7 @@ impl synctv_livestream::relay::StreamRegistryTrait for MockStreamRegistry {
     ) -> anyhow::Result<Option<synctv_livestream::relay::PublisherInfo>> {
         Ok(Some(synctv_livestream::relay::PublisherInfo {
             node_id: "test_node".to_string(),
+            grpc_address: String::new(),
             app_name: "live".to_string(),
             user_id: String::new(),
             started_at: chrono::Utc::now(),

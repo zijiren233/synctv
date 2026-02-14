@@ -169,7 +169,7 @@ impl PesMuxer {
         }
 
         let pes_payload_length =
-            self.bytes_writer.len() - define::PES_HEADER_LEN as usize + payload_data_length;
+            self.bytes_writer.len().saturating_sub(define::PES_HEADER_LEN as usize) + payload_data_length;
 
         /*pes header -- update pes packet length*/
         if pes_payload_length > 0xFFFF {

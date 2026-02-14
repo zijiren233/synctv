@@ -69,15 +69,16 @@ pub async fn init_services(
     let jwt_service = load_jwt_service(config)?;
     info!("JWT service initialized");
 
-    // Initialize token blacklist and rate limiter (both use Redis)
-    let redis_url = if config.redis.url.is_empty() {
-        None
+    // Initialize shared Redis connection (used by token blacklist, rate limiter, and username cache)
+    let redis_conn = if !config.redis.url.is_empty() {
+        let client = redis::Client::open(config.redis.url.clone())?;
+        Some(redis::aio::ConnectionManager::new(client).await?)
     } else {
-        Some(config.redis.url.clone())
+        None
     };
 
     // Initialize token blacklist service
-    let token_blacklist = TokenBlacklistService::new(redis_url.clone())?;
+    let token_blacklist = TokenBlacklistService::new(redis_conn.clone());
     if token_blacklist.is_enabled() {
         info!("Token blacklist service initialized with Redis");
     } else {
@@ -86,11 +87,11 @@ pub async fn init_services(
 
     // Initialize username cache
     let username_cache = UsernameCache::new(
-        redis_url.clone(),
+        redis_conn.clone(),
         format!("{}username:", config.redis.key_prefix),
         1000, // Cache up to 1000 usernames in memory
         3600, // Cache for 1 hour in Redis
-    )?;
+    );
     info!("Username cache initialized");
 
     // Initialize UserService
@@ -110,7 +111,7 @@ pub async fn init_services(
     info!("UserProviderCredentialRepository initialized");
 
     // Initialize rate limiter
-    let rate_limiter = RateLimiter::new(redis_url.clone(), config.redis.key_prefix.clone())?;
+    let rate_limiter = RateLimiter::new(redis_conn.clone(), config.redis.key_prefix.clone());
     let rate_limit_config = RateLimitConfig::default();
     info!(
         "Rate limiter initialized (chat: {}/s, danmaku: {}/s)",

@@ -108,7 +108,7 @@ impl ProvidersManager {
                 let base_url = config
                     .get("base_url")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("https://localhost:8080");
+                    .unwrap_or("http://localhost:8080");
 
                 Ok(Arc::new(RtmpProvider::new(base_url)))
             }),
@@ -157,10 +157,11 @@ impl ProvidersManager {
                     .and_then(|v| v.as_str())
                     .unwrap_or_else(|| {
                         // Fallback: derive from instance_id (e.g., "alist_main" -> "alist")
+                        // split('_').next() always returns Some for non-empty strings
                         instance_id
                             .split('_')
                             .next()
-                            .unwrap_or("alist")
+                            .unwrap_or(instance_id)
                     });
 
                 // Check if this provider type is registered

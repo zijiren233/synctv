@@ -16,7 +16,6 @@ pub use providers::{GitHubConfig, GoogleConfig, LogtoConfig, OidcConfig};
 use crate::Error;
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use std::sync::RwLock;
 use async_trait::async_trait;
 
 // ============================================================================

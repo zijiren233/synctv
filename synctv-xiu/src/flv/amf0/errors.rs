@@ -17,6 +17,8 @@ pub enum Amf0ReadErrorValue {
     BytesReadError(BytesReadError),
     #[fail(display = "wrong type")]
     WrongType,
+    #[fail(display = "string length {} exceeds maximum {}", length, max)]
+    StringTooLong { length: usize, max: usize },
 }
 
 #[derive(Debug)]

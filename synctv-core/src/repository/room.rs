@@ -480,23 +480,6 @@ impl RoomRepository {
             _ => RoomStatus::Active, // Default to Active for invalid values
         }
     }
-
-    const fn status_to_str(&self, status: &RoomStatus) -> &'static str {
-        match status {
-            RoomStatus::Pending => "pending",
-            RoomStatus::Active => "active",
-            RoomStatus::Banned => "banned",
-        }
-    }
-
-    fn str_to_status(&self, s: &str) -> RoomStatus {
-        match s {
-            "pending" => RoomStatus::Pending,
-            "active" => RoomStatus::Active,
-            "banned" => RoomStatus::Banned,
-            _ => RoomStatus::Active,
-        }
-    }
 }
 
 #[cfg(test)]

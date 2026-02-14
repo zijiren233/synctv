@@ -7,6 +7,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use once_cell::sync::Lazy;
 use std::sync::Arc;
 use synctv_core::{
     models::{id::UserId, UserStatus},
@@ -15,6 +16,29 @@ use synctv_core::{
 };
 
 use super::{AppError, AppState};
+
+/// Pre-validated security header names (validated once at startup via Lazy)
+static X_FRAME_OPTIONS: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+    axum::http::HeaderName::from_static("x-frame-options")
+});
+static X_CONTENT_TYPE_OPTIONS: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+    axum::http::HeaderName::from_static("x-content-type-options")
+});
+static X_XSS_PROTECTION: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+    axum::http::HeaderName::from_static("x-xss-protection")
+});
+static CONTENT_SECURITY_POLICY: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+    axum::http::HeaderName::from_static("content-security-policy")
+});
+static REFERRER_POLICY: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+    axum::http::HeaderName::from_static("referrer-policy")
+});
+static PERMISSIONS_POLICY: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+    axum::http::HeaderName::from_static("permissions-policy")
+});
+static PRAGMA: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+    axum::http::HeaderName::from_static("pragma")
+});
 
 /// Authenticated user extracted from JWT token
 #[derive(Debug, Clone)]
@@ -373,7 +397,8 @@ pub async fn security_headers_middleware(
     // DENY: The page cannot be displayed in a frame, regardless of the site attempting to do so.
     if !headers.contains_key("X-Frame-Options") {
         headers.insert(
-            axum::http::HeaderName::try_from("X-Frame-Options").unwrap(),
+            // Static header name - validated at compile time via Lazy
+            X_FRAME_OPTIONS.clone(),
             axum::http::HeaderValue::from_static("DENY"),
         );
     }
@@ -383,7 +408,7 @@ pub async fn security_headers_middleware(
     // and the MIME type is not a valid MIME type for the requested type.
     if !headers.contains_key("X-Content-Type-Options") {
         headers.insert(
-            axum::http::HeaderName::try_from("X-Content-Type-Options").unwrap(),
+            X_CONTENT_TYPE_OPTIONS.clone(),
             axum::http::HeaderValue::from_static("nosniff"),
         );
     }
@@ -393,7 +418,7 @@ pub async fn security_headers_middleware(
     // the browser will prevent rendering of the page entirely if an attack is detected.
     if !headers.contains_key("X-XSS-Protection") {
         headers.insert(
-            axum::http::HeaderName::try_from("X-XSS-Protection").unwrap(),
+            X_XSS_PROTECTION.clone(),
             axum::http::HeaderValue::from_static("1; mode=block"),
         );
     }
@@ -405,7 +430,7 @@ pub async fn security_headers_middleware(
         // Note: 'unsafe-inline' for style is often needed for inline styles
         // For APIs, we can be very restrictive
         headers.insert(
-            axum::http::HeaderName::try_from("Content-Security-Policy").unwrap(),
+            CONTENT_SECURITY_POLICY.clone(),
             axum::http::HeaderValue::from_static(
                 "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
             ),
@@ -417,7 +442,7 @@ pub async fn security_headers_middleware(
     // full URL for same-origin requests
     if !headers.contains_key("Referrer-Policy") {
         headers.insert(
-            axum::http::HeaderName::try_from("Referrer-Policy").unwrap(),
+            REFERRER_POLICY.clone(),
             axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
         );
     }
@@ -426,7 +451,7 @@ pub async fn security_headers_middleware(
     // Disables various browser features that are typically not needed by APIs
     if !headers.contains_key("Permissions-Policy") {
         headers.insert(
-            axum::http::HeaderName::try_from("Permissions-Policy").unwrap(),
+            PERMISSIONS_POLICY.clone(),
             axum::http::HeaderValue::from_static(
                 "accelerometer=(), camera=(), geolocation=(), gyroscope=(), \
                  magnetometer=(), microphone=(), payment=(), usb=()"
@@ -448,7 +473,7 @@ pub async fn security_headers_middleware(
     // Pragma: no-cache (for HTTP/1.0 compatibility)
     if !headers.contains_key("Pragma") {
         headers.insert(
-            axum::http::HeaderName::try_from("Pragma").unwrap(),
+            PRAGMA.clone(),
             axum::http::HeaderValue::from_static("no-cache"),
         );
     }

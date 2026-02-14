@@ -91,6 +91,11 @@ impl AdminServiceImpl {
 
     /// Check if user has admin role (load from database)
     async fn check_admin(&self, request: &Request<impl std::fmt::Debug>) -> Result<(), Status> {
+        self.check_admin_get_role(request).await.map(|_| ())
+    }
+
+    /// Check if user has admin role and return their role
+    async fn check_admin_get_role(&self, request: &Request<impl std::fmt::Debug>) -> Result<synctv_core::models::UserRole, Status> {
         let user_context = request
             .extensions()
             .get::<super::interceptors::UserContext>()
@@ -109,7 +114,7 @@ impl AdminServiceImpl {
         if !user.role.is_admin_or_above() {
             return Err(Status::permission_denied("Admin role required"));
         }
-        Ok(())
+        Ok(user.role)
     }
 
     /// Check if user has root role (load from database)
@@ -878,11 +883,12 @@ impl AdminService for AdminServiceImpl {
         request: Request<UpdateUserRoleRequest>,
     ) -> Result<Response<UpdateUserRoleResponse>, Status> {
         // Granting root role requires root privileges
-        if request.get_ref().role == "root" {
+        let caller_role = if request.get_ref().role == "root" {
             self.check_root(&request).await?;
+            synctv_core::models::UserRole::Root
         } else {
-            self.check_admin(&request).await?;
-        }
+            self.check_admin_get_role(&request).await?
+        };
         let req = request.into_inner();
 
         let user_id = UserId::from_string(req.user_id);
@@ -893,6 +899,16 @@ impl AdminService for AdminServiceImpl {
             .get_user(&user_id)
             .await
             .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
+
+        // Only root can change root user roles
+        if user.role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
+            return Err(Status::permission_denied("Only root users can change root user roles"));
+        }
+
+        // Only root can change admin user roles
+        if user.role == synctv_core::models::UserRole::Admin && caller_role != synctv_core::models::UserRole::Root {
+            return Err(Status::permission_denied("Only root users can change admin user roles"));
+        }
 
         // Update role
         user.role = match req.role.as_str() {
@@ -942,7 +958,7 @@ impl AdminService for AdminServiceImpl {
         &self,
         request: Request<BanUserRequest>,
     ) -> Result<Response<BanUserResponse>, Status> {
-        self.check_admin(&request).await?;
+        let caller_role = self.check_admin_get_role(&request).await?;
         let req = request.into_inner();
 
         let user_id = UserId::from_string(req.user_id);
@@ -953,6 +969,16 @@ impl AdminService for AdminServiceImpl {
             .get_user(&user_id)
             .await
             .map_err(|e| Status::not_found(format!("User not found: {e}")))?;
+
+        // Prevent admin from banning root users (only root can ban root)
+        if user.role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
+            return Err(Status::permission_denied("Only root users can ban other root users"));
+        }
+
+        // Prevent admin from banning other admins (only root can ban admins)
+        if user.role == synctv_core::models::UserRole::Admin && caller_role != synctv_core::models::UserRole::Root {
+            return Err(Status::permission_denied("Only root users can ban admin users"));
+        }
 
         // Check if already banned (use status, not deleted_at)
         if user.status == synctv_core::models::UserStatus::Banned {

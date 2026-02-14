@@ -12,6 +12,7 @@ use crate::room::{RoomMode, RoomStats, SfuRoom};
 use crate::track::MediaTrack;
 use crate::types::{PeerId, RoomId, TrackId};
 use anyhow::{anyhow, Result};
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -92,33 +93,65 @@ impl SfuManager {
     /// Get or create a room
     #[allow(clippy::unused_async)]
     pub async fn get_or_create_room(&self, room_id: RoomId) -> Result<Arc<SfuRoom>> {
-        // Check if room already exists
-        if let Some(room) = self.rooms.get(&room_id) {
-            debug!(room_id = %room_id, "Room already exists");
-            return Ok(Arc::clone(room.value()));
+        // Use entry() API for atomic check-and-insert to avoid TOCTOU race conditions.
+        // With the previous contains_key/get + insert pattern, two concurrent requests
+        // could both observe the room as absent and each create their own instance,
+        // with one silently overwriting the other.
+        //
+        // NOTE: We must NOT call self.rooms.len() while holding an entry lock, as
+        // DashMap::len() acquires read locks on all shards and would deadlock if we
+        // already hold a write lock on one shard via entry(). So we check the limit
+        // inside the Vacant branch by dropping the entry, checking, and re-acquiring.
+        match self.rooms.entry(room_id.clone()) {
+            Entry::Occupied(entry) => {
+                debug!(room_id = %room_id, "Room already exists");
+                Ok(Arc::clone(entry.get()))
+            }
+            Entry::Vacant(entry) => {
+                // Enforce room limit (0 = unlimited).
+                // We use the entry's shard to avoid calling self.rooms.len() which
+                // would deadlock. DashMap guarantees that the vacant entry means this
+                // key does not exist, so current count + 1 would exceed the limit if
+                // len() >= max. We must drop the entry first, check, then re-acquire.
+                drop(entry);
+
+                if self.config.max_sfu_rooms > 0
+                    && self.rooms.len() >= self.config.max_sfu_rooms
+                {
+                    // Double-check: the room might have been inserted by another task
+                    // between our entry() call and now.
+                    if let Some(room) = self.rooms.get(&room_id) {
+                        return Ok(Arc::clone(room.value()));
+                    }
+                    warn!(
+                        current_rooms = self.rooms.len(),
+                        max_rooms = self.config.max_sfu_rooms,
+                        "Room limit reached"
+                    );
+                    return Err(anyhow!("Maximum number of SFU rooms reached"));
+                }
+
+                // Re-acquire entry atomically. Another task may have inserted
+                // the same room_id between our drop and now.
+                match self.rooms.entry(room_id.clone()) {
+                    Entry::Occupied(entry) => {
+                        debug!(room_id = %room_id, "Room created by concurrent task");
+                        Ok(Arc::clone(entry.get()))
+                    }
+                    Entry::Vacant(entry) => {
+                        let room = Arc::new(SfuRoom::new(room_id.clone(), Arc::clone(&self.config)));
+                        entry.insert(Arc::clone(&room));
+
+                        info!(
+                            room_id = %room_id,
+                            "Created new room"
+                        );
+
+                        Ok(room)
+                    }
+                }
+            }
         }
-
-        // Enforce room limit (0 = unlimited)
-        if self.config.max_sfu_rooms > 0 && self.rooms.len() >= self.config.max_sfu_rooms {
-            warn!(
-                current_rooms = self.rooms.len(),
-                max_rooms = self.config.max_sfu_rooms,
-                "Room limit reached"
-            );
-            return Err(anyhow!("Maximum number of SFU rooms reached"));
-        }
-
-        // Create new room
-        let room = Arc::new(SfuRoom::new(room_id.clone(), Arc::clone(&self.config)));
-        self.rooms.insert(room_id.clone(), Arc::clone(&room));
-
-        info!(
-            room_id = %room_id,
-            total_rooms = self.rooms.len(),
-            "Created new room"
-        );
-
-        Ok(room)
     }
 
     /// Add a peer to a room

@@ -859,7 +859,7 @@ impl ClientApiImpl {
         })
     }
 
-    /// Add multiple media items in a batch
+    /// Add multiple media items in a batch (atomic - all succeed or all fail)
     pub async fn add_media_batch(
         &self,
         user_id: &str,
@@ -873,11 +873,30 @@ impl ClientApiImpl {
             return Err("Too many items (max 100 per batch)".to_string());
         }
 
-        let mut results = Vec::with_capacity(req.items.len());
-        for item in req.items {
-            let response = self.add_media(user_id, room_id, item).await?;
-            results.push(response);
-        }
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        // Build batch items for the atomic service call
+        let items: Vec<(String, serde_json::Value, String)> = req.items.iter().map(|item| {
+            let source_config = serde_json::json!({ "url": item.url });
+            let title = if item.title.is_empty() {
+                item.url.split('/').next_back().unwrap_or("Unknown").to_string()
+            } else {
+                item.title.clone()
+            };
+            // For direct URL, provider_instance_name is empty
+            (String::new(), source_config, title)
+        }).collect();
+
+        let media_list = self.room_service.add_media_batch(rid, uid, items)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let results = media_list.into_iter()
+            .map(|media| crate::proto::client::AddMediaResponse {
+                media: Some(media_to_proto(&media)),
+            })
+            .collect();
 
         Ok(crate::proto::client::AddMediaBatchResponse { results })
     }

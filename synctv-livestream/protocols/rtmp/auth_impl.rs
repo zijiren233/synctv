@@ -14,6 +14,7 @@ use synctv_xiu::rtmp::auth::AuthCallback;
 use async_trait::async_trait;
 use std::sync::Arc;
 use synctv_core::service::PublishKeyService;
+use tracing::{debug, info, warn};
 
 pub struct RtmpAuthCallbackImpl {
     publish_key_service: Arc<PublishKeyService>,
@@ -36,7 +37,7 @@ impl AuthCallback for RtmpAuthCallbackImpl {
         stream_name: &str,
         query: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        tracing::debug!(
+        debug!(
             "RTMP publish auth: app={}, stream={}, query={:?}",
             app_name,
             stream_name,
@@ -65,7 +66,7 @@ impl AuthCallback for RtmpAuthCallbackImpl {
             .into());
         }
 
-        tracing::info!(
+        info!(
             "RTMP publisher authenticated: room_id={}, media_id={}, user_id={}",
             claims.room_id,
             claims.media_id,
@@ -81,7 +82,7 @@ impl AuthCallback for RtmpAuthCallbackImpl {
         stream_name: &str,
         _query: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        tracing::warn!(
+        warn!(
             "RTMP play rejected: room_id={}, media_id={} — use HTTP-FLV or HLS",
             app_name,
             stream_name
@@ -95,7 +96,7 @@ impl AuthCallback for RtmpAuthCallbackImpl {
         stream_name: &str,
         _query: Option<&str>,
     ) {
-        tracing::info!(
+        info!(
             "RTMP player disconnected: room_id={}, media_id={}",
             app_name,
             stream_name

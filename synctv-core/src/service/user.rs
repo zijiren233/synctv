@@ -86,23 +86,42 @@ impl UserService {
     }
 
     /// Login user
+    ///
+    /// Timing-safe: always performs password verification regardless of user existence
+    /// to prevent username enumeration via response time analysis.
     pub async fn login(
         &self,
         username: String,
         password: String,
     ) -> Result<(User, String, String)> {
         // Get user by username
-        let user = self
+        let maybe_user = self
             .repository
             .get_by_username(&username)
-            .await?
-            .ok_or_else(|| Error::Authentication("Invalid username or password".to_string()))?;
+            .await?;
 
-        // Verify password
-        let is_valid = verify_password(&password, &user.password_hash).await?;
-        if !is_valid {
-            return Err(Error::Authentication("Invalid username or password".to_string()));
-        }
+        // Always perform password verification to prevent timing side-channel.
+        // If the user doesn't exist, verify against a dummy hash so the response
+        // time is indistinguishable from a real verification.
+        let (is_valid, user) = match maybe_user {
+            Some(user) => {
+                let valid = verify_password(&password, &user.password_hash).await?;
+                (valid, Some(user))
+            }
+            None => {
+                // Dummy Argon2 verification to match timing of real verification.
+                // This hash is pre-computed and never matches any real password.
+                let dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+daw";
+                let _ = verify_password(&password, dummy_hash).await;
+                (false, None)
+            }
+        };
+
+        // After constant-time verification, check all failure conditions
+        let user = match user {
+            Some(u) if is_valid => u,
+            _ => return Err(Error::Authentication("Invalid username or password".to_string())),
+        };
 
         // Check if user is banned or soft-deleted (generic message to prevent enumeration)
         if user.status == crate::models::UserStatus::Banned || user.deleted_at.is_some() {
@@ -547,8 +566,8 @@ mod tests {
         let pool = PgPool::connect_lazy("postgresql://fake").unwrap();
 
         let jwt = JwtService::new("test-secret-for-user-service").unwrap();
-        let blacklist = TokenBlacklistService::new(None).unwrap(); // Disabled for tests
-        let username_cache = UsernameCache::new(None, "test:".to_string(), 10, 0).unwrap();
+        let blacklist = TokenBlacklistService::new(None); // Disabled for tests
+        let username_cache = UsernameCache::new(None, "test:".to_string(), 10, 0);
         UserService::new(pool, jwt, blacklist, username_cache)
     }
 

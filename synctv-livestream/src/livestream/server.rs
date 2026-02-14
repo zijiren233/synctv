@@ -20,7 +20,7 @@ use synctv_xiu::rtmp::auth::AuthCallback;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing as log;
+use tracing::{error, info, warn};
 use synctv_xiu::streamhub::StreamsHub;
 
 pub struct LivestreamConfig {
@@ -74,14 +74,14 @@ impl LivestreamHandle {
         let mut all_graceful = true;
 
         // Shutdown in reverse startup order
-        log::info!("Starting graceful shutdown of livestream components...");
+        info!("Starting graceful shutdown of livestream components...");
 
         // 1. Stop external publish cleanup
         self.external_publish_cleanup.abort();
         match timeout(timeout_duration, &mut self.external_publish_cleanup).await {
-            Ok(_) => log::info!("External publish cleanup stopped"),
+            Ok(_) => info!("External publish cleanup stopped"),
             Err(_) => {
-                log::warn!("External publish cleanup shutdown timed out");
+                warn!("External publish cleanup shutdown timed out");
                 all_graceful = false;
             }
         }
@@ -89,9 +89,9 @@ impl LivestreamHandle {
         // 2. Stop pull manager cleanup
         self.pull_manager_cleanup.abort();
         match timeout(timeout_duration, &mut self.pull_manager_cleanup).await {
-            Ok(_) => log::info!("Pull manager cleanup stopped"),
+            Ok(_) => info!("Pull manager cleanup stopped"),
             Err(_) => {
-                log::warn!("Pull manager cleanup shutdown timed out");
+                warn!("Pull manager cleanup shutdown timed out");
                 all_graceful = false;
             }
         }
@@ -99,9 +99,9 @@ impl LivestreamHandle {
         // 3. Stop publisher manager
         self.publisher_manager_handle.abort();
         match timeout(timeout_duration, &mut self.publisher_manager_handle).await {
-            Ok(_) => log::info!("Publisher manager stopped"),
+            Ok(_) => info!("Publisher manager stopped"),
             Err(_) => {
-                log::warn!("Publisher manager shutdown timed out");
+                warn!("Publisher manager shutdown timed out");
                 all_graceful = false;
             }
         }
@@ -109,9 +109,9 @@ impl LivestreamHandle {
         // 4. Stop RTMP server
         self.rtmp_handle.abort();
         match timeout(timeout_duration, &mut self.rtmp_handle).await {
-            Ok(_) => log::info!("RTMP server stopped"),
+            Ok(_) => info!("RTMP server stopped"),
             Err(_) => {
-                log::warn!("RTMP server shutdown timed out");
+                warn!("RTMP server shutdown timed out");
                 all_graceful = false;
             }
         }
@@ -119,17 +119,17 @@ impl LivestreamHandle {
         // 5. Stop StreamHub (last, as other components depend on it)
         self.hub_handle.abort();
         match timeout(timeout_duration, &mut self.hub_handle).await {
-            Ok(_) => log::info!("StreamHub stopped"),
+            Ok(_) => info!("StreamHub stopped"),
             Err(_) => {
-                log::warn!("StreamHub shutdown timed out");
+                warn!("StreamHub shutdown timed out");
                 all_graceful = false;
             }
         }
 
         if all_graceful {
-            log::info!("Graceful shutdown completed successfully");
+            info!("Graceful shutdown completed successfully");
         } else {
-            log::warn!("Graceful shutdown completed with some timeouts");
+            warn!("Graceful shutdown completed with some timeouts");
         }
 
         all_graceful
@@ -188,17 +188,17 @@ impl LivestreamServer {
         // 2. Spawn StreamHub event loop with automatic recovery
         let hub_handle = tokio::spawn(async move {
             loop {
-                log::info!("Starting StreamHub event loop...");
+                info!("Starting StreamHub event loop...");
                 streams_hub.run().await;
-                log::warn!("StreamHub event loop exited unexpectedly, cleaning up local state before restart...");
+                warn!("StreamHub event loop exited unexpectedly, cleaning up local state before restart...");
 
                 // Clean up all local publisher registrations from Redis
                 // This ensures stale state doesn't persist after restart
                 if let Err(e) = registry_for_cleanup.cleanup_all_publishers_for_node(&node_id_for_cleanup).await {
-                    log::error!("Failed to cleanup publishers on StreamHub restart: {}", e);
+                    error!("Failed to cleanup publishers on StreamHub restart: {}", e);
                 }
 
-                log::info!("Waiting 1 second before restarting StreamHub...");
+                info!("Waiting 1 second before restarting StreamHub...");
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         });
@@ -212,7 +212,7 @@ impl LivestreamServer {
         );
         let rtmp_handle = tokio::spawn(async move {
             if let Err(e) = rtmp_server.run().await {
-                log::error!("RTMP server error: {}", e);
+                error!("RTMP server error: {}", e);
             }
         });
 
@@ -260,7 +260,7 @@ impl LivestreamServer {
             self.user_stream_tracker,
         ));
 
-        log::info!(
+        info!(
             "Livestream infrastructure initialized, RTMP server listening on rtmp://{}",
             self.config.rtmp_address,
         );

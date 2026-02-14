@@ -21,7 +21,7 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
 
 use crate::http::{AppError, AppResult, AppState};
@@ -130,8 +130,9 @@ async fn handle_flv_stream(
     let mut disconnect_rx = state.connection_manager.subscribe_disconnect();
     let room_id = RoomId::from_string(room_id_str.clone());
 
-    // Create channel wrapper that monitors disconnect signals
-    let (tx, rx_wrapped) = tokio::sync::mpsc::unbounded_channel();
+    // Create bounded channel wrapper that monitors disconnect signals
+    // Match FLV_RESPONSE_CHANNEL_CAPACITY from synctv-xiu (512 entries ≈ 4MB)
+    let (tx, rx_wrapped) = tokio::sync::mpsc::channel(512);
 
     // Spawn task to forward data and monitor disconnect signals.
     // The subscriber_guard lives here — dropped when the task ends (viewer disconnect),
@@ -146,9 +147,15 @@ async fn handle_flv_stream(
                 // Forward FLV data from source
                 data = rx.recv() => {
                     if let Some(chunk) = data {
-                        if tx.send(chunk).is_err() {
-                            debug!("FLV client disconnected");
-                            break;
+                        match tx.try_send(chunk) {
+                            Ok(()) => {}
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                debug!("FLV client disconnected");
+                                break;
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                // Slow client - drop frame to prevent memory buildup
+                            }
                         }
                     } else {
                         debug!("FLV source ended");
@@ -204,7 +211,7 @@ async fn handle_flv_stream(
     });
 
     // Convert to streaming response
-    let body = Body::from_stream(UnboundedReceiverStream::new(rx_wrapped));
+    let body = Body::from_stream(ReceiverStream::new(rx_wrapped));
 
     info!(
         room_id = %room_id.as_str(),

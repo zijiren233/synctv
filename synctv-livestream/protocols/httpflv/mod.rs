@@ -75,8 +75,10 @@ async fn handle_flv_stream(
         }
     }
 
-    // Create channel for HTTP response data
-    let (tx, rx) = mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
+    // Create bounded channel for HTTP response data (backpressure for slow clients)
+    let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(
+        synctv_xiu::httpflv::FLV_RESPONSE_CHANNEL_CAPACITY,
+    );
 
     // Spawn FLV session
     let stream_name = format!("{room_id}/{media_id}");
@@ -94,7 +96,7 @@ async fn handle_flv_stream(
     });
 
     // Return streaming response
-    let body = Body::from_stream(tokio_stream::wrappers::UnboundedReceiverStream::new(rx));
+    let body = Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
 
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -128,7 +130,7 @@ mod tests {
     #[test]
     fn test_http_flv_session_creation() {
         let (event_sender, _) = tokio::sync::mpsc::channel(64);
-        let (response_tx, _response_rx) = mpsc::unbounded_channel();
+        let (response_tx, _response_rx) = mpsc::channel(synctv_xiu::httpflv::FLV_RESPONSE_CHANNEL_CAPACITY);
 
         let session = HttpFlvSession::new(
             "live".to_string(),
@@ -147,7 +149,7 @@ mod tests {
     #[test]
     fn test_flv_session_defaults() {
         let (event_sender, _) = tokio::sync::mpsc::channel(64);
-        let (response_tx, _response_rx) = mpsc::unbounded_channel();
+        let (response_tx, _response_rx) = mpsc::channel(synctv_xiu::httpflv::FLV_RESPONSE_CHANNEL_CAPACITY);
 
         let session = HttpFlvSession::new(
             "live".to_string(),

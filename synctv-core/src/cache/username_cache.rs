@@ -4,7 +4,7 @@
 //! 1. In-memory Moka LRU cache for frequently accessed usernames
 //! 2. Redis persistent cache for cross-node consistency
 
-use redis::{AsyncCommands, Client};
+use redis::AsyncCommands;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -13,7 +13,7 @@ use crate::{models::UserId, Error, Result};
 /// Username cache service with L1 (Moka) + L2 (Redis) strategy
 #[derive(Clone)]
 pub struct UsernameCache {
-    redis_client: Option<Client>,
+    redis_conn: Option<redis::aio::ConnectionManager>,
     memory_cache: Arc<moka::future::Cache<UserId, String>>,
     key_prefix: String,
     ttl_seconds: u64,
@@ -23,37 +23,28 @@ impl UsernameCache {
     /// Create a new `UsernameCache`
     ///
     /// # Arguments
-    /// * `redis_url` - Optional Redis URL. If None, only in-memory caching is used.
+    /// * `redis_conn` - Optional Redis `ConnectionManager`. If None, only in-memory caching is used.
     /// * `key_prefix` - Redis key prefix (e.g., "synctv:username:")
     /// * `memory_cache_size` - Maximum number of entries in memory cache
     /// * `ttl_seconds` - Cache TTL in Redis (0 = no expiration)
     pub fn new(
-        redis_url: Option<String>,
+        redis_conn: Option<redis::aio::ConnectionManager>,
         key_prefix: String,
         memory_cache_size: usize,
         ttl_seconds: u64,
-    ) -> Result<Self> {
-        let redis_client = if let Some(url) = redis_url {
-            Some(
-                Client::open(url)
-                    .map_err(|e| Error::Internal(format!("Failed to connect to Redis: {e}")))?,
-            )
-        } else {
-            None
-        };
-
+    ) -> Self {
         // Use moka for production-grade LRU cache with automatic eviction
         let memory_cache = Arc::new(
             moka::future::CacheBuilder::new(memory_cache_size as u64)
                 .build()
         );
 
-        Ok(Self {
-            redis_client,
+        Self {
+            redis_conn,
             memory_cache,
             key_prefix,
             ttl_seconds,
-        })
+        }
     }
 
     /// Get username for a user ID
@@ -68,11 +59,8 @@ impl UsernameCache {
         }
 
         // Check Redis cache
-        if let Some(ref client) = self.redis_client {
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+        if let Some(ref conn) = self.redis_conn {
+            let mut conn = conn.clone();
 
             let key = format!("{}{}", self.key_prefix, user_id.as_str());
             let username: Option<String> = conn
@@ -102,11 +90,8 @@ impl UsernameCache {
         self.memory_cache.insert(user_id.clone(), username.to_string()).await;
 
         // Update Redis cache
-        if let Some(ref client) = self.redis_client {
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+        if let Some(ref conn) = self.redis_conn {
+            let mut conn = conn.clone();
 
             let key = format!("{}{}", self.key_prefix, user_id.as_str());
 
@@ -152,11 +137,8 @@ impl UsernameCache {
 
         // Check Redis for missing IDs
         if !missing_ids.is_empty() {
-            if let Some(ref client) = self.redis_client {
-                let mut conn = client
-                    .get_multiplexed_async_connection()
-                    .await
-                    .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+            if let Some(ref conn) = self.redis_conn {
+                let mut conn = conn.clone();
 
                 let mut pipe = redis::pipe();
                 for user_id in &missing_ids {
@@ -196,11 +178,8 @@ impl UsernameCache {
         self.memory_cache.invalidate(user_id).await;
 
         // Remove from Redis cache
-        if let Some(ref client) = self.redis_client {
-            let mut conn = client
-                .get_multiplexed_async_connection()
-                .await
-                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+        if let Some(ref conn) = self.redis_conn {
+            let mut conn = conn.clone();
 
             let key = format!("{}{}", self.key_prefix, user_id.as_str());
             let _: () = conn
@@ -239,7 +218,7 @@ impl UsernameCache {
 impl std::fmt::Debug for UsernameCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UsernameCache")
-            .field("redis_enabled", &self.redis_client.is_some())
+            .field("redis_enabled", &self.redis_conn.is_some())
             .field("ttl_seconds", &self.ttl_seconds)
             .finish()
     }
@@ -255,7 +234,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_cache_only() {
-        let cache = UsernameCache::new(None, "test:".to_string(), 10, 0).unwrap();
+        let cache = UsernameCache::new(None, "test:".to_string(), 10, 0);
 
         let user_id = create_test_user_id("user1");
 
@@ -274,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_cache_lru() {
-        let cache = UsernameCache::new(None, "test:".to_string(), 3, 0).unwrap();
+        let cache = UsernameCache::new(None, "test:".to_string(), 3, 0);
 
         let user1 = create_test_user_id("user1");
         let user2 = create_test_user_id("user2");
@@ -307,7 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_lookup() {
-        let cache = UsernameCache::new(None, "test:".to_string(), 10, 0).unwrap();
+        let cache = UsernameCache::new(None, "test:".to_string(), 10, 0);
 
         let user1 = create_test_user_id("user1");
         let user2 = create_test_user_id("user2");

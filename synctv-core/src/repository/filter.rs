@@ -165,10 +165,12 @@ impl Iden for ColumnRef {
     fn unquoted(&self, s: &mut dyn std::fmt::Write) {
         match self {
             Self::Simple(name) => {
-                write!(s, "{name}").unwrap();
+                // write! to fmt::Write only fails if the underlying writer fails,
+                // which doesn't happen with SeaQuery's internal string buffer.
+                let _ = write!(s, "{name}");
             }
             Self::Qualified { table, column } => {
-                write!(s, "{table}.{column}").unwrap();
+                let _ = write!(s, "{table}.{column}");
             }
         }
     }

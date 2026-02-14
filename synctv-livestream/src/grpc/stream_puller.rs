@@ -135,7 +135,16 @@ impl GrpcStreamPuller {
     /// For high-traffic scenarios, a connection pool keyed by publisher_node_addr could
     /// be implemented to reduce connection overhead.
     async fn connect_and_stream(&self, data_sender: &FrameDataSender) -> anyhow::Result<()> {
-        let publisher_url = format!("http://{}", self.publisher_node_addr);
+        // gRPC uses HTTP/2 as transport. The URL scheme should be:
+        // - http:// for plaintext (development/internal networks)
+        // - https:// for TLS (production)
+        // If grpc_address already contains a scheme, use it directly; otherwise default to http://
+        let publisher_url = if self.publisher_node_addr.starts_with("http://") || self.publisher_node_addr.starts_with("https://") {
+            self.publisher_node_addr.clone()
+        } else {
+            format!("http://{}", self.publisher_node_addr)
+        };
+
         let mut client = StreamRelayServiceClient::connect(publisher_url)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to connect to publisher: {e}"))?;
