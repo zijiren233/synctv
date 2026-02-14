@@ -27,6 +27,7 @@ impl UsernameCache {
     /// * `key_prefix` - Redis key prefix (e.g., "synctv:username:")
     /// * `memory_cache_size` - Maximum number of entries in memory cache
     /// * `ttl_seconds` - Cache TTL in Redis (0 = no expiration)
+    #[must_use] 
     pub fn new(
         redis_conn: Option<redis::aio::ConnectionManager>,
         key_prefix: String,

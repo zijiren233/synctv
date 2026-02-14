@@ -45,7 +45,7 @@ enum ServerSessionState {
 }
 
 /// Overall session idle timeout: if no complete RTMP message is received
-/// within this duration, the session is terminated (prevents slow-rate DoS).
+/// within this duration, the session is terminated (prevents slow-rate `DoS`).
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct ServerSession {

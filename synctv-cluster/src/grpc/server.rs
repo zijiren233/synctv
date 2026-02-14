@@ -31,7 +31,7 @@ pub struct ClusterServer {
 impl ClusterServer {
     /// Create a new cluster server
     #[must_use]
-    pub fn new(node_registry: Arc<NodeRegistry>, node_id: String) -> Self {
+    pub const fn new(node_registry: Arc<NodeRegistry>, node_id: String) -> Self {
         Self {
             node_registry,
             connection_manager: None,
@@ -46,12 +46,12 @@ impl ClusterServer {
         self
     }
 
-    /// Maximum length for node_id
+    /// Maximum length for `node_id`
     const MAX_NODE_ID_LEN: usize = 64;
-    /// Maximum number of user_ids in a single request
+    /// Maximum number of `user_ids` in a single request
     const MAX_USER_IDS: usize = 1000;
 
-    /// Validate a node_id: non-empty, max 64 chars, alphanumeric + underscore/hyphen
+    /// Validate a `node_id`: non-empty, max 64 chars, alphanumeric + underscore/hyphen
     fn validate_node_id(node_id: &str) -> std::result::Result<(), Status> {
         if node_id.is_empty() {
             return Err(Status::invalid_argument("node_id must not be empty"));
@@ -270,7 +270,7 @@ impl ClusterService for ClusterServer {
 
     /// Broadcast an event to all nodes
     ///
-    /// Not implemented - events are broadcast via Redis Pub/Sub through ClusterManager.
+    /// Not implemented - events are broadcast via Redis Pub/Sub through `ClusterManager`.
     async fn broadcast_event(
         &self,
         _request: Request<BroadcastEventRequest>,
@@ -283,7 +283,7 @@ impl ClusterService for ClusterServer {
     /// Get online status of users on this node
     ///
     /// Returns the online status for requested users based on this node's
-    /// ConnectionManager. In a multi-replica setup, the caller should fan out
+    /// `ConnectionManager`. In a multi-replica setup, the caller should fan out
     /// this query to all nodes to get the global picture.
     async fn get_user_online_status(
         &self,
@@ -331,7 +331,7 @@ impl ClusterService for ClusterServer {
     /// Get connections for a room on this node
     ///
     /// Returns the active connections in a specific room based on this node's
-    /// ConnectionManager. In a multi-replica setup, the caller should fan out
+    /// `ConnectionManager`. In a multi-replica setup, the caller should fan out
     /// this query to all nodes to get the global room connections.
     async fn get_room_connections(
         &self,

@@ -18,7 +18,7 @@ const BLOCKED_HOSTNAME_SUFFIXES: &[&str] = &[
 ];
 
 /// Check if an IP address is in a private/reserved range that should be blocked.
-fn is_blocked_ip(ip: IpAddr) -> bool {
+const fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_loopback()           // 127.0.0.0/8

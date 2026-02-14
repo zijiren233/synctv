@@ -55,7 +55,7 @@ pub struct ClientApiImpl {
 impl ClientApiImpl {
     #[allow(clippy::too_many_arguments)]
     #[must_use]
-    pub fn new(
+    pub const fn new(
         user_service: Arc<UserService>,
         room_service: Arc<RoomService>,
         connection_manager: Arc<ConnectionManager>,
@@ -794,7 +794,7 @@ impl ClientApiImpl {
             serde_json::json!({})
         } else {
             serde_json::from_slice(&req.source_config)
-                .map_err(|e| format!("Invalid source_config JSON: {}", e))?
+                .map_err(|e| format!("Invalid source_config JSON: {e}"))?
         };
 
         // Use provided title or default
@@ -915,7 +915,7 @@ impl ClientApiImpl {
                 serde_json::json!({})
             } else {
                 serde_json::from_slice(&item.source_config)
-                    .map_err(|e| format!("Invalid source_config JSON: {}", e))?
+                    .map_err(|e| format!("Invalid source_config JSON: {e}"))?
             };
             let title = if item.title.is_empty() {
                 source_config.get("url")

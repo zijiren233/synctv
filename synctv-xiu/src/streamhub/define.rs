@@ -143,7 +143,7 @@ pub const PACKET_DATA_CHANNEL_CAPACITY: usize = 256;
 pub type StreamHubEventSender = mpsc::Sender<StreamHubEvent>;
 pub type StreamHubEventReceiver = mpsc::Receiver<StreamHubEvent>;
 
-/// Default capacity for the bounded StreamHub event channel.
+/// Default capacity for the bounded `StreamHub` event channel.
 /// Large enough for normal operation but prevents unbounded memory growth.
 pub const STREAM_HUB_EVENT_CHANNEL_CAPACITY: usize = 4096;
 

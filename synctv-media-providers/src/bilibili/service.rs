@@ -75,7 +75,7 @@ impl Default for BilibiliService {
     }
 }
 
-/// Create a BilibiliClient from a cookies map (from proto requests)
+/// Create a `BilibiliClient` from a cookies map (from proto requests)
 fn client_from_cookies(cookies: &HashMap<String, String>) -> Result<BilibiliClient, BilibiliError> {
     if cookies.is_empty() {
         BilibiliClient::new()
@@ -84,7 +84,7 @@ fn client_from_cookies(cookies: &HashMap<String, String>) -> Result<BilibiliClie
     }
 }
 
-/// Convert client-layer VideoPageInfo to proto VideoPageInfo
+/// Convert client-layer `VideoPageInfo` to proto `VideoPageInfo`
 fn to_proto_page_info(page_info: super::client::VideoPageInfo) -> VideoPageInfo {
     VideoPageInfo {
         title: page_info.title,

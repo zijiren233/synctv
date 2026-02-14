@@ -308,8 +308,7 @@ impl TsMuxer {
             // Check adaptation field control bit (bit 5 of byte 3)
             // ts_header has at least 4 bytes at this point (sync byte + PID + flags)
             let has_adaptation_field = ts_header.get(3)
-                .map(|b| (b & 0x20) > 0)
-                .unwrap_or(false);
+                .is_some_and(|b| (b & 0x20) > 0);
             if has_adaptation_field {
                 /*adaption filed length -- add 6 for pcr length*/
                 ts_header.add_u8_at(4, stuffing_length as u8)?;

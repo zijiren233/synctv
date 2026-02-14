@@ -130,7 +130,7 @@ impl ClusterManager {
             tokio::spawn(async move {
                 loop {
                     tokio::select! {
-                        _ = cancel_critical.cancelled() => {
+                        () = cancel_critical.cancelled() => {
                             // Drain remaining critical events before exiting
                             while let Ok(req) = critical_rx.try_recv() {
                                 let _ = normal_tx.send(req).await;
@@ -237,7 +237,7 @@ impl ClusterManager {
 
             loop {
                 tokio::select! {
-                    _ = cancel_token.cancelled() => {
+                    () = cancel_token.cancelled() => {
                         info!("Heartbeat loop cancelled");
                         return;
                     }

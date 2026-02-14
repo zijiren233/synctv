@@ -34,7 +34,7 @@ pub struct LivestreamConfig {
 
 /// Handle returned by [`LivestreamServer::start`].
 ///
-/// Owns the spawned tasks (StreamHub event loop, RTMP server, PublisherManager)
+/// Owns the spawned tasks (`StreamHub` event loop, RTMP server, `PublisherManager`)
 /// and exposes the shared infrastructure components.
 pub struct LivestreamHandle {
     pub infrastructure: Arc<LiveStreamingInfrastructure>,
@@ -79,52 +79,37 @@ impl LivestreamHandle {
 
         // 1. Stop external publish cleanup
         self.external_publish_cleanup.abort();
-        match timeout(timeout_duration, &mut self.external_publish_cleanup).await {
-            Ok(_) => info!("External publish cleanup stopped"),
-            Err(_) => {
-                warn!("External publish cleanup shutdown timed out");
-                all_graceful = false;
-            }
+        if let Ok(_) = timeout(timeout_duration, &mut self.external_publish_cleanup).await { info!("External publish cleanup stopped") } else {
+            warn!("External publish cleanup shutdown timed out");
+            all_graceful = false;
         }
 
         // 2. Stop pull manager cleanup
         self.pull_manager_cleanup.abort();
-        match timeout(timeout_duration, &mut self.pull_manager_cleanup).await {
-            Ok(_) => info!("Pull manager cleanup stopped"),
-            Err(_) => {
-                warn!("Pull manager cleanup shutdown timed out");
-                all_graceful = false;
-            }
+        if let Ok(_) = timeout(timeout_duration, &mut self.pull_manager_cleanup).await { info!("Pull manager cleanup stopped") } else {
+            warn!("Pull manager cleanup shutdown timed out");
+            all_graceful = false;
         }
 
         // 3. Stop publisher manager
         self.publisher_manager_handle.abort();
-        match timeout(timeout_duration, &mut self.publisher_manager_handle).await {
-            Ok(_) => info!("Publisher manager stopped"),
-            Err(_) => {
-                warn!("Publisher manager shutdown timed out");
-                all_graceful = false;
-            }
+        if let Ok(_) = timeout(timeout_duration, &mut self.publisher_manager_handle).await { info!("Publisher manager stopped") } else {
+            warn!("Publisher manager shutdown timed out");
+            all_graceful = false;
         }
 
         // 4. Stop RTMP server
         self.rtmp_handle.abort();
-        match timeout(timeout_duration, &mut self.rtmp_handle).await {
-            Ok(_) => info!("RTMP server stopped"),
-            Err(_) => {
-                warn!("RTMP server shutdown timed out");
-                all_graceful = false;
-            }
+        if let Ok(_) = timeout(timeout_duration, &mut self.rtmp_handle).await { info!("RTMP server stopped") } else {
+            warn!("RTMP server shutdown timed out");
+            all_graceful = false;
         }
 
         // 5. Stop StreamHub (last, as other components depend on it)
         self.hub_handle.abort();
-        match timeout(timeout_duration, &mut self.hub_handle).await {
-            Ok(_) => info!("StreamHub stopped"),
-            Err(_) => {
-                warn!("StreamHub shutdown timed out");
-                all_graceful = false;
-            }
+        if let Ok(_) = timeout(timeout_duration, &mut self.hub_handle).await { info!("StreamHub stopped") } else {
+            warn!("StreamHub shutdown timed out");
+            all_graceful = false;
         }
 
         if all_graceful {
@@ -167,8 +152,8 @@ impl LivestreamServer {
 
     /// Start the entire livestream infrastructure.
     ///
-    /// Creates StreamHub, RTMP server, PullStreamManager,
-    /// ExternalPublishManager, PublisherManager, and LiveStreamingInfrastructure.
+    /// Creates `StreamHub`, RTMP server, `PullStreamManager`,
+    /// `ExternalPublishManager`, `PublisherManager`, and `LiveStreamingInfrastructure`.
     /// Returns a handle with public components.
     pub async fn start(self) -> StreamResult<LivestreamHandle> {
         // 1. Create StreamHub channels and hub (bounded to prevent OOM under load)
@@ -189,7 +174,7 @@ impl LivestreamServer {
         // Cancellation token for RTMP sessions — cancelled on StreamHub restart
         // to actively terminate all sessions instead of waiting for broken pipe detection
         let rtmp_session_token = CancellationToken::new();
-        let rtmp_session_token_for_hub = rtmp_session_token.clone();
+        let rtmp_session_token_for_hub = rtmp_session_token;
 
         // 2. Spawn StreamHub event loop with automatic recovery
         let hub_handle = tokio::spawn(async move {

@@ -83,8 +83,8 @@ macro_rules! setting {
 /// Raw settings storage - shared across all settings
 ///
 /// Uses `std::sync::RwLock` (not `tokio::sync::RwLock`) because all lock-guarded
-/// operations are fast, synchronous HashMap lookups/inserts with no `.await` points.
-/// This avoids the overhead of async RwLock and is safe since the lock is never
+/// operations are fast, synchronous `HashMap` lookups/inserts with no `.await` points.
+/// This avoids the overhead of async `RwLock` and is safe since the lock is never
 /// held across an await point.
 #[derive(Clone)]
 pub struct SettingsStorage {

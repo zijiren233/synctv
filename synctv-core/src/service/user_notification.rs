@@ -113,7 +113,7 @@ impl UserNotificationService {
             .ok_or_else(|| Error::NotFound("Notification not found".to_string()))
     }
 
-    /// List notifications for a user (single query with COUNT(*) OVER())
+    /// List notifications for a user (single query with COUNT(*) `OVER()`)
     pub async fn list(
         &self,
         user_id: &UserId,

@@ -141,7 +141,7 @@ impl EmailService {
     /// Store verification code (Redis if available, otherwise local memory)
     async fn store_code(&self, email: &str, code: &VerificationCode) -> Result<()> {
         if let Some(ref redis) = self.redis {
-            let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
+            let key = format!("{EMAIL_CODE_KEY_PREFIX}{email}");
             let value = serde_json::to_string(code)
                 .map_err(|e| Error::Internal(format!("Failed to serialize verification code: {e}")))?;
 
@@ -170,7 +170,7 @@ impl EmailService {
     #[allow(dead_code)]
     async fn get_code(&self, email: &str) -> Result<Option<VerificationCode>> {
         if let Some(ref redis) = self.redis {
-            let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
+            let key = format!("{EMAIL_CODE_KEY_PREFIX}{email}");
 
             let mut conn = redis
                 .get_multiplexed_tokio_connection()
@@ -214,7 +214,7 @@ impl EmailService {
     #[allow(dead_code)]
     async fn remove_code(&self, email: &str) -> Result<()> {
         if let Some(ref redis) = self.redis {
-            let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
+            let key = format!("{EMAIL_CODE_KEY_PREFIX}{email}");
 
             let mut conn = redis
                 .get_multiplexed_tokio_connection()
@@ -394,7 +394,7 @@ impl EmailService {
     /// Verify code for email
     ///
     /// Uses atomic check-and-update to prevent concurrent verification attempts
-    /// from bypassing the max_attempts check.
+    /// from bypassing the `max_attempts` check.
     pub async fn verify_code(&self, email: &str, code: &str) -> Result<()> {
         if let Some(ref redis) = self.redis {
             // Redis path: use Lua script for atomic read-check-increment-return
@@ -412,7 +412,7 @@ impl EmailService {
         email: &str,
         code: &str,
     ) -> Result<()> {
-        let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
+        let key = format!("{EMAIL_CODE_KEY_PREFIX}{email}");
 
         let mut conn = redis
             .get_multiplexed_tokio_connection()
@@ -427,7 +427,7 @@ impl EmailService {
         //   -4 = wrong code (attempts incremented)
         //    1 = success (key deleted)
         let script = redis::Script::new(
-            r#"
+            r"
             local data = redis.call('GET', KEYS[1])
             if not data then return -1 end
             local obj = cjson.decode(data)
@@ -449,7 +449,7 @@ impl EmailService {
             end
             redis.call('DEL', KEYS[1])
             return 1
-            "#,
+            ",
         );
 
         let created_at_millis = Utc::now().timestamp_millis();
@@ -792,7 +792,7 @@ impl EmailService {
 
     /// Check if Redis is being used for code storage
     #[must_use]
-    pub fn uses_redis(&self) -> bool {
+    pub const fn uses_redis(&self) -> bool {
         self.redis.is_some()
     }
 }

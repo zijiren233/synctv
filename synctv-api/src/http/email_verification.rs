@@ -53,7 +53,7 @@ pub struct EmailVerificationConfirm {
     pub token: String,
 }
 
-/// Build an EmailApiImpl from AppState, or return an error if email is not configured.
+/// Build an `EmailApiImpl` from `AppState`, or return an error if email is not configured.
 fn require_email_api(state: &AppState) -> Result<EmailApiImpl, AppError> {
     let email_service = state
         .email_service
@@ -96,7 +96,7 @@ pub async fn send_verification_email(
     let result = email_api
         .send_verification_email(&req.email)
         .await
-        .map_err(|e| AppError::internal_server_error(e))?;
+        .map_err(AppError::internal_server_error)?;
 
     Ok(Json(EmailVerificationResponse {
         message: result.message,
@@ -116,7 +116,7 @@ pub async fn confirm_email(
     let result = email_api
         .confirm_email(&req.email, &req.token)
         .await
-        .map_err(|e| AppError::bad_request(e))?;
+        .map_err(AppError::bad_request)?;
 
     Ok(Json(serde_json::json!({
         "message": result.message,
@@ -136,7 +136,7 @@ pub async fn request_password_reset(
     let result = email_api
         .request_password_reset(&req.email)
         .await
-        .map_err(|e| AppError::internal_server_error(e))?;
+        .map_err(AppError::internal_server_error)?;
 
     Ok(Json(PasswordResetResponse {
         message: result.message,
@@ -156,7 +156,7 @@ pub async fn confirm_password_reset(
     let result = email_api
         .confirm_password_reset(&req.email, &req.token, &req.new_password)
         .await
-        .map_err(|e| AppError::bad_request(e))?;
+        .map_err(AppError::bad_request)?;
 
     Ok(Json(serde_json::json!({
         "message": result.message,

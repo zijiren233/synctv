@@ -70,11 +70,11 @@ pub async fn init_services(
     info!("JWT service initialized");
 
     // Initialize shared Redis connection (used by token blacklist, rate limiter, and username cache)
-    let redis_conn = if !config.redis.url.is_empty() {
+    let redis_conn = if config.redis.url.is_empty() {
+        None
+    } else {
         let client = redis::Client::open(config.redis.url.clone())?;
         Some(redis::aio::ConnectionManager::new(client).await?)
-    } else {
-        None
     };
 
     // Initialize token blacklist service

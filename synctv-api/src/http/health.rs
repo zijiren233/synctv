@@ -28,13 +28,13 @@ use crate::observability::metrics;
 /// information disclosure in production. In production, use a separate
 /// metrics collection mechanism (e.g., Prometheus scraping on a private port).
 pub fn create_health_router() -> Router<AppState> {
-    let router = Router::new()
-        .route("/health", get(liveness_check))
-        .route("/health/live", get(liveness_check))
-        .route("/health/ready", get(readiness_check));
+    
 
     // Metrics are conditionally registered via create_health_router_with_config
-    router
+    Router::new()
+        .route("/health", get(liveness_check))
+        .route("/health/live", get(liveness_check))
+        .route("/health/ready", get(readiness_check))
 }
 
 /// Create health router with optional metrics endpoint (development mode only)

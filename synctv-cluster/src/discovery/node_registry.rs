@@ -43,7 +43,7 @@ impl NodeInfo {
 
     /// Create with a specific epoch (for re-registration)
     #[must_use]
-    pub fn with_epoch(mut self, epoch: u64) -> Self {
+    pub const fn with_epoch(mut self, epoch: u64) -> Self {
         self.epoch = epoch;
         self
     }
@@ -73,13 +73,13 @@ pub struct FencingToken {
 impl FencingToken {
     /// Create a new fencing token
     #[must_use]
-    pub fn new(node_id: String, epoch: u64) -> Self {
+    pub const fn new(node_id: String, epoch: u64) -> Self {
         Self { node_id, epoch }
     }
 
     /// Check if this token is newer than another (same node, higher epoch)
     #[must_use]
-    pub fn is_newer_than(&self, other: &FencingToken) -> bool {
+    pub fn is_newer_than(&self, other: &Self) -> bool {
         self.node_id == other.node_id && self.epoch > other.epoch
     }
 }
@@ -136,7 +136,7 @@ impl NodeRegistry {
 
     /// Get or create a cached multiplexed Redis connection.
     ///
-    /// MultiplexedConnection handles concurrent requests internally and
+    /// `MultiplexedConnection` handles concurrent requests internally and
     /// reconnects automatically, so we reuse a single instance.
     async fn get_conn(&self, client: &redis::Client) -> Result<redis::aio::MultiplexedConnection> {
         let mut guard = self.cached_conn.lock().await;
@@ -188,7 +188,7 @@ impl NodeRegistry {
             // Atomic Lua script: read epoch, increment, write with TTL
             // Returns the new epoch assigned
             let script = redis::Script::new(
-                r#"
+                r"
                 local key = KEYS[1]
                 local new_node_json = ARGV[1]
                 local ttl = tonumber(ARGV[2])
@@ -222,7 +222,7 @@ impl NodeRegistry {
                 redis.call('SETEX', key, ttl, final_json)
 
                 return new_epoch
-                "#,
+                ",
             );
 
             let now_rfc3339 = Utc::now().to_rfc3339();
@@ -267,7 +267,7 @@ impl NodeRegistry {
 
     /// Send heartbeat to keep this node alive with fencing token validation
     ///
-    /// Uses an atomic Lua script to check epoch == expected_epoch before writing,
+    /// Uses an atomic Lua script to check epoch == `expected_epoch` before writing,
     /// preventing stale heartbeats from overwriting newer registrations.
     ///
     /// Returns `HeartbeatResult` indicating whether re-registration is needed.
@@ -299,7 +299,7 @@ impl NodeRegistry {
             //   -2 if epoch mismatch (returns remote epoch as second value via error message)
             //   current_epoch on success
             let script = redis::Script::new(
-                r#"
+                r"
                 local key = KEYS[1]
                 local expected_epoch = tonumber(ARGV[1])
                 local new_node_json = ARGV[2]
@@ -326,7 +326,7 @@ impl NodeRegistry {
                 local final_json = cjson.encode(node)
                 redis.call('SETEX', key, ttl, final_json)
                 return expected_epoch
-                "#,
+                ",
             );
 
             let result: i64 = timeout(
@@ -377,7 +377,7 @@ impl NodeRegistry {
 
     /// Unregister this node with fencing token validation
     ///
-    /// Uses an atomic Lua script to check epoch <= local_epoch before deleting.
+    /// Uses an atomic Lua script to check epoch <= `local_epoch` before deleting.
     /// Prevents stale nodes from unregistering newer registrations.
     pub async fn unregister(&self) -> Result<()> {
         if let Some(ref client) = self.redis_client {
@@ -389,7 +389,7 @@ impl NodeRegistry {
             // Atomic Lua script: only delete if existing epoch <= our epoch
             // Returns 1 if deleted, 0 if skipped (newer epoch exists), -1 if key not found
             let script = redis::Script::new(
-                r#"
+                r"
                 local key = KEYS[1]
                 local local_epoch = tonumber(ARGV[1])
 
@@ -408,7 +408,7 @@ impl NodeRegistry {
 
                 redis.call('DEL', key)
                 return 1
-                "#,
+                ",
             );
 
             let result: i64 = timeout(
@@ -454,7 +454,7 @@ impl NodeRegistry {
             // Atomic Lua script: only register if incoming epoch >= existing epoch
             // Returns 1 if written, 0 if rejected (existing epoch is higher)
             let script = redis::Script::new(
-                r#"
+                r"
                 local key = KEYS[1]
                 local new_json = ARGV[1]
                 local ttl = tonumber(ARGV[2])
@@ -471,7 +471,7 @@ impl NodeRegistry {
 
                 redis.call('SETEX', key, ttl, new_json)
                 return 1
-                "#,
+                ",
             );
 
             let result: i64 = timeout(
@@ -514,7 +514,7 @@ impl NodeRegistry {
 
             // Atomic Lua: read → update last_heartbeat → write back with fresh TTL
             let script = redis::Script::new(
-                r#"
+                r"
                 local val = redis.call('GET', KEYS[1])
                 if not val then return nil end
                 local obj = cjson.decode(val)
@@ -522,7 +522,7 @@ impl NodeRegistry {
                 local updated = cjson.encode(obj)
                 redis.call('SETEX', KEYS[1], ARGV[2], updated)
                 return updated
-                "#,
+                ",
             );
 
             let result: Option<String> = timeout(
@@ -566,7 +566,7 @@ impl NodeRegistry {
             if let Some(epoch) = expected_epoch {
                 // Atomic Lua script: only delete if existing epoch <= expected epoch
                 let script = redis::Script::new(
-                    r#"
+                    r"
                     local key = KEYS[1]
                     local expected_epoch = tonumber(ARGV[1])
 
@@ -584,7 +584,7 @@ impl NodeRegistry {
 
                     redis.call('DEL', key)
                     return 1
-                    "#,
+                    ",
                 );
 
                 let result: i64 = timeout(

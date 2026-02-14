@@ -83,9 +83,9 @@ pub struct ClientSession {
     sub_stream_name: Option<String>,
     /*configure how many gops will be cached.*/
     gop_num: usize,
-    /// Tracks whether this session has an active subscription to the StreamHub
+    /// Tracks whether this session has an active subscription to the `StreamHub`
     is_subscribed: bool,
-    /// Tracks whether this session has published to the StreamHub
+    /// Tracks whether this session has published to the `StreamHub`
     is_publishing: bool,
 }
 
@@ -153,7 +153,7 @@ impl ClientSession {
         result
     }
 
-    /// Clean up StreamHub subscriptions/publications on disconnect
+    /// Clean up `StreamHub` subscriptions/publications on disconnect
     async fn cleanup(&mut self) -> Result<(), SessionError> {
         if self.is_publishing {
             tracing::info!(

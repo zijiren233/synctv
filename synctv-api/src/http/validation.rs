@@ -13,7 +13,7 @@ pub mod limits {
     pub const USERNAME_MAX: usize = 32;
     /// Minimum username length
     pub const USERNAME_MIN: usize = 2;
-    /// Maximum password length (prevent DoS via hashing)
+    /// Maximum password length (prevent `DoS` via hashing)
     pub const PASSWORD_MAX: usize = 256;
     /// Minimum password length
     pub const PASSWORD_MIN: usize = 8;
@@ -29,13 +29,13 @@ pub mod limits {
     pub const URL_MAX: usize = 2048;
     /// Maximum email length
     pub const EMAIL_MAX: usize = 254;
-    /// Maximum ID length (room_id, user_id, media_id)
+    /// Maximum ID length (`room_id`, `user_id`, `media_id`)
     pub const ID_MAX: usize = 64;
 }
 
 /// Regex patterns for validation
 mod patterns {
-    use super::*;
+    use super::{LazyLock, Regex};
 
     /// Valid username: alphanumeric, underscores, hyphens, and CJK characters
     pub static USERNAME: LazyLock<Regex> = LazyLock::new(|| {
@@ -435,7 +435,7 @@ pub fn validate_playback_speed(speed: f64) -> ValidationResult<f64> {
         return Err(ValidationError::InvalidValue("Speed must be a finite number"));
     }
     // Reasonable range: 0.25x to 4x
-    if speed < 0.25 || speed > 4.0 {
+    if !(0.25..=4.0).contains(&speed) {
         return Err(ValidationError::InvalidValue(
             "Speed must be between 0.25 and 4.0",
         ));
@@ -444,7 +444,7 @@ pub fn validate_playback_speed(speed: f64) -> ValidationResult<f64> {
 }
 
 /// Validate pagination limit
-pub fn validate_pagination_limit(limit: u32) -> ValidationResult<u32> {
+pub const fn validate_pagination_limit(limit: u32) -> ValidationResult<u32> {
     // Default and max limits
     const DEFAULT_LIMIT: u32 = 20;
     const MAX_LIMIT: u32 = 100;
@@ -462,7 +462,7 @@ pub fn validate_pagination_limit(limit: u32) -> ValidationResult<u32> {
     Ok(limit)
 }
 
-/// Validate generic ID (user_id, media_id, etc.)
+/// Validate generic ID (`user_id`, `media_id`, etc.)
 pub fn validate_id(id: &str, field_name: &'static str) -> ValidationResult<String> {
     let sanitized = sanitize_string(id);
 

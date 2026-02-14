@@ -31,7 +31,7 @@ use crate::proto::admin::{
 
 use crate::impls::AdminApiImpl;
 
-/// Convert a String error from AdminApiImpl into a gRPC Status.
+/// Convert a String error from `AdminApiImpl` into a gRPC Status.
 fn api_err(err: String) -> Status {
     tracing::error!("Admin API error: {err}");
     Status::internal("Internal error")
@@ -55,7 +55,7 @@ pub struct AdminServiceImpl {
 
 impl AdminServiceImpl {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         user_service: Arc<UserService>,
         admin_api: Arc<AdminApiImpl>,
     ) -> Self {
@@ -66,7 +66,7 @@ impl AdminServiceImpl {
     }
 
     /// Check if user has admin role and return their role.
-    /// Also checks banned/deleted status and token invalidation (matching HTTP AuthAdmin).
+    /// Also checks banned/deleted status and token invalidation (matching HTTP `AuthAdmin`).
     async fn check_admin_get_role(
         &self,
         request: &Request<impl std::fmt::Debug>,
@@ -119,7 +119,7 @@ impl AdminServiceImpl {
     }
 
     /// Check if user has root role (load from database).
-    /// Also checks banned/deleted status and token invalidation (matching HTTP AuthRoot).
+    /// Also checks banned/deleted status and token invalidation (matching HTTP `AuthRoot`).
     async fn check_root(&self, request: &Request<impl std::fmt::Debug>) -> Result<(), Status> {
         let user_context = request
             .extensions()

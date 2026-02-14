@@ -168,7 +168,7 @@ impl ClientServiceImpl {
         }
     }
 
-    /// Build an EmailApiImpl from the configured services, or return an error message
+    /// Build an `EmailApiImpl` from the configured services, or return an error message
     fn email_api(&self) -> Result<crate::impls::EmailApiImpl, String> {
         let email_service = self.email_service.as_ref()
             .ok_or_else(|| "Email service is not configured on this server. Please contact the administrator.".to_string())?;
@@ -1107,7 +1107,7 @@ impl EmailService for ClientServiceImpl {
         request: Request<SendVerificationEmailRequest>,
     ) -> Result<Response<SendVerificationEmailResponse>, Status> {
         let email_api = self.email_api()
-            .map_err(|e| Status::failed_precondition(e))?;
+            .map_err(Status::failed_precondition)?;
         let req = request.into_inner();
 
         let result = email_api
@@ -1125,13 +1125,13 @@ impl EmailService for ClientServiceImpl {
         request: Request<ConfirmEmailRequest>,
     ) -> Result<Response<ConfirmEmailResponse>, Status> {
         let email_api = self.email_api()
-            .map_err(|e| Status::failed_precondition(e))?;
+            .map_err(Status::failed_precondition)?;
         let req = request.into_inner();
 
         let result = email_api
             .confirm_email(&req.email, &req.token)
             .await
-            .map_err(|e| Status::invalid_argument(e))?;
+            .map_err(Status::invalid_argument)?;
 
         Ok(Response::new(ConfirmEmailResponse {
             message: result.message,
@@ -1144,7 +1144,7 @@ impl EmailService for ClientServiceImpl {
         request: Request<RequestPasswordResetRequest>,
     ) -> Result<Response<RequestPasswordResetResponse>, Status> {
         let email_api = self.email_api()
-            .map_err(|e| Status::failed_precondition(e))?;
+            .map_err(Status::failed_precondition)?;
         let req = request.into_inner();
 
         let result = email_api
@@ -1162,13 +1162,13 @@ impl EmailService for ClientServiceImpl {
         request: Request<ConfirmPasswordResetRequest>,
     ) -> Result<Response<ConfirmPasswordResetResponse>, Status> {
         let email_api = self.email_api()
-            .map_err(|e| Status::failed_precondition(e))?;
+            .map_err(Status::failed_precondition)?;
         let req = request.into_inner();
 
         let result = email_api
             .confirm_password_reset(&req.email, &req.token, &req.new_password)
             .await
-            .map_err(|e| Status::invalid_argument(e))?;
+            .map_err(Status::invalid_argument)?;
 
         Ok(Response::new(ConfirmPasswordResetResponse {
             message: result.message,

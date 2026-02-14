@@ -20,7 +20,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
 
-/// Error type for SingleFlight operations
+/// Error type for `SingleFlight` operations
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SingleFlightError<E> {
     /// The worker task panicked or was cancelled
@@ -31,7 +31,7 @@ pub enum SingleFlightError<E> {
     Inner(E),
 }
 
-/// SingleFlight prevents duplicate concurrent function executions.
+/// `SingleFlight` prevents duplicate concurrent function executions.
 ///
 /// When multiple tasks attempt to execute the same operation (by key)
 /// simultaneously, only one execution proceeds while others wait for the result.
@@ -54,7 +54,8 @@ where
     V: Clone + Send + Sync + 'static,
     E: Clone + Send + Sync + 'static,
 {
-    /// Create a new SingleFlight instance
+    /// Create a new `SingleFlight` instance
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             group: Arc::new(async_singleflight::Group::new()),

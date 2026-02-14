@@ -10,7 +10,7 @@ pub static REGISTRY: std::sync::LazyLock<Registry> = std::sync::LazyLock::new(Re
 
 /// HTTP metrics
 pub mod http {
-    use super::*;
+    use super::{IntCounterVec, REGISTRY, HistogramVec, IntGauge, IntGaugeVec};
     use prometheus::{HistogramOpts, Opts, register_int_counter_vec_with_registry, register_int_gauge_with_registry, register_int_gauge_vec_with_registry};
 
     /// Total HTTP requests, labeled by method, path, and status code.
@@ -45,7 +45,7 @@ pub mod http {
         ).expect("Failed to register HTTP_REQUESTS_IN_FLIGHT")
     });
 
-    /// Active WebSocket connections, labeled by room_id.
+    /// Active WebSocket connections, labeled by `room_id`.
     pub static WEBSOCKET_CONNECTIONS_ACTIVE: std::sync::LazyLock<IntGaugeVec> = std::sync::LazyLock::new(|| {
         register_int_gauge_vec_with_registry!(
             Opts::new("websocket_connections_active", "Number of active WebSocket connections"),

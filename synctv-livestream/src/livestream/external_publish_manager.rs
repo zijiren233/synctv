@@ -46,6 +46,7 @@ impl ExternalPublishManager {
     ///
     /// Should be called once after creating the manager to prevent memory leaks
     /// from failed stream creation attempts.
+    #[must_use] 
     pub fn start_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
         self.pool.start_creation_lock_cleanup()
     }

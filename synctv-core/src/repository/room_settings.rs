@@ -30,7 +30,7 @@ impl RoomSettingsRepository {
 
     /// Get a reference to the database pool
     #[must_use]
-    pub fn pool(&self) -> &PgPool {
+    pub const fn pool(&self) -> &PgPool {
         &self.pool
     }
 

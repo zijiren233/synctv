@@ -137,8 +137,8 @@ impl ChatService {
     ///
     /// # Arguments
     /// * `message_id` - Message ID to delete
-    /// * `user_id` - User ID requesting deletion (must be sender or have DELETE_CHAT permission)
-    /// * `has_delete_permission` - Whether the user has DELETE_CHAT permission in this room
+    /// * `user_id` - User ID requesting deletion (must be sender or have `DELETE_CHAT` permission)
+    /// * `has_delete_permission` - Whether the user has `DELETE_CHAT` permission in this room
     ///
     /// # Returns
     /// Result indicating success or failure

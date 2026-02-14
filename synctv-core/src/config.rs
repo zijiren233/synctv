@@ -56,7 +56,7 @@ pub struct ServerConfig {
     pub trusted_proxies: Vec<String>,
     /// CORS allowed origins. In development mode, all origins are allowed.
     /// In production, this should be set to specific domains.
-    /// Example: ["https://app.example.com", "https://admin.example.com"]
+    /// Example: ["<https://app.example.com>", "<https://admin.example.com>"]
     pub cors_allowed_origins: Vec<String>,
     /// Shared secret for authenticating cluster gRPC calls between nodes.
     /// When set, all inter-node gRPC requests must include this secret in the
@@ -85,6 +85,7 @@ impl ServerConfig {
     /// Returns `true` if the IP matches any of the configured trusted proxies
     /// (supports both single IPs and CIDR notation like "10.0.0.0/8").
     /// Returns `false` if no trusted proxies are configured or if the IP doesn't match.
+    #[must_use] 
     pub fn is_trusted_proxy(&self, ip: &std::net::IpAddr) -> bool {
         if self.trusted_proxies.is_empty() {
             return false;
@@ -544,8 +545,8 @@ impl Config {
         }
 
         // Validate root credentials (only in production mode)
-        if !self.server.development_mode {
-            if self.bootstrap.create_root_user {
+        if !self.server.development_mode
+            && self.bootstrap.create_root_user {
                 if self.bootstrap.root_password == "root" {
                     errors.push("Root password is set to default value 'root'. Set SYNCTV__BOOTSTRAP__ROOT_PASSWORD environment variable or server.development_mode=true for local development".to_string());
                 }
@@ -556,7 +557,6 @@ impl Config {
                     errors.push("Root password must be at least 6 characters".to_string());
                 }
             }
-        }
 
         // Validate port conflicts: RTMP != HTTP != gRPC (all three must differ)
         if self.server.grpc_port == self.server.http_port {

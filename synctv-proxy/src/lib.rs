@@ -49,7 +49,7 @@ static PROXY_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .unwrap_or_else(|e| {
             // Log the error before panicking for better debugging
             tracing::error!("Failed to build shared proxy HTTP client: {}", e);
-            panic!("Failed to build shared proxy HTTP client: {}", e)
+            panic!("Failed to build shared proxy HTTP client: {e}")
         })
 });
 
@@ -163,8 +163,7 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
             Ok(ref data) => {
                 *total += data.len();
                 if *total > MAX_PROXY_BODY_SIZE {
-                    futures::future::ready(Some(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    futures::future::ready(Some(Err(std::io::Error::other(
                         format!(
                             "Response body exceeded size limit ({} bytes, max {MAX_PROXY_BODY_SIZE})",
                             *total
@@ -174,8 +173,7 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
                     futures::future::ready(Some(Ok(data.clone())))
                 }
             }
-            Err(e) => futures::future::ready(Some(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(e) => futures::future::ready(Some(Err(std::io::Error::other(
                 e,
             )))),
         }

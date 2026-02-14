@@ -255,7 +255,7 @@ impl AuthCallback for SyncTvRtmpAuth {
         let media_id = claims.media_id.clone();
         let ttl_user_id = claims.user_id.clone();
         let ttl_task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut interval = tokio::time::interval(std::time::Duration::from_mins(1));
             // Skip the first immediate tick
             interval.tick().await;
             let mut consecutive_failures: u32 = 0;

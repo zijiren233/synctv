@@ -91,11 +91,10 @@ async fn extract_user_id(
                 .await
                 .map_err(|e| AppError::unauthorized(format!("Invalid or expired ticket: {e}")))?;
             return Ok((user_id, AuthMethod::Ticket));
-        } else {
-            return Err(AppError::internal_server_error(
-                "WebSocket ticket service not configured (Redis required)",
-            ));
         }
+        return Err(AppError::internal_server_error(
+            "WebSocket ticket service not configured (Redis required)",
+        ));
     }
 
     // Finally, try JWT token query parameter (legacy fallback)

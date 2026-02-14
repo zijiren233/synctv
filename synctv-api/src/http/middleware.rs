@@ -216,7 +216,7 @@ pub async fn rate_limit_middleware(
 
         // Check if we should trust proxy headers
         let should_trust_headers = state.config.server.development_mode
-            || remote_addr.map_or(false, |ip| state.config.server.is_trusted_proxy(&ip));
+            || remote_addr.is_some_and(|ip| state.config.server.is_trusted_proxy(&ip));
 
         if should_trust_headers {
             // Trust X-Forwarded-For from trusted proxies (or in dev mode)
@@ -242,9 +242,7 @@ pub async fn rate_limit_middleware(
             }
         } else {
             // Don't trust headers - use socket address directly
-            remote_addr
-                .map(|ip| ip.to_string())
-                .unwrap_or_else(|| "unknown".to_string())
+            remote_addr.map_or_else(|| "unknown".to_string(), |ip| ip.to_string())
         }
     });
 
@@ -268,7 +266,7 @@ pub async fn rate_limit_middleware(
     // Previously: format!("{}:{}:{}", category_name, rate_limit_key, path)
     // This caused each endpoint to have its own counter, effectively multiplying the limit
     // Now: All endpoints in same category share the limit (e.g., 30 req/min for ALL write operations)
-    let key = format!("ratelimit:{}:{}", category_name, rate_limit_key);
+    let key = format!("ratelimit:{category_name}:{rate_limit_key}");
     match rate_limiter.check_rate_limit(&key, max_requests, window_seconds).await {
         Ok(()) => {
             // Rate limit check passed, proceed with request
@@ -487,7 +485,7 @@ pub async fn security_headers_middleware(
 
 /// HSTS (HTTP Strict Transport Security) middleware
 ///
-/// Should be used alongside security_headers_middleware when HTTPS is enabled.
+/// Should be used alongside `security_headers_middleware` when HTTPS is enabled.
 /// This tells browsers to always use HTTPS for this site.
 ///
 /// # Arguments
@@ -495,6 +493,7 @@ pub async fn security_headers_middleware(
 ///   that a site is only to be accessed using HTTPS.
 /// * `include_subdomains` - If true, this rule applies to all subdomains as well.
 /// * `preload` - If true, the site can be included in browser HSTS preload lists.
+#[must_use] 
 pub fn hsts_header(max_age: u64, include_subdomains: bool, preload: bool) -> String {
     let mut value = format!("max-age={max_age}");
 

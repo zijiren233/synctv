@@ -132,7 +132,7 @@ impl GrpcStreamPuller {
     /// TODO: Consider implementing connection pooling for gRPC clients.
     /// Current implementation creates a new connection on each retry, which is acceptable
     /// because retries are infrequent and gRPC has built-in connection management.
-    /// For high-traffic scenarios, a connection pool keyed by publisher_node_addr could
+    /// For high-traffic scenarios, a connection pool keyed by `publisher_node_addr` could
     /// be implemented to reduce connection overhead.
     async fn connect_and_stream(&self, data_sender: &FrameDataSender) -> anyhow::Result<()> {
         // gRPC uses HTTP/2 as transport. The URL scheme should be:

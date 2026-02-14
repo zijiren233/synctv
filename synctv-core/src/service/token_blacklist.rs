@@ -148,7 +148,7 @@ impl TokenBlacklistService {
 
     /// Check if the service is enabled (Redis configured)
     #[must_use]
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         self.redis_conn.is_some()
     }
 }

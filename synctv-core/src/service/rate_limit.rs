@@ -44,7 +44,7 @@ impl RateLimiter {
     /// This is a convenience constructor that never fails, useful as a fallback
     /// when `RateLimiter::new` cannot be used with `?`.
     #[must_use]
-    pub fn disabled(key_prefix: String) -> Self {
+    pub const fn disabled(key_prefix: String) -> Self {
         Self {
             redis_conn: None,
             key_prefix,
@@ -208,8 +208,7 @@ impl RateLimiter {
     fn current_timestamp_millis() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
+            .map_or(0, |d| d.as_millis() as u64)
     }
 }
 

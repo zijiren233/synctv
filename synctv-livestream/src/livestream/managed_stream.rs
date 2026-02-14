@@ -21,7 +21,7 @@ use tracing::{debug, error, info, info_span, warn, Instrument};
 /// and task handle management. Embed this in your stream struct and delegate.
 pub struct StreamLifecycle {
     subscriber_count: AtomicUsize,
-    /// Stores unix timestamp seconds as AtomicU64 (lock-free last-active tracking).
+    /// Stores unix timestamp seconds as `AtomicU64` (lock-free last-active tracking).
     last_active_secs: AtomicU64,
     is_running: Arc<AtomicBool>,
     task_handle: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
@@ -31,8 +31,7 @@ pub struct StreamLifecycle {
 fn unix_now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 impl StreamLifecycle {
@@ -68,10 +67,10 @@ impl StreamLifecycle {
     /// Check if the stream is healthy.
     ///
     /// A stream is considered healthy if:
-    /// 1. The is_running flag is true
+    /// 1. The `is_running` flag is true
     /// 2. If a task handle is set, it must still be running (not finished)
     ///
-    /// If no task handle is set, we rely solely on the is_running flag.
+    /// If no task handle is set, we rely solely on the `is_running` flag.
     /// This is useful for unit tests or scenarios where task tracking isn't needed.
     pub async fn is_healthy(&self) -> bool {
         if !self.is_running.load(Ordering::Acquire) {
@@ -102,7 +101,7 @@ impl StreamLifecycle {
         self.is_running.store(true, Ordering::Release);
     }
 
-    /// Clone the is_running flag for use in spawned tasks.
+    /// Clone the `is_running` flag for use in spawned tasks.
     /// Allows marking the stream as unhealthy from within the task.
     pub fn is_running_clone(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.is_running)
@@ -155,8 +154,7 @@ impl CreationLockEntry {
             last_accessed: AtomicUsize::new(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as usize)
-                    .unwrap_or(0),
+                    .map_or(0, |d| d.as_secs() as usize),
             ),
         }
     }
@@ -192,6 +190,7 @@ pub struct StreamPool<S: ManagedStream> {
 }
 
 impl<S: ManagedStream> StreamPool<S> {
+    #[must_use] 
     pub fn new(cleanup_check_interval: Duration, idle_timeout: Duration) -> Self {
         Self {
             streams: Arc::new(DashMap::new()),
@@ -199,7 +198,7 @@ impl<S: ManagedStream> StreamPool<S> {
             cleanup_check_interval,
             idle_timeout,
             // Clean up creation locks that haven't been used for 10 minutes
-            creation_lock_max_age: Duration::from_secs(600),
+            creation_lock_max_age: Duration::from_mins(10),
         }
     }
 
@@ -252,6 +251,7 @@ impl<S: ManagedStream> StreamPool<S> {
     ///
     /// This should be called once during initialization to prevent memory leaks
     /// from failed stream creation attempts that leave orphaned lock entries.
+    #[must_use] 
     pub fn start_creation_lock_cleanup(&self) -> tokio::task::JoinHandle<()> {
         let creation_locks = Arc::clone(&self.creation_locks);
         let max_age = self.creation_lock_max_age;

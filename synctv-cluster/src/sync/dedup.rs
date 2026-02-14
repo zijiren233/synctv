@@ -48,13 +48,9 @@ impl DedupKey {
         };
         Self {
             event_type: event.event_type().to_string(),
-            room_id: event.room_id()
-                .map(|id| id.as_str().to_string())
-                .unwrap_or_else(|| "global".to_string()),
+            room_id: event.room_id().map_or_else(|| "global".to_string(), |id| id.as_str().to_string()),
             user_id: if eid.is_empty() {
-                event.user_id()
-                    .map(|id| id.as_str().to_string())
-                    .unwrap_or_else(|| "system".to_string())
+                event.user_id().map_or_else(|| "system".to_string(), |id| id.as_str().to_string())
             } else {
                 // When event_id is present, embed it in the user_id field
                 // so each event gets a distinct key
@@ -103,7 +99,7 @@ impl MessageDeduplicator {
             entries: Arc::new(DashMap::new()),
             dedup_window,
             cleanup_interval,
-            cancel_token: cancel_token,
+            cancel_token,
         };
 
         // Start cleanup task with cancellation support

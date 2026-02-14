@@ -18,7 +18,7 @@ const TTL_MULTIPLIER: u64 = 5;
 pub const PUBLISHER_TTL_SECS: i64 = (HEARTBEAT_INTERVAL_SECS * TTL_MULTIPLIER) as i64;
 
 /// Redis key for the global epoch counter used for fencing tokens.
-/// Format: "stream:epoch:{room_id}:{media_id}"
+/// Format: "`stream:epoch:{room_id}:{media_id`}"
 /// Each publisher registration increments this counter atomically.
 const EPOCH_KEY_PREFIX: &str = "stream:epoch";
 
@@ -156,10 +156,10 @@ impl StreamRegistry {
             return {1, epoch}
         "#;
 
-        let user_key = if !user_id.is_empty() {
-            format!("stream:user_publishers:{user_id}")
-        } else {
+        let user_key = if user_id.is_empty() {
             String::new()
+        } else {
+            format!("stream:user_publishers:{user_id}")
         };
         let user_member = format!("{room_id}:{media_id}");
 
@@ -172,7 +172,7 @@ impl StreamRegistry {
             .arg(&user_member)
             .invoke_async(&mut conn)
             .await
-            .map_err(|e| anyhow!("Lua script execution failed: {}", e))?;
+            .map_err(|e| anyhow!("Lua script execution failed: {e}"))?;
 
         let registered = result[0] == 1;
         let actual_epoch = result[1] as u64;
@@ -490,7 +490,7 @@ impl StreamRegistry {
     /// Used when a node restarts to remove stale entries from Redis.
     ///
     /// This uses SCAN to iterate through all publisher keys and removes
-    /// those belonging to the specified node_id.
+    /// those belonging to the specified `node_id`.
     pub async fn cleanup_all_publishers_for_node(&self, node_id: &str) -> Result<()> {
         let mut conn = self.redis.clone();
         let mut cursor: u64 = 0;
@@ -541,7 +541,7 @@ impl StreamRegistry {
                             // Also clean up user reverse index if present
                             if !info.user_id.is_empty() {
                                 let user_key = format!("stream:user_publishers:{}", info.user_id);
-                                let member = format!("{}:{}", room_id, media_id);
+                                let member = format!("{room_id}:{media_id}");
                                 let _: () = redis::cmd("SREM")
                                     .arg(&user_key)
                                     .arg(&member)

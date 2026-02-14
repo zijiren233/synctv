@@ -103,18 +103,15 @@ impl UserService {
         // Always perform password verification to prevent timing side-channel.
         // If the user doesn't exist, verify against a dummy hash so the response
         // time is indistinguishable from a real verification.
-        let (is_valid, user) = match maybe_user {
-            Some(user) => {
-                let valid = verify_password(&password, &user.password_hash).await?;
-                (valid, Some(user))
-            }
-            None => {
-                // Dummy Argon2 verification to match timing of real verification.
-                // This hash is pre-computed and never matches any real password.
-                let dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+daw";
-                let _ = verify_password(&password, dummy_hash).await;
-                (false, None)
-            }
+        let (is_valid, user) = if let Some(user) = maybe_user {
+            let valid = verify_password(&password, &user.password_hash).await?;
+            (valid, Some(user))
+        } else {
+            // Dummy Argon2 verification to match timing of real verification.
+            // This hash is pre-computed and never matches any real password.
+            let dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+daw";
+            let _ = verify_password(&password, dummy_hash).await;
+            (false, None)
         };
 
         // After constant-time verification, check all failure conditions
@@ -380,7 +377,7 @@ impl UserService {
             match self.repository.create(&user).await {
                 Ok(created_user) => {
                     // Populate username cache
-                    self.username_cache.set(&created_user.id, &candidate).await?;
+                    self.username_cache.set(&created_user.id, candidate).await?;
 
                     if candidate == username {
                         tracing::info!(

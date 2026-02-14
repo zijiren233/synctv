@@ -20,8 +20,8 @@ use std::time::Duration;
 /// Default gRPC port for inter-node streaming
 const DEFAULT_GRPC_PORT: u16 = 50051;
 
-/// Extract IP address from node_id and construct gRPC address.
-/// node_id format is "{hostname}_{ip}-{suffix}", e.g., "server1_192.168.1.1-abc123"
+/// Extract IP address from `node_id` and construct gRPC address.
+/// `node_id` format is "{hostname}_{ip}-{suffix}", e.g., "server1_192.168.1.1-abc123"
 /// Returns "ip:port" if IP is found, None otherwise.
 fn extract_address_from_node_id(node_id: &str) -> Option<String> {
     // Split by '_' to get the part containing IP
@@ -32,7 +32,7 @@ fn extract_address_from_node_id(node_id: &str) -> Option<String> {
 
     // Validate it looks like an IP address
     if ip_part.parse::<std::net::IpAddr>().is_ok() {
-        Some(format!("{}:{}", ip_part, DEFAULT_GRPC_PORT))
+        Some(format!("{ip_part}:{DEFAULT_GRPC_PORT}"))
     } else {
         None
     }
@@ -58,6 +58,7 @@ impl PullStreamManager {
     ///
     /// Should be called once after creating the manager to prevent memory leaks
     /// from failed stream creation attempts.
+    #[must_use] 
     pub fn start_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
         self.pool.start_creation_lock_cleanup()
     }
@@ -139,12 +140,12 @@ impl PullStreamManager {
 
         // Use grpc_address if available, otherwise extract IP from node_id
         // node_id format is "{hostname}_{ip}-{suffix}", e.g., "server1_192.168.1.1-abc123"
-        let publisher_address = if !publisher_info.grpc_address.is_empty() {
-            publisher_info.grpc_address.clone()
-        } else {
+        let publisher_address = if publisher_info.grpc_address.is_empty() {
             // Fallback: extract IP from node_id and use default gRPC port
             extract_address_from_node_id(&publisher_info.node_id)
                 .unwrap_or_else(|| publisher_info.node_id.clone())
+        } else {
+            publisher_info.grpc_address.clone()
         };
 
         let pull_stream = Arc::new(

@@ -71,7 +71,7 @@ impl SettingsRepository {
 
     /// Update a setting value by key
     ///
-    /// Also sends a NOTIFY to 'settings_changed' channel so other replicas
+    /// Also sends a NOTIFY to '`settings_changed`' channel so other replicas
     /// can reload the changed setting from database.
     pub async fn update(&self, key: &str, value: &str) -> Result<SettingsGroup> {
         let row = sqlx::query(

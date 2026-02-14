@@ -82,6 +82,7 @@ impl PermissionService {
     /// On Pub/Sub lag, `invalidate_all()` is rate-limited to at most once per
     /// `FLUSH_RATE_LIMIT_SECS` seconds. Between flushes, the service falls back
     /// to `check_permission_no_cache` for all requests to avoid cache storms.
+    #[must_use] 
     pub fn with_invalidation(
         member_repo: RoomMemberRepository,
         room_repo: RoomRepository,
@@ -108,7 +109,7 @@ impl PermissionService {
 
                         match msg {
                             InvalidationMessage::UserPermission { room_id, user_id } => {
-                                let cache_key = format!("{}:{}", room_id, user_id);
+                                let cache_key = format!("{room_id}:{user_id}");
                                 cache.invalidate(&cache_key).await;
                                 tracing::debug!(
                                     room_id = %room_id,
@@ -117,7 +118,7 @@ impl PermissionService {
                                 );
                             }
                             InvalidationMessage::RoomPermission { room_id } => {
-                                let prefix = format!("{}:", room_id);
+                                let prefix = format!("{room_id}:");
                                 let _ = cache.invalidate_entries_if(move |key, _| key.starts_with(&prefix));
                                 tracing::debug!(
                                     room_id = %room_id,

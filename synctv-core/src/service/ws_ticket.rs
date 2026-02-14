@@ -136,11 +136,13 @@ impl WsTicketService {
     }
 
     /// Create a new WebSocket ticket service with Redis (multi-replica mode)
+    #[must_use] 
     pub fn with_redis(redis_client: Client, ticket_ttl_secs: Option<u64>) -> Self {
         Self::new(Some(redis_client), ticket_ttl_secs)
     }
 
     /// Create a new WebSocket ticket service with memory storage (single-replica mode)
+    #[must_use] 
     pub fn with_memory(ticket_ttl_secs: Option<u64>) -> Self {
         Self {
             redis_client: None,
@@ -286,7 +288,7 @@ impl WsTicketService {
         rand::RngCore::fill_bytes(&mut rng, &mut bytes);
 
         // Encode as URL-safe base64 (no special characters that could cause issues in URLs)
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     }
 }
 

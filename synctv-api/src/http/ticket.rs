@@ -7,7 +7,7 @@
 //! Instead of passing JWT tokens directly in WebSocket URLs (which appear in
 //! browser history and server logs), clients can:
 //! 1. Call POST /api/tickets to get a short-lived ticket
-//! 2. Use the ticket in WebSocket URL: ws://host/ws/room/{room_id}?ticket=xxx
+//! 2. Use the ticket in WebSocket URL: <ws://host/ws/room/{room_id}?ticket=xxx>
 //!
 //! The ticket is:
 //! - Short-lived (default 30 seconds)

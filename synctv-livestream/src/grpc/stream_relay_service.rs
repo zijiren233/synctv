@@ -34,7 +34,7 @@ pub struct StreamRelayServiceImpl {
 
 impl StreamRelayServiceImpl {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         registry: Arc<StreamRegistry>,
         node_id: String,
         stream_hub_event_sender: StreamHubEventSender,

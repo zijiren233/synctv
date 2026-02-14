@@ -1,7 +1,7 @@
 //! Load balancing for cluster requests
 //!
 //! Distributes requests across available cluster nodes.
-//! Integrates with HealthMonitor to exclude unhealthy nodes.
+//! Integrates with `HealthMonitor` to exclude unhealthy nodes.
 
 use rand::seq::SliceRandom;
 use std::sync::Arc;
@@ -65,7 +65,7 @@ impl LoadBalancer {
             .filter(|n| {
                 statuses
                     .get(&n.node_id)
-                    .map_or(true, |s| *s != NodeHealth::Unhealthy)
+                    .is_none_or(|s| *s != NodeHealth::Unhealthy)
             })
             .collect();
 

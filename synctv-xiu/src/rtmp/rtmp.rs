@@ -94,7 +94,7 @@ impl RtmpServer {
                         conn_counter.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
-                _ = self.shutdown_token.cancelled() => {
+                () = self.shutdown_token.cancelled() => {
                     tracing::info!("RTMP server shutting down gracefully, waiting for {} active sessions",
                         active_connections.load(Ordering::Relaxed));
                     break;

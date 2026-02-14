@@ -292,8 +292,8 @@ impl StreamTracker {
 
     /// Get RTMP identifiers (`app_name`, `stream_name`) for a logical (`room_id`, `media_id`).
     ///
-    /// This is needed because StreamHub uses the original RTMP identifiers,
-    /// not the logical (room_id, media_id) pair.
+    /// This is needed because `StreamHub` uses the original RTMP identifiers,
+    /// not the logical (`room_id`, `media_id`) pair.
     #[must_use]
     pub fn get_rtmp_identifiers(&self, room_id: &str, media_id: &str) -> Option<(String, String)> {
         let sk = Self::stream_key(room_id, media_id);

@@ -78,7 +78,7 @@ pub type ProviderFactory = fn(config: &serde_yaml::Value) -> Result<Box<dyn Prov
 ///
 /// Uses `std::sync::RwLock` instead of `tokio::sync::RwLock` because:
 /// 1. Registration happens only during initialization (synchronous)
-/// 2. Lookups are extremely fast (just a HashMap read)
+/// 2. Lookups are extremely fast (just a `HashMap` read)
 /// 3. Lock is held for a very short time, won't significantly block the runtime
 static PROVIDER_REGISTRY: LazyLock<std::sync::RwLock<HashMap<String, ProviderFactory>>> =
     LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));

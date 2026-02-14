@@ -71,6 +71,7 @@ impl CacheInvalidationService {
     /// # Arguments
     /// * `redis_client` - Optional Redis client. If None, only local invalidation is used.
     /// * `node_id` - Unique identifier for this node (for logging)
+    #[must_use] 
     pub fn new(redis_client: Option<Client>, node_id: String) -> Self {
         let (local_sender, _) = broadcast::channel(1024);
 
@@ -219,6 +220,7 @@ impl CacheInvalidationService {
     /// Subscribe to local cache invalidation events
     ///
     /// Returns a receiver that will receive invalidation messages from all nodes.
+    #[must_use] 
     pub fn subscribe(&self) -> broadcast::Receiver<InvalidationMessage> {
         self.local_sender.subscribe()
     }

@@ -202,9 +202,8 @@ impl JwtService {
 
         if entropy_bits < MIN_JWT_SECRET_ENTROPY_BITS as f64 {
             return Err(Error::Internal(format!(
-                "JWT secret has insufficient entropy ({:.0} bits, need at least {} bits). \
-                 Use a longer secret with mixed case, numbers, and special characters.",
-                entropy_bits, MIN_JWT_SECRET_ENTROPY_BITS
+                "JWT secret has insufficient entropy ({entropy_bits:.0} bits, need at least {MIN_JWT_SECRET_ENTROPY_BITS} bits). \
+                 Use a longer secret with mixed case, numbers, and special characters."
             )));
         }
 

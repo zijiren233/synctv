@@ -4,7 +4,7 @@
 //! Tokens are only used temporarily during login to fetch user info.
 //!
 //! ## State Storage
-//! OAuth2 states are stored in Redis when available (for multi-node deployments).
+//! `OAuth2` states are stored in Redis when available (for multi-node deployments).
 //! Falls back to in-memory storage when Redis is not configured.
 
 use std::sync::Arc;
@@ -20,11 +20,11 @@ use crate::{
     Error, Result,
 };
 
-/// Redis key prefix for OAuth2 states
+/// Redis key prefix for `OAuth2` states
 const OAUTH2_STATE_KEY_PREFIX: &str = "oauth2:state:";
-/// Default TTL for OAuth2 states (5 minutes)
+/// Default TTL for `OAuth2` states (5 minutes)
 const OAUTH2_STATE_TTL_SECONDS: u64 = 300;
-/// Maximum number of in-memory OAuth2 states (prevents unbounded memory growth)
+/// Maximum number of in-memory `OAuth2` states (prevents unbounded memory growth)
 const MAX_LOCAL_STATES: usize = 10_000;
 
 /// `OAuth2` state (for CSRF protection during authorization flow)
@@ -103,10 +103,10 @@ impl OAuth2Service {
         }
     }
 
-    /// Store OAuth2 state (Redis if available, otherwise local memory)
+    /// Store `OAuth2` state (Redis if available, otherwise local memory)
     async fn store_state(&self, state_token: &str, state: &OAuth2State) -> Result<()> {
         if let Some(ref redis) = self.redis {
-            let key = format!("{}{}", OAUTH2_STATE_KEY_PREFIX, state_token);
+            let key = format!("{OAUTH2_STATE_KEY_PREFIX}{state_token}");
             let value = serde_json::to_string(state)
                 .map_err(|e| Error::Internal(format!("Failed to serialize OAuth2 state: {e}")))?;
 
@@ -135,10 +135,10 @@ impl OAuth2Service {
         Ok(())
     }
 
-    /// Retrieve and remove OAuth2 state (Redis if available, otherwise local memory)
+    /// Retrieve and remove `OAuth2` state (Redis if available, otherwise local memory)
     async fn consume_state(&self, state_token: &str) -> Result<OAuth2State> {
         if let Some(ref redis) = self.redis {
-            let key = format!("{}{}", OAUTH2_STATE_KEY_PREFIX, state_token);
+            let key = format!("{OAUTH2_STATE_KEY_PREFIX}{state_token}");
 
             let mut conn = redis
                 .get_multiplexed_tokio_connection()
@@ -474,7 +474,7 @@ impl OAuth2Service {
 
     /// Check if Redis is being used for state storage
     #[must_use]
-    pub fn uses_redis(&self) -> bool {
+    pub const fn uses_redis(&self) -> bool {
         self.redis.is_some()
     }
 }

@@ -21,7 +21,7 @@ use synctv_core::{
 use synctv_cluster::sync::ClusterEvent;
 /// Livestream server state (held for graceful shutdown).
 ///
-/// Dropping the handle stops the StreamHub event loop and all dependent tasks.
+/// Dropping the handle stops the `StreamHub` event loop and all dependent tasks.
 pub struct LivestreamState {
     pub handle: synctv_livestream::livestream::LivestreamHandle,
 }
@@ -117,7 +117,7 @@ impl SyncTvServer {
 
         // Start background connection cleanup (every 60 seconds)
         let _conn_cleanup = self.services.connection_manager.spawn_cleanup_task(
-            Duration::from_secs(60),
+            Duration::from_mins(1),
         );
 
         // Start gRPC server

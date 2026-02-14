@@ -166,7 +166,7 @@ impl RedisPubSub {
                 // Process events until connection breaks or cancelled
                 loop {
                     let req = tokio::select! {
-                        _ = cancel_publisher.cancelled() => {
+                        () = cancel_publisher.cancelled() => {
                             info!("Redis publisher task cancelled");
                             return;
                         }
@@ -248,11 +248,11 @@ impl RedisPubSub {
 
                 // Wait with cancellation support
                 tokio::select! {
-                    _ = cancel_subscriber.cancelled() => {
+                    () = cancel_subscriber.cancelled() => {
                         info!("Redis subscriber task cancelled during backoff");
                         return;
                     }
-                    _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
+                    () = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
                 }
 
                 // Exponential backoff: double the delay, cap at MAX_BACKOFF_SECS

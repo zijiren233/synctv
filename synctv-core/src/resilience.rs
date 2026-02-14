@@ -211,7 +211,7 @@ pub mod circuit_breaker {
     /// Simple circuit breaker
     ///
     /// Uses `parking_lot::Mutex` instead of `std::sync::Mutex` to avoid
-    /// blocking the async runtime (parking_lot never yields to the OS scheduler
+    /// blocking the async runtime (`parking_lot` never yields to the OS scheduler
     /// for short critical sections like this).
     #[derive(Debug, Clone)]
     pub struct CircuitBreaker {

@@ -104,7 +104,7 @@ pub struct ConnectionManager {
     limits: Arc<ConnectionLimits>,
 
     /// Atomic total connection count for race-free limit enforcement.
-    /// Incremented atomically during register(), decremented during unregister().
+    /// Incremented atomically during `register()`, decremented during `unregister()`.
     total_connections: Arc<AtomicUsize>,
 
     /// Metrics

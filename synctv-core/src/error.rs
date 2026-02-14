@@ -40,7 +40,7 @@ impl From<sqlx::Error> for Error {
     fn from(err: sqlx::Error) -> Self {
         match &err {
             // Map "no rows" to NotFound
-            sqlx::Error::RowNotFound => Error::NotFound("Resource not found".to_string()),
+            sqlx::Error::RowNotFound => Self::NotFound("Resource not found".to_string()),
             // Map unique constraint violations to AlreadyExists
             sqlx::Error::Database(db_err) => {
                 let code = db_err.code().unwrap_or_default();
@@ -49,23 +49,23 @@ impl From<sqlx::Error> for Error {
                     "23505" => {
                         let detail = db_err.message().to_string();
                         if detail.contains("username") {
-                            Error::AlreadyExists("Username already taken".to_string())
+                            Self::AlreadyExists("Username already taken".to_string())
                         } else if detail.contains("email") {
-                            Error::AlreadyExists("Email already registered".to_string())
+                            Self::AlreadyExists("Email already registered".to_string())
                         } else {
-                            Error::AlreadyExists("Resource already exists".to_string())
+                            Self::AlreadyExists("Resource already exists".to_string())
                         }
                     }
                     // PostgreSQL foreign_key_violation
-                    "23503" => Error::NotFound("Referenced resource not found".to_string()),
+                    "23503" => Self::NotFound("Referenced resource not found".to_string()),
                     // PostgreSQL check_violation
-                    "23514" => Error::InvalidInput("Constraint check failed".to_string()),
+                    "23514" => Self::InvalidInput("Constraint check failed".to_string()),
                     // PostgreSQL not_null_violation
-                    "23502" => Error::InvalidInput("Required field is missing".to_string()),
-                    _ => Error::Database(err),
+                    "23502" => Self::InvalidInput("Required field is missing".to_string()),
+                    _ => Self::Database(err),
                 }
             }
-            _ => Error::Database(err),
+            _ => Self::Database(err),
         }
     }
 }

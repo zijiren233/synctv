@@ -449,7 +449,9 @@ impl SfuManager {
             let room = room_entry.value();
             let mut current_mode = room.mode.write().await;
 
-            if *current_mode != mode {
+            if *current_mode == mode {
+                drop(current_mode);
+            } else {
                 let old_mode = *current_mode;
                 info!(
                     room_id = %room_id,
@@ -465,8 +467,6 @@ impl SfuManager {
                     RoomMode::SFU => room.switch_to_sfu().await?,
                     RoomMode::P2P => room.switch_to_p2p().await?,
                 }
-            } else {
-                drop(current_mode);
             }
 
             Ok(())

@@ -91,7 +91,7 @@ impl UserRepository {
             return Ok(Vec::new());
         }
 
-        let ids: Vec<&str> = user_ids.iter().map(|id| id.as_str()).collect();
+        let ids: Vec<&str> = user_ids.iter().map(super::super::models::id::UserId::as_str).collect();
         let rows = sqlx::query(
             r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
