@@ -79,10 +79,10 @@ pub async fn init_services(
 
     // Initialize token blacklist service
     let token_blacklist = TokenBlacklistService::new(redis_conn.clone());
-    if token_blacklist.is_enabled() {
+    if token_blacklist.uses_redis() {
         info!("Token blacklist service initialized with Redis");
     } else {
-        warn!("⚠ Token blacklist DISABLED (no Redis) — revoked tokens will remain valid until expiry");
+        warn!("Token blacklist using in-memory fallback (no Redis) — revocations are per-instance only");
     }
 
     // Initialize username cache
@@ -120,7 +120,7 @@ pub async fn init_services(
         );
     } else {
         warn!(
-            "⚠ Rate limiting DISABLED (no Redis) — all rate limits are unenforced"
+            "Rate limiting using in-memory fallback (no Redis) — limits are per-instance only"
         );
     }
 
@@ -246,11 +246,9 @@ async fn init_oauth2_service(
     // 1. Get OAuth2 provider configurations from main config
     let providers_value = &config.oauth2.providers;
 
-    // Extract provider instance names from the YAML mapping
-    let provider_instances = if let Some(mapping) = providers_value.as_mapping() {
-        mapping.keys()
-            .filter_map(|k| k.as_str().map(std::string::ToString::to_string))
-            .collect::<Vec<_>>()
+    // Extract provider instance names from the JSON mapping
+    let provider_instances = if let Some(mapping) = providers_value.as_object() {
+        mapping.keys().cloned().collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -272,24 +270,21 @@ async fn init_oauth2_service(
             .ok_or_else(|| anyhow::anyhow!("Provider instance {instance_name} not found in config"))?;
 
         // Get provider type from config (check for explicit "type" field)
-        let provider_type = if let Some(map) = full_config.as_mapping() {
-            map.get(serde_yaml::Value::String("type".to_string()))
-                .and_then(|v| v.as_str())
-                .unwrap_or(&instance_name)
-                .to_string()
-        } else {
-            instance_name.clone()
-        };
+        let provider_type = full_config
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&instance_name)
+            .to_string();
 
         // Create a mutable config for adding redirect_url
         let mut full_config = full_config.clone();
 
         // Add redirect_url to config (merge it in)
         let redirect_url = format!("http://{}/api/oauth2/{}/callback", config.server.host, instance_name);
-        if let Some(mapping) = full_config.as_mapping_mut() {
+        if let Some(mapping) = full_config.as_object_mut() {
             mapping.insert(
-                serde_yaml::Value::String("redirect_url".to_string()),
-                serde_yaml::Value::String(redirect_url.clone())
+                "redirect_url".to_string(),
+                serde_json::Value::String(redirect_url.clone())
             );
         }
 
@@ -344,9 +339,20 @@ fn load_jwt_service(config: &Config) -> Result<JwtService, anyhow::Error> {
         ));
     }
 
-    if config.jwt.secret == "change-me-in-production" {
-        warn!("Using default JWT secret! This is insecure for production use.");
+    const WEAK_SECRETS: &[&str] = &[
+        "change-me-in-production", "secret", "password", "jwt-secret",
+        "changeme", "test", "default",
+    ];
+    if WEAK_SECRETS.contains(&config.jwt.secret.as_str()) {
+        warn!("Using a well-known JWT secret! This is insecure for production use.");
         warn!("Please set SYNCTV__JWT__SECRET to a strong random value.");
+    }
+    if config.jwt.secret.len() < 32 {
+        return Err(anyhow::anyhow!(
+            "JWT secret is too short ({} chars). Minimum 32 characters required for security. \
+             Set SYNCTV__JWT__SECRET to a strong random value.",
+            config.jwt.secret.len()
+        ));
     }
 
     JwtService::with_durations(

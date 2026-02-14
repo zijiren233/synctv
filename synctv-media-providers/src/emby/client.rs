@@ -6,7 +6,7 @@ use std::time::Duration;
 use reqwest::{Client, header::{HeaderMap, HeaderValue, CONTENT_TYPE}};
 use serde_json::{json, Value};
 
-use super::error::{EmbyError, check_response};
+use super::error::{EmbyError, check_response, json_with_limit};
 use super::types::{AuthResponse, Item, UserInfo, ItemsResponse, SystemInfo, FsListResponse, PathInfo, PlaybackInfoResponse, default_device_profile};
 
 /// URL-encode a string for safe use in query parameters
@@ -124,7 +124,7 @@ impl EmbyClient {
             return Err(EmbyError::Auth(format!("Login failed: {}", response.status())));
         }
 
-        let auth_resp: AuthResponse = response.json().await?;
+        let auth_resp: AuthResponse = json_with_limit(response).await?;
         let token = auth_resp.access_token;
         let user_id = auth_resp.user.id;
 
@@ -150,7 +150,7 @@ impl EmbyClient {
             .await?;
 
         let response = check_response(response)?;
-        let json: Value = response.json().await?;
+        let json: Value = json_with_limit(response).await?;
         let items = json["Items"].as_array()
             .ok_or_else(|| EmbyError::Parse("Missing Items array".to_string()))?;
 
@@ -180,7 +180,7 @@ impl EmbyClient {
             .await?;
 
         let response = check_response(response)?;
-        let user: UserInfo = response.json().await?;
+        let user: UserInfo = json_with_limit(response).await?;
         Ok(user)
     }
 
@@ -217,7 +217,7 @@ impl EmbyClient {
             .await?;
 
         let response = check_response(response)?;
-        let items: ItemsResponse = response.json().await?;
+        let items: ItemsResponse = json_with_limit(response).await?;
         Ok(items)
     }
 
@@ -234,7 +234,7 @@ impl EmbyClient {
             .await?;
 
         let response = check_response(response)?;
-        let info: SystemInfo = response.json().await?;
+        let info: SystemInfo = json_with_limit(response).await?;
         Ok(info)
     }
 
@@ -264,7 +264,7 @@ impl EmbyClient {
                 .await?;
 
             let response = check_response(response)?;
-            let views: ItemsResponse = response.json().await?;
+            let views: ItemsResponse = json_with_limit(response).await?;
             return Ok(FsListResponse {
                 items: views.items,
                 paths: vec![PathInfo {
@@ -297,7 +297,7 @@ impl EmbyClient {
             .await?;
 
         let response = check_response(response)?;
-        let items: ItemsResponse = response.json().await?;
+        let items: ItemsResponse = json_with_limit(response).await?;
 
         let mut paths = vec![PathInfo {
             name: "Home".to_string(),
@@ -379,7 +379,7 @@ impl EmbyClient {
             .await?;
 
         let response = check_response(response)?;
-        let playback_info: PlaybackInfoResponse = response.json().await?;
+        let playback_info: PlaybackInfoResponse = json_with_limit(response).await?;
         Ok(playback_info)
     }
 

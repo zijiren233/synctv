@@ -133,8 +133,9 @@ pub struct BindInfo {
     pub host: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub user_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub created_at: ::prost::alloc::string::String,
+    /// Unix epoch timestamp
+    #[prost(int64, tag = "4")]
+    pub created_at: i64,
 }
 /// Generated client implementations.
 pub mod emby_provider_service_client {

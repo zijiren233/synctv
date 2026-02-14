@@ -8,7 +8,7 @@ use bytes::BytesMut;
 use crate::streamhub::{
     define::{
         FrameData, FrameDataReceiver, NotifyInfo, StreamHubEvent, StreamHubEventSender,
-        SubDataType, SubscribeType, SubscriberInfo, FRAME_DATA_CHANNEL_CAPACITY,
+        SubDataType, SubscribeType, SubscriberInfo,
     },
     stream::StreamIdentifier,
     utils::Uuid,
@@ -27,7 +27,9 @@ pub struct HttpFlvSession {
     pub app_name: String,
     pub stream_name: String,
     event_producer: StreamHubEventSender,
-    data_receiver: FrameDataReceiver,
+    /// Initialized to None; set by `subscribe_from_stream_hub`.
+    /// Calling `send_media_stream` without subscribing first is an error.
+    data_receiver: Option<FrameDataReceiver>,
     response_producer: mpsc::Sender<Result<bytes::Bytes, std::io::Error>>,
     subscriber_id: Uuid,
     muxer: FlvMuxer,
@@ -44,14 +46,13 @@ impl HttpFlvSession {
         event_producer: StreamHubEventSender,
         response_producer: mpsc::Sender<Result<bytes::Bytes, std::io::Error>>,
     ) -> Self {
-        let (_, data_receiver) = mpsc::channel(FRAME_DATA_CHANNEL_CAPACITY);
         let subscriber_id = Uuid::new();
 
         Self {
             app_name,
             stream_name,
             event_producer,
-            data_receiver,
+            data_receiver: None,
             response_producer,
             subscriber_id,
             muxer: FlvMuxer::new(),
@@ -72,6 +73,10 @@ impl HttpFlvSession {
     }
 
     async fn send_media_stream(&mut self) -> anyhow::Result<()> {
+        let mut data_receiver = self.data_receiver.take().ok_or_else(|| {
+            anyhow::anyhow!("send_media_stream called before subscribe_from_stream_hub")
+        })?;
+
         let mut max_av_frame_num_to_guess_av = 0;
         let mut cached_frames = Vec::new();
 
@@ -82,7 +87,7 @@ impl HttpFlvSession {
         loop {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(RECV_TIMEOUT_SECS),
-                self.data_receiver.recv()
+                data_receiver.recv()
             ).await {
                 Ok(Some(data)) => {
                     // Detect audio/video before sending header
@@ -231,10 +236,10 @@ impl HttpFlvSession {
             .await
             .map_err(|e| anyhow::anyhow!("Event result channel error: {e}"))?
             .map_err(|e| anyhow::anyhow!("Subscribe failed: {e:?}"))?;
-        self.data_receiver = result
+        self.data_receiver = Some(result
             .0
             .frame_receiver
-            .ok_or_else(|| anyhow::anyhow!("No frame receiver"))?;
+            .ok_or_else(|| anyhow::anyhow!("No frame receiver"))?);
 
         info!(
             subscriber_id = %self.subscriber_id,

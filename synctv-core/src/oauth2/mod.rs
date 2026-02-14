@@ -69,19 +69,17 @@ pub struct OAuth2UserInfo {
 /// Each provider type registers a factory function that knows how to
 /// create instances of that provider with configuration.
 /// All parameters (`client_id`, `client_secret`, `redirect_url`, etc.) are in config.
-pub type ProviderFactory = fn(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error>;
+pub type ProviderFactory = fn(config: &serde_json::Value) -> Result<Box<dyn Provider>, Error>;
 
 /// Provider registry
 ///
 /// Maps provider type strings to factory functions.
 /// Similar to Go's `allProviders rwmap.RWMap[provider.OAuth2Provider, provider.Interface]`
 ///
-/// Uses `std::sync::RwLock` instead of `tokio::sync::RwLock` because:
-/// 1. Registration happens only during initialization (synchronous)
-/// 2. Lookups are extremely fast (just a `HashMap` read)
-/// 3. Lock is held for a very short time, won't significantly block the runtime
-static PROVIDER_REGISTRY: LazyLock<std::sync::RwLock<HashMap<String, ProviderFactory>>> =
-    LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
+/// Uses `parking_lot::RwLock` (non-poisoning) for consistency with the rest of the codebase.
+/// Registration happens only during initialization and lookups are extremely fast.
+static PROVIDER_REGISTRY: LazyLock<parking_lot::RwLock<HashMap<String, ProviderFactory>>> =
+    LazyLock::new(|| parking_lot::RwLock::new(HashMap::new()));
 
 /// Register an `OAuth2` provider factory function
 ///
@@ -93,24 +91,14 @@ static PROVIDER_REGISTRY: LazyLock<std::sync::RwLock<HashMap<String, ProviderFac
 /// ```ignore
 /// register_provider_factory("github", github_factory);
 /// ```
-///
-/// # Panics
-///
-/// Panics if the registry lock is poisoned (indicates a previous panic during registration).
 pub fn register_provider_factory(provider_type: &str, factory: ProviderFactory) {
-    let mut registry = PROVIDER_REGISTRY
-        .write()
-        .expect("OAuth2 provider registry lock poisoned - this indicates a bug during initialization");
+    let mut registry = PROVIDER_REGISTRY.write();
     registry.insert(provider_type.to_string(), factory);
 }
 
 /// Get a registered factory function by type
 async fn get_provider_factory(provider_type: &str) -> Option<ProviderFactory> {
-    // Use std::sync::RwLock for fast read operations
-    // The lock is held for a very short time (just a HashMap lookup)
-    let registry = PROVIDER_REGISTRY
-        .read()
-        .expect("OAuth2 provider registry lock poisoned");
+    let registry = PROVIDER_REGISTRY.read();
     registry.get(provider_type).copied()
 }
 
@@ -140,16 +128,16 @@ async fn get_provider_factory(provider_type: &str) -> Option<ProviderFactory> {
 ///
 /// ```ignore
 /// // Create GitHub provider
-/// let config = serde_yaml::from_str::<GitHubConfig>(yaml)?;
+/// let config = serde_json::from_str::<serde_json::Value>(json)?;
 /// let github = create_provider("github", &config).await?;
 ///
 /// // Create Logto provider with custom endpoint
-/// let config = serde_yaml::from_str::<LogtoConfig>(yaml)?;
+/// let config = serde_json::from_str::<serde_json::Value>(json)?;
 /// let logto = create_provider("logto", &config).await?;
 /// ```
 pub async fn create_provider(
     provider_type: &str,
-    config: &serde_yaml::Value,
+    config: &serde_json::Value,
 ) -> Result<Box<dyn Provider>, Error> {
     // Look up factory function in registry
     let factory = get_provider_factory(provider_type).await

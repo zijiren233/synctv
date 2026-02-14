@@ -416,23 +416,13 @@ async fn parse(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::bilibili::ParseRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili parse request");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::bilibili::ParseRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
 
-    match api.parse(proto_req, query.as_deref()).await {
+    match api.parse(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }
@@ -448,23 +438,13 @@ async fn login_qr(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::bilibili::LoginQrRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili login QR request");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::bilibili::LoginQrRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
 
-    match api.login_qr(proto_req, query.as_deref()).await {
+    match api.login_qr(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }
@@ -480,23 +460,13 @@ async fn qr_check(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::bilibili::CheckQrRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili QR check");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::bilibili::CheckQrRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
 
-    match api.check_qr(proto_req, query.as_deref()).await {
+    match api.check_qr(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }
@@ -512,23 +482,13 @@ async fn new_captcha(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::bilibili::GetCaptchaRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili new captcha request");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::bilibili::GetCaptchaRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
 
-    match api.get_captcha(proto_req, query.as_deref()).await {
+    match api.get_captcha(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }
@@ -544,23 +504,13 @@ async fn sms_send(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::bilibili::SendSmsRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili SMS send request");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::bilibili::SendSmsRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
 
-    match api.send_sms(proto_req, query.as_deref()).await {
+    match api.send_sms(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }
@@ -576,23 +526,13 @@ async fn sms_login(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::bilibili::LoginSmsRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili SMS login request");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::bilibili::LoginSmsRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
 
-    match api.login_sms(proto_req, query.as_deref()).await {
+    match api.login_sms(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }
@@ -608,23 +548,13 @@ async fn user_info(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::bilibili::UserInfoRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Bilibili user info request");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::bilibili::UserInfoRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
 
-    match api.get_user_info(proto_req, query.as_deref()).await {
+    match api.get_user_info(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }

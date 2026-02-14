@@ -287,10 +287,13 @@ impl ProvidersManager {
 
 impl std::fmt::Debug for ProvidersManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let providers_count = self.instances.blocking_read().len();
+        let instances_count = match self.instances.try_read() {
+            Ok(guard) => Some(guard.len()),
+            Err(_) => None,
+        };
         f.debug_struct("ProvidersManager")
             .field("factories_count", &self.factories.len())
-            .field("instances_count", &providers_count)
+            .field("instances_count", &instances_count)
             .field("instance_manager", &self.instance_manager)
             .finish()
     }

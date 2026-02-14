@@ -195,8 +195,8 @@ impl FilterValue {
         match self {
             Self::Null => SeaValue::String(None),
             Self::Bool(b) => SeaValue::Bool(Some(b)),
-            Self::Int(i) => SeaValue::Int(Some(i as i32)),
-            Self::Float(f) => SeaValue::Float(Some(f as f32)),
+            Self::Int(i) => SeaValue::BigInt(Some(i)),
+            Self::Float(f) => SeaValue::Double(Some(f)),
             Self::String(s) => SeaValue::String(Some(Box::new(s))),
         }
     }

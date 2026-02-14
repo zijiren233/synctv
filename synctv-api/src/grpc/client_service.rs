@@ -18,8 +18,7 @@ use crate::proto::client::{
     auth_service_server::AuthService, email_service_server::EmailService,
     media_service_server::MediaService, public_service_server::PublicService,
     room_service_server::RoomService, user_service_server::UserService,
-    ServerMessage, server_message, ChatMessageReceive, UserJoinedRoom,
-    RoomMember, UserLeftRoom, PlaybackStateChanged, PlaybackState, RoomSettingsChanged,
+    ServerMessage,
     RegisterRequest, RegisterResponse, LoginRequest, LoginResponse,
     RefreshTokenRequest, RefreshTokenResponse, LogoutRequest, LogoutResponse,
     GetProfileRequest, GetProfileResponse, SetUsernameRequest, SetUsernameResponse,
@@ -69,13 +68,30 @@ fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
 }
 
 /// Map impls layer error strings to appropriate gRPC Status codes.
+///
+/// The impls layer currently returns `Result<T, String>`. This function maps
+/// those strings to gRPC status codes using keyword matching. Once the impls
+/// layer migrates to `synctv_core::Error`, callers should use the typed
+/// `From<Error> for tonic::Status` conversion instead.
 fn impls_err_to_status(err: String) -> Status {
-    if err.contains("not found") || err.contains("Not found") {
+    let lower = err.to_lowercase();
+    if lower.contains("not found") {
         Status::not_found(err)
-    } else if err.contains("permission") || err.contains("Permission") || err.contains("Forbidden") {
+    } else if lower.contains("unauthenticated") || lower.contains("invalid token")
+        || lower.contains("token expired") || lower.contains("not authenticated")
+    {
+        Status::unauthenticated(err)
+    } else if lower.contains("permission") || lower.contains("forbidden")
+        || lower.contains("not allowed") || lower.contains("banned")
+    {
         Status::permission_denied(err)
-    } else if err.contains("Invalid") || err.contains("too short") || err.contains("too long")
-        || err.contains("cannot be empty") || err.contains("Too many")
+    } else if lower.contains("already exists") || lower.contains("already taken")
+        || lower.contains("already registered")
+    {
+        Status::already_exists(err)
+    } else if lower.contains("invalid") || lower.contains("too short") || lower.contains("too long")
+        || lower.contains("cannot be empty") || lower.contains("too many")
+        || lower.contains("required") || lower.contains("must be")
     {
         Status::invalid_argument(err)
     } else {
@@ -214,103 +230,6 @@ impl ClientServiceImpl {
         Ok(RoomId::from_string(room_context.room_id))
     }
 
-    /// Handle incoming client message from bidirectional stream
-    #[allow(dead_code)]
-    fn convert_event_to_server_message(event: ClusterEvent) -> Option<ServerMessage> {
-        match event {
-            ClusterEvent::ChatMessage {
-                room_id,
-                user_id,
-                username,
-                message,
-                timestamp,
-                position,
-                color,
-                ..
-            } => Some(ServerMessage {
-                message: Some(server_message::Message::Chat(ChatMessageReceive {
-                    id: nanoid::nanoid!(12),
-                    room_id: room_id.as_str().to_string(),
-                    user_id: user_id.as_str().to_string(),
-                    username,
-                    content: message,
-                    timestamp: timestamp.timestamp(),
-                    position,
-                    color,
-                })),
-            }),
-
-            ClusterEvent::UserJoined {
-                room_id,
-                user_id,
-                username,
-                permissions,
-                ..
-            } => Some(ServerMessage {
-                message: Some(server_message::Message::UserJoined(UserJoinedRoom {
-                    room_id: room_id.as_str().to_string(),
-                    member: Some(RoomMember {
-                        room_id: room_id.as_str().to_string(),
-                        user_id: user_id.as_str().to_string(),
-                        username,
-                        role: "member".to_string(),
-                        permissions: permissions.0,
-                        added_permissions: 0,
-                        removed_permissions: 0,
-                        admin_added_permissions: 0,
-                        admin_removed_permissions: 0,
-                        joined_at: chrono::Utc::now().timestamp(),
-                        is_online: true,
-                    }),
-                })),
-            }),
-
-            ClusterEvent::UserLeft {
-                room_id, user_id, ..
-            } => Some(ServerMessage {
-                message: Some(server_message::Message::UserLeft(UserLeftRoom {
-                    room_id: room_id.as_str().to_string(),
-                    user_id: user_id.as_str().to_string(),
-                })),
-            }),
-
-            ClusterEvent::PlaybackStateChanged { room_id, state, .. } => Some(ServerMessage {
-                message: Some(server_message::Message::PlaybackState(
-                    PlaybackStateChanged {
-                        room_id: room_id.as_str().to_string(),
-                        state: Some(PlaybackState {
-                            room_id: room_id.as_str().to_string(),
-                            playing_media_id: state
-                                .playing_media_id
-                                .map(|id| id.as_str().to_string())
-                                .unwrap_or_default(),
-                            current_time: state.current_time,
-                            speed: state.speed,
-                            is_playing: state.is_playing,
-                            updated_at: state.updated_at.timestamp(),
-                            version: state.version as i32,
-                            playing_playlist_id: state
-                                .playing_playlist_id
-                                .map(|id| id.as_str().to_string())
-                                .unwrap_or_default(),
-                            relative_path: state.relative_path,
-                        }),
-                    },
-                )),
-            }),
-
-            ClusterEvent::RoomSettingsChanged { room_id, .. } => Some(ServerMessage {
-                message: Some(server_message::Message::RoomSettings(RoomSettingsChanged {
-                    room_id: room_id.as_str().to_string(),
-                    // Settings are embedded in the room object, client should fetch room details
-                    // to get updated settings. This event is just a notification.
-                    settings: vec![],
-                })),
-            }),
-
-            _ => None,
-        }
-    }
 }
 
 // ==================== AuthService Implementation ====================

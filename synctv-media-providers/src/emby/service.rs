@@ -98,7 +98,7 @@ impl EmbyInterface for EmbyService {
     }
 
     async fn get_item(&self, request: GetItemReq) -> Result<Item, EmbyError> {
-        let client = EmbyClient::with_credentials(&request.host, &request.token, String::new())?;
+        let client = EmbyClient::with_credentials(&request.host, &request.token, &request.user_id)?;
         let item = client.get_item(&request.item_id).await?;
 
         Ok(item.into())

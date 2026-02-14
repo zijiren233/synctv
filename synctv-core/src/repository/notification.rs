@@ -73,6 +73,7 @@ impl NotificationRepository {
     ///
     /// Uses `COUNT(*) OVER()` window function to return both the list and total count
     /// in a single query, avoiding a separate count round trip.
+    /// Dynamic query building eliminates the need for separate query variants per filter combo.
     pub async fn list_by_user_with_count(
         &self,
         user_id: &UserId,
@@ -82,77 +83,28 @@ impl NotificationRepository {
         let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
         let offset = (page - 1) * page_size;
 
-        let rows = if let Some(notification_type) = &query.notification_type {
-            if let Some(is_read) = query.is_read {
-                sqlx::query(
-                    r"
-                    SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at,
-                           COUNT(*) OVER() AS total_count
-                    FROM notifications
-                    WHERE user_id = $1 AND type = $2 AND is_read = $3
-                    ORDER BY created_at DESC
-                    LIMIT $4 OFFSET $5
-                    ",
-                )
-                .bind(user_id.as_str())
-                .bind(notification_type.to_string())
-                .bind(is_read)
-                .bind(page_size)
-                .bind(i64::from(offset))
-                .fetch_all(&self.pool)
-                .await?
-            } else {
-                sqlx::query(
-                    r"
-                    SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at,
-                           COUNT(*) OVER() AS total_count
-                    FROM notifications
-                    WHERE user_id = $1 AND type = $2
-                    ORDER BY created_at DESC
-                    LIMIT $3 OFFSET $4
-                    ",
-                )
-                .bind(user_id.as_str())
-                .bind(notification_type.to_string())
-                .bind(page_size)
-                .bind(i64::from(offset))
-                .fetch_all(&self.pool)
-                .await?
-            }
-        } else if let Some(is_read) = query.is_read {
-            sqlx::query(
-                r"
-                SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at,
-                       COUNT(*) OVER() AS total_count
-                FROM notifications
-                WHERE user_id = $1 AND is_read = $2
-                ORDER BY created_at DESC
-                LIMIT $3 OFFSET $4
-                ",
-            )
-            .bind(user_id.as_str())
-            .bind(is_read)
-            .bind(page_size)
-            .bind(i64::from(offset))
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            sqlx::query(
-                r"
-                SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at,
-                       COUNT(*) OVER() AS total_count
-                FROM notifications
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2 OFFSET $3
-                ",
-            )
-            .bind(user_id.as_str())
-            .bind(page_size)
-            .bind(i64::from(offset))
-            .fetch_all(&self.pool)
-            .await?
-        };
+        let mut qb: sqlx::QueryBuilder<sqlx::Postgres> = sqlx::QueryBuilder::new(
+            "SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at, \
+             COUNT(*) OVER() AS total_count \
+             FROM notifications WHERE user_id = "
+        );
+        qb.push_bind(user_id.as_str());
+
+        if let Some(notification_type) = &query.notification_type {
+            qb.push(" AND type = ");
+            qb.push_bind(notification_type.to_string());
+        }
+        if let Some(is_read) = query.is_read {
+            qb.push(" AND is_read = ");
+            qb.push_bind(is_read);
+        }
+
+        qb.push(" ORDER BY created_at DESC LIMIT ");
+        qb.push_bind(page_size);
+        qb.push(" OFFSET ");
+        qb.push_bind(i64::from(offset));
+
+        let rows = qb.build().fetch_all(&self.pool).await?;
 
         let total = rows.first().map_or(0i64, |row| row.try_get("total_count").unwrap_or(0));
         let notifications: Result<Vec<Notification>> = rows.into_iter()
@@ -169,57 +121,23 @@ impl NotificationRepository {
         is_read: Option<bool>,
         notification_type: Option<&NotificationType>,
     ) -> Result<i64> {
-        let count: i64 = if let Some(notification_type) = notification_type {
-            if let Some(is_read) = is_read {
-                sqlx::query_scalar(
-                    r"
-                    SELECT COUNT(*)
-                    FROM notifications
-                    WHERE user_id = $1 AND type = $2 AND is_read = $3
-                    ",
-                )
-                .bind(user_id.as_str())
-                .bind(notification_type.to_string())
-                .bind(is_read)
-                .fetch_one(&self.pool)
-                .await?
-            } else {
-                sqlx::query_scalar(
-                    r"
-                    SELECT COUNT(*)
-                    FROM notifications
-                    WHERE user_id = $1 AND type = $2
-                    ",
-                )
-                .bind(user_id.as_str())
-                .bind(notification_type.to_string())
-                .fetch_one(&self.pool)
-                .await?
-            }
-        } else if let Some(is_read) = is_read {
-            sqlx::query_scalar(
-                r"
-                SELECT COUNT(*)
-                FROM notifications
-                WHERE user_id = $1 AND is_read = $2
-                ",
-            )
-            .bind(user_id.as_str())
-            .bind(is_read)
+        let mut qb: sqlx::QueryBuilder<sqlx::Postgres> = sqlx::QueryBuilder::new(
+            "SELECT COUNT(*) FROM notifications WHERE user_id = "
+        );
+        qb.push_bind(user_id.as_str());
+
+        if let Some(notification_type) = notification_type {
+            qb.push(" AND type = ");
+            qb.push_bind(notification_type.to_string());
+        }
+        if let Some(is_read) = is_read {
+            qb.push(" AND is_read = ");
+            qb.push_bind(is_read);
+        }
+
+        let count: i64 = qb.build_query_scalar()
             .fetch_one(&self.pool)
-            .await?
-        } else {
-            sqlx::query_scalar(
-                r"
-                SELECT COUNT(*)
-                FROM notifications
-                WHERE user_id = $1
-                ",
-            )
-            .bind(user_id.as_str())
-            .fetch_one(&self.pool)
-            .await?
-        };
+            .await?;
 
         Ok(count)
     }

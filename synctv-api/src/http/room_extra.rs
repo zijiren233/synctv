@@ -56,7 +56,13 @@ pub async fn set_member_permissions(
             &room_id,
             crate::proto::client::UpdateMemberPermissionsRequest {
                 user_id: target_user_id,
-                role: req.role,
+                role: match req.role.as_str() {
+                    "creator" => synctv_proto::common::RoomMemberRole::Creator as i32,
+                    "admin" => synctv_proto::common::RoomMemberRole::Admin as i32,
+                    "member" => synctv_proto::common::RoomMemberRole::Member as i32,
+                    "guest" => synctv_proto::common::RoomMemberRole::Guest as i32,
+                    _ => synctv_proto::common::RoomMemberRole::Unspecified as i32,
+                },
                 added_permissions: req.added_permissions,
                 removed_permissions: req.removed_permissions,
                 admin_added_permissions: req.admin_added_permissions,

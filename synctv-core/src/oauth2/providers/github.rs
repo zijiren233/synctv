@@ -109,8 +109,8 @@ impl Provider for GitHubProvider {
 }
 
 /// Factory function for GitHub provider
-pub fn github_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error> {
-    let config: GitHubConfig = serde_yaml::from_value(config.clone())
+pub fn github_factory(config: &serde_json::Value) -> Result<Box<dyn Provider>, Error> {
+    let config: GitHubConfig = serde_json::from_value(config.clone())
         .map_err(|e| Error::InvalidInput(format!("Invalid GitHub config: {e}")))?;
 
     Ok(Box::new(GitHubProvider::create(

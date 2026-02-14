@@ -79,6 +79,7 @@ message GetNodesResponse {
 message DeregisterNodeRequest {
     string node_id = 1;
     string reason = 2; // shutdown, upgrade, failure, etc.
+    uint64 epoch = 3; // Fencing token epoch (required for stale-deregister protection)
 }
 
 message DeregisterNodeResponse {
@@ -138,6 +139,12 @@ message ClusterEvent {
         ChatMessageEvent chat_message = 16;
         DanmakuMessageEvent danmaku_message = 17;
         CacheInvalidateEvent cache_invalidate = 18;
+        MediaAddedEvent media_added = 19;
+        MediaRemovedEvent media_removed = 20;
+        WebRTCSignalingEvent webrtc_signaling = 21;
+        KickPublisherEvent kick_publisher = 22;
+        KickUserEvent kick_user = 23;
+        PermissionChangedEvent permission_changed = 24;
     }
 }
 
@@ -193,6 +200,53 @@ message DanmakuMessageEvent {
 message CacheInvalidateEvent {
     repeated string keys = 1; // Cache keys to invalidate
     string pattern = 2; // Optional pattern (e.g., "room:123:*")
+}
+
+message MediaAddedEvent {
+    string room_id = 1;
+    string media_id = 2;
+    string title = 3;
+    string added_by_user_id = 4;
+    string added_by_username = 5;
+}
+
+message MediaRemovedEvent {
+    string room_id = 1;
+    string media_id = 2;
+    string removed_by_user_id = 3;
+    string removed_by_username = 4;
+}
+
+message WebRTCSignalingEvent {
+    string room_id = 1;
+    string target_user_id = 2; // Specific user to route to
+    string from_user_id = 3;
+    string signal_type = 4; // "offer", "answer", "ice_candidate"
+    string data = 5; // Opaque signaling data (JSON)
+}
+
+message KickPublisherEvent {
+    string room_id = 1;
+    string media_id = 2;
+    string reason = 3;
+}
+
+message KickUserEvent {
+    string room_id = 1;
+    string user_id = 2;
+    string reason = 3;
+}
+
+message PermissionChangedEvent {
+    string room_id = 1;
+    string user_id = 2;
+    string role = 3; // New role
+    uint64 effective_permissions = 4;
+    uint64 added_permissions = 5;
+    uint64 removed_permissions = 6;
+    uint64 admin_added_permissions = 7;
+    uint64 admin_removed_permissions = 8;
+    string updated_by = 9;
 }
 
 // User connection tracking

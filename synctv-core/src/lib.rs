@@ -10,7 +10,6 @@ pub mod logging;
 pub mod bootstrap;
 pub mod transaction;
 pub mod metrics;
-pub mod telemetry;
 pub mod resilience;
 pub mod validation;
 pub mod secrets;

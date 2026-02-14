@@ -200,9 +200,9 @@ fn check_host_not_internal(host: &str) -> Result<(), ProviderError> {
         ));
     }
 
-    // Check IP addresses against private ranges
+    // Check IP addresses against private ranges using the authoritative SSRF validator
     if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(ip) {
+        if crate::validation::is_private_ip(&ip) {
             return Err(ProviderError::InvalidConfig(
                 "Source URL targets a private IP address".to_string(),
             ));
@@ -210,39 +210,4 @@ fn check_host_not_internal(host: &str) -> Result<(), ProviderError> {
     }
 
     Ok(())
-}
-
-/// Check if an IP address is in a private/reserved range.
-const fn is_private_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-            || v4.is_private()
-            || v4.is_link_local()
-            || v4.is_unspecified()
-            || v4.is_multicast()
-            || v4.is_broadcast()
-            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-            || v6.is_unspecified()
-            || v6.is_multicast()
-            || (v6.segments()[0] & 0xffc0) == 0xfe80 // link-local
-            || (v6.segments()[0] & 0xfe00) == 0xfc00  // unique local
-            // IPv4-mapped IPv6 (::ffff:x.x.x.x) - check the embedded IPv4
-            || {
-                let segs = v6.segments();
-                if segs[0] == 0 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0
-                    && segs[4] == 0 && segs[5] == 0xffff
-                {
-                    let o = v6.octets();
-                    let v4 = std::net::Ipv4Addr::new(o[12], o[13], o[14], o[15]);
-                    is_private_ip(IpAddr::V4(v4))
-                } else {
-                    false
-                }
-            }
-        }
-    }
 }

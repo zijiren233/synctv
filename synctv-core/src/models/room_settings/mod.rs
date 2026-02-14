@@ -377,7 +377,7 @@ impl RoomSettings {
     /// Get effective permissions for Admin role
     ///
     /// Formula: (`global_default` | added) & ~removed
-    #[must_use] 
+    #[must_use]
     pub const fn admin_permissions(&self, global_default: PermissionBits) -> PermissionBits {
         let mut result = global_default.0;
         result |= self.admin_added_permissions.0;
@@ -386,21 +386,45 @@ impl RoomSettings {
     }
 
     /// Get effective permissions for Member role
-    #[must_use] 
+    #[must_use]
     pub const fn member_permissions(&self, global_default: PermissionBits) -> PermissionBits {
         let mut result = global_default.0;
-        result |= self.member_added_permissions.0;
+        // Cap member added permissions to DEFAULT_ADMIN ceiling
+        result |= self.member_added_permissions.0 & PermissionBits::DEFAULT_ADMIN;
         result &= !self.member_removed_permissions.0;
         PermissionBits(result)
     }
 
     /// Get effective permissions for Guest
-    #[must_use] 
+    #[must_use]
     pub const fn guest_permissions(&self, global_default: PermissionBits) -> PermissionBits {
         let mut result = global_default.0;
-        result |= self.guest_added_permissions.0;
+        // Cap guest added permissions to DEFAULT_MEMBER ceiling
+        result |= self.guest_added_permissions.0 & PermissionBits::DEFAULT_MEMBER;
         result &= !self.guest_removed_permissions.0;
         PermissionBits(result)
+    }
+
+    /// Validate that permission overrides don't escalate beyond role ceilings
+    ///
+    /// - Guest added permissions cannot exceed DEFAULT_MEMBER
+    /// - Member added permissions cannot exceed DEFAULT_ADMIN
+    pub fn validate_permissions(&self) -> Result<()> {
+        let guest_overflow = self.guest_added_permissions.0 & !PermissionBits::DEFAULT_MEMBER;
+        if guest_overflow != 0 {
+            return Err(Error::InvalidInput(
+                "Guest added permissions cannot exceed member-level permissions".to_string()
+            ));
+        }
+
+        let member_overflow = self.member_added_permissions.0 & !PermissionBits::DEFAULT_ADMIN;
+        if member_overflow != 0 {
+            return Err(Error::InvalidInput(
+                "Member added permissions cannot exceed admin-level permissions".to_string()
+            ));
+        }
+
+        Ok(())
     }
 }
 

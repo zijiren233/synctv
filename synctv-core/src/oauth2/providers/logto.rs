@@ -121,8 +121,8 @@ impl Provider for LogtoProvider {
 }
 
 /// Factory function for Logto provider
-pub fn logto_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error> {
-    let config: LogtoConfig = serde_yaml::from_value(config.clone())
+pub fn logto_factory(config: &serde_json::Value) -> Result<Box<dyn Provider>, Error> {
+    let config: LogtoConfig = serde_json::from_value(config.clone())
         .map_err(|e| Error::InvalidInput(format!("Invalid Logto config: {e}")))?;
 
     Ok(Box::new(LogtoProvider::create(

@@ -35,7 +35,7 @@ axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 hyper.workspace = true
-reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+reqwest.workspace = true
 http-body-util = "0.1"
 
 # Serialization
@@ -61,13 +61,13 @@ parking_lot.workspace = true
 hostname.workspace = true
 base64.workspace = true
 uuid.workspace = true
-url = "2.5"
+url.workspace = true
 
 # Cryptography (for WebRTC TURN credentials and M3U8 proxy tokens)
-hmac = "0.12"
-sha1 = "0.10"
+hmac.workspace = true
+sha1.workspace = true
 sha2.workspace = true
-subtle = "2.6"
+subtle.workspace = true
 
 # Time
 chrono.workspace = true
@@ -80,6 +80,9 @@ tracing-subscriber.workspace = true
 config.workspace = true
 clap.workspace = true
 regex.workspace = true
+
+[lints]
+workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true

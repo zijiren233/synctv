@@ -166,6 +166,8 @@ struct TrackStatsInner {
     bytes_sent: AtomicU64,
     packets_lost: AtomicU64,
     last_packet_time: RwLock<Option<Instant>>,
+    /// Sliding window of (timestamp, bytes) for accurate bitrate calculation
+    bitrate_window: parking_lot::Mutex<std::collections::VecDeque<(Instant, u64)>>,
 }
 
 impl MediaTrack {
@@ -202,6 +204,7 @@ impl MediaTrack {
                 bytes_sent: AtomicU64::new(0),
                 packets_lost: AtomicU64::new(0),
                 last_packet_time: RwLock::new(None),
+                bitrate_window: parking_lot::Mutex::new(std::collections::VecDeque::new()),
             }),
             packet_tx: parking_lot::Mutex::new(None),
         }
@@ -245,7 +248,20 @@ impl MediaTrack {
                                 let packet_size = rtp_packet.header.marshal_size() + rtp_packet.payload.len();
                                 stats.packets_received.fetch_add(1, Ordering::Relaxed);
                                 stats.bytes_received.fetch_add(packet_size as u64, Ordering::Relaxed);
-                                *stats.last_packet_time.write() = Some(Instant::now());
+                                let now = Instant::now();
+                                *stats.last_packet_time.write() = Some(now);
+
+                                // Record in sliding window for bitrate calculation
+                                {
+                                    let mut window = stats.bitrate_window.lock();
+                                    window.push_back((now, packet_size as u64));
+                                    // Prune entries older than 2 seconds
+                                    if let Some(cutoff) = now.checked_sub(Duration::from_secs(2)) {
+                                        while let Some(&(t, _)) = window.front() {
+                                            if t < cutoff { window.pop_front(); } else { break; }
+                                        }
+                                    }
+                                }
 
                                 // Create forwardable packet
                                 let forwardable = ForwardablePacket {
@@ -364,16 +380,19 @@ impl MediaTrack {
         let bytes_sent = self.stats.bytes_sent.load(Ordering::Relaxed);
         let packets_lost = self.stats.packets_lost.load(Ordering::Relaxed);
 
-        // Calculate bitrate (over last second)
-        let bitrate_kbps = if let Some(last_time) = *self.stats.last_packet_time.read() {
-            let elapsed = Instant::now().duration_since(last_time);
-            if elapsed < Duration::from_secs(1) {
-                ((bytes_received * 8) as f64 / elapsed.as_secs_f64() / 1000.0) as u32
-            } else {
-                0
+        // Calculate bitrate from sliding window (bytes in last 2 seconds)
+        let bitrate_kbps = {
+            let now = Instant::now();
+            let mut window = self.stats.bitrate_window.lock();
+            // Prune old entries
+            if let Some(cutoff) = now.checked_sub(Duration::from_secs(2)) {
+                while let Some(&(t, _)) = window.front() {
+                    if t < cutoff { window.pop_front(); } else { break; }
+                }
             }
-        } else {
-            0
+            let total_bytes: u64 = window.iter().map(|(_, b)| b).sum();
+            // Bits per second over 2-second window, converted to kbps
+            (total_bytes * 8 / 2 / 1000) as u32
         };
 
         TrackStats {

@@ -8,7 +8,7 @@ use std::time::Duration;
 use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT}};
 use serde_json::json;
 
-use super::error::{AlistError, check_response};
+use super::error::{AlistError, check_response, json_with_limit};
 use super::types::{AlistResp, LoginData, HttpFsGetResp, HttpFsListResp, HttpFsOtherResp, HttpMeResp, HttpFsSearchResp};
 
 /// Shared HTTP client for all Alist requests (connection pooling)
@@ -106,7 +106,7 @@ impl AlistClient {
             .await?;
 
         let response = check_response(response)?;
-        let resp: AlistResp<LoginData> = response.json().await?;
+        let resp: AlistResp<LoginData> = json_with_limit(response).await?;
 
         if resp.code != 200 {
             return Err(AlistError::Api {
@@ -143,7 +143,7 @@ impl AlistClient {
             .await?;
 
         let response = check_response(response)?;
-        let resp: AlistResp<HttpFsGetResp> = response.json().await?;
+        let resp: AlistResp<HttpFsGetResp> = json_with_limit(response).await?;
 
         if resp.code != 200 {
             return Err(AlistError::Api {
@@ -187,7 +187,7 @@ impl AlistClient {
             .await?;
 
         let response = check_response(response)?;
-        let resp: AlistResp<HttpFsListResp> = response.json().await?;
+        let resp: AlistResp<HttpFsListResp> = json_with_limit(response).await?;
 
         if resp.code != 200 {
             return Err(AlistError::Api {
@@ -227,7 +227,7 @@ impl AlistClient {
             .await?;
 
         let response = check_response(response)?;
-        let resp: AlistResp<HttpFsOtherResp> = response.json().await?;
+        let resp: AlistResp<HttpFsOtherResp> = json_with_limit(response).await?;
 
         if resp.code != 200 {
             return Err(AlistError::Api {
@@ -253,7 +253,7 @@ impl AlistClient {
             .await?;
 
         let response = check_response(response)?;
-        let resp: AlistResp<HttpMeResp> = response.json().await?;
+        let resp: AlistResp<HttpMeResp> = json_with_limit(response).await?;
 
         if resp.code != 200 {
             return Err(AlistError::Api {
@@ -302,7 +302,7 @@ impl AlistClient {
             .await?;
 
         let response = check_response(response)?;
-        let resp: AlistResp<HttpFsSearchResp> = response.json().await?;
+        let resp: AlistResp<HttpFsSearchResp> = json_with_limit(response).await?;
 
         if resp.code != 200 {
             return Err(AlistError::Api {

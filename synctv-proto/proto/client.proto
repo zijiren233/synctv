@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package synctv.client;
 
+import "proto/common.proto";
+
 // ==================== Auth Service ====================
 // Authentication: None (public access)
 // Routes: /api/auth/*
@@ -128,13 +130,25 @@ service EmailService {
     rpc ConfirmPasswordReset(ConfirmPasswordResetRequest) returns (ConfirmPasswordResetResponse);
 }
 
+// ==================== Notification Service ====================
+// Authentication: JWT Authorization header (user_id)
+// Routes: /api/notifications/*
+service NotificationService {
+    rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
+    rpc GetNotification(GetNotificationRequest) returns (GetNotificationResponse);
+    rpc MarkAsRead(MarkAsReadRequest) returns (MarkAsReadResponse);
+    rpc MarkAllAsRead(MarkAllAsReadRequest) returns (MarkAllAsReadResponse);
+    rpc DeleteNotification(DeleteNotificationRequest) returns (DeleteNotificationResponse);
+    rpc DeleteAllRead(DeleteAllReadRequest) returns (DeleteAllReadResponse);
+}
+
 // Common Types
 message User {
     string id = 1;
     string username = 2;
     string email = 3;
-    string role = 4;     // Global RBAC role: root, admin, user
-    string status = 5;   // Account status: active, pending, banned
+    synctv.common.UserRole role = 4;     // Global RBAC role
+    synctv.common.UserStatus status = 5; // Account status
     int64 created_at = 6;
     bool email_verified = 7; // Whether email has been verified
 }
@@ -154,6 +168,7 @@ message Room {
 message Media {
     string id = 1;
     string room_id = 2;
+    reserved 3; // Previously used field tag - do not reuse
     string provider = 4; // bilibili, alist, emby, direct (also known as source_provider)
     string title = 5; // Also known as name
     bytes metadata = 6; // JSON metadata
@@ -187,27 +202,6 @@ message PlaybackState {
     int32 version = 7; // For optimistic locking
     string playing_playlist_id = 8; // Currently playing playlist
     string relative_path = 9; // Relative path within dynamic folder (empty for static playlists)
-}
-
-message RoomMember {
-    string room_id = 1;
-    string user_id = 2;
-    string username = 3;
-    string role = 4; // creator, admin, member, guest
-
-    // Effective permissions (calculated from role + added/removed)
-    uint64 permissions = 5;
-
-    // Allow/Deny permission pattern fields
-    // For member role: uses added_permissions/removed_permissions
-    // For admin role: uses admin_added_permissions/admin_removed_permissions
-    uint64 added_permissions = 6;
-    uint64 removed_permissions = 7;
-    uint64 admin_added_permissions = 8;
-    uint64 admin_removed_permissions = 9;
-
-    int64 joined_at = 10;
-    bool is_online = 11;
 }
 
 // Authentication Messages
@@ -276,7 +270,7 @@ message JoinRoomRequest {
 message JoinRoomResponse {
     Room room = 1;
     PlaybackState playback_state = 2;
-    repeated RoomMember members = 3;
+    repeated synctv.common.RoomMember members = 3;
 }
 
 message LeaveRoomRequest {}
@@ -341,15 +335,19 @@ message CheckRoomPasswordResponse {
 
 // Room Members Messages
 // Note: room_id extracted from x-room-id metadata
-message GetRoomMembersRequest {}
+message GetRoomMembersRequest {
+    int32 page = 1;      // Page number (default 1)
+    int32 page_size = 2;  // Items per page (default 50)
+}
 
 message GetRoomMembersResponse {
-    repeated RoomMember members = 1;
+    repeated synctv.common.RoomMember members = 1;
+    int32 total = 2;
 }
 
 message UpdateMemberPermissionsRequest {
     string user_id = 1;           // Target user
-    string role = 2;              // New role (optional): creator, admin, member, guest
+    synctv.common.RoomMemberRole role = 2; // New role (optional)
 
     // Allow/Deny permission pattern fields
     // Only set the fields you want to update
@@ -362,7 +360,7 @@ message UpdateMemberPermissionsRequest {
 }
 
 message UpdateMemberPermissionsResponse {
-    RoomMember member = 1;
+    synctv.common.RoomMember member = 1;
 }
 
 message KickMemberRequest {
@@ -477,7 +475,7 @@ message ListPlaylistResponse {
 message ListPlaylistItemsRequest {
     string playlist_id = 1; // Playlist ID
     string relative_path = 2; // Relative path within dynamic folder (empty for root)
-    int32 page = 3; // Page number (default 0)
+    int32 page = 3; // Page number (default 1)
     int32 page_size = 4; // Items per page (default 50)
 }
 
@@ -665,7 +663,7 @@ message PlaybackStateChanged {
 
 message UserJoinedRoom {
     string room_id = 1;
-    RoomMember member = 2;
+    synctv.common.RoomMember member = 2;
 }
 
 message UserLeftRoom {
@@ -741,7 +739,7 @@ message ListParticipatedRoomsResponse {
 message RoomWithRole {
     Room room = 1;
     uint64 permissions = 2; // User's permissions in this room
-    string role = 3; // creator, admin, member, guest
+    synctv.common.RoomMemberRole role = 3; // Room member role
 }
 
 // Room Discovery
@@ -792,7 +790,7 @@ message GetStreamInfoRequest {
 
 message StreamPublisherInfo {
     string user_id = 1;
-    string started_at = 2;  // RFC3339 timestamp
+    int64 started_at = 2;  // Unix epoch timestamp
 }
 
 message GetStreamInfoResponse {
@@ -908,7 +906,7 @@ message MediaRemoved {
 message PermissionChanged {
     string room_id = 1;
     string user_id = 2;
-    string role = 3; // New role (optional): creator, admin, member, guest
+    synctv.common.RoomMemberRole role = 3; // New role
 
     // All permission fields for full state sync
     uint64 effective_permissions = 4; // Calculated final permissions
@@ -949,7 +947,7 @@ message PlayingChanged {
 // Client sends this to another specific peer through the server
 message WebRTCOffer {
     string to = 1;          // Target: "user_id" or "user_id:conn_id"
-    string from = 2;        // Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    string from = 2;        // Sender: Set by server, format: "user_id:conn_id"
     string data = 3;        // SDP offer (JSON string, opaque to server)
 }
 
@@ -957,7 +955,7 @@ message WebRTCOffer {
 // Response to an offer
 message WebRTCAnswer {
     string to = 1;          // Target: "user_id" or "user_id:conn_id"
-    string from = 2;        // Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    string from = 2;        // Sender: Set by server, format: "user_id:conn_id"
     string data = 3;        // SDP answer (JSON string, opaque to server)
 }
 
@@ -965,7 +963,7 @@ message WebRTCAnswer {
 // Sent repeatedly during ICE negotiation
 message WebRTCIceCandidate {
     string to = 1;          // Target: "user_id" or "user_id:conn_id"
-    string from = 2;        // Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    string from = 2;        // Sender: Set by server, format: "user_id:conn_id"
     string data = 3;        // ICE candidate (JSON string, opaque to server)
 }
 
@@ -1007,7 +1005,7 @@ message GetIceServersResponse {
 }
 
 // ==================== Network Quality Monitoring ====================
-// Phase 5: Real-time network quality monitoring for WebRTC connections
+// Real-time network quality monitoring for WebRTC connections
 
 message GetNetworkQualityRequest {
     // Empty - uses x-room-id from metadata
@@ -1067,3 +1065,69 @@ message MovieSubtitle {
     string url = 3;
     string format = 4;        // "json", "srt", "vtt"
 }
+
+// ==================== Notification Messages ====================
+
+enum NotificationType {
+    NOTIFICATION_TYPE_UNSPECIFIED = 0;
+    NOTIFICATION_TYPE_ROOM_INVITATION = 1;
+    NOTIFICATION_TYPE_SYSTEM_ANNOUNCEMENT = 2;
+    NOTIFICATION_TYPE_ROOM_EVENT = 3;
+    NOTIFICATION_TYPE_PASSWORD_RESET = 4;
+    NOTIFICATION_TYPE_EMAIL_VERIFICATION = 5;
+}
+
+message NotificationProto {
+    string id = 1;
+    string user_id = 2;
+    NotificationType notification_type = 3;
+    string title = 4;
+    string content = 5;
+    bytes data = 6; // JSON additional data
+    bool is_read = 7;
+    int64 created_at = 8;
+    int64 updated_at = 9;
+}
+
+message ListNotificationsRequest {
+    int32 page = 1;      // Page number (default 1)
+    int32 page_size = 2;  // Items per page (default 20, max 100)
+    optional bool is_read = 3; // Filter by read status
+    optional NotificationType notification_type = 4; // Filter by type
+}
+
+message ListNotificationsResponse {
+    repeated NotificationProto notifications = 1;
+    int64 total = 2;
+    int64 unread_count = 3;
+}
+
+message GetNotificationRequest {
+    string notification_id = 1;
+}
+
+message GetNotificationResponse {
+    NotificationProto notification = 1;
+}
+
+message MarkAsReadRequest {
+    repeated string notification_ids = 1;
+}
+
+message MarkAsReadResponse {}
+
+message MarkAllAsReadRequest {
+    optional int64 before = 1; // Mark all as read before this timestamp
+}
+
+message MarkAllAsReadResponse {}
+
+message DeleteNotificationRequest {
+    string notification_id = 1;
+}
+
+message DeleteNotificationResponse {}
+
+message DeleteAllReadRequest {}
+
+message DeleteAllReadResponse {}

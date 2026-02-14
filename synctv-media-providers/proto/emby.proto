@@ -103,6 +103,7 @@ message GetItemReq {
   string host = 1;
   string token = 2;
   string itemId = 3;
+  string userId = 4;
 }
 
 message SystemInfoReq {

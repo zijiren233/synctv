@@ -16,6 +16,7 @@ use axum::{
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use crate::streamhub::StreamsHub;
 
 pub struct HlsServer {
@@ -23,6 +24,7 @@ pub struct HlsServer {
     stream_hub: Arc<Mutex<StreamsHub>>,
     segment_manager: Arc<SegmentManager>,
     stream_registry: StreamRegistry,
+    shutdown_token: CancellationToken,
 }
 
 impl HlsServer {
@@ -34,9 +36,8 @@ impl HlsServer {
     ) -> Self {
         // Parse port from address (e.g., "0.0.0.0:8081" -> 8081)
         let port = address
-            .split(':')
-            .nth(1)
-            .and_then(|p| p.parse().ok())
+            .rsplit_once(':')
+            .and_then(|(_, p)| p.parse().ok())
             .unwrap_or(8081);
 
         Self {
@@ -44,18 +45,28 @@ impl HlsServer {
             stream_hub,
             segment_manager,
             stream_registry,
+            shutdown_token: CancellationToken::new(),
         }
+    }
+
+    /// Returns a `CancellationToken` that can be used to signal graceful shutdown.
+    #[must_use]
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown_token.clone()
     }
 
     pub async fn start(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracing::info!("HLS server starting on http://0.0.0.0:{}", self.port);
 
+        let shutdown_token = self.shutdown_token.clone();
+
         // Start custom HLS HTTP server (serves from our storage)
         let port = self.port;
         let segment_manager_clone = Arc::clone(&self.segment_manager);
         let stream_registry_clone = self.stream_registry.clone();
+        let http_shutdown = shutdown_token.clone();
         tokio::spawn(async move {
-            if let Err(e) = start_http_server(port, segment_manager_clone, stream_registry_clone).await {
+            if let Err(e) = start_http_server(port, segment_manager_clone, stream_registry_clone, http_shutdown).await {
                 tracing::error!("HLS HTTP server error: {}", e);
             }
         });
@@ -100,6 +111,7 @@ async fn start_http_server(
     port: usize,
     segment_manager: Arc<SegmentManager>,
     stream_registry: StreamRegistry,
+    shutdown_token: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let state = HlsServerState {
         segment_manager,
@@ -116,7 +128,11 @@ async fn start_http_server(
 
     tracing::info!("HLS HTTP server listening on {}", addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move { shutdown_token.cancelled().await })
+        .await?;
+
+    tracing::info!("HLS HTTP server shut down gracefully");
 
     Ok(())
 }

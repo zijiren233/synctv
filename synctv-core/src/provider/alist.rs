@@ -507,13 +507,8 @@ impl DynamicFolder for AlistProvider {
                     return Ok(None);
                 }
 
-                // Simple random selection (use timestamp as seed)
-                use std::time::{SystemTime, UNIX_EPOCH};
-                let seed = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let random_idx = (seed as usize) % videos.len();
+                use rand::Rng;
+                let random_idx = rand::thread_rng().gen_range(0..videos.len());
                 let random_item = videos[random_idx];
 
                 let config = playlist

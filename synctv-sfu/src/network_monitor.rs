@@ -146,15 +146,11 @@ impl NetworkQualityMonitor {
         };
 
         // Enforce capacity limit before adding
-        if entry.rtt_samples.len() >= MAX_SAMPLES {
-            entry.rtt_samples.pop_front();
-        }
         if entry.loss_samples.len() >= MAX_SAMPLES {
             entry.loss_samples.pop_front();
         }
 
-        // Add samples
-        entry.rtt_samples.push_back((now, 0)); // RTT from RTCP when available
+        // Only add loss sample here; RTT is added via update_rtt() from actual RTCP measurements
         entry.loss_samples.push_back((now, loss_rate));
 
         // Prune old samples outside the window

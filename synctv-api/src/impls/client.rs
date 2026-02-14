@@ -181,8 +181,12 @@ impl ClientApiImpl {
         &self,
         _req: crate::proto::client::LogoutRequest,
     ) -> Result<crate::proto::client::LogoutResponse, String> {
-        // Logout is typically handled client-side by deleting the token
-        // If we had a token blacklist, we would add the token here
+        // Token invalidation is transport-specific:
+        // - gRPC: Extracts token from metadata and calls user_service.logout(token)
+        //   directly in ClientServiceImpl::logout (server-side blacklist).
+        // - HTTP: Relies on client-side token deletion (no server-side blacklist
+        //   needed because short-lived JWTs expire naturally).
+        // This method handles the common response; gRPC adds blacklisting on top.
         Ok(crate::proto::client::LogoutResponse { success: true })
     }
 
@@ -283,12 +287,6 @@ impl ClientApiImpl {
             .map_err(|e| e.to_string())?;
 
         let room_list: Vec<_> = rooms.into_iter().map(|(room, role, _status, _member_count)| {
-            let role_str = match role {
-                synctv_core::models::RoomRole::Creator => "creator",
-                synctv_core::models::RoomRole::Admin => "admin",
-                synctv_core::models::RoomRole::Member => "member",
-                synctv_core::models::RoomRole::Guest => "guest",
-            };
             let permissions = role.permissions().0;
 
             crate::proto::client::RoomWithRole {
@@ -301,7 +299,7 @@ impl ClientApiImpl {
                         .ok(),
                 )),
                 permissions,
-                role: role_str.to_string(),
+                role: room_role_to_proto(role),
             }
         }).collect();
 
@@ -1367,7 +1365,7 @@ impl ClientApiImpl {
                 active: true,
                 publisher: Some(crate::proto::client::StreamPublisherInfo {
                     user_id: pub_info.user_id,
-                    started_at: pub_info.started_at.to_rfc3339(),
+                    started_at: pub_info.started_at.timestamp(),
                 }),
             }),
             Ok(None) => Ok(crate::proto::client::GetStreamInfoResponse {
@@ -1588,8 +1586,10 @@ impl ClientApiImpl {
             .map(room_member_to_proto)
             .collect();
 
+        let total = proto_members.len() as i32;
         Ok(crate::proto::client::GetRoomMembersResponse {
             members: proto_members,
+            total,
         })
     }
 
@@ -1603,9 +1603,9 @@ impl ClientApiImpl {
         let rid = RoomId::from_string(room_id.to_string());
         let target_uid = UserId::from_string(req.user_id.clone());
 
-        // Handle role update if provided
-        if !req.role.is_empty() {
-            let new_role = synctv_core::models::RoomRole::from_str(&req.role)?;
+        // Handle role update if provided (non-zero = specified)
+        if req.role != synctv_proto::common::RoomMemberRole::Unspecified as i32 {
+            let new_role = proto_role_to_room_role(req.role)?;
             // Update the member role
             self.room_service.member_service().set_member_role(
                 rid.clone(),
@@ -1910,25 +1910,57 @@ impl ClientApiImpl {
 
 // === Helper Functions ===
 
+fn user_role_to_proto(role: synctv_core::models::UserRole) -> i32 {
+    match role {
+        synctv_core::models::UserRole::Root => synctv_proto::common::UserRole::Root as i32,
+        synctv_core::models::UserRole::Admin => synctv_proto::common::UserRole::Admin as i32,
+        synctv_core::models::UserRole::User => synctv_proto::common::UserRole::User as i32,
+    }
+}
+
+fn user_status_to_proto(status: synctv_core::models::UserStatus) -> i32 {
+    match status {
+        synctv_core::models::UserStatus::Active => synctv_proto::common::UserStatus::Active as i32,
+        synctv_core::models::UserStatus::Pending => synctv_proto::common::UserStatus::Pending as i32,
+        synctv_core::models::UserStatus::Banned => synctv_proto::common::UserStatus::Banned as i32,
+    }
+}
+
+pub fn proto_role_to_room_role(role_i32: i32) -> Result<synctv_core::models::RoomRole, String> {
+    match synctv_proto::common::RoomMemberRole::try_from(role_i32) {
+        Ok(synctv_proto::common::RoomMemberRole::Creator) => Ok(synctv_core::models::RoomRole::Creator),
+        Ok(synctv_proto::common::RoomMemberRole::Admin) => Ok(synctv_core::models::RoomRole::Admin),
+        Ok(synctv_proto::common::RoomMemberRole::Member) => Ok(synctv_core::models::RoomRole::Member),
+        Ok(synctv_proto::common::RoomMemberRole::Guest) => Ok(synctv_core::models::RoomRole::Guest),
+        _ => Err(format!("Unknown room member role: {role_i32}")),
+    }
+}
+
+pub fn proto_role_to_user_role(role_i32: i32) -> Result<synctv_core::models::UserRole, String> {
+    match synctv_proto::common::UserRole::try_from(role_i32) {
+        Ok(synctv_proto::common::UserRole::Root) => Ok(synctv_core::models::UserRole::Root),
+        Ok(synctv_proto::common::UserRole::Admin) => Ok(synctv_core::models::UserRole::Admin),
+        Ok(synctv_proto::common::UserRole::User) => Ok(synctv_core::models::UserRole::User),
+        _ => Err(format!("Unknown user role: {role_i32}")),
+    }
+}
+
+pub fn room_role_to_proto(role: synctv_core::models::RoomRole) -> i32 {
+    match role {
+        synctv_core::models::RoomRole::Creator => synctv_proto::common::RoomMemberRole::Creator as i32,
+        synctv_core::models::RoomRole::Admin => synctv_proto::common::RoomMemberRole::Admin as i32,
+        synctv_core::models::RoomRole::Member => synctv_proto::common::RoomMemberRole::Member as i32,
+        synctv_core::models::RoomRole::Guest => synctv_proto::common::RoomMemberRole::Guest as i32,
+    }
+}
+
 fn user_to_proto(user: &synctv_core::models::User) -> crate::proto::client::User {
-    let role_str = match user.role {
-        synctv_core::models::UserRole::Root => "root",
-        synctv_core::models::UserRole::Admin => "admin",
-        synctv_core::models::UserRole::User => "user",
-    };
-
-    let status_str = match user.status {
-        synctv_core::models::UserStatus::Active => "active",
-        synctv_core::models::UserStatus::Pending => "pending",
-        synctv_core::models::UserStatus::Banned => "banned",
-    };
-
     crate::proto::client::User {
         id: user.id.as_str().to_string(),
         username: user.username.clone(),
         email: user.email.clone().unwrap_or_default(),
-        role: role_str.to_string(),
-        status: status_str.to_string(),
+        role: user_role_to_proto(user.role),
+        status: user_status_to_proto(user.status),
         created_at: user.created_at.timestamp(),
         email_verified: user.email_verified,
     }
@@ -2008,19 +2040,12 @@ fn playback_state_to_proto(state: &synctv_core::models::RoomPlaybackState) -> cr
     }
 }
 
-fn room_member_to_proto(member: synctv_core::models::RoomMemberWithUser) -> crate::proto::client::RoomMember {
-    let role_str = match member.role {
-        synctv_core::models::RoomRole::Creator => "creator",
-        synctv_core::models::RoomRole::Admin => "admin",
-        synctv_core::models::RoomRole::Member => "member",
-        synctv_core::models::RoomRole::Guest => "guest",
-    };
-
-    crate::proto::client::RoomMember {
+fn room_member_to_proto(member: synctv_core::models::RoomMemberWithUser) -> synctv_proto::common::RoomMember {
+    synctv_proto::common::RoomMember {
         room_id: member.room_id.as_str().to_string(),
         user_id: member.user_id.as_str().to_string(),
         username: member.username.clone(),
-        role: role_str.to_string(),
+        role: room_role_to_proto(member.role),
         permissions: member.effective_permissions(synctv_core::models::PermissionBits::empty()).0,
         added_permissions: member.added_permissions,
         removed_permissions: member.removed_permissions,

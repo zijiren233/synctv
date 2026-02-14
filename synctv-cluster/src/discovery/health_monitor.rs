@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::interval;
+use tokio_util::sync::CancellationToken;
 
 use super::node_registry::NodeRegistry;
 use crate::error::Result;
@@ -25,32 +26,42 @@ pub struct HealthMonitor {
     node_registry: Arc<NodeRegistry>,
     check_interval_secs: u64,
     health_status: Arc<RwLock<std::collections::HashMap<String, NodeHealth>>>,
+    cancel_token: CancellationToken,
 }
 
 impl HealthMonitor {
     /// Create a new health monitor
-    #[must_use] 
+    #[must_use]
     pub fn new(node_registry: Arc<NodeRegistry>, check_interval_secs: u64) -> Self {
         Self {
             node_registry,
             check_interval_secs,
             health_status: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            cancel_token: CancellationToken::new(),
         }
     }
 
     /// Start health monitoring loop
     ///
     /// Returns the `JoinHandle` so the caller can detect panics or task completion.
+    /// Use `shutdown()` to gracefully stop the monitoring loop.
     pub async fn start(&self) -> Result<tokio::task::JoinHandle<()>> {
         let registry = self.node_registry.clone();
         let health_status = self.health_status.clone();
         let timeout_secs = registry.heartbeat_timeout_secs;
+        let cancel_token = self.cancel_token.clone();
 
         let mut timer = interval(Duration::from_secs(self.check_interval_secs));
 
         let handle = tokio::spawn(async move {
             loop {
-                timer.tick().await;
+                tokio::select! {
+                    () = cancel_token.cancelled() => {
+                        tracing::info!("Health monitor shutting down");
+                        return;
+                    }
+                    _ = timer.tick() => {}
+                }
 
                 match registry.get_all_nodes().await {
                     Ok(nodes) => {
@@ -107,6 +118,11 @@ impl HealthMonitor {
         });
 
         Ok(handle)
+    }
+
+    /// Gracefully shut down the health monitoring loop
+    pub fn shutdown(&self) {
+        self.cancel_token.cancel();
     }
 
     /// Get health status of all nodes

@@ -8,7 +8,7 @@ use {
     byteorder::{BigEndian, LittleEndian},
     bytes::{BufMut, BytesMut},
     crate::bytesio::bytes_reader::BytesReader,
-    std::{cmp::min, collections::HashMap, fmt, vec::Vec},
+    std::{cmp::min, fmt, num::NonZeroUsize, vec::Vec},
 };
 
 const PARSE_ERROR_NUMBER: usize = 5;
@@ -82,7 +82,11 @@ pub struct ChunkUnpacketizer {
     //                   the whole payload will be splitted into several chunks.
     //
     pub current_chunk_info: ChunkInfo,
-    chunk_message_headers: HashMap<u32, ChunkMessageHeader>,
+    /// LRU cache of chunk message headers per chunk stream ID.
+    /// Bounded to MAX_CACHED_CHUNK_HEADERS; least-recently-used entries
+    /// are automatically evicted, avoiding the random-eviction problem
+    /// of the previous HashMap-based pruning approach.
+    chunk_message_headers: lru::LruCache<u32, ChunkMessageHeader>,
     chunk_read_state: ChunkReadState,
     msg_header_read_state: MessageHeaderReadState,
     max_chunk_size: usize,
@@ -103,7 +107,9 @@ impl ChunkUnpacketizer {
         Self {
             reader: BytesReader::new(BytesMut::new()),
             current_chunk_info: ChunkInfo::default(),
-            chunk_message_headers: HashMap::new(),
+            chunk_message_headers: lru::LruCache::new(
+                NonZeroUsize::new(MAX_CACHED_CHUNK_HEADERS).expect("non-zero constant"),
+            ),
             chunk_read_state: ChunkReadState::ReadBasicHeader,
             msg_header_read_state: MessageHeaderReadState::ReadTimeStamp,
             max_chunk_size: define::INIT_CHUNK_SIZE as usize,
@@ -117,28 +123,6 @@ impl ChunkUnpacketizer {
     /// Call this when the connection is closed or when memory usage is a concern
     pub fn clear_cached_headers(&mut self) {
         self.chunk_message_headers.clear();
-    }
-
-    /// Check if we need to prune old entries to prevent unbounded memory growth
-    fn maybe_prune_headers(&mut self) {
-        if self.chunk_message_headers.len() > MAX_CACHED_CHUNK_HEADERS {
-            // Keep only the most recently used entries
-            // Since HashMap doesn't track access order, we'll just clear half
-            // A better solution would be to use an LRU cache, but that adds complexity
-            let to_remove: Vec<u32> = self.chunk_message_headers
-                .keys()
-                .take(self.chunk_message_headers.len() / 2)
-                .copied()
-                .collect();
-            for key in to_remove {
-                self.chunk_message_headers.remove(&key);
-            }
-            tracing::debug!(
-                "Pruned chunk_message_headers from {} to {} entries",
-                MAX_CACHED_CHUNK_HEADERS * 2,
-                self.chunk_message_headers.len()
-            );
-        }
     }
 
     pub fn extend_data(&mut self, data: &[u8]) -> Result<(), UnpackError> {
@@ -326,7 +310,7 @@ impl ChunkUnpacketizer {
             //If the chunk stream id is changed, then we should
             //restore the cached chunk message header used for
             //getting the correct message header fields.
-            match self.chunk_message_headers.get_mut(&csid) {
+            match self.chunk_message_headers.get(&csid) {
                 Some(header) => {
                     self.current_chunk_info.message_header = header.clone();
                     self.print_current_basic_header();
@@ -633,11 +617,9 @@ impl ChunkUnpacketizer {
 
             let csid = self.current_chunk_info.basic_header.chunk_stream_id;
 
-            // Check if we need to prune old entries to prevent memory leak
-            self.maybe_prune_headers();
-
+            // LRU cache automatically evicts least-recently-used entries when full
             self.chunk_message_headers
-                .insert(csid, self.current_chunk_info.message_header.clone());
+                .put(csid, self.current_chunk_info.message_header.clone());
 
             return Ok(UnpackResult::ChunkInfo(chunk_info));
         }

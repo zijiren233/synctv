@@ -212,13 +212,6 @@ impl ClusterManager {
     /// epoch mismatch), the node automatically re-registers.
     ///
     /// Must be called after `register()` on the `NodeRegistry`.
-    /// Start a background heartbeat loop that keeps this node alive in Redis.
-    ///
-    /// Calls `NodeRegistry::heartbeat()` every `heartbeat_timeout / 2` seconds.
-    /// If the heartbeat indicates re-registration is needed (key expired or
-    /// epoch mismatch), the node automatically re-registers.
-    ///
-    /// Must be called after `register()` on the `NodeRegistry`.
     pub async fn start_heartbeat_loop(
         &self,
         node_registry: Arc<NodeRegistry>,
@@ -373,13 +366,20 @@ impl ClusterManager {
                     Ok(()) => {
                         redis_sent = 1;
                     }
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        // Critical channel is full -- this is very unusual.
-                        // Log at error level since these events should never be dropped.
-                        error!(
-                            "Critical event publish channel full (capacity {}), event may be delayed",
+                    Err(mpsc::error::TrySendError::Full(req)) => {
+                        // Critical channel is full -- spawn a task that uses
+                        // send().await so the event is never dropped.
+                        let tx = tx.clone();
+                        warn!(
+                            "Critical event publish channel full (capacity {}), spawning retry task",
                             CRITICAL_CHANNEL_CAPACITY
                         );
+                        tokio::spawn(async move {
+                            if let Err(e) = tx.send(req).await {
+                                error!("Failed to send critical event after retry: {e}");
+                            }
+                        });
+                        redis_sent = 1; // Will be sent asynchronously
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         error!("Critical event publish channel closed");

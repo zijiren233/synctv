@@ -13,6 +13,7 @@ use serde_json::json;
 
 use crate::http::{AppState, error::AppResult, middleware::AuthUser, provider_common::{InstanceQuery, error_response, parse_provider_error}};
 use crate::impls::EmbyApiImpl;
+use crate::impls::providers::get_provider_binds;
 use synctv_core::models::{MediaId, RoomId};
 use synctv_core::provider::{MediaProvider, ProviderContext};
 
@@ -22,7 +23,7 @@ pub fn emby_routes() -> Router<AppState> {
         .route("/login", post(login))
         .route("/logout", post(logout))
         .route("/list", post(list))
-        .route("/me", get(me))
+        .route("/me", post(me))
         .route("/binds", get(binds))
         // Provider-specific proxy routes
         .route(
@@ -136,23 +137,13 @@ async fn login(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::emby::LoginRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Emby login request");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::emby::LoginRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = EmbyApiImpl::new(state.emby_provider.clone());
 
-    match api.login(proto_req, query.as_deref()).await {
+    match api.login(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }
@@ -168,23 +159,13 @@ async fn list(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::emby::ListRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Emby list request");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::emby::ListRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = EmbyApiImpl::new(state.emby_provider.clone());
 
-    match api.list(proto_req, query.as_deref()).await {
+    match api.list(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }
@@ -200,23 +181,13 @@ async fn me(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<crate::proto::providers::emby::GetMeRequest>,
 ) -> impl IntoResponse {
     tracing::info!("Emby me request");
 
-    let proto_req = match serde_json::from_value::<crate::proto::providers::emby::GetMeRequest>(req) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Invalid request: {}", e)})),
-            ).into_response();
-        }
-    };
-
     let api = EmbyApiImpl::new(state.emby_provider.clone());
 
-    match api.get_me(proto_req, query.as_deref()).await {
+    match api.get_me(req, query.as_deref()).await {
         Ok(resp) => {
             (StatusCode::OK, Json(json!(resp))).into_response()
         }
@@ -244,35 +215,23 @@ async fn binds(
 ) -> impl IntoResponse {
     tracing::info!("Emby binds request for user: {}", auth.user_id);
 
-    match state
-        .user_provider_credential_repository
-        .get_by_user(&auth.user_id.to_string())
-        .await
+    match get_provider_binds(
+        &state.user_provider_credential_repository,
+        &auth.user_id.to_string(),
+        "emby",
+        "emby_user_id",
+    )
+    .await
     {
-        Ok(credentials) => {
-            let emby_binds: Vec<_> = credentials
+        Ok(provider_binds) => {
+            let emby_binds: Vec<_> = provider_binds
                 .into_iter()
-                .filter(|c| c.provider == "emby")
-                .map(|c| {
-                    let host = c
-                        .credential_data
-                        .get("host")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-
-                    let emby_user_id = c
-                        .credential_data
-                        .get("emby_user_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-
+                .map(|b| {
                     json!({
-                        "id": c.id,
-                        "host": host,
-                        "user_id": emby_user_id,
-                        "created_at": c.created_at.to_rfc3339(),
+                        "id": b.id,
+                        "host": b.host,
+                        "user_id": b.label_value,
+                        "created_at": b.created_at_str,
                     })
                 })
                 .collect();
@@ -287,7 +246,7 @@ async fn binds(
             tracing::error!("Failed to query credentials: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to query credentials", "message": e.to_string()})),
+                Json(json!({"error": "Failed to query credentials"})),
             )
                 .into_response()
         }

@@ -55,14 +55,17 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 # Crypto
-subtle = "2.6"
+subtle.workspace = true
 
 # JWT
-jsonwebtoken = "9"
+jsonwebtoken.workspace = true
 
 # Configuration
 config.workspace = true
 clap.workspace = true
+
+[lints]
+workspace = true
 
 [build-dependencies]
 tonic-build.workspace = true

@@ -2507,6 +2507,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
+name = "lru"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
+dependencies = [
+ "hashbrown 0.15.5",
+]
+
+[[package]]
 name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4371,19 +4380,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap 2.13.0",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4978,6 +4974,7 @@ dependencies = [
  "redis",
  "serde",
  "serde_json",
+ "subtle",
  "synctv-core",
  "thiserror 1.0.69",
  "tokio",
@@ -5030,7 +5027,6 @@ dependencies = [
  "sea-query",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha1",
  "sha2",
  "sqlx",
@@ -5148,10 +5144,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
- "chrono",
  "dashmap",
  "futures",
- "nanoid",
  "parking_lot",
  "serde",
  "serde_json",
@@ -5159,7 +5153,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "uuid",
  "webrtc",
 ]
 
@@ -5178,6 +5171,7 @@ dependencies = [
  "hex",
  "hmac",
  "indexmap 2.13.0",
+ "lru",
  "nanoid",
  "opendal",
  "parking_lot",
@@ -5979,12 +5973,6 @@ dependencies = [
  "crypto-common",
  "subtle",
 ]
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

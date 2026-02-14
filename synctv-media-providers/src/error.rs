@@ -4,6 +4,10 @@
 
 use thiserror::Error;
 
+/// Maximum response body size for provider HTTP calls (16 MB).
+/// Prevents OOM from malicious or misconfigured upstream servers.
+pub const MAX_RESPONSE_SIZE: usize = 16 * 1024 * 1024;
+
 /// Common error type for all provider HTTP clients.
 #[derive(Debug, Error)]
 pub enum ProviderClientError {
@@ -30,6 +34,28 @@ pub enum ProviderClientError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    #[error("Response too large ({size} bytes, max {MAX_RESPONSE_SIZE})")]
+    ResponseTooLarge { size: u64 },
+}
+
+/// Read a response body with size limit and deserialize as JSON.
+///
+/// Checks `Content-Length` hint first (if available), then enforces the
+/// limit on the actual body bytes before deserializing.
+pub async fn json_with_limit<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, ProviderClientError> {
+    if let Some(cl) = response.content_length() {
+        if cl as usize > MAX_RESPONSE_SIZE {
+            return Err(ProviderClientError::ResponseTooLarge { size: cl });
+        }
+    }
+    let bytes = response.bytes().await?;
+    if bytes.len() > MAX_RESPONSE_SIZE {
+        return Err(ProviderClientError::ResponseTooLarge { size: bytes.len() as u64 });
+    }
+    serde_json::from_slice(&bytes).map_err(Into::into)
 }
 
 /// Check HTTP response status before processing body.

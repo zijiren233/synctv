@@ -5,9 +5,17 @@ use {
     },
     byteorder::{BigEndian, LittleEndian},
     crate::bytesio::{bytes_writer::AsyncBytesWriter, bytesio::TNetIO},
-    std::{collections::HashMap, sync::Arc},
+    std::{num::NonZeroUsize, sync::Arc, time::Duration},
     tokio::sync::Mutex,
 };
+
+/// Write timeout for flushing RTMP chunks to TCP.
+/// Prevents slow-write attacks where a subscriber accepts the connection but never reads.
+const WRITE_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Maximum number of chunk stream headers to cache in the packetizer.
+/// Matches the unpacketizer's MAX_CACHED_CHUNK_HEADERS for consistency.
+const MAX_CACHED_CHUNK_HEADERS: usize = 256;
 
 #[derive(Eq, PartialEq, Debug)]
 pub enum PackResult {
@@ -16,12 +24,10 @@ pub enum PackResult {
 }
 
 pub struct ChunkPacketizer {
-    csid_2_chunk_header: HashMap<u32, ChunkHeader>,
-    //https://doc.rust-lang.org/stable/rust-by-example/scope/lifetime/fn.html
-    //https://zhuanlan.zhihu.com/p/165976086
-    //chunk_info: ChunkInfo,
+    /// LRU cache of chunk headers per chunk stream ID.
+    /// Bounded to MAX_CACHED_CHUNK_HEADERS to prevent unbounded memory growth.
+    csid_2_chunk_header: lru::LruCache<u32, ChunkHeader>,
     max_chunk_size: usize,
-    //bytes: Cursor<Vec<u8>>,
     writer: AsyncBytesWriter,
     //save extended timestamp need to be write for chunk
     extended_timestamp: Option<u32>,
@@ -30,7 +36,9 @@ pub struct ChunkPacketizer {
 impl ChunkPacketizer {
     pub fn new(io: Arc<Mutex<Box<dyn TNetIO + Send + Sync>>>) -> Self {
         Self {
-            csid_2_chunk_header: HashMap::new(),
+            csid_2_chunk_header: lru::LruCache::new(
+                NonZeroUsize::new(MAX_CACHED_CHUNK_HEADERS).expect("non-zero constant"),
+            ),
             writer: AsyncBytesWriter::new(io),
             max_chunk_size: CHUNK_SIZE as usize,
             extended_timestamp: None,
@@ -41,10 +49,10 @@ impl ChunkPacketizer {
 
         if let Some(pre_header) = self
             .csid_2_chunk_header
-            .get_mut(&chunk_info.basic_header.chunk_stream_id)
+            .peek(&chunk_info.basic_header.chunk_stream_id)
         {
             let cur_msg_header = &mut chunk_info.message_header;
-            let pre_msg_header = &mut pre_header.message_header;
+            let pre_msg_header = &pre_header.message_header;
 
             if cur_msg_header.timestamp < pre_msg_header.timestamp {
                 tracing::warn!(
@@ -67,12 +75,17 @@ impl ChunkPacketizer {
                     }
                 }
             }
-        } else {
-            assert_eq!(chunk_info.message_header.timestamp_delta, 0);
+        } else if chunk_info.message_header.timestamp_delta != 0 {
+            tracing::warn!(
+                "First chunk for csid {} has non-zero timestamp_delta: {}, resetting to 0",
+                chunk_info.basic_header.chunk_stream_id,
+                chunk_info.message_header.timestamp_delta
+            );
+            chunk_info.message_header.timestamp_delta = 0;
         }
 
         //update pre header
-        self.csid_2_chunk_header.insert(
+        self.csid_2_chunk_header.put(
             chunk_info.basic_header.chunk_stream_id,
             ChunkHeader {
                 basic_header: chunk_info.basic_header.clone(),
@@ -208,7 +221,7 @@ impl ChunkPacketizer {
                 }
             }
         }
-        self.writer.flush().await?;
+        self.writer.flush_timeout(WRITE_FLUSH_TIMEOUT).await?;
 
         Ok(())
     }

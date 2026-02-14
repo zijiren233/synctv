@@ -198,7 +198,7 @@ impl Cache {
     }
 
     #[must_use] 
-    pub fn get_gops_data(&self) -> Option<VecDeque<Gop>> {
+    pub fn get_gops_data(&mut self) -> Option<VecDeque<Gop>> {
         if self.gops.setted() {
             Some(self.gops.get_gops())
         } else {

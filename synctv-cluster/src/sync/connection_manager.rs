@@ -149,7 +149,12 @@ impl ConnectionManager {
             connection_id = %connection_id,
             "Forcing connection disconnect"
         );
-        let _ = self.disconnect_tx.send(DisconnectSignal::Connection(connection_id.to_string()));
+        if self.disconnect_tx.send(DisconnectSignal::Connection(connection_id.to_string())).is_err() {
+            warn!(
+                connection_id = %connection_id,
+                "Failed to send disconnect signal: no active receivers"
+            );
+        }
     }
 
     /// Force disconnect all connections for a user
@@ -162,7 +167,12 @@ impl ConnectionManager {
             connection_count = conn_count,
             "Forcing disconnect of all user connections"
         );
-        let _ = self.disconnect_tx.send(DisconnectSignal::User(user_id.clone()));
+        if self.disconnect_tx.send(DisconnectSignal::User(user_id.clone())).is_err() {
+            warn!(
+                user_id = %user_id.as_str(),
+                "Failed to send user disconnect signal: no active receivers"
+            );
+        }
     }
 
     /// Force disconnect all connections in a room
@@ -175,7 +185,12 @@ impl ConnectionManager {
             connection_count = conn_count,
             "Forcing disconnect of all room connections"
         );
-        let _ = self.disconnect_tx.send(DisconnectSignal::Room(room_id.clone()));
+        if self.disconnect_tx.send(DisconnectSignal::Room(room_id.clone())).is_err() {
+            warn!(
+                room_id = %room_id.as_str(),
+                "Failed to send room disconnect signal: no active receivers"
+            );
+        }
     }
 
     /// Force disconnect a specific user from a specific room
@@ -187,10 +202,16 @@ impl ConnectionManager {
             room_id = %room_id.as_str(),
             "Forcing disconnect of user from room"
         );
-        let _ = self.disconnect_tx.send(DisconnectSignal::UserFromRoom {
+        if self.disconnect_tx.send(DisconnectSignal::UserFromRoom {
             user_id: user_id.clone(),
             room_id: room_id.clone(),
-        });
+        }).is_err() {
+            warn!(
+                user_id = %user_id.as_str(),
+                room_id = %room_id.as_str(),
+                "Failed to send user-from-room disconnect signal: no active receivers"
+            );
+        }
     }
 
     /// Register a new connection

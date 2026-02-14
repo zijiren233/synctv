@@ -23,6 +23,18 @@ use crate::{Error, Result};
 use super::email_token::{EmailTokenService, EmailTokenType};
 use super::email_templates::EmailTemplateManager;
 
+/// Mask an email address for safe logging: `user***@example.com`
+fn mask_email(email: &str) -> String {
+    if let Some(at_pos) = email.find('@') {
+        let local = &email[..at_pos];
+        let domain = &email[at_pos..];
+        let visible = local.len().min(3);
+        format!("{}***{}", &local[..visible], domain)
+    } else {
+        "***".to_string()
+    }
+}
+
 /// Redis key prefix for email verification codes
 const EMAIL_CODE_KEY_PREFIX: &str = "email:code:";
 
@@ -552,7 +564,7 @@ impl EmailService {
             tracing::warn!("Email service not configured, returning token directly");
         }
 
-        tracing::info!("Sent verification email to {}", email);
+        tracing::info!("Sent verification email to {}", mask_email(email));
         Ok(token)
     }
 
@@ -587,7 +599,7 @@ impl EmailService {
             tracing::warn!("Email service not configured, returning token directly");
         }
 
-        tracing::info!("Sent password reset email to {}", email);
+        tracing::info!("Sent password reset email to {}", mask_email(email));
         Ok(token)
     }
 
@@ -616,7 +628,7 @@ impl EmailService {
             .await
             .map_err(|e| Error::Internal(format!("Failed to send test email: {e}")))?;
 
-        tracing::info!("Sent test email to {}", to);
+        tracing::info!("Sent test email to {}", mask_email(to));
         Ok(())
     }
 

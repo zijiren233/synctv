@@ -107,5 +107,5 @@ message BindInfo {
   string id = 1;
   string host = 2;
   string user_id = 3;
-  string created_at = 4;
+  int64 created_at = 4; // Unix epoch timestamp
 }

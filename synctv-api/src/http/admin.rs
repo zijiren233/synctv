@@ -345,12 +345,25 @@ async fn list_users(
     Query(q): Query<ListUsersQuery>,
 ) -> AppResult<Json<admin::ListUsersResponse>> {
     let api = require_admin_api(&state)?;
+    // Convert string status/role filters to proto enum values
+    let status_i32 = match q.status.as_deref() {
+        Some("active") => synctv_proto::common::UserStatus::Active as i32,
+        Some("pending") => synctv_proto::common::UserStatus::Pending as i32,
+        Some("banned") => synctv_proto::common::UserStatus::Banned as i32,
+        _ => synctv_proto::common::UserStatus::Unspecified as i32,
+    };
+    let role_i32 = match q.role.as_deref() {
+        Some("root") => synctv_proto::common::UserRole::Root as i32,
+        Some("admin") => synctv_proto::common::UserRole::Admin as i32,
+        Some("user") => synctv_proto::common::UserRole::User as i32,
+        _ => synctv_proto::common::UserRole::Unspecified as i32,
+    };
     let resp = api
         .list_users(admin::ListUsersRequest {
             page: q.page.unwrap_or(1).max(1),
             page_size: q.page_size.unwrap_or(20).clamp(1, 100),
-            status: q.status.unwrap_or_default(),
-            role: q.role.unwrap_or_default(),
+            status: status_i32,
+            role: role_i32,
             search: q.search.unwrap_or_default(),
         })
         .await
@@ -401,8 +414,15 @@ async fn set_user_role(
     Json(req): Json<SetUserRoleRequest>,
 ) -> AppResult<Json<admin::UpdateUserRoleResponse>> {
     let api = require_admin_api(&state)?;
+    // Convert string role to proto enum value
+    let role_i32 = match req.role.as_str() {
+        "root" => synctv_proto::common::UserRole::Root as i32,
+        "admin" => synctv_proto::common::UserRole::Admin as i32,
+        "user" => synctv_proto::common::UserRole::User as i32,
+        _ => return Err(AppError::bad_request(format!("Unknown role: {}", req.role))),
+    };
     let resp = api
-        .update_user_role(admin::UpdateUserRoleRequest { user_id, role: req.role }, auth.role)
+        .update_user_role(admin::UpdateUserRoleRequest { user_id, role: role_i32 }, auth.role)
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))
@@ -581,7 +601,7 @@ async fn get_room_members(
 ) -> AppResult<Json<admin::GetRoomMembersResponse>> {
     let api = require_admin_api(&state)?;
     let resp = api
-        .get_room_members(admin::GetRoomMembersRequest { room_id })
+        .get_room_members(admin::GetRoomMembersRequest { room_id, page: 1, page_size: 100 })
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))

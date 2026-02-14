@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package synctv.admin;
 
+import "proto/common.proto";
+
 // Admin API for SyncTV - Requires admin or root permissions
 service AdminService {
     // =========================
@@ -80,8 +82,8 @@ message AdminUser {
     string id = 1;
     string username = 2;
     string email = 3;
-    string role = 4; // user, admin, root (RBAC only, no permissions)
-    string status = 5; // active, banned, pending
+    synctv.common.UserRole role = 4; // RBAC role
+    synctv.common.UserStatus status = 5; // Account status
     int64 created_at = 6;
     int64 updated_at = 7;
 }
@@ -103,7 +105,7 @@ message ProviderInstance {
     string name = 1; // Instance name (primary key)
     string endpoint = 2; // gRPC service endpoint
     string comment = 3; // Human-readable description
-    string timeout = 4; // Request timeout (e.g., "10s")
+    uint32 timeout_seconds = 4; // Request timeout in seconds
     bool tls = 5; // Enable TLS
     bool insecure_tls = 6; // Skip TLS certificate verification (UNSAFE, dev/test only)
     repeated string providers = 7; // Supported media provider types (e.g., ["bilibili", "alist", "emby"])
@@ -170,7 +172,7 @@ message AddProviderInstanceRequest {
     string name = 1; // Instance name (unique identifier)
     string endpoint = 2; // gRPC service endpoint
     string comment = 3; // Optional description
-    string timeout = 4; // Request timeout (e.g., "10s")
+    uint32 timeout_seconds = 4; // Request timeout in seconds
     bool tls = 5; // Enable TLS
     bool insecure_tls = 6; // Skip TLS certificate verification
     repeated string providers = 7; // Supported media provider types
@@ -183,13 +185,13 @@ message AddProviderInstanceResponse {
 
 message UpdateProviderInstanceRequest {
     string name = 1; // Instance name (cannot be changed)
-    string endpoint = 2; // Optional new endpoint
-    string comment = 3; // Optional new description
-    string timeout = 4; // Optional new timeout
-    bool tls = 5; // Optional new TLS setting
-    bool insecure_tls = 6; // Optional new insecure_tls setting
-    repeated string providers = 7; // Optional new media provider list
-    bytes config = 8; // Optional additional config
+    optional string endpoint = 2; // New endpoint
+    optional string comment = 3; // New description
+    optional uint32 timeout_seconds = 4; // New timeout in seconds
+    optional bool tls = 5; // New TLS setting
+    optional bool insecure_tls = 6; // New insecure_tls setting
+    repeated string providers = 7; // New media provider list (empty = no change)
+    bytes config = 8; // Additional config
 }
 
 message UpdateProviderInstanceResponse {
@@ -236,7 +238,7 @@ message CreateUserRequest {
     string username = 1;
     string password = 2;
     string email = 3;
-    string role = 4; // user, admin (default: user)
+    synctv.common.UserRole role = 4; // Default: USER_ROLE_USER
 }
 
 message CreateUserResponse {
@@ -254,8 +256,8 @@ message DeleteUserResponse {
 message ListUsersRequest {
     int32 page = 1;
     int32 page_size = 2;
-    string status = 3; // Optional filter: active, banned, pending
-    string role = 4; // Optional filter: guest, user, admin, root
+    synctv.common.UserStatus status = 3; // Optional filter (UNSPECIFIED = show all)
+    synctv.common.UserRole role = 4; // Optional filter (UNSPECIFIED = show all)
     string search = 5; // Search by username or email
 }
 
@@ -292,7 +294,7 @@ message UpdateUserUsernameResponse {
 
 message UpdateUserRoleRequest {
     string user_id = 1;
-    string role = 2; // user, admin
+    synctv.common.UserRole role = 2; // New role
 }
 
 message UpdateUserRoleResponse {
@@ -426,31 +428,13 @@ message ApproveRoomResponse {
 
 message GetRoomMembersRequest {
     string room_id = 1;
+    int32 page = 2;      // Page number (default 1)
+    int32 page_size = 3;  // Items per page (default 50)
 }
 
 message GetRoomMembersResponse {
-    repeated RoomMember members = 1;
-}
-
-message RoomMember {
-    string room_id = 1;
-    string user_id = 2;
-    string username = 3;
-    string role = 4; // creator, admin, member, guest
-
-    // Effective permissions (calculated from role + added/removed)
-    uint64 permissions = 5;
-
-    // Allow/Deny permission pattern fields
-    // For member role: uses added_permissions/removed_permissions
-    // For admin role: uses admin_added_permissions/admin_removed_permissions
-    uint64 added_permissions = 6;
-    uint64 removed_permissions = 7;
-    uint64 admin_added_permissions = 8;
-    uint64 admin_removed_permissions = 9;
-
-    int64 joined_at = 10;
-    bool is_online = 11;
+    repeated synctv.common.RoomMember members = 1;
+    int32 total = 2;
 }
 
 // =========================
@@ -510,7 +494,7 @@ message ActiveStreamInfo {
     string media_id = 2;
     string user_id = 3;
     string node_id = 4;
-    string started_at = 5;
+    int64 started_at = 5; // Unix epoch timestamp
 }
 
 message ListActiveStreamsResponse {

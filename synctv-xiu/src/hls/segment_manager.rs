@@ -19,6 +19,7 @@ use crate::storage::HlsStorage;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
+use tokio_util::sync::CancellationToken;
 
 /// Segment cleanup configuration
 #[derive(Debug, Clone)]
@@ -50,19 +51,19 @@ impl SegmentManager {
         Self { storage, config }
     }
 
-    /// Start periodic cleanup task
+    /// Start periodic cleanup task with optional cancellation support.
     ///
     /// This spawns a background task that periodically calls `storage.cleanup()`
-    /// to delete expired segments.
-    pub fn start_cleanup_task(self: Arc<Self>) {
+    /// to delete expired segments. The task stops when the `CancellationToken` is cancelled.
+    pub fn start_cleanup_task(self: Arc<Self>, shutdown_token: CancellationToken) {
         let manager = Arc::clone(&self);
         tokio::spawn(async move {
-            manager.run_cleanup_loop().await;
+            manager.run_cleanup_loop(shutdown_token).await;
         });
     }
 
-    /// Run the cleanup loop
-    async fn run_cleanup_loop(&self) {
+    /// Run the cleanup loop until cancelled.
+    async fn run_cleanup_loop(&self, shutdown_token: CancellationToken) {
         let mut interval = time::interval(self.config.interval);
 
         tracing::info!(
@@ -72,7 +73,13 @@ impl SegmentManager {
         );
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                () = shutdown_token.cancelled() => {
+                    tracing::info!("Segment cleanup task shutting down");
+                    break;
+                }
+            }
 
             match self.storage.cleanup(self.config.retention).await {
                 Ok(deleted) => {

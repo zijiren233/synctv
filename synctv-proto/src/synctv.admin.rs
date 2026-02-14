@@ -8,12 +8,12 @@ pub struct AdminUser {
     pub username: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub email: ::prost::alloc::string::String,
-    /// user, admin, root (RBAC only, no permissions)
-    #[prost(string, tag = "4")]
-    pub role: ::prost::alloc::string::String,
-    /// active, banned, pending
-    #[prost(string, tag = "5")]
-    pub status: ::prost::alloc::string::String,
+    /// RBAC role
+    #[prost(enumeration = "super::common::UserRole", tag = "4")]
+    pub role: i32,
+    /// Account status
+    #[prost(enumeration = "super::common::UserStatus", tag = "5")]
+    pub status: i32,
     #[prost(int64, tag = "6")]
     pub created_at: i64,
     #[prost(int64, tag = "7")]
@@ -57,9 +57,9 @@ pub struct ProviderInstance {
     /// Human-readable description
     #[prost(string, tag = "3")]
     pub comment: ::prost::alloc::string::String,
-    /// Request timeout (e.g., "10s")
-    #[prost(string, tag = "4")]
-    pub timeout: ::prost::alloc::string::String,
+    /// Request timeout in seconds
+    #[prost(uint32, tag = "4")]
+    pub timeout_seconds: u32,
     /// Enable TLS
     #[prost(bool, tag = "5")]
     pub tls: bool,
@@ -165,9 +165,9 @@ pub struct AddProviderInstanceRequest {
     /// Optional description
     #[prost(string, tag = "3")]
     pub comment: ::prost::alloc::string::String,
-    /// Request timeout (e.g., "10s")
-    #[prost(string, tag = "4")]
-    pub timeout: ::prost::alloc::string::String,
+    /// Request timeout in seconds
+    #[prost(uint32, tag = "4")]
+    pub timeout_seconds: u32,
     /// Enable TLS
     #[prost(bool, tag = "5")]
     pub tls: bool,
@@ -193,25 +193,25 @@ pub struct UpdateProviderInstanceRequest {
     /// Instance name (cannot be changed)
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
-    /// Optional new endpoint
-    #[prost(string, tag = "2")]
-    pub endpoint: ::prost::alloc::string::String,
-    /// Optional new description
-    #[prost(string, tag = "3")]
-    pub comment: ::prost::alloc::string::String,
-    /// Optional new timeout
-    #[prost(string, tag = "4")]
-    pub timeout: ::prost::alloc::string::String,
-    /// Optional new TLS setting
-    #[prost(bool, tag = "5")]
-    pub tls: bool,
-    /// Optional new insecure_tls setting
-    #[prost(bool, tag = "6")]
-    pub insecure_tls: bool,
-    /// Optional new media provider list
+    /// New endpoint
+    #[prost(string, optional, tag = "2")]
+    pub endpoint: ::core::option::Option<::prost::alloc::string::String>,
+    /// New description
+    #[prost(string, optional, tag = "3")]
+    pub comment: ::core::option::Option<::prost::alloc::string::String>,
+    /// New timeout in seconds
+    #[prost(uint32, optional, tag = "4")]
+    pub timeout_seconds: ::core::option::Option<u32>,
+    /// New TLS setting
+    #[prost(bool, optional, tag = "5")]
+    pub tls: ::core::option::Option<bool>,
+    /// New insecure_tls setting
+    #[prost(bool, optional, tag = "6")]
+    pub insecure_tls: ::core::option::Option<bool>,
+    /// New media provider list (empty = no change)
     #[prost(string, repeated, tag = "7")]
     pub providers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// Optional additional config
+    /// Additional config
     #[prost(bytes = "vec", tag = "8")]
     pub config: ::prost::alloc::vec::Vec<u8>,
 }
@@ -282,9 +282,9 @@ pub struct CreateUserRequest {
     pub password: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub email: ::prost::alloc::string::String,
-    /// user, admin (default: user)
-    #[prost(string, tag = "4")]
-    pub role: ::prost::alloc::string::String,
+    /// Default: USER_ROLE_USER
+    #[prost(enumeration = "super::common::UserRole", tag = "4")]
+    pub role: i32,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -311,12 +311,12 @@ pub struct ListUsersRequest {
     pub page: i32,
     #[prost(int32, tag = "2")]
     pub page_size: i32,
-    /// Optional filter: active, banned, pending
-    #[prost(string, tag = "3")]
-    pub status: ::prost::alloc::string::String,
-    /// Optional filter: guest, user, admin, root
-    #[prost(string, tag = "4")]
-    pub role: ::prost::alloc::string::String,
+    /// Optional filter (UNSPECIFIED = show all)
+    #[prost(enumeration = "super::common::UserStatus", tag = "3")]
+    pub status: i32,
+    /// Optional filter (UNSPECIFIED = show all)
+    #[prost(enumeration = "super::common::UserRole", tag = "4")]
+    pub role: i32,
     /// Search by username or email
     #[prost(string, tag = "5")]
     pub search: ::prost::alloc::string::String,
@@ -374,9 +374,9 @@ pub struct UpdateUserUsernameResponse {
 pub struct UpdateUserRoleRequest {
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
-    /// user, admin
-    #[prost(string, tag = "2")]
-    pub role: ::prost::alloc::string::String,
+    /// New role
+    #[prost(enumeration = "super::common::UserRole", tag = "2")]
+    pub role: i32,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -583,43 +583,20 @@ pub struct ApproveRoomResponse {
 pub struct GetRoomMembersRequest {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
+    /// Page number (default 1)
+    #[prost(int32, tag = "2")]
+    pub page: i32,
+    /// Items per page (default 50)
+    #[prost(int32, tag = "3")]
+    pub page_size: i32,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetRoomMembersResponse {
     #[prost(message, repeated, tag = "1")]
-    pub members: ::prost::alloc::vec::Vec<RoomMember>,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RoomMember {
-    #[prost(string, tag = "1")]
-    pub room_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub user_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub username: ::prost::alloc::string::String,
-    /// creator, admin, member, guest
-    #[prost(string, tag = "4")]
-    pub role: ::prost::alloc::string::String,
-    /// Effective permissions (calculated from role + added/removed)
-    #[prost(uint64, tag = "5")]
-    pub permissions: u64,
-    /// Allow/Deny permission pattern fields
-    /// For member role: uses added_permissions/removed_permissions
-    /// For admin role: uses admin_added_permissions/admin_removed_permissions
-    #[prost(uint64, tag = "6")]
-    pub added_permissions: u64,
-    #[prost(uint64, tag = "7")]
-    pub removed_permissions: u64,
-    #[prost(uint64, tag = "8")]
-    pub admin_added_permissions: u64,
-    #[prost(uint64, tag = "9")]
-    pub admin_removed_permissions: u64,
-    #[prost(int64, tag = "10")]
-    pub joined_at: i64,
-    #[prost(bool, tag = "11")]
-    pub is_online: bool,
+    pub members: ::prost::alloc::vec::Vec<super::common::RoomMember>,
+    #[prost(int32, tag = "2")]
+    pub total: i32,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -699,8 +676,9 @@ pub struct ActiveStreamInfo {
     pub user_id: ::prost::alloc::string::String,
     #[prost(string, tag = "4")]
     pub node_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "5")]
-    pub started_at: ::prost::alloc::string::String,
+    /// Unix epoch timestamp
+    #[prost(int64, tag = "5")]
+    pub started_at: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]

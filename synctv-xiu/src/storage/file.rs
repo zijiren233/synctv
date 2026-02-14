@@ -15,6 +15,12 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tokio::fs;
 
+/// Check if a filename matches the SHA256 hex hash pattern (exactly 64 hex chars).
+/// This prevents accidentally deleting non-HLS files if base_path is misconfigured.
+fn is_sha256_filename(name: &str) -> bool {
+    name.len() == 64 && name.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// Hash storage key to prevent path traversal attacks
 ///
 /// Uses SHA256 to convert arbitrary keys into safe filenames
@@ -104,6 +110,14 @@ impl HlsStorage for FileStorage {
                 Err(_) => continue,
             };
             if !file_type.is_file() {
+                continue;
+            }
+
+            // Only delete files matching the SHA256 hex filename pattern.
+            // This prevents deleting unrelated files if base_path is misconfigured.
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+            if !is_sha256_filename(&file_name_str) {
                 continue;
             }
 

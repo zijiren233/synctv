@@ -8,7 +8,7 @@ use regex::Regex;
 use reqwest::Client;
 use serde::Deserialize;
 
-use super::error::{BilibiliError, check_response};
+use super::error::{BilibiliError, check_response, json_with_limit};
 use super::types::{self as types, VideoInfo, Quality, PlayUrlInfo, DurlItem, AnimeInfo};
 
 // Pre-compiled regexes using std::sync::LazyLock (no external crate needed).
@@ -92,7 +92,7 @@ impl BilibiliClient {
             .header("Referer", "https://passport.bilibili.com/login");
 
         let resp = check_response(req.send().await?)?;
-        let json: QrCodeResp = resp.json().await?;
+        let json: QrCodeResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -118,9 +118,9 @@ impl BilibiliClient {
             data: Option<LoginData>,
         }
 
-        let url = format!("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={key}");
         let req = self.client
-            .get(&url)
+            .get("https://passport.bilibili.com/x/passport-login/web/qrcode/poll")
+            .query(&[("qrcode_key", key)])
             .header("Referer", "https://passport.bilibili.com/login");
 
         let resp = req.send().await?;
@@ -138,7 +138,7 @@ impl BilibiliClient {
             if relevant.is_empty() { None } else { Some(relevant) }
         };
 
-        let json: LoginResp = resp.json().await?;
+        let json: LoginResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -181,7 +181,7 @@ impl BilibiliClient {
             .header("Referer", "https://passport.bilibili.com/login");
 
         let resp = check_response(req.send().await?)?;
-        let json: CaptchaResp = resp.json().await?;
+        let json: CaptchaResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -215,7 +215,7 @@ impl BilibiliClient {
             .header("Referer", "https://www.bilibili.com");
 
         let resp = check_response(req.send().await?)?;
-        let json: SpiResp = resp.json().await?;
+        let json: SpiResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -280,7 +280,7 @@ impl BilibiliClient {
         }
 
         let resp = check_response(req.send().await?)?;
-        let json: SmsResp = resp.json().await?;
+        let json: SmsResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -340,7 +340,7 @@ impl BilibiliClient {
             .map(|c| (c.name().to_string(), c.value().to_string()))
             .collect();
 
-        let json: LoginSmsResp = resp.json().await?;
+        let json: LoginSmsResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -372,10 +372,30 @@ impl BilibiliClient {
         url.contains("b23.tv")
     }
 
-    /// Resolve short link to full URL
+    /// Resolve short link to full URL.
+    ///
+    /// The shared client has `redirect(Policy::none())`, so we manually follow
+    /// the `Location` header from b23.tv to get the resolved URL.
     pub async fn resolve_short_link(&self, url: &str) -> Result<String, BilibiliError> {
-        let response = check_response(self.client.get(url).send().await?)?;
-        Ok(response.url().to_string())
+        let response = self.client.get(url).send().await?;
+        let status = response.status();
+
+        // b23.tv returns a 302 redirect; extract the Location header
+        if status.is_redirection() {
+            if let Some(location) = response.headers().get("location") {
+                let resolved = location.to_str().map_err(|e| {
+                    BilibiliError::Parse(format!("Invalid Location header: {e}"))
+                })?;
+                return Ok(resolved.to_string());
+            }
+        }
+
+        // If no redirect, the response URL is already the final URL
+        if status.is_success() {
+            return Ok(response.url().to_string());
+        }
+
+        Err(BilibiliError::Http { status, url: response.url().to_string() })
     }
 
     /// Get video information by BVID
@@ -383,7 +403,7 @@ impl BilibiliClient {
         let url = format!("https://api.bilibili.com/x/web-interface/view?bvid={bvid}");
         let response = check_response(self.client.get(&url).send().await?)?;
 
-        let json: serde_json::Value = response.json().await?;
+        let json: serde_json::Value = json_with_limit(response).await?;
 
         if json["code"].as_i64() != Some(0) {
             return Err(BilibiliError::Api {
@@ -417,7 +437,7 @@ impl BilibiliClient {
         );
 
         let response = check_response(self.client.get(&url).send().await?)?;
-        let json: serde_json::Value = response.json().await?;
+        let json: serde_json::Value = json_with_limit(response).await?;
 
         if json["code"].as_i64() != Some(0) {
             return Err(BilibiliError::Api {
@@ -444,7 +464,7 @@ impl BilibiliClient {
     pub async fn get_anime_info(&self, epid: &str) -> Result<AnimeInfo, BilibiliError> {
         let url = format!("https://api.bilibili.com/pgc/view/web/season?ep_id={epid}");
         let response = check_response(self.client.get(&url).send().await?)?;
-        let json: serde_json::Value = response.json().await?;
+        let json: serde_json::Value = json_with_limit(response).await?;
 
         if json["code"].as_i64() != Some(0) {
             return Err(BilibiliError::Api {
@@ -477,7 +497,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::VideoPageInfoResp = resp.json().await?;
+        let json: types::VideoPageInfoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -517,7 +537,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::VideoUrlResp = resp.json().await?;
+        let json: types::VideoUrlResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -549,7 +569,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::DashVideoResp = resp.json().await?;
+        let json: types::DashVideoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -572,7 +592,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::PlayerV2InfoResp = resp.json().await?;
+        let json: types::PlayerV2InfoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -599,7 +619,7 @@ impl BilibiliClient {
         let url = "https://api.bilibili.com/x/web-interface/nav";
         let req = self.add_cookies(self.client.get(url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::NavResp = resp.json().await?;
+        let json: types::NavResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -624,7 +644,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::SeasonInfoResp = resp.json().await?;
+        let json: types::SeasonInfoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -667,7 +687,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::PgcUrlResp = resp.json().await?;
+        let json: types::PgcUrlResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -697,7 +717,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::DashPgcResp = resp.json().await?;
+        let json: types::DashPgcResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -749,7 +769,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::ParseLivePageResp = resp.json().await?;
+        let json: types::ParseLivePageResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });
@@ -786,7 +806,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: serde_json::Value = resp.json().await?;
+        let json: serde_json::Value = json_with_limit(resp).await?;
 
         if json["code"].as_i64() != Some(0) {
             return Err(BilibiliError::Api {
@@ -843,7 +863,7 @@ impl BilibiliClient {
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
-        let json: types::GetLiveDanmuInfoResp = resp.json().await?;
+        let json: types::GetLiveDanmuInfoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
             return Err(BilibiliError::Api { code: 0, message: json.message });

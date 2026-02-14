@@ -449,7 +449,24 @@ impl MediaProvider for BilibiliProvider {
     }
 
     fn cache_key(&self, _ctx: &ProviderContext<'_>, source_config: &Value) -> String {
-        format!("bilibili:{source_config}")
+        // Hash only video identifiers, not the full config (which contains cookies)
+        if let Ok(config) = BilibiliSourceConfig::try_from(source_config) {
+            use sha2::{Sha256, Digest};
+            let identifier = match &config {
+                BilibiliSourceConfig::Video { bvid, aid, cid, .. } => {
+                    format!("video:{}:{}:{}", bvid.as_deref().unwrap_or(""), aid.unwrap_or(0), cid)
+                }
+                BilibiliSourceConfig::Pgc { epid, cid, .. } => {
+                    format!("pgc:{}:{}", epid, cid)
+                }
+                BilibiliSourceConfig::Live { room_id, .. } => {
+                    format!("live:{}", room_id)
+                }
+            };
+            format!("bilibili:{:x}", Sha256::digest(identifier.as_bytes()))
+        } else {
+            "bilibili:unknown".to_string()
+        }
     }
 }
 

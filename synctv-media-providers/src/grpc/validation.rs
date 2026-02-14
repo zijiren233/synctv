@@ -18,22 +18,47 @@ const BLOCKED_HOSTNAME_SUFFIXES: &[&str] = &[
 ];
 
 /// Check if an IP address is in a private/reserved range that should be blocked.
+///
+/// Covers: loopback, private, link-local, CGNAT (100.64/10), multicast,
+/// broadcast, unspecified, IPv4-mapped IPv6, and IPv6 unique-local / link-local.
 const fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()           // 127.0.0.0/8
-            || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-            || v4.is_link_local()      // 169.254.0.0/16
-            || v4.is_unspecified()     // 0.0.0.0
-            || v4.is_broadcast()       // 255.255.255.255
-        }
+        IpAddr::V4(v4) => is_blocked_ipv4(v4),
         IpAddr::V6(v6) => {
             v6.is_loopback()           // ::1
             || v6.is_unspecified()     // ::
+            || v6.is_multicast()       // ff00::/8
+            // fe80::/10 (link-local)
+            || (v6.segments()[0] & 0xffc0) == 0xfe80
             // fc00::/7 (unique local addresses)
             || (v6.segments()[0] & 0xfe00) == 0xfc00
+            // IPv4-mapped IPv6 (::ffff:x.x.x.x) — check the embedded IPv4
+            || is_ipv4_mapped_private(&v6)
         }
     }
+}
+
+const fn is_blocked_ipv4(v4: std::net::Ipv4Addr) -> bool {
+    v4.is_loopback()           // 127.0.0.0/8
+    || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+    || v4.is_link_local()      // 169.254.0.0/16
+    || v4.is_unspecified()     // 0.0.0.0
+    || v4.is_multicast()       // 224.0.0.0/4
+    || v4.is_broadcast()       // 255.255.255.255
+    || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64) // 100.64.0.0/10 (CGNAT)
+}
+
+/// Check if an IPv6 address is IPv4-mapped (`::ffff:x.x.x.x`) with a private IPv4.
+const fn is_ipv4_mapped_private(v6: &std::net::Ipv6Addr) -> bool {
+    let segs = v6.segments();
+    if segs[0] == 0 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0
+        && segs[4] == 0 && segs[5] == 0xffff
+    {
+        let octets = v6.octets();
+        let v4 = std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
+        return is_blocked_ipv4(v4);
+    }
+    false
 }
 
 /// Validate that a host string is a non-empty, valid URL with SSRF protections.

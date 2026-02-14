@@ -62,17 +62,18 @@ impl RtmpServer {
                 accept_result = listener.accept() => {
                     let (tcp_stream, remote_addr) = accept_result?;
 
-                    let current = active_connections.load(Ordering::Relaxed);
-                    if current >= self.max_connections {
+                    // Atomically reserve a slot first, then check. This avoids the
+                    // TOCTOU race between load() and fetch_add().
+                    let prev = active_connections.fetch_add(1, Ordering::Relaxed);
+                    if prev >= self.max_connections {
+                        active_connections.fetch_sub(1, Ordering::Relaxed);
                         tracing::warn!(
                             "RTMP connection rejected from {}: at capacity ({}/{})",
-                            remote_addr, current, self.max_connections,
+                            remote_addr, prev, self.max_connections,
                         );
                         drop(tcp_stream);
                         continue;
                     }
-
-                    active_connections.fetch_add(1, Ordering::Relaxed);
                     let conn_counter = active_connections.clone();
 
                     let mut session = server_session::ServerSession::new(

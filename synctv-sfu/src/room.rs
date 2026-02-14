@@ -16,7 +16,7 @@ use anyhow::{anyhow, Result};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -78,6 +78,9 @@ pub struct SfuRoom {
     packets_relayed: Arc<AtomicU64>,
     bytes_relayed: Arc<AtomicU64>,
 
+    /// Atomic peer counter for TOCTOU-safe capacity enforcement
+    peer_count_atomic: Arc<AtomicUsize>,
+
     /// Network quality monitoring
     network_monitor: Arc<NetworkQualityMonitor>,
 }
@@ -98,39 +101,39 @@ impl SfuRoom {
             stats: Arc::new(RwLock::new(RoomStats::default())),
             packets_relayed: Arc::new(AtomicU64::new(0)),
             bytes_relayed: Arc::new(AtomicU64::new(0)),
+            peer_count_atomic: Arc::new(AtomicUsize::new(0)),
             network_monitor: Arc::new(NetworkQualityMonitor::new()),
         }
     }
 
-    /// Add a peer to the room (atomic via entry API to prevent TOCTOU)
+    /// Add a peer to the room.
     ///
-    /// The peer count check is done inside the vacant entry branch so that
-    /// the limit enforcement is atomic with the actual insert — no gap for
-    /// concurrent callers to both pass the check.
+    /// Uses an `AtomicUsize` counter for TOCTOU-safe capacity enforcement:
+    /// `fetch_add` first to reserve a slot, then insert; `fetch_sub` on failure.
     pub async fn add_peer(&self, peer_id: PeerId, max_peers: usize) -> Result<Arc<SfuPeer>> {
         use dashmap::mapref::entry::Entry;
 
+        // Reserve a slot atomically before touching DashMap
+        if max_peers > 0 {
+            let prev = self.peer_count_atomic.fetch_add(1, Ordering::SeqCst);
+            if prev >= max_peers {
+                self.peer_count_atomic.fetch_sub(1, Ordering::SeqCst);
+                return Err(anyhow!("Maximum number of peers reached for this room"));
+            }
+        }
+
         let peer = match self.peers.entry(peer_id.clone()) {
-            Entry::Occupied(_) => return Err(anyhow!("Peer already exists in room")),
+            Entry::Occupied(_) => {
+                // Peer already exists, release reserved slot
+                if max_peers > 0 {
+                    self.peer_count_atomic.fetch_sub(1, Ordering::SeqCst);
+                }
+                return Err(anyhow!("Peer already exists in room"));
+            }
             Entry::Vacant(entry) => {
-                // Check peer limit atomically with insert (0 = unlimited).
-                // DashMap::len() is safe here because the vacant entry holds a
-                // write lock on only ONE shard, and len() acquires read locks on
-                // ALL shards. DashMap uses RwLock per shard, so a read lock on the
-                // same shard as our write lock would deadlock. We must drop the
-                // entry, check, then re-acquire — same pattern as get_or_create_room.
-                drop(entry);
-                if max_peers > 0 && self.peers.len() >= max_peers {
-                    return Err(anyhow!("Maximum number of peers reached for this room"));
-                }
-                match self.peers.entry(peer_id.clone()) {
-                    Entry::Occupied(entry) => return Ok(entry.get().clone()),
-                    Entry::Vacant(entry) => {
-                        let p = Arc::new(SfuPeer::new(peer_id.clone()));
-                        entry.insert(p.clone());
-                        p
-                    }
-                }
+                let p = Arc::new(SfuPeer::new(peer_id.clone()));
+                entry.insert(p.clone());
+                p
             }
         };
 
@@ -156,8 +159,10 @@ impl SfuRoom {
 
     /// Remove a peer from the room
     pub async fn remove_peer(&self, peer_id: &PeerId) -> Result<()> {
-        // Remove peer
-        self.peers.remove(peer_id);
+        // Remove peer and decrement atomic counter
+        if self.peers.remove(peer_id).is_some() {
+            self.peer_count_atomic.fetch_sub(1, Ordering::SeqCst);
+        }
 
         // Remove from network quality monitor
         self.network_monitor.remove_peer(peer_id);

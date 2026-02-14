@@ -107,8 +107,8 @@ impl Provider for GoogleProvider {
 }
 
 /// Factory function for Google provider
-pub fn google_factory(config: &serde_yaml::Value) -> Result<Box<dyn Provider>, Error> {
-    let config: GoogleConfig = serde_yaml::from_value(config.clone())
+pub fn google_factory(config: &serde_json::Value) -> Result<Box<dyn Provider>, Error> {
+    let config: GoogleConfig = serde_json::from_value(config.clone())
         .map_err(|e| Error::InvalidInput(format!("Invalid Google config: {e}")))?;
 
     Ok(Box::new(GoogleProvider::create(

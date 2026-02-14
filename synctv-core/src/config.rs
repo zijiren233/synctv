@@ -232,13 +232,13 @@ impl Default for LivestreamConfig {
 pub struct OAuth2Config {
     /// Provider configurations (e.g., github, google, logto1, logto2)
     #[serde(default)]
-    pub providers: serde_yaml::Value,
+    pub providers: serde_json::Value,
 }
 
 impl Default for OAuth2Config {
     fn default() -> Self {
         Self {
-            providers: serde_yaml::Value::Mapping(serde_yaml::mapping::Mapping::new()),
+            providers: serde_json::json!({}),
         }
     }
 }
@@ -320,6 +320,12 @@ pub struct WebRTCConfig {
     pub max_sfu_rooms: usize,
     /// Maximum peers per SFU room
     pub max_peers_per_sfu_room: usize,
+    /// Simulcast layers to use (e.g., ["high", "medium", "low"])
+    pub simulcast_layers: Vec<String>,
+    /// Maximum bitrate per peer in kbps (0 = unlimited)
+    pub max_bitrate_per_peer: u32,
+    /// Enable bandwidth estimation
+    pub enable_bandwidth_estimation: bool,
 }
 
 /// TURN server mode
@@ -411,12 +417,19 @@ impl Default for WebRTCConfig {
             enable_simulcast: true,
             max_sfu_rooms: 0, // No limit by default
             max_peers_per_sfu_room: 50,
+            simulcast_layers: vec![
+                "high".to_string(),
+                "medium".to_string(),
+                "low".to_string(),
+            ],
+            max_bitrate_per_peer: 0, // No limit by default
+            enable_bandwidth_estimation: true,
         }
     }
 }
 
 /// Email configuration for SMTP
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EmailConfig {
     pub smtp_host: String,
     pub smtp_port: u16,
@@ -425,6 +438,20 @@ pub struct EmailConfig {
     pub from_email: String,
     pub from_name: String,
     pub use_tls: bool,
+}
+
+impl std::fmt::Debug for EmailConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmailConfig")
+            .field("smtp_host", &self.smtp_host)
+            .field("smtp_port", &self.smtp_port)
+            .field("smtp_username", &self.smtp_username)
+            .field("smtp_password", &"<redacted>")
+            .field("from_email", &self.from_email)
+            .field("from_name", &self.from_name)
+            .field("use_tls", &self.use_tls)
+            .finish()
+    }
 }
 
 impl Default for EmailConfig {

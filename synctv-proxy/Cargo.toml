@@ -5,9 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 axum.workspace = true
-reqwest = { version = "0.12", features = ["rustls-tls", "stream"], default-features = false }
+reqwest = { workspace = true, features = ["stream"] }
 futures.workspace = true
 url.workspace = true
 percent-encoding.workspace = true

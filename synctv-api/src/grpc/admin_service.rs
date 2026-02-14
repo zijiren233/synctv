@@ -32,9 +32,28 @@ use crate::proto::admin::{
 use crate::impls::AdminApiImpl;
 
 /// Convert a String error from `AdminApiImpl` into a gRPC Status.
+///
+/// Uses the same keyword-based mapping as `impls_err_to_status` in
+/// client_service.rs. Once the impls layer migrates to typed errors,
+/// this should use `From<synctv_core::Error> for tonic::Status` instead.
 fn api_err(err: String) -> Status {
-    tracing::error!("Admin API error: {err}");
-    Status::internal("Internal error")
+    let lower = err.to_lowercase();
+    if lower.contains("not found") {
+        Status::not_found(err)
+    } else if lower.contains("permission") || lower.contains("forbidden")
+        || lower.contains("not allowed")
+    {
+        Status::permission_denied(err)
+    } else if lower.contains("already exists") || lower.contains("already taken") {
+        Status::already_exists(err)
+    } else if lower.contains("invalid") || lower.contains("too short") || lower.contains("too long")
+        || lower.contains("cannot be empty") || lower.contains("must be")
+    {
+        Status::invalid_argument(err)
+    } else {
+        tracing::error!("Admin API error: {err}");
+        Status::internal("Internal error")
+    }
 }
 
 /// Convert an anyhow error into a gRPC Status.
@@ -293,7 +312,7 @@ impl AdminService for AdminServiceImpl {
         request: Request<CreateUserRequest>,
     ) -> Result<Response<CreateUserResponse>, Status> {
         // Creating root users requires root privileges
-        let caller_role = if request.get_ref().role == "root" {
+        let caller_role = if request.get_ref().role == synctv_proto::common::UserRole::Root as i32 {
             self.check_root(&request).await?;
             synctv_core::models::UserRole::Root
         } else {
@@ -359,7 +378,7 @@ impl AdminService for AdminServiceImpl {
         request: Request<UpdateUserRoleRequest>,
     ) -> Result<Response<UpdateUserRoleResponse>, Status> {
         // Granting root role requires root privileges
-        let caller_role = if request.get_ref().role == "root" {
+        let caller_role = if request.get_ref().role == synctv_proto::common::UserRole::Root as i32 {
             self.check_root(&request).await?;
             synctv_core::models::UserRole::Root
         } else {

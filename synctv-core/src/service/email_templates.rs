@@ -282,7 +282,7 @@ const EMAIL_VERIFICATION_TEMPLATE: &str = r#"
         </div>
 
         <div class="footer">
-            <p>© 2024 SyncTV. All rights reserved.</p>
+            <p>© SyncTV. All rights reserved.</p>
             <p>This is an automated message, please do not reply to this email.</p>
         </div>
     </div>
@@ -390,7 +390,7 @@ const PASSWORD_RESET_TEMPLATE: &str = r#"
         </div>
 
         <div class="footer">
-            <p>© 2024 SyncTV. All rights reserved.</p>
+            <p>© SyncTV. All rights reserved.</p>
             <p>This is an automated message, please do not reply to this email.</p>
         </div>
     </div>
@@ -512,7 +512,7 @@ const TEST_EMAIL_TEMPLATE: &str = r#"
         </div>
 
         <div class="footer">
-            <p>© 2024 SyncTV. All rights reserved.</p>
+            <p>© SyncTV. All rights reserved.</p>
             <p>This is an automated message, please do not reply to this email.</p>
         </div>
     </div>
@@ -610,7 +610,7 @@ const NOTIFICATION_TEMPLATE: &str = r#"
         </div>
 
         <div class="footer">
-            <p>© 2024 SyncTV. All rights reserved.</p>
+            <p>© SyncTV. All rights reserved.</p>
             <p>This is an automated message, please do not reply to this email.</p>
         </div>
     </div>

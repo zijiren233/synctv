@@ -54,7 +54,8 @@ async fn main() -> Result<()> {
     }
 
     // 2. Initialize logging
-    logging::init_logging(&config.logging)?;
+    // Hold the guard so buffered log entries are flushed on shutdown
+    let _log_guard = logging::init_logging(&config.logging)?;
     info!("SyncTV server starting...");
     info!("gRPC address: {}", config.grpc_address());
     info!("HTTP address: {}", config.http_address());
@@ -373,9 +374,9 @@ async fn main() -> Result<()> {
             max_sfu_rooms: config.webrtc.max_sfu_rooms,
             max_peers_per_room: config.webrtc.max_peers_per_sfu_room,
             enable_simulcast: config.webrtc.enable_simulcast,
-            simulcast_layers: vec!["high".to_string(), "medium".to_string(), "low".to_string()],
-            max_bitrate_per_peer: 0, // 0 = no limit
-            enable_bandwidth_estimation: true,
+            simulcast_layers: config.webrtc.simulcast_layers.clone(),
+            max_bitrate_per_peer: config.webrtc.max_bitrate_per_peer,
+            enable_bandwidth_estimation: config.webrtc.enable_bandwidth_estimation,
         };
         let manager = synctv_sfu::SfuManager::new(sfu_config);
         info!(

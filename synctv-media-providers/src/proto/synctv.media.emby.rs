@@ -156,6 +156,8 @@ pub struct GetItemReq {
     pub token: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub item_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub user_id: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]

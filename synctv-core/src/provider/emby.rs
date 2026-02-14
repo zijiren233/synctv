@@ -124,6 +124,7 @@ impl MediaProvider for EmbyProvider {
             host: config.host.clone(),
             token: config.token.clone(),
             item_id: config.item_id.clone(),
+            user_id: config.user_id.clone(),
         };
 
         let item = client.get_item(item_request).await?;

@@ -2,4 +2,4 @@
 //!
 //! Type alias to the shared `ProviderClientError`.
 
-pub use crate::error::{check_response, ProviderClientError as EmbyError};
+pub use crate::error::{check_response, json_with_limit, ProviderClientError as EmbyError};

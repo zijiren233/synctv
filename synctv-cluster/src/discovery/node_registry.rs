@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
 
@@ -13,6 +14,82 @@ use crate::error::{Error, Result};
 
 /// Timeout for Redis operations in seconds
 const REDIS_TIMEOUT_SECS: u64 = 5;
+
+/// Number of consecutive Redis failures before the circuit breaker opens
+const CIRCUIT_BREAKER_THRESHOLD: u64 = 3;
+
+/// How long the circuit breaker stays open before allowing a probe request (seconds)
+const CIRCUIT_BREAKER_COOLDOWN_SECS: u64 = 10;
+
+/// Simple circuit breaker for Redis operations.
+///
+/// After `CIRCUIT_BREAKER_THRESHOLD` consecutive failures, the breaker opens
+/// and immediately rejects requests for `CIRCUIT_BREAKER_COOLDOWN_SECS`.
+/// After the cooldown, a single probe request is allowed through; if it
+/// succeeds, the breaker closes. If it fails, the cooldown restarts.
+struct RedisCircuitBreaker {
+    consecutive_failures: AtomicU64,
+    is_open: AtomicBool,
+    /// Timestamp (seconds since UNIX epoch) when the circuit breaker opened
+    opened_at: AtomicU64,
+}
+
+impl RedisCircuitBreaker {
+    fn new() -> Self {
+        Self {
+            consecutive_failures: AtomicU64::new(0),
+            is_open: AtomicBool::new(false),
+            opened_at: AtomicU64::new(0),
+        }
+    }
+
+    /// Check if a request should be allowed through.
+    /// Returns `true` if the request is allowed, `false` if the circuit is open.
+    fn allow_request(&self) -> bool {
+        if !self.is_open.load(Ordering::Acquire) {
+            return true;
+        }
+
+        // Check if cooldown has elapsed
+        let opened = self.opened_at.load(Ordering::Relaxed);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        if now.saturating_sub(opened) >= CIRCUIT_BREAKER_COOLDOWN_SECS {
+            // Allow a probe request (half-open state)
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Record a successful Redis operation
+    fn record_success(&self) {
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+        self.is_open.store(false, Ordering::Release);
+    }
+
+    /// Record a failed Redis operation
+    fn record_failure(&self) {
+        let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
+        if failures >= CIRCUIT_BREAKER_THRESHOLD {
+            if !self.is_open.swap(true, Ordering::AcqRel) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                self.opened_at.store(now, Ordering::Relaxed);
+                tracing::warn!(
+                    consecutive_failures = failures,
+                    "Redis circuit breaker opened after {} consecutive failures",
+                    failures
+                );
+            }
+        }
+    }
+}
 
 /// Node information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,7 +184,9 @@ pub struct NodeRegistry {
     pub heartbeat_timeout_secs: i64,
     local_nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
     /// Current epoch for this node (incremented on each registration)
-    current_epoch: Arc<std::sync::atomic::AtomicU64>,
+    current_epoch: Arc<AtomicU64>,
+    /// Circuit breaker for Redis operations
+    circuit_breaker: RedisCircuitBreaker,
 }
 
 impl NodeRegistry {
@@ -130,7 +209,8 @@ impl NodeRegistry {
             node_id,
             heartbeat_timeout_secs,
             local_nodes: Arc::new(RwLock::new(HashMap::new())),
-            current_epoch: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            current_epoch: Arc::new(AtomicU64::new(1)),
+            circuit_breaker: RedisCircuitBreaker::new(),
         })
     }
 
@@ -154,12 +234,29 @@ impl NodeRegistry {
         Ok(conn)
     }
 
+    /// Check the circuit breaker and get a Redis connection.
+    /// Returns `Err` if the circuit breaker is open. Records connection
+    /// failures in the circuit breaker.
+    async fn get_conn_with_breaker(&self, client: &redis::Client) -> Result<redis::aio::MultiplexedConnection> {
+        if !self.circuit_breaker.allow_request() {
+            return Err(Error::Database(
+                "Redis circuit breaker is open, request rejected".to_string(),
+            ));
+        }
+        let result = self.get_conn(client).await;
+        match &result {
+            Ok(_) => self.circuit_breaker.record_success(),
+            Err(_) => self.circuit_breaker.record_failure(),
+        }
+        result
+    }
+
     /// Get the current fencing token for this node
     #[must_use]
     pub fn current_fencing_token(&self) -> FencingToken {
         FencingToken::new(
             self.node_id.clone(),
-            self.current_epoch.load(std::sync::atomic::Ordering::SeqCst),
+            self.current_epoch.load(Ordering::SeqCst),
         )
     }
 
@@ -173,10 +270,10 @@ impl NodeRegistry {
     /// This prevents race conditions when multiple instances register concurrently.
     pub async fn register(&self, grpc_address: String, http_address: String) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = self.get_conn(client).await?;
+            let mut conn = self.get_conn_with_breaker(client).await?;
 
             let key = Self::node_key(&self.node_id);
-            let local_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
+            let local_epoch = self.current_epoch.load(Ordering::SeqCst);
             let ttl = self.heartbeat_timeout_secs * 2;
 
             // Create node info template
@@ -242,7 +339,7 @@ impl NodeRegistry {
             .map_err(|e| Error::Database(format!("Redis register script failed: {e}")))?;
 
             // Update local epoch
-            self.current_epoch.store(new_epoch, std::sync::atomic::Ordering::SeqCst);
+            self.current_epoch.store(new_epoch, Ordering::SeqCst);
 
             // Update local cache
             node_info.epoch = new_epoch;
@@ -273,10 +370,10 @@ impl NodeRegistry {
     /// Returns `HeartbeatResult` indicating whether re-registration is needed.
     pub async fn heartbeat(&self) -> Result<HeartbeatResult> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = self.get_conn(client).await?;
+            let mut conn = self.get_conn_with_breaker(client).await?;
 
             let key = Self::node_key(&self.node_id);
-            let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
+            let current_epoch = self.current_epoch.load(Ordering::SeqCst);
             let now = Utc::now();
             let now_rfc3339 = now.to_rfc3339();
             let ttl = self.heartbeat_timeout_secs * 2;
@@ -357,11 +454,10 @@ impl NodeRegistry {
                     remote_epoch = remote_epoch,
                     "Epoch mismatch during heartbeat, node may need re-registration"
                 );
-                // Update our epoch to match the remote one
-                self.current_epoch.store(
-                    remote_epoch.max(current_epoch),
-                    std::sync::atomic::Ordering::SeqCst,
-                );
+                // Don't update local epoch on mismatch -- let the caller
+                // handle it by re-registering, which atomically sets the
+                // correct epoch. Updating here is misleading because the
+                // Lua script requires exact match, not max(remote, local).
                 return Ok(HeartbeatResult::EpochMismatch(remote_epoch));
             }
         }
@@ -381,10 +477,10 @@ impl NodeRegistry {
     /// Prevents stale nodes from unregistering newer registrations.
     pub async fn unregister(&self) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = self.get_conn(client).await?;
+            let mut conn = self.get_conn_with_breaker(client).await?;
 
             let key = Self::node_key(&self.node_id);
-            let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
+            let current_epoch = self.current_epoch.load(Ordering::SeqCst);
 
             // Atomic Lua script: only delete if existing epoch <= our epoch
             // Returns 1 if deleted, 0 if skipped (newer epoch exists), -1 if key not found
@@ -444,7 +540,7 @@ impl NodeRegistry {
     /// epoch >= existing epoch, preventing stale registrations from overwriting newer ones.
     pub async fn register_remote(&self, node_info: NodeInfo) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = self.get_conn(client).await?;
+            let mut conn = self.get_conn_with_breaker(client).await?;
 
             let key = Self::node_key(&node_info.node_id);
             let value = serde_json::to_string(&node_info)
@@ -506,7 +602,7 @@ impl NodeRegistry {
     /// Update heartbeat for a remote node (atomic via Lua script)
     pub async fn heartbeat_remote(&self, node_id: &str) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = self.get_conn(client).await?;
+            let mut conn = self.get_conn_with_breaker(client).await?;
 
             let key = Self::node_key(node_id);
             let now = Utc::now().to_rfc3339();
@@ -558,7 +654,7 @@ impl NodeRegistry {
     /// stale deregister requests from removing re-registered nodes.
     pub async fn unregister_remote(&self, node_id: &str, expected_epoch: Option<u64>) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = self.get_conn(client).await?;
+            let mut conn = self.get_conn_with_breaker(client).await?;
 
             let key = Self::node_key(node_id);
 
@@ -629,7 +725,7 @@ impl NodeRegistry {
     /// Get all active nodes
     pub async fn get_all_nodes(&self) -> Result<Vec<NodeInfo>> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = self.get_conn(client).await?;
+            let mut conn = self.get_conn_with_breaker(client).await?;
 
             // Use SCAN instead of KEYS for better performance on large datasets
             // SCAN is non-blocking and returns results incrementally
@@ -715,7 +811,7 @@ impl NodeRegistry {
     /// Get a specific node by ID
     pub async fn get_node(&self, node_id: &str) -> Result<Option<NodeInfo>> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = self.get_conn(client).await?;
+            let mut conn = self.get_conn_with_breaker(client).await?;
 
             let key = Self::node_key(node_id);
             let value: Option<String> = timeout(

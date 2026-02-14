@@ -84,6 +84,9 @@ pub struct DeregisterNodeRequest {
     /// shutdown, upgrade, failure, etc.
     #[prost(string, tag = "2")]
     pub reason: ::prost::alloc::string::String,
+    /// Fencing token epoch (required for stale-deregister protection)
+    #[prost(uint64, tag = "3")]
+    pub epoch: u64,
 }
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct DeregisterNodeResponse {
@@ -161,7 +164,10 @@ pub struct ClusterEvent {
     /// Sequence number for ordering
     #[prost(int32, tag = "4")]
     pub sequence: i32,
-    #[prost(oneof = "cluster_event::Event", tags = "10, 11, 12, 13, 14, 15, 16, 17, 18")]
+    #[prost(
+        oneof = "cluster_event::Event",
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24"
+    )]
     pub event: ::core::option::Option<cluster_event::Event>,
 }
 /// Nested message and enum types in `ClusterEvent`.
@@ -186,6 +192,18 @@ pub mod cluster_event {
         DanmakuMessage(super::DanmakuMessageEvent),
         #[prost(message, tag = "18")]
         CacheInvalidate(super::CacheInvalidateEvent),
+        #[prost(message, tag = "19")]
+        MediaAdded(super::MediaAddedEvent),
+        #[prost(message, tag = "20")]
+        MediaRemoved(super::MediaRemovedEvent),
+        #[prost(message, tag = "21")]
+        WebrtcSignaling(super::WebRtcSignalingEvent),
+        #[prost(message, tag = "22")]
+        KickPublisher(super::KickPublisherEvent),
+        #[prost(message, tag = "23")]
+        KickUser(super::KickUserEvent),
+        #[prost(message, tag = "24")]
+        PermissionChanged(super::PermissionChangedEvent),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -271,6 +289,86 @@ pub struct CacheInvalidateEvent {
     /// Optional pattern (e.g., "room:123:*")
     #[prost(string, tag = "2")]
     pub pattern: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MediaAddedEvent {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub media_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub title: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub added_by_user_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub added_by_username: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MediaRemovedEvent {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub media_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub removed_by_user_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub removed_by_username: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WebRtcSignalingEvent {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    /// Specific user to route to
+    #[prost(string, tag = "2")]
+    pub target_user_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub from_user_id: ::prost::alloc::string::String,
+    /// "offer", "answer", "ice_candidate"
+    #[prost(string, tag = "4")]
+    pub signal_type: ::prost::alloc::string::String,
+    /// Opaque signaling data (JSON)
+    #[prost(string, tag = "5")]
+    pub data: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct KickPublisherEvent {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub media_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub reason: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct KickUserEvent {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub user_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub reason: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PermissionChangedEvent {
+    #[prost(string, tag = "1")]
+    pub room_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub user_id: ::prost::alloc::string::String,
+    /// New role
+    #[prost(string, tag = "3")]
+    pub role: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "4")]
+    pub effective_permissions: u64,
+    #[prost(uint64, tag = "5")]
+    pub added_permissions: u64,
+    #[prost(uint64, tag = "6")]
+    pub removed_permissions: u64,
+    #[prost(uint64, tag = "7")]
+    pub admin_added_permissions: u64,
+    #[prost(uint64, tag = "8")]
+    pub admin_removed_permissions: u64,
+    #[prost(string, tag = "9")]
+    pub updated_by: ::prost::alloc::string::String,
 }
 /// User connection tracking
 #[derive(Clone, PartialEq, ::prost::Message)]

@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package synctv.common;
+
+// ==================== Shared Enums ====================
+
+// Global user role for RBAC
+enum UserRole {
+    USER_ROLE_UNSPECIFIED = 0;
+    USER_ROLE_USER = 1;
+    USER_ROLE_ADMIN = 2;
+    USER_ROLE_ROOT = 3;
+}
+
+// Account status
+enum UserStatus {
+    USER_STATUS_UNSPECIFIED = 0;
+    USER_STATUS_ACTIVE = 1;
+    USER_STATUS_PENDING = 2;
+    USER_STATUS_BANNED = 3;
+}
+
+// Room member role
+enum RoomMemberRole {
+    ROOM_MEMBER_ROLE_UNSPECIFIED = 0;
+    ROOM_MEMBER_ROLE_GUEST = 1;
+    ROOM_MEMBER_ROLE_MEMBER = 2;
+    ROOM_MEMBER_ROLE_ADMIN = 3;
+    ROOM_MEMBER_ROLE_CREATOR = 4;
+}
+
+// ==================== Shared Types ====================
+
+// Room member information (shared between admin and client APIs)
+message RoomMember {
+    string room_id = 1;
+    string user_id = 2;
+    string username = 3;
+    RoomMemberRole role = 4;
+
+    // Effective permissions (calculated from role + added/removed)
+    uint64 permissions = 5;
+
+    // Allow/Deny permission pattern fields
+    // For member role: uses added_permissions/removed_permissions
+    // For admin role: uses admin_added_permissions/admin_removed_permissions
+    uint64 added_permissions = 6;
+    uint64 removed_permissions = 7;
+    uint64 admin_added_permissions = 8;
+    uint64 admin_removed_permissions = 9;
+
+    int64 joined_at = 10;
+    bool is_online = 11;
+}

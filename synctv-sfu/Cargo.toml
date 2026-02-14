@@ -5,9 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 # WebRTC
-webrtc = "0.11"
+webrtc.workspace = true
 
 # Async runtime
 tokio.workspace = true
@@ -19,10 +22,6 @@ futures.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
 
-# IDs
-uuid.workspace = true
-nanoid.workspace = true
-
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
@@ -33,9 +32,6 @@ thiserror.workspace = true
 
 # Logging
 tracing.workspace = true
-
-# Time
-chrono.workspace = true
 
 # Utilities
 bytes.workspace = true

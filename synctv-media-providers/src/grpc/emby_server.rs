@@ -33,6 +33,7 @@ fn map_emby_error(context: &str, e: EmbyError) -> Status {
         EmbyError::InvalidConfig(_) => Status::invalid_argument(format!("{context}: invalid configuration")),
         EmbyError::InvalidHeader(_) => Status::internal(format!("{context}: invalid header")),
         EmbyError::NotImplemented(_) => Status::unimplemented(format!("{context}: not implemented")),
+        EmbyError::ResponseTooLarge { size } => Status::resource_exhausted(format!("{context}: response too large ({size} bytes)")),
     }
 }
 

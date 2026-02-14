@@ -38,6 +38,7 @@ fn map_alist_error(context: &str, e: AlistError) -> Status {
         AlistError::InvalidConfig(_) => Status::invalid_argument(format!("{context}: invalid configuration")),
         AlistError::InvalidHeader(_) => Status::internal(format!("{context}: invalid header")),
         AlistError::NotImplemented(_) => Status::unimplemented(format!("{context}: not implemented")),
+        AlistError::ResponseTooLarge { size } => Status::resource_exhausted(format!("{context}: response too large ({size} bytes)")),
     }
 }
 

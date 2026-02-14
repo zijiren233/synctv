@@ -1,4 +1,8 @@
 //! SFU Configuration
+//!
+//! Re-uses the SFU-related fields from `synctv_core::config::WebRTCConfig`
+//! to avoid duplication. This struct is the single source of truth within
+//! the SFU crate.
 
 use serde::{Deserialize, Serialize};
 

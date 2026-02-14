@@ -3,6 +3,11 @@
 //! This crate contains all protobuf definitions and generated code for `SyncTV`'s
 //! external APIs.
 
+// Common shared types (enums, RoomMember)
+pub mod common {
+    include!("synctv.common.rs");
+}
+
 // Client API
 pub mod client {
     include!("synctv.client.rs");

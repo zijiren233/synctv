@@ -282,19 +282,26 @@ pub async fn serve(
             admin_api: None,
         });
 
-        // Manually register provider gRPC services
+        // Register provider gRPC services with auth interceptor
         use synctv_proto::providers::alist::alist_provider_service_server::AlistProviderServiceServer;
         use synctv_proto::providers::bilibili::bilibili_provider_service_server::BilibiliProviderServiceServer;
         use synctv_proto::providers::emby::emby_provider_service_server::EmbyProviderServiceServer;
 
-        router = router.add_service(AlistProviderServiceServer::new(
-            providers::alist::AlistProviderGrpcService::new(app_state.clone())
+        let provider_interceptor1 = auth_interceptor.clone();
+        let provider_interceptor2 = auth_interceptor.clone();
+        let provider_interceptor3 = auth_interceptor.clone();
+
+        router = router.add_service(AlistProviderServiceServer::with_interceptor(
+            providers::alist::AlistProviderGrpcService::new(app_state.clone()),
+            move |req| provider_interceptor1.inject_user(req),
         ));
-        router = router.add_service(BilibiliProviderServiceServer::new(
-            providers::bilibili::BilibiliProviderGrpcService::new(app_state.clone())
+        router = router.add_service(BilibiliProviderServiceServer::with_interceptor(
+            providers::bilibili::BilibiliProviderGrpcService::new(app_state.clone()),
+            move |req| provider_interceptor2.inject_user(req),
         ));
-        router = router.add_service(EmbyProviderServiceServer::new(
-            providers::emby::EmbyProviderGrpcService::new(app_state)
+        router = router.add_service(EmbyProviderServiceServer::with_interceptor(
+            providers::emby::EmbyProviderGrpcService::new(app_state),
+            move |req| provider_interceptor3.inject_user(req),
         ));
     }
 

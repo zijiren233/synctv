@@ -471,6 +471,9 @@ impl RoomService {
             .check_permission(&room_id, &user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
             .await?;
 
+        // Validate permission escalation
+        settings.validate_permissions()?;
+
         // Verify room exists
         let room = self
             .room_repo
@@ -1068,7 +1071,8 @@ impl RoomService {
         let room_settings = self.room_settings_repo.get(&room_id).await?;
 
         // Convert to gRPC RoomMember type
-        let proto_members: Vec<synctv_proto::admin::RoomMember> = members_with_users
+        let total = members_with_users.len() as i32;
+        let proto_members: Vec<synctv_proto::common::RoomMember> = members_with_users
             .into_iter()
             .map(|m| {
                 // Calculate role default permissions (global + room-level overrides)
@@ -1078,11 +1082,19 @@ impl RoomService {
                 // Apply member-level overrides
                 let effective = m.effective_permissions(role_default);
 
-                synctv_proto::admin::RoomMember {
+                // Map internal Role to proto RoomMemberRole enum
+                let proto_role = match m.role {
+                    crate::models::permission::Role::Guest => synctv_proto::common::RoomMemberRole::Guest as i32,
+                    crate::models::permission::Role::Member => synctv_proto::common::RoomMemberRole::Member as i32,
+                    crate::models::permission::Role::Admin => synctv_proto::common::RoomMemberRole::Admin as i32,
+                    crate::models::permission::Role::Creator => synctv_proto::common::RoomMemberRole::Creator as i32,
+                };
+
+                synctv_proto::common::RoomMember {
                     room_id: m.room_id.as_str().to_string(),
                     user_id: m.user_id.as_str().to_string(),
                     username: m.username,
-                    role: m.role.to_string(),
+                    role: proto_role,
                     permissions: effective.0,
                     added_permissions: m.added_permissions,
                     removed_permissions: m.removed_permissions,
@@ -1096,6 +1108,7 @@ impl RoomService {
 
         Ok(synctv_proto::admin::GetRoomMembersResponse {
             members: proto_members,
+            total,
         })
     }
 

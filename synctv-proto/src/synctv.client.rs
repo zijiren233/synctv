@@ -9,12 +9,12 @@ pub struct User {
     pub username: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub email: ::prost::alloc::string::String,
-    /// Global RBAC role: root, admin, user
-    #[prost(string, tag = "4")]
-    pub role: ::prost::alloc::string::String,
-    /// Account status: active, pending, banned
-    #[prost(string, tag = "5")]
-    pub status: ::prost::alloc::string::String,
+    /// Global RBAC role
+    #[prost(enumeration = "super::common::UserRole", tag = "4")]
+    pub role: i32,
+    /// Account status
+    #[prost(enumeration = "super::common::UserStatus", tag = "5")]
+    pub status: i32,
     #[prost(int64, tag = "6")]
     pub created_at: i64,
     /// Whether email has been verified
@@ -133,37 +133,6 @@ pub struct PlaybackState {
     #[prost(string, tag = "9")]
     pub relative_path: ::prost::alloc::string::String,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RoomMember {
-    #[prost(string, tag = "1")]
-    pub room_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub user_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub username: ::prost::alloc::string::String,
-    /// creator, admin, member, guest
-    #[prost(string, tag = "4")]
-    pub role: ::prost::alloc::string::String,
-    /// Effective permissions (calculated from role + added/removed)
-    #[prost(uint64, tag = "5")]
-    pub permissions: u64,
-    /// Allow/Deny permission pattern fields
-    /// For member role: uses added_permissions/removed_permissions
-    /// For admin role: uses admin_added_permissions/admin_removed_permissions
-    #[prost(uint64, tag = "6")]
-    pub added_permissions: u64,
-    #[prost(uint64, tag = "7")]
-    pub removed_permissions: u64,
-    #[prost(uint64, tag = "8")]
-    pub admin_added_permissions: u64,
-    #[prost(uint64, tag = "9")]
-    pub admin_removed_permissions: u64,
-    #[prost(int64, tag = "10")]
-    pub joined_at: i64,
-    #[prost(bool, tag = "11")]
-    pub is_online: bool,
-}
 /// Authentication Messages
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -275,7 +244,7 @@ pub struct JoinRoomResponse {
     #[prost(message, optional, tag = "2")]
     pub playback_state: ::core::option::Option<PlaybackState>,
     #[prost(message, repeated, tag = "3")]
-    pub members: ::prost::alloc::vec::Vec<RoomMember>,
+    pub members: ::prost::alloc::vec::Vec<super::common::RoomMember>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
@@ -379,12 +348,21 @@ pub struct CheckRoomPasswordResponse {
 /// Note: room_id extracted from x-room-id metadata
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct GetRoomMembersRequest {}
+pub struct GetRoomMembersRequest {
+    /// Page number (default 1)
+    #[prost(int32, tag = "1")]
+    pub page: i32,
+    /// Items per page (default 50)
+    #[prost(int32, tag = "2")]
+    pub page_size: i32,
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetRoomMembersResponse {
     #[prost(message, repeated, tag = "1")]
-    pub members: ::prost::alloc::vec::Vec<RoomMember>,
+    pub members: ::prost::alloc::vec::Vec<super::common::RoomMember>,
+    #[prost(int32, tag = "2")]
+    pub total: i32,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -392,9 +370,9 @@ pub struct UpdateMemberPermissionsRequest {
     /// Target user
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
-    /// New role (optional): creator, admin, member, guest
-    #[prost(string, tag = "2")]
-    pub role: ::prost::alloc::string::String,
+    /// New role (optional)
+    #[prost(enumeration = "super::common::RoomMemberRole", tag = "2")]
+    pub role: i32,
     /// Allow/Deny permission pattern fields
     /// Only set the fields you want to update
     /// For member role: use added_permissions/removed_permissions
@@ -412,7 +390,7 @@ pub struct UpdateMemberPermissionsRequest {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateMemberPermissionsResponse {
     #[prost(message, optional, tag = "1")]
-    pub member: ::core::option::Option<RoomMember>,
+    pub member: ::core::option::Option<super::common::RoomMember>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -606,7 +584,7 @@ pub struct ListPlaylistItemsRequest {
     /// Relative path within dynamic folder (empty for root)
     #[prost(string, tag = "2")]
     pub relative_path: ::prost::alloc::string::String,
-    /// Page number (default 0)
+    /// Page number (default 1)
     #[prost(int32, tag = "3")]
     pub page: i32,
     /// Items per page (default 50)
@@ -932,7 +910,7 @@ pub struct UserJoinedRoom {
     #[prost(string, tag = "1")]
     pub room_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "2")]
-    pub member: ::core::option::Option<RoomMember>,
+    pub member: ::core::option::Option<super::common::RoomMember>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1053,9 +1031,9 @@ pub struct RoomWithRole {
     /// User's permissions in this room
     #[prost(uint64, tag = "2")]
     pub permissions: u64,
-    /// creator, admin, member, guest
-    #[prost(string, tag = "3")]
-    pub role: ::prost::alloc::string::String,
+    /// Room member role
+    #[prost(enumeration = "super::common::RoomMemberRole", tag = "3")]
+    pub role: i32,
 }
 /// Room Discovery
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1136,9 +1114,9 @@ pub struct GetStreamInfoRequest {
 pub struct StreamPublisherInfo {
     #[prost(string, tag = "1")]
     pub user_id: ::prost::alloc::string::String,
-    /// RFC3339 timestamp
-    #[prost(string, tag = "2")]
-    pub started_at: ::prost::alloc::string::String,
+    /// Unix epoch timestamp
+    #[prost(int64, tag = "2")]
+    pub started_at: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1308,9 +1286,9 @@ pub struct PermissionChanged {
     pub room_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub user_id: ::prost::alloc::string::String,
-    /// New role (optional): creator, admin, member, guest
-    #[prost(string, tag = "3")]
-    pub role: ::prost::alloc::string::String,
+    /// New role
+    #[prost(enumeration = "super::common::RoomMemberRole", tag = "3")]
+    pub role: i32,
     /// All permission fields for full state sync
     ///
     /// Calculated final permissions
@@ -1371,7 +1349,7 @@ pub struct WebRtcOffer {
     /// Target: "user_id" or "user_id:conn_id"
     #[prost(string, tag = "1")]
     pub to: ::prost::alloc::string::String,
-    /// Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    /// Sender: Set by server, format: "user_id:conn_id"
     #[prost(string, tag = "2")]
     pub from: ::prost::alloc::string::String,
     /// SDP offer (JSON string, opaque to server)
@@ -1386,7 +1364,7 @@ pub struct WebRtcAnswer {
     /// Target: "user_id" or "user_id:conn_id"
     #[prost(string, tag = "1")]
     pub to: ::prost::alloc::string::String,
-    /// Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    /// Sender: Set by server, format: "user_id:conn_id"
     #[prost(string, tag = "2")]
     pub from: ::prost::alloc::string::String,
     /// SDP answer (JSON string, opaque to server)
@@ -1401,7 +1379,7 @@ pub struct WebRtcIceCandidate {
     /// Target: "user_id" or "user_id:conn_id"
     #[prost(string, tag = "1")]
     pub to: ::prost::alloc::string::String,
-    /// Sender: Set by server (防止伪造), format: "user_id:conn_id"
+    /// Sender: Set by server, format: "user_id:conn_id"
     #[prost(string, tag = "2")]
     pub from: ::prost::alloc::string::String,
     /// ICE candidate (JSON string, opaque to server)
@@ -1571,6 +1549,101 @@ pub struct MovieSubtitle {
     pub format: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NotificationProto {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub user_id: ::prost::alloc::string::String,
+    #[prost(enumeration = "NotificationType", tag = "3")]
+    pub notification_type: i32,
+    #[prost(string, tag = "4")]
+    pub title: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub content: ::prost::alloc::string::String,
+    /// JSON additional data
+    #[prost(bytes = "vec", tag = "6")]
+    pub data: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bool, tag = "7")]
+    pub is_read: bool,
+    #[prost(int64, tag = "8")]
+    pub created_at: i64,
+    #[prost(int64, tag = "9")]
+    pub updated_at: i64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct ListNotificationsRequest {
+    /// Page number (default 1)
+    #[prost(int32, tag = "1")]
+    pub page: i32,
+    /// Items per page (default 20, max 100)
+    #[prost(int32, tag = "2")]
+    pub page_size: i32,
+    /// Filter by read status
+    #[prost(bool, optional, tag = "3")]
+    pub is_read: ::core::option::Option<bool>,
+    /// Filter by type
+    #[prost(enumeration = "NotificationType", optional, tag = "4")]
+    pub notification_type: ::core::option::Option<i32>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListNotificationsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub notifications: ::prost::alloc::vec::Vec<NotificationProto>,
+    #[prost(int64, tag = "2")]
+    pub total: i64,
+    #[prost(int64, tag = "3")]
+    pub unread_count: i64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetNotificationRequest {
+    #[prost(string, tag = "1")]
+    pub notification_id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetNotificationResponse {
+    #[prost(message, optional, tag = "1")]
+    pub notification: ::core::option::Option<NotificationProto>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MarkAsReadRequest {
+    #[prost(string, repeated, tag = "1")]
+    pub notification_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct MarkAsReadResponse {}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct MarkAllAsReadRequest {
+    /// Mark all as read before this timestamp
+    #[prost(int64, optional, tag = "1")]
+    pub before: ::core::option::Option<i64>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct MarkAllAsReadResponse {}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeleteNotificationRequest {
+    #[prost(string, tag = "1")]
+    pub notification_id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct DeleteNotificationResponse {}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct DeleteAllReadRequest {}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct DeleteAllReadResponse {}
+#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ItemType {
@@ -1610,6 +1683,45 @@ impl ItemType {
             "ITEM_TYPE_FOLDER" => Some(Self::Folder),
             "ITEM_TYPE_LIVE" => Some(Self::Live),
             "ITEM_TYPE_FILE" => Some(Self::File),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum NotificationType {
+    Unspecified = 0,
+    RoomInvitation = 1,
+    SystemAnnouncement = 2,
+    RoomEvent = 3,
+    PasswordReset = 4,
+    EmailVerification = 5,
+}
+impl NotificationType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "NOTIFICATION_TYPE_UNSPECIFIED",
+            Self::RoomInvitation => "NOTIFICATION_TYPE_ROOM_INVITATION",
+            Self::SystemAnnouncement => "NOTIFICATION_TYPE_SYSTEM_ANNOUNCEMENT",
+            Self::RoomEvent => "NOTIFICATION_TYPE_ROOM_EVENT",
+            Self::PasswordReset => "NOTIFICATION_TYPE_PASSWORD_RESET",
+            Self::EmailVerification => "NOTIFICATION_TYPE_EMAIL_VERIFICATION",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "NOTIFICATION_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "NOTIFICATION_TYPE_ROOM_INVITATION" => Some(Self::RoomInvitation),
+            "NOTIFICATION_TYPE_SYSTEM_ANNOUNCEMENT" => Some(Self::SystemAnnouncement),
+            "NOTIFICATION_TYPE_ROOM_EVENT" => Some(Self::RoomEvent),
+            "NOTIFICATION_TYPE_PASSWORD_RESET" => Some(Self::PasswordReset),
+            "NOTIFICATION_TYPE_EMAIL_VERIFICATION" => Some(Self::EmailVerification),
             _ => None,
         }
     }
@@ -3671,6 +3783,267 @@ pub mod email_service_client {
             req.extensions_mut()
                 .insert(
                     GrpcMethod::new("synctv.client.EmailService", "ConfirmPasswordReset"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated client implementations.
+pub mod notification_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// ==================== Notification Service ====================
+    /// Authentication: JWT Authorization header (user_id)
+    /// Routes: /api/notifications/*
+    #[derive(Debug, Clone)]
+    pub struct NotificationServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl NotificationServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> NotificationServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> NotificationServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            NotificationServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        pub async fn list_notifications(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListNotificationsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListNotificationsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.client.NotificationService/ListNotifications",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "synctv.client.NotificationService",
+                        "ListNotifications",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_notification(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetNotificationRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetNotificationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.client.NotificationService/GetNotification",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "synctv.client.NotificationService",
+                        "GetNotification",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn mark_as_read(
+            &mut self,
+            request: impl tonic::IntoRequest<super::MarkAsReadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::MarkAsReadResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.client.NotificationService/MarkAsRead",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("synctv.client.NotificationService", "MarkAsRead"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn mark_all_as_read(
+            &mut self,
+            request: impl tonic::IntoRequest<super::MarkAllAsReadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::MarkAllAsReadResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.client.NotificationService/MarkAllAsRead",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("synctv.client.NotificationService", "MarkAllAsRead"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_notification(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteNotificationRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteNotificationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.client.NotificationService/DeleteNotification",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "synctv.client.NotificationService",
+                        "DeleteNotification",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_all_read(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteAllReadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteAllReadResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/synctv.client.NotificationService/DeleteAllRead",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("synctv.client.NotificationService", "DeleteAllRead"),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -7607,6 +7980,467 @@ pub mod email_service_server {
     /// Generated gRPC service name
     pub const SERVICE_NAME: &str = "synctv.client.EmailService";
     impl<T> tonic::server::NamedService for EmailServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}
+/// Generated server implementations.
+pub mod notification_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with NotificationServiceServer.
+    #[async_trait]
+    pub trait NotificationService: std::marker::Send + std::marker::Sync + 'static {
+        async fn list_notifications(
+            &self,
+            request: tonic::Request<super::ListNotificationsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListNotificationsResponse>,
+            tonic::Status,
+        >;
+        async fn get_notification(
+            &self,
+            request: tonic::Request<super::GetNotificationRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetNotificationResponse>,
+            tonic::Status,
+        >;
+        async fn mark_as_read(
+            &self,
+            request: tonic::Request<super::MarkAsReadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::MarkAsReadResponse>,
+            tonic::Status,
+        >;
+        async fn mark_all_as_read(
+            &self,
+            request: tonic::Request<super::MarkAllAsReadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::MarkAllAsReadResponse>,
+            tonic::Status,
+        >;
+        async fn delete_notification(
+            &self,
+            request: tonic::Request<super::DeleteNotificationRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteNotificationResponse>,
+            tonic::Status,
+        >;
+        async fn delete_all_read(
+            &self,
+            request: tonic::Request<super::DeleteAllReadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteAllReadResponse>,
+            tonic::Status,
+        >;
+    }
+    /// ==================== Notification Service ====================
+    /// Authentication: JWT Authorization header (user_id)
+    /// Routes: /api/notifications/*
+    #[derive(Debug)]
+    pub struct NotificationServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> NotificationServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for NotificationServiceServer<T>
+    where
+        T: NotificationService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/synctv.client.NotificationService/ListNotifications" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListNotificationsSvc<T: NotificationService>(pub Arc<T>);
+                    impl<
+                        T: NotificationService,
+                    > tonic::server::UnaryService<super::ListNotificationsRequest>
+                    for ListNotificationsSvc<T> {
+                        type Response = super::ListNotificationsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListNotificationsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as NotificationService>::list_notifications(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListNotificationsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.client.NotificationService/GetNotification" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetNotificationSvc<T: NotificationService>(pub Arc<T>);
+                    impl<
+                        T: NotificationService,
+                    > tonic::server::UnaryService<super::GetNotificationRequest>
+                    for GetNotificationSvc<T> {
+                        type Response = super::GetNotificationResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetNotificationRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as NotificationService>::get_notification(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetNotificationSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.client.NotificationService/MarkAsRead" => {
+                    #[allow(non_camel_case_types)]
+                    struct MarkAsReadSvc<T: NotificationService>(pub Arc<T>);
+                    impl<
+                        T: NotificationService,
+                    > tonic::server::UnaryService<super::MarkAsReadRequest>
+                    for MarkAsReadSvc<T> {
+                        type Response = super::MarkAsReadResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::MarkAsReadRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as NotificationService>::mark_as_read(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = MarkAsReadSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.client.NotificationService/MarkAllAsRead" => {
+                    #[allow(non_camel_case_types)]
+                    struct MarkAllAsReadSvc<T: NotificationService>(pub Arc<T>);
+                    impl<
+                        T: NotificationService,
+                    > tonic::server::UnaryService<super::MarkAllAsReadRequest>
+                    for MarkAllAsReadSvc<T> {
+                        type Response = super::MarkAllAsReadResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::MarkAllAsReadRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as NotificationService>::mark_all_as_read(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = MarkAllAsReadSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.client.NotificationService/DeleteNotification" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteNotificationSvc<T: NotificationService>(pub Arc<T>);
+                    impl<
+                        T: NotificationService,
+                    > tonic::server::UnaryService<super::DeleteNotificationRequest>
+                    for DeleteNotificationSvc<T> {
+                        type Response = super::DeleteNotificationResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteNotificationRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as NotificationService>::delete_notification(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteNotificationSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/synctv.client.NotificationService/DeleteAllRead" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteAllReadSvc<T: NotificationService>(pub Arc<T>);
+                    impl<
+                        T: NotificationService,
+                    > tonic::server::UnaryService<super::DeleteAllReadRequest>
+                    for DeleteAllReadSvc<T> {
+                        type Response = super::DeleteAllReadResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteAllReadRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as NotificationService>::delete_all_read(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteAllReadSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(empty_body());
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for NotificationServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "synctv.client.NotificationService";
+    impl<T> tonic::server::NamedService for NotificationServiceServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }
 }

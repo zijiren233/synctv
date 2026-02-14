@@ -16,6 +16,7 @@ use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, Duration};
@@ -57,6 +58,9 @@ pub struct SfuManager {
     /// Cancellation token for background tasks
     cancel_token: CancellationToken,
 
+    /// Atomic room counter for TOCTOU-safe limit enforcement
+    room_count_atomic: AtomicUsize,
+
     /// Background task handles for cleanup and stats collection
     background_tasks: parking_lot::Mutex<Vec<JoinHandle<()>>>,
 }
@@ -71,6 +75,7 @@ impl SfuManager {
             rooms: DashMap::new(),
             stats: Arc::new(RwLock::new(ManagerStats::default())),
             cancel_token,
+            room_count_atomic: AtomicUsize::new(0),
             background_tasks: parking_lot::Mutex::new(Vec::new()),
         });
 
@@ -101,66 +106,49 @@ impl SfuManager {
         manager
     }
 
-    /// Get or create a room
+    /// Get or create a room.
+    ///
+    /// Uses an `AtomicUsize` counter for TOCTOU-safe room limit enforcement:
+    /// `fetch_add` first to reserve a slot, then insert; `fetch_sub` on failure.
     #[allow(clippy::unused_async)]
     pub async fn get_or_create_room(&self, room_id: RoomId) -> Result<Arc<SfuRoom>> {
-        // Use entry() API for atomic check-and-insert to avoid TOCTOU race conditions.
-        // With the previous contains_key/get + insert pattern, two concurrent requests
-        // could both observe the room as absent and each create their own instance,
-        // with one silently overwriting the other.
-        //
-        // NOTE: We must NOT call self.rooms.len() while holding an entry lock, as
-        // DashMap::len() acquires read locks on all shards and would deadlock if we
-        // already hold a write lock on one shard via entry(). So we check the limit
-        // inside the Vacant branch by dropping the entry, checking, and re-acquiring.
+        // Fast path: room already exists
+        if let Some(room) = self.rooms.get(&room_id) {
+            return Ok(Arc::clone(room.value()));
+        }
+
+        // Reserve a slot atomically before touching DashMap
+        if self.config.max_sfu_rooms > 0 {
+            let prev = self.room_count_atomic.fetch_add(1, Ordering::SeqCst);
+            if prev >= self.config.max_sfu_rooms {
+                self.room_count_atomic.fetch_sub(1, Ordering::SeqCst);
+                warn!(
+                    max_rooms = self.config.max_sfu_rooms,
+                    "Room limit reached"
+                );
+                return Err(anyhow!("Maximum number of SFU rooms reached"));
+            }
+        }
+
         match self.rooms.entry(room_id.clone()) {
             Entry::Occupied(entry) => {
+                // Room was created by concurrent task; release our reserved slot
+                if self.config.max_sfu_rooms > 0 {
+                    self.room_count_atomic.fetch_sub(1, Ordering::SeqCst);
+                }
                 debug!(room_id = %room_id, "Room already exists");
                 Ok(Arc::clone(entry.get()))
             }
             Entry::Vacant(entry) => {
-                // Enforce room limit (0 = unlimited).
-                // We use the entry's shard to avoid calling self.rooms.len() which
-                // would deadlock. DashMap guarantees that the vacant entry means this
-                // key does not exist, so current count + 1 would exceed the limit if
-                // len() >= max. We must drop the entry first, check, then re-acquire.
-                drop(entry);
+                let room = Arc::new(SfuRoom::new(room_id.clone(), Arc::clone(&self.config)));
+                entry.insert(Arc::clone(&room));
 
-                if self.config.max_sfu_rooms > 0
-                    && self.rooms.len() >= self.config.max_sfu_rooms
-                {
-                    // Double-check: the room might have been inserted by another task
-                    // between our entry() call and now.
-                    if let Some(room) = self.rooms.get(&room_id) {
-                        return Ok(Arc::clone(room.value()));
-                    }
-                    warn!(
-                        current_rooms = self.rooms.len(),
-                        max_rooms = self.config.max_sfu_rooms,
-                        "Room limit reached"
-                    );
-                    return Err(anyhow!("Maximum number of SFU rooms reached"));
-                }
+                info!(
+                    room_id = %room_id,
+                    "Created new room"
+                );
 
-                // Re-acquire entry atomically. Another task may have inserted
-                // the same room_id between our drop and now.
-                match self.rooms.entry(room_id.clone()) {
-                    Entry::Occupied(entry) => {
-                        debug!(room_id = %room_id, "Room created by concurrent task");
-                        Ok(Arc::clone(entry.get()))
-                    }
-                    Entry::Vacant(entry) => {
-                        let room = Arc::new(SfuRoom::new(room_id.clone(), Arc::clone(&self.config)));
-                        entry.insert(Arc::clone(&room));
-
-                        info!(
-                            room_id = %room_id,
-                            "Created new room"
-                        );
-
-                        Ok(room)
-                    }
-                }
+                Ok(room)
             }
         }
     }
@@ -323,6 +311,9 @@ impl SfuManager {
                 .remove_if(&room_id, |_, room| room.peers.is_empty())
                 .is_some()
             {
+                if self.config.max_sfu_rooms > 0 {
+                    self.room_count_atomic.fetch_sub(1, Ordering::SeqCst);
+                }
                 removed_count += 1;
                 debug!(room_id = %room_id, "Removed empty room");
             }
@@ -436,7 +427,11 @@ impl SfuManager {
         // Collect room IDs and clear the rooms map
         let room_ids: Vec<RoomId> = self.rooms.iter().map(|entry| entry.key().clone()).collect();
         for room_id in &room_ids {
-            self.rooms.remove(room_id);
+            if self.rooms.remove(room_id).is_some() {
+                if self.config.max_sfu_rooms > 0 {
+                    self.room_count_atomic.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
             debug!(room_id = %room_id, "Closed room during shutdown");
         }
 

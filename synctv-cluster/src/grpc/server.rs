@@ -103,7 +103,9 @@ impl ClusterServer {
             address: discovery.grpc_address.clone(),
             region: String::new(),
             status: 1, // Active
-            registered_at: chrono::Utc::now().timestamp(),
+            // Use last_heartbeat as proxy for registered_at since
+            // DiscoveryNodeInfo doesn't track actual registration time.
+            registered_at: discovery.last_heartbeat.timestamp(),
             last_heartbeat: discovery.last_heartbeat.timestamp(),
             metrics: None,
         }
@@ -236,10 +238,23 @@ impl ClusterService for ClusterServer {
 
         Self::validate_node_id(&req.node_id)?;
 
-        // Remove the node from Redis registry
-        if let Err(e) = self.node_registry.unregister_remote(&req.node_id, None).await {
+        // Epoch is required to prevent stale deregister requests from removing
+        // re-registered nodes.
+        if req.epoch == 0 {
+            return Err(Status::invalid_argument(
+                "epoch is required for deregister requests",
+            ));
+        }
+
+        // Remove the node from Redis registry with epoch validation
+        if let Err(e) = self
+            .node_registry
+            .unregister_remote(&req.node_id, Some(req.epoch))
+            .await
+        {
             tracing::warn!(
                 node_id = %req.node_id,
+                epoch = req.epoch,
                 error = %e,
                 "Failed to deregister node from cluster"
             );
@@ -248,6 +263,7 @@ impl ClusterService for ClusterServer {
 
         tracing::info!(
             node_id = %req.node_id,
+            epoch = req.epoch,
             reason = %req.reason,
             "Node deregistered from cluster"
         );

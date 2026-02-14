@@ -68,6 +68,8 @@ pub struct OAuth2Service {
     local_states: Arc<RwLock<HashMap<String, OAuth2State>>>,
     /// Optional Redis client for distributed state storage
     redis: Option<Arc<redis::Client>>,
+    /// Allowlist of permitted redirect domains (empty = relative paths only)
+    allowed_redirect_domains: Arc<Vec<String>>,
 }
 
 impl std::fmt::Debug for OAuth2Service {
@@ -88,6 +90,7 @@ impl OAuth2Service {
             provider_types: Arc::new(RwLock::new(HashMap::new())),
             local_states: Arc::new(RwLock::new(HashMap::new())),
             redis: None,
+            allowed_redirect_domains: Arc::new(Vec::new()),
         }
     }
 
@@ -100,7 +103,16 @@ impl OAuth2Service {
             provider_types: Arc::new(RwLock::new(HashMap::new())),
             local_states: Arc::new(RwLock::new(HashMap::new())),
             redis: Some(redis),
+            allowed_redirect_domains: Arc::new(Vec::new()),
         }
+    }
+
+    /// Set allowlist of permitted redirect domains
+    ///
+    /// When set, absolute redirect URLs are only accepted if their host matches
+    /// one of the allowed domains. When empty, only relative paths are allowed.
+    pub fn set_allowed_redirect_domains(&mut self, domains: Vec<String>) {
+        self.allowed_redirect_domains = Arc::new(domains);
     }
 
     /// Store `OAuth2` state (Redis if available, otherwise local memory)
@@ -197,7 +209,7 @@ impl OAuth2Service {
     ) -> Result<(String, String)> {
         // Validate redirect URL if provided
         if let Some(ref url) = redirect_url {
-            Self::validate_redirect_url(url)?;
+            Self::validate_redirect_url_with_allowlist(url, &self.allowed_redirect_domains)?;
         }
 
         let providers = self.providers.read().await;
@@ -238,7 +250,7 @@ impl OAuth2Service {
     ) -> Result<(String, String)> {
         // Validate redirect URL if provided
         if let Some(ref url) = redirect_url {
-            Self::validate_redirect_url(url)?;
+            Self::validate_redirect_url_with_allowlist(url, &self.allowed_redirect_domains)?;
         }
 
         let providers = self.providers.read().await;
@@ -267,9 +279,8 @@ impl OAuth2Service {
 
     /// Validate redirect URL to prevent open redirect vulnerabilities (CWE-601)
     ///
-    /// This function ensures that redirect URLs are safe and cannot be used for phishing attacks.
-    /// Only relative paths and same-origin URLs are allowed by default.
-    fn validate_redirect_url(url: &str) -> Result<()> {
+    /// Only relative paths and URLs matching the configured allowed domains are accepted.
+    fn validate_redirect_url_with_allowlist(url: &str, allowed_domains: &[String]) -> Result<()> {
         // Empty or whitespace-only URLs are rejected
         if url.trim().is_empty() {
             return Err(Error::InvalidInput("Redirect URL cannot be empty".to_string()));
@@ -305,12 +316,18 @@ impl OAuth2Service {
                     ));
                 }
 
-                // In production, you should validate against a whitelist of allowed domains
-                // For now, we log a warning for absolute URLs
-                tracing::warn!(
-                    "OAuth2 redirect to external URL: {}. Consider configuring an allowed domains whitelist for enhanced security.",
-                    url
-                );
+                // Check against allowed domains allowlist
+                let host = parsed_url.host_str().unwrap_or("");
+                if allowed_domains.is_empty() {
+                    return Err(Error::InvalidInput(
+                        "Absolute redirect URLs are not allowed. Use a relative path instead.".to_string()
+                    ));
+                }
+                if !allowed_domains.iter().any(|d| host == d || host.ends_with(&format!(".{d}"))) {
+                    return Err(Error::InvalidInput(format!(
+                        "Redirect URL domain '{host}' is not in the allowed domains list"
+                    )));
+                }
 
                 Ok(())
             }

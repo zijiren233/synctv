@@ -5,6 +5,7 @@ use tonic::{Request, Response, Status};
 
 use crate::http::AppState;
 use crate::impls::BilibiliApiImpl;
+use crate::impls::providers::extract_instance_name;
 
 // Import generated proto types from synctv_proto
 use crate::proto::providers::bilibili::bilibili_provider_service_server::BilibiliProviderService;
@@ -15,13 +16,16 @@ use crate::proto::providers::bilibili::{ParseRequest, ParseResponse, LoginQrRequ
 /// Thin wrapper that delegates to `BilibiliApiImpl`.
 #[derive(Clone)]
 pub struct BilibiliProviderGrpcService {
+    #[allow(dead_code)]
     app_state: Arc<AppState>,
+    api: BilibiliApiImpl,
 }
 
 impl BilibiliProviderGrpcService {
-    #[must_use] 
-    pub const fn new(app_state: Arc<AppState>) -> Self {
-        Self { app_state }
+    #[must_use]
+    pub fn new(app_state: Arc<AppState>) -> Self {
+        let api = BilibiliApiImpl::new(app_state.bilibili_provider.clone());
+        Self { app_state, api }
     }
 }
 
@@ -30,16 +34,9 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
     async fn parse(&self, request: Request<ParseRequest>) -> Result<Response<ParseResponse>, Status> {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili parse request: url={}", req.url);
+        let instance_name = extract_instance_name(&req.instance_name);
 
-        let instance_name = if req.instance_name.is_empty() {
-            None
-        } else {
-            Some(req.instance_name.clone())
-        };
-
-        let api = BilibiliApiImpl::new(self.app_state.bilibili_provider.clone());
-
-        api.parse(req, instance_name.as_deref())
+        self.api.parse(req, instance_name.as_deref())
             .await
             .map(Response::new)
             .map_err(Status::internal)
@@ -48,16 +45,9 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
     async fn login_qr(&self, request: Request<LoginQrRequest>) -> Result<Response<QrCodeResponse>, Status> {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili login QR request");
+        let instance_name = extract_instance_name(&req.instance_name);
 
-        let instance_name = if req.instance_name.is_empty() {
-            None
-        } else {
-            Some(req.instance_name.clone())
-        };
-
-        let api = BilibiliApiImpl::new(self.app_state.bilibili_provider.clone());
-
-        api.login_qr(req, instance_name.as_deref())
+        self.api.login_qr(req, instance_name.as_deref())
             .await
             .map(Response::new)
             .map_err(Status::internal)
@@ -66,16 +56,9 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
     async fn check_qr(&self, request: Request<CheckQrRequest>) -> Result<Response<QrStatusResponse>, Status> {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili check QR: {}", req.key);
+        let instance_name = extract_instance_name(&req.instance_name);
 
-        let instance_name = if req.instance_name.is_empty() {
-            None
-        } else {
-            Some(req.instance_name.clone())
-        };
-
-        let api = BilibiliApiImpl::new(self.app_state.bilibili_provider.clone());
-
-        api.check_qr(req, instance_name.as_deref())
+        self.api.check_qr(req, instance_name.as_deref())
             .await
             .map(Response::new)
             .map_err(Status::internal)
@@ -84,16 +67,9 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
     async fn get_captcha(&self, request: Request<GetCaptchaRequest>) -> Result<Response<CaptchaResponse>, Status> {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili get captcha request");
+        let instance_name = extract_instance_name(&req.instance_name);
 
-        let instance_name = if req.instance_name.is_empty() {
-            None
-        } else {
-            Some(req.instance_name.clone())
-        };
-
-        let api = BilibiliApiImpl::new(self.app_state.bilibili_provider.clone());
-
-        api.get_captcha(req, instance_name.as_deref())
+        self.api.get_captcha(req, instance_name.as_deref())
             .await
             .map(Response::new)
             .map_err(Status::internal)
@@ -102,16 +78,9 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
     async fn send_sms(&self, request: Request<SendSmsRequest>) -> Result<Response<SendSmsResponse>, Status> {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili send SMS: phone={}", req.phone);
+        let instance_name = extract_instance_name(&req.instance_name);
 
-        let instance_name = if req.instance_name.is_empty() {
-            None
-        } else {
-            Some(req.instance_name.clone())
-        };
-
-        let api = BilibiliApiImpl::new(self.app_state.bilibili_provider.clone());
-
-        api.send_sms(req, instance_name.as_deref())
+        self.api.send_sms(req, instance_name.as_deref())
             .await
             .map(Response::new)
             .map_err(Status::internal)
@@ -120,16 +89,9 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
     async fn login_sms(&self, request: Request<LoginSmsRequest>) -> Result<Response<LoginSmsResponse>, Status> {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili login SMS: phone={}", req.phone);
+        let instance_name = extract_instance_name(&req.instance_name);
 
-        let instance_name = if req.instance_name.is_empty() {
-            None
-        } else {
-            Some(req.instance_name.clone())
-        };
-
-        let api = BilibiliApiImpl::new(self.app_state.bilibili_provider.clone());
-
-        api.login_sms(req, instance_name.as_deref())
+        self.api.login_sms(req, instance_name.as_deref())
             .await
             .map(Response::new)
             .map_err(Status::internal)
@@ -138,16 +100,9 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
     async fn get_user_info(&self, request: Request<UserInfoRequest>) -> Result<Response<UserInfoResponse>, Status> {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili user info request");
+        let instance_name = extract_instance_name(&req.instance_name);
 
-        let instance_name = if req.instance_name.is_empty() {
-            None
-        } else {
-            Some(req.instance_name.clone())
-        };
-
-        let api = BilibiliApiImpl::new(self.app_state.bilibili_provider.clone());
-
-        api.get_user_info(req, instance_name.as_deref())
+        self.api.get_user_info(req, instance_name.as_deref())
             .await
             .map(Response::new)
             .map_err(Status::internal)
@@ -157,9 +112,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         let req = request.into_inner();
         tracing::info!("gRPC Bilibili logout request");
 
-        let api = BilibiliApiImpl::new(self.app_state.bilibili_provider.clone());
-
-        api.logout(req)
+        self.api.logout(req)
             .await
             .map(Response::new)
             .map_err(Status::internal)

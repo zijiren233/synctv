@@ -11,14 +11,14 @@ use tracing::info;
 /// Configuration loader
 ///
 /// Implements the Go `LoadModuleConfig` pattern:
-/// 1. Parse full YAML
+/// 1. Parse full JSON config
 /// 2. Navigate to section (e.g., "oauth2.github")
 /// 3. Decode section directly into provider's config struct
 ///
 /// Similar to `ModuleConfigLoader.LoadModuleConfig()` in sealos-state-metric
 pub struct ConfigLoader {
     /// Full parsed YAML config
-    raw_config: HashMap<String, serde_yaml::Value>,
+    raw_config: HashMap<String, serde_json::Value>,
 }
 
 impl ConfigLoader {
@@ -30,13 +30,13 @@ impl ConfigLoader {
         }
     }
 
-    /// Load configuration from YAML file
+    /// Load configuration from JSON file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .context("Failed to read config file")?;
 
-        let raw_config: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(&content)
-            .context("Failed to parse YAML")?;
+        let raw_config: HashMap<String, serde_json::Value> = serde_json::from_str(&content)
+            .context("Failed to parse JSON config")?;
 
         info!("Loaded OAuth2 configuration from file");
 
@@ -61,25 +61,22 @@ impl ConfigLoader {
     /// ```
     pub fn load_section<T: DeserializeOwned>(&self, section_key: &str) -> Result<T> {
         let value = self.navigate_to_section(section_key)?;
-        serde_yaml::from_value(value.clone())
+        serde_json::from_value(value.clone())
             .context(format!("Failed to decode section '{section_key}' into target type"))
     }
 
     /// Navigate to a section key (e.g., "oauth2.github")
     ///
     /// Similar to Go's `navigateToKey()` function in `module_loader.go`
-    fn navigate_to_section(&self, key: &str) -> Result<&serde_yaml::Value> {
+    fn navigate_to_section(&self, key: &str) -> Result<&serde_json::Value> {
         let parts: Vec<&str> = key.split('.').collect();
-        let mut current: Option<&serde_yaml::Value> = None;
+        let mut current: Option<&serde_json::Value> = None;
 
         for part in parts {
             if current.is_none() {
                 current = self.raw_config.get(part);
             } else {
-                current = current.and_then(|v| {
-                    v.as_mapping()
-                        .and_then(|m| m.get(serde_yaml::Value::String(part.to_string())))
-                });
+                current = current.and_then(|v| v.get(part));
             }
         }
 
@@ -87,16 +84,14 @@ impl ConfigLoader {
     }
 
     /// Get all provider instance names from oauth2 section
-    #[must_use] 
+    #[must_use]
     pub fn provider_instances(&self) -> Vec<String> {
         let mut instances = Vec::new();
 
         if let Some(oauth2_section) = self.raw_config.get("oauth2") {
-            if let Some(map) = oauth2_section.as_mapping() {
-                for (key, _value) in map {
-                    if let Some(name) = key.as_str() {
-                        instances.push(name.to_string());
-                    }
+            if let Some(map) = oauth2_section.as_object() {
+                for key in map.keys() {
+                    instances.push(key.clone());
                 }
             }
         }
@@ -114,12 +109,8 @@ impl ConfigLoader {
         let value = self.navigate_to_section(&section_key)?;
 
         // Check for explicit `type` field
-        if let Some(map) = value.as_mapping() {
-            if let Some(type_value) = map.get(serde_yaml::Value::String("type".to_string())) {
-                if let Some(type_str) = type_value.as_str() {
-                    return Ok(type_str.to_string());
-                }
-            }
+        if let Some(type_str) = value.get("type").and_then(|v| v.as_str()) {
+            return Ok(type_str.to_string());
         }
 
         // Default to instance name

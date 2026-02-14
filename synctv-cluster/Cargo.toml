@@ -40,8 +40,14 @@ parking_lot.workspace = true
 rand.workspace = true
 nanoid.workspace = true
 
+# Security
+subtle.workspace = true
+
 # Logging
 tracing.workspace = true
+
+[lints]
+workspace = true
 
 [build-dependencies]
 tonic-build.workspace = true

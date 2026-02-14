@@ -36,6 +36,7 @@ fn map_bilibili_error(context: &str, e: ProviderClientError) -> Status {
         ProviderClientError::InvalidConfig(_) => Status::invalid_argument(format!("{context}: invalid configuration")),
         ProviderClientError::InvalidHeader(_) => Status::internal(format!("{context}: invalid header")),
         ProviderClientError::NotImplemented(_) => Status::unimplemented(format!("{context}: not implemented")),
+        ProviderClientError::ResponseTooLarge { size } => Status::resource_exhausted(format!("{context}: response too large ({size} bytes)")),
     }
 }
 

@@ -9,6 +9,9 @@ license.workspace = true
 name = "synctv"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 # Internal workspace libraries
 synctv-core.workspace = true

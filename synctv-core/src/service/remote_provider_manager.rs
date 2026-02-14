@@ -174,8 +174,10 @@ impl RemoteProviderManager {
     /// 2. Saves to database
     /// 3. Adds to in-memory registry
     pub async fn add(&self, config: ProviderInstance) -> anyhow::Result<()> {
-        // Check if instance already exists
-        if self.instances.read().await.contains_key(&config.name) {
+        // Hold write lock for the entire operation to prevent TOCTOU race
+        let mut instances = self.instances.write().await;
+
+        if instances.contains_key(&config.name) {
             anyhow::bail!("Instance '{}' already exists", config.name);
         }
 
@@ -185,11 +187,8 @@ impl RemoteProviderManager {
         // Save to database
         self.repository.create(&config).await?;
 
-        // Add to in-memory registry
-        self.instances
-            .write()
-            .await
-            .insert(config.name.clone(), channel);
+        // Add to in-memory registry (still holding write lock)
+        instances.insert(config.name.clone(), channel);
 
         tracing::info!("Added provider instance: {}", config.name);
         Ok(())

@@ -45,6 +45,7 @@ static PROXY_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .timeout(REQUEST_TIMEOUT)
         .redirect(ssrf_safe_redirect_policy())
         .pool_max_idle_per_host(20)
+        .pool_idle_timeout(Duration::from_secs(30))
         .build()
         .unwrap_or_else(|e| {
             // Log the error before panicking for better debugging
@@ -141,9 +142,19 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
     let mut builder = Response::builder().status(status);
 
     for (name, value) in &response_headers {
+        // Filter hop-by-hop headers per RFC 2616 Section 13.5.1
         if matches!(
             name.as_str(),
-            "connection" | "transfer-encoding" | "content-encoding" | "content-length"
+            "connection"
+                | "transfer-encoding"
+                | "content-encoding"
+                | "content-length"
+                | "keep-alive"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailer"
+                | "upgrade"
         ) {
             continue;
         }
@@ -154,15 +165,21 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
 
     builder = builder.header("Cache-Control", "no-cache");
     builder = builder.header("Pragma", "no-cache");
+    builder = builder.header("X-Content-Type-Options", "nosniff");
 
     // Stream the body with cumulative size enforcement to prevent upstream servers
     // from sending unlimited data (e.g. with chunked transfer encoding or lying Content-Length).
+    // Returns `None` after the first size-exceeded error to terminate the stream immediately.
     use futures::StreamExt;
-    let body_stream = proxy_response.bytes_stream().scan(0usize, |total, chunk| {
+    let body_stream = proxy_response.bytes_stream().scan((0usize, false), |(total, exceeded), chunk| {
+        if *exceeded {
+            return futures::future::ready(None);
+        }
         match chunk {
             Ok(ref data) => {
                 *total += data.len();
                 if *total > MAX_PROXY_BODY_SIZE {
+                    *exceeded = true;
                     futures::future::ready(Some(Err(std::io::Error::other(
                         format!(
                             "Response body exceeded size limit ({} bytes, max {MAX_PROXY_BODY_SIZE})",
@@ -433,64 +450,10 @@ fn validate_proxy_url_static(raw: &str) -> Result<(), anyhow::Error> {
 
 /// Check if an IP address is in a private/reserved range.
 ///
-/// Includes protection against IPv4-mapped IPv6 addresses (e.g., `::ffff:127.0.0.1`)
-/// which can bypass naive IPv4-only checks.
-const fn is_private_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_private_ipv4(v4),
-        IpAddr::V6(v6) => {
-            v6.is_loopback()           // ::1
-            || v6.is_unspecified()     // ::
-            || v6.is_multicast()       // ff00::/8
-            // fe80::/10 (link-local)
-            || (v6.segments()[0] & 0xffc0) == 0xfe80
-            // fc00::/7 (unique local)
-            || (v6.segments()[0] & 0xfe00) == 0xfc00
-            // IPv4-mapped IPv6 (::ffff:x.x.x.x) — check the embedded IPv4 address
-            || is_ipv4_mapped_private(&v6)
-            // IPv4-compatible IPv6 (deprecated but still handled: ::x.x.x.x)
-            || is_ipv4_compatible_private(&v6)
-        }
-    }
-}
-
-const fn is_private_ipv4(v4: std::net::Ipv4Addr) -> bool {
-    v4.is_loopback()           // 127.0.0.0/8
-    || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-    || v4.is_link_local()      // 169.254.0.0/16
-    || v4.is_unspecified()     // 0.0.0.0
-    || v4.is_multicast()       // 224.0.0.0/4
-    || v4.is_broadcast()       // 255.255.255.255
-    || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64  // 100.64.0.0/10 (CGNAT)
-}
-
-/// Check if an IPv6 address is an IPv4-mapped address (`::ffff:x.x.x.x`) with a private IPv4.
-const fn is_ipv4_mapped_private(v6: &std::net::Ipv6Addr) -> bool {
-    let segs = v6.segments();
-    // ::ffff:x.x.x.x has segments [0,0,0,0,0,0xffff, hi, lo]
-    if segs[0] == 0 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0
-        && segs[4] == 0 && segs[5] == 0xffff
-    {
-        let octets = v6.octets();
-        let v4 = std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
-        return is_private_ipv4(v4);
-    }
-    false
-}
-
-/// Check if an IPv6 address is an IPv4-compatible address (`::x.x.x.x`) with a private IPv4.
-const fn is_ipv4_compatible_private(v6: &std::net::Ipv6Addr) -> bool {
-    let segs = v6.segments();
-    // ::x.x.x.x has segments [0,0,0,0,0,0, hi, lo]
-    if segs[0] == 0 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0
-        && segs[4] == 0 && segs[5] == 0
-    {
-        let octets = v6.octets();
-        // Skip ::0 and ::1 (already handled by is_unspecified/is_loopback)
-        if (octets[12] | octets[13] | octets[14]) != 0 || octets[15] > 1 {
-            let v4 = std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
-            return is_private_ipv4(v4);
-        }
-    }
-    false
+/// Delegates to `synctv_core::validation::is_private_ip` which is the
+/// authoritative SSRF IP validator covering IPv4 private, loopback,
+/// link-local, CGNAT, multicast, broadcast, IPv4-mapped IPv6, and
+/// IPv6 unique-local addresses.
+fn is_private_ip(ip: IpAddr) -> bool {
+    synctv_core::validation::is_private_ip(&ip)
 }

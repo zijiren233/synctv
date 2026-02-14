@@ -47,6 +47,7 @@ hex.workspace = true
 # Concurrency
 dashmap.workspace = true
 parking_lot.workspace = true
+lru.workspace = true
 
 # IDs
 nanoid.workspace = true

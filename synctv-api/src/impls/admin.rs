@@ -4,7 +4,6 @@
 //! Used by both HTTP and gRPC handlers.
 
 use std::sync::Arc;
-use std::str::FromStr;
 use synctv_core::models::{UserId, RoomId, MediaId, UserRole, UserStatus};
 use synctv_core::service::{RoomService, UserService, SettingsService, EmailService, RemoteProviderManager, SettingsRegistry};
 use synctv_cluster::sync::{ConnectionManager, ClusterEvent, PublishRequest};
@@ -189,8 +188,10 @@ impl AdminApiImpl {
 
         let proto_members: Vec<_> = members.iter().map(admin_room_member_to_proto).collect();
 
+        let total = proto_members.len() as i32;
         Ok(crate::proto::admin::GetRoomMembersResponse {
             members: proto_members,
+            total,
         })
     }
 
@@ -242,8 +243,8 @@ impl AdminApiImpl {
         let user = self.user_service.get_user(&uid).await
             .map_err(|e| e.to_string())?;
 
-        // Parse role from string
-        let new_role = synctv_core::models::UserRole::from_str(&req.role)?;
+        // Parse role from proto enum
+        let new_role = crate::impls::client::proto_role_to_user_role(req.role)?;
 
         // Only root can promote to root
         if new_role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
@@ -406,7 +407,7 @@ impl AdminApiImpl {
             comment: if req.comment.is_empty() { None } else { Some(req.comment) },
             jwt_secret,
             custom_ca,
-            timeout: req.timeout,
+            timeout: seconds_to_timeout_string(if req.timeout_seconds > 0 { req.timeout_seconds } else { 10 }),
             tls: req.tls,
             insecure_tls: req.insecure_tls,
             providers: req.providers,
@@ -436,33 +437,30 @@ impl AdminApiImpl {
             .find(|i| i.name == req.name)
             .ok_or_else(|| format!("Provider instance '{}' not found", req.name))?;
 
-        // Update fields if provided
-        if !req.endpoint.is_empty() {
-            instance.endpoint = req.endpoint;
+        // Update fields if explicitly provided (optional fields)
+        if let Some(endpoint) = req.endpoint {
+            instance.endpoint = endpoint;
         }
-        if !req.comment.is_empty() {
-            instance.comment = Some(req.comment);
+        if let Some(comment) = req.comment {
+            instance.comment = Some(comment);
         }
-        if !req.timeout.is_empty() {
-            instance.timeout = req.timeout;
+        if let Some(timeout_seconds) = req.timeout_seconds {
+            instance.timeout = seconds_to_timeout_string(timeout_seconds);
         }
         if !req.providers.is_empty() {
             instance.providers = req.providers;
         }
 
-        // Parse config if provided (tls/insecure_tls are also updated via config
-        // to avoid proto3 default-false semantics silently resetting them)
-        if req.config.is_empty() {
-            // When config is not provided, still allow explicit tls/insecure_tls proto fields
-            // but only if they differ from current values (proto3 defaults to false)
-            // This preserves existing values when fields are not explicitly set
-            if req.tls != instance.tls {
-                instance.tls = req.tls;
-            }
-            if req.insecure_tls != instance.insecure_tls {
-                instance.insecure_tls = req.insecure_tls;
-            }
-        } else {
+        // Update boolean fields (optional means explicit intent)
+        if let Some(tls) = req.tls {
+            instance.tls = tls;
+        }
+        if let Some(insecure_tls) = req.insecure_tls {
+            instance.insecure_tls = insecure_tls;
+        }
+
+        // Parse config if provided for additional settings
+        if !req.config.is_empty() {
             let config: serde_json::Value = serde_json::from_slice(&req.config)
                 .map_err(|e| format!("Invalid config JSON: {e}"))?;
             if let Some(jwt_secret) = config.get("jwt_secret").and_then(|v| v.as_str()) {
@@ -586,8 +584,10 @@ impl AdminApiImpl {
         }
 
         // Validate role BEFORE registration to fail fast
-        let target_role = if !req.role.is_empty() && req.role != "user" {
-            let new_role = UserRole::from_str(&req.role)?;
+        let target_role = if req.role != synctv_proto::common::UserRole::Unspecified as i32
+            && req.role != synctv_proto::common::UserRole::User as i32
+        {
+            let new_role = crate::impls::client::proto_role_to_user_role(req.role)?;
             // Only root can create root users
             if new_role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
                 return Err("Only root users can create root users".to_string());
@@ -1082,9 +1082,9 @@ impl AdminApiImpl {
                 Ok(Some(info)) => (
                     info.user_id,
                     info.node_id,
-                    info.started_at.to_rfc3339(),
+                    info.started_at.timestamp(),
                 ),
-                _ => (String::new(), String::new(), String::new()),
+                _ => (String::new(), String::new(), 0i64),
             };
 
             streams.push(crate::proto::admin::ActiveStreamInfo {
@@ -1139,19 +1139,12 @@ fn admin_room_to_proto(
     }
 }
 
-fn admin_room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) -> crate::proto::admin::RoomMember {
-    let role_str = match member.role {
-        synctv_core::models::RoomRole::Creator => "creator",
-        synctv_core::models::RoomRole::Admin => "admin",
-        synctv_core::models::RoomRole::Member => "member",
-        synctv_core::models::RoomRole::Guest => "guest",
-    };
-
-    crate::proto::admin::RoomMember {
+fn admin_room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) -> synctv_proto::common::RoomMember {
+    synctv_proto::common::RoomMember {
         room_id: member.room_id.to_string(),
         user_id: member.user_id.to_string(),
         username: member.username.clone(),
-        role: role_str.to_string(),
+        role: crate::impls::client::room_role_to_proto(member.role),
         permissions: member.effective_permissions(member.role.permissions()).0,
         added_permissions: member.added_permissions,
         removed_permissions: member.removed_permissions,
@@ -1163,24 +1156,24 @@ fn admin_room_member_to_proto(member: &synctv_core::models::RoomMemberWithUser) 
 }
 
 fn admin_user_to_proto(user: &synctv_core::models::User) -> crate::proto::admin::AdminUser {
-    let role_str = match user.role {
-        synctv_core::models::UserRole::Root => "root",
-        synctv_core::models::UserRole::Admin => "admin",
-        synctv_core::models::UserRole::User => "user",
+    let role = match user.role {
+        synctv_core::models::UserRole::Root => synctv_proto::common::UserRole::Root as i32,
+        synctv_core::models::UserRole::Admin => synctv_proto::common::UserRole::Admin as i32,
+        synctv_core::models::UserRole::User => synctv_proto::common::UserRole::User as i32,
     };
 
-    let status_str = match user.status {
-        synctv_core::models::UserStatus::Active => "active",
-        synctv_core::models::UserStatus::Pending => "pending",
-        synctv_core::models::UserStatus::Banned => "banned",
+    let status = match user.status {
+        synctv_core::models::UserStatus::Active => synctv_proto::common::UserStatus::Active as i32,
+        synctv_core::models::UserStatus::Pending => synctv_proto::common::UserStatus::Pending as i32,
+        synctv_core::models::UserStatus::Banned => synctv_proto::common::UserStatus::Banned as i32,
     };
 
     crate::proto::admin::AdminUser {
         id: user.id.to_string(),
         username: user.username.clone(),
         email: user.email.clone().unwrap_or_default(),
-        role: role_str.to_string(),
-        status: status_str.to_string(),
+        role,
+        status,
         created_at: user.created_at.timestamp(),
         updated_at: user.updated_at.timestamp(),
     }
@@ -1194,11 +1187,14 @@ fn provider_instance_to_proto(instance: synctv_core::models::ProviderInstance) -
         "disabled".to_string()
     };
 
+    // Parse timeout string (e.g., "10s", "30s") to seconds
+    let timeout_seconds = parse_timeout_to_seconds(&instance.timeout);
+
     crate::proto::admin::ProviderInstance {
         name: instance.name,
         endpoint: instance.endpoint,
         comment: instance.comment.unwrap_or_default(),
-        timeout: instance.timeout,
+        timeout_seconds,
         tls: instance.tls,
         insecure_tls: instance.insecure_tls,
         providers: instance.providers,
@@ -1207,4 +1203,15 @@ fn provider_instance_to_proto(instance: synctv_core::models::ProviderInstance) -
         created_at: instance.created_at.timestamp(),
         updated_at: instance.updated_at.timestamp(),
     }
+}
+
+fn parse_timeout_to_seconds(timeout: &str) -> u32 {
+    timeout
+        .trim_end_matches('s')
+        .parse::<u32>()
+        .unwrap_or(10)
+}
+
+fn seconds_to_timeout_string(seconds: u32) -> String {
+    format!("{seconds}s")
 }

@@ -31,13 +31,13 @@ use {
 /// Tracks per-subscriber frame drop counts for diagnostics.
 struct SubscriberDropCounter {
     sender: FrameDataSender,
-    drop_count: AtomicU64,
+    drop_count: Arc<AtomicU64>,
 }
 
 /// Tracks per-subscriber packet drop counts for diagnostics.
 struct PacketSubscriberDropCounter {
     sender: PacketDataSender,
-    drop_count: AtomicU64,
+    drop_count: Arc<AtomicU64>,
 }
 
 use statistics::StatisticsStream;
@@ -88,25 +88,22 @@ impl StreamDataTransceiver {
 
     /// Snapshot the frame senders map and fan out to all subscribers without holding the lock.
     /// Collects closed/failed subscriber IDs and removes them in a separate lock acquisition.
+    /// Drop counters are snapshotted as Arc<AtomicU64> so no lock is needed during fan-out.
     fn fan_out_frame(
-        snapshot: &[(Uuid, FrameDataSender)],
-        drop_counters: &HashMap<Uuid, SubscriberDropCounter>,
+        snapshot: &[(Uuid, FrameDataSender, Arc<AtomicU64>)],
         data: FrameData,
     ) -> Vec<Uuid> {
         let mut closed_ids = Vec::new();
-        for (id, sender) in snapshot {
+        for (id, sender, drop_count) in snapshot {
             match sender.try_send(data.clone()) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    // Increment per-subscriber drop counter and periodically log
-                    if let Some(counter) = drop_counters.get(id) {
-                        let prev = counter.drop_count.fetch_add(1, Ordering::Relaxed);
-                        if (prev + 1) % DROP_LOG_INTERVAL == 0 {
-                            tracing::warn!(
-                                "Subscriber {} dropped {} frames due to backpressure",
-                                id, prev + 1
-                            );
-                        }
+                    let prev = drop_count.fetch_add(1, Ordering::Relaxed);
+                    if (prev + 1) % DROP_LOG_INTERVAL == 0 {
+                        tracing::warn!(
+                            "Subscriber {} dropped {} frames due to backpressure",
+                            id, prev + 1
+                        );
                     }
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
@@ -118,24 +115,22 @@ impl StreamDataTransceiver {
     }
 
     /// Snapshot the packet senders map and fan out to all subscribers without holding the lock.
+    /// Drop counters are snapshotted as Arc<AtomicU64> so no lock is needed during fan-out.
     fn fan_out_packet(
-        snapshot: &[(Uuid, PacketDataSender)],
-        drop_counters: &HashMap<Uuid, PacketSubscriberDropCounter>,
+        snapshot: &[(Uuid, PacketDataSender, Arc<AtomicU64>)],
         data: PacketData,
     ) -> Vec<Uuid> {
         let mut closed_ids = Vec::new();
-        for (id, sender) in snapshot {
+        for (id, sender, drop_count) in snapshot {
             match sender.try_send(data.clone()) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    if let Some(counter) = drop_counters.get(id) {
-                        let prev = counter.drop_count.fetch_add(1, Ordering::Relaxed);
-                        if (prev + 1) % DROP_LOG_INTERVAL == 0 {
-                            tracing::warn!(
-                                "Packet subscriber {} dropped {} packets due to backpressure",
-                                id, prev + 1
-                            );
-                        }
+                    let prev = drop_count.fetch_add(1, Ordering::Relaxed);
+                    if (prev + 1) % DROP_LOG_INTERVAL == 0 {
+                        tracing::warn!(
+                            "Packet subscriber {} dropped {} packets due to backpressure",
+                            id, prev + 1
+                        );
                     }
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
@@ -146,38 +141,33 @@ impl StreamDataTransceiver {
         closed_ids
     }
 
-    /// H-1 fix: Snapshot senders, fan out without holding the lock, then clean up.
-    /// H-2 fix: Per-subscriber drop counters with periodic logging.
+    /// Snapshot senders and drop counters (Arc<AtomicU64>) under lock, then fan out lock-free.
     async fn receive_frame_data(
         data: Option<FrameData>,
         frame_senders: &Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
     ) {
         if let Some(val) = data {
-            // Snapshot the senders under lock, then release immediately
-            let (snapshot, senders_ref): (Vec<_>, _) = {
+            // Snapshot senders AND drop counters under lock, then release immediately.
+            // Drop counters are Arc<AtomicU64>, so cloning the Arc is cheap and allows
+            // lock-free atomic increments during fan-out.
+            let snapshot: Vec<(Uuid, FrameDataSender, Arc<AtomicU64>)> = {
                 let guard = frame_senders.lock().await;
-                let snap: Vec<(Uuid, FrameDataSender)> = guard
+                guard
                     .iter()
-                    .map(|(id, sc)| (*id, sc.sender.clone()))
-                    .collect();
-                drop(guard);
-                (snap, frame_senders)
+                    .map(|(id, sc)| (*id, sc.sender.clone(), Arc::clone(&sc.drop_count)))
+                    .collect()
             };
 
             if snapshot.is_empty() {
                 return;
             }
 
-            // Fan out to all subscribers without holding the lock
-            // We need drop_counters for logging, so briefly re-lock for the reference
-            let closed_ids = {
-                let guard = senders_ref.lock().await;
-                Self::fan_out_frame(&snapshot, &guard, val)
-            };
+            // Fan out to all subscribers without holding any lock
+            let closed_ids = Self::fan_out_frame(&snapshot, val);
 
             // Remove closed subscribers
             if !closed_ids.is_empty() {
-                let mut guard = senders_ref.lock().await;
+                let mut guard = frame_senders.lock().await;
                 for id in closed_ids {
                     guard.remove(&id);
                     tracing::debug!("Removed closed frame subscriber: {}", id);
@@ -205,33 +195,28 @@ impl StreamDataTransceiver {
         });
     }
 
-    /// Snapshot-based packet fan-out (same pattern as frame fan-out).
+    /// Snapshot senders and drop counters (Arc<AtomicU64>) under lock, then fan out lock-free.
     async fn receive_packet_data(
         data: Option<PacketData>,
         packet_senders: &Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
     ) {
         if let Some(val) = data {
-            let (snapshot, senders_ref): (Vec<_>, _) = {
+            let snapshot: Vec<(Uuid, PacketDataSender, Arc<AtomicU64>)> = {
                 let guard = packet_senders.lock().await;
-                let snap: Vec<(Uuid, PacketDataSender)> = guard
+                guard
                     .iter()
-                    .map(|(id, sc)| (*id, sc.sender.clone()))
-                    .collect();
-                drop(guard);
-                (snap, packet_senders)
+                    .map(|(id, sc)| (*id, sc.sender.clone(), Arc::clone(&sc.drop_count)))
+                    .collect()
             };
 
             if snapshot.is_empty() {
                 return;
             }
 
-            let closed_ids = {
-                let guard = senders_ref.lock().await;
-                Self::fan_out_packet(&snapshot, &guard, val)
-            };
+            let closed_ids = Self::fan_out_packet(&snapshot, val);
 
             if !closed_ids.is_empty() {
-                let mut guard = senders_ref.lock().await;
+                let mut guard = packet_senders.lock().await;
                 for id in closed_ids {
                     guard.remove(&id);
                     tracing::debug!("Removed closed packet subscriber: {}", id);
@@ -433,7 +418,7 @@ impl StreamDataTransceiver {
                                 } => {
                                     frame_senders.lock().await.insert(info.id, SubscriberDropCounter {
                                         sender: frame_sender,
-                                        drop_count: AtomicU64::new(0),
+                                        drop_count: Arc::new(AtomicU64::new(0)),
                                     });
                                 }
                                 DataSender::Packet {
@@ -441,7 +426,7 @@ impl StreamDataTransceiver {
                                 } => {
                                     packet_senders.lock().await.insert(info.id, PacketSubscriberDropCounter {
                                         sender: packet_sender,
-                                        drop_count: AtomicU64::new(0),
+                                        drop_count: Arc::new(AtomicU64::new(0)),
                                     });
                                 }
                             }

@@ -1,5 +1,7 @@
 use anyhow::Result;
 use redis::AsyncCommands;
+use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -13,41 +15,114 @@ pub enum RateLimitError {
     RedisError(#[from] redis::RedisError),
 }
 
+/// In-memory sliding window rate limiter (per-instance fallback when Redis is unavailable)
+///
+/// Uses a `DashMap` of `VecDeque<u64>` (timestamps) per key.
+/// Each entry stores recent request timestamps; expired ones are pruned on access.
+#[derive(Clone)]
+struct InMemoryRateLimiter {
+    /// key -> timestamps (sorted, oldest first)
+    windows: Arc<dashmap::DashMap<String, VecDeque<u64>>>,
+}
+
+impl InMemoryRateLimiter {
+    fn new() -> Self {
+        Self {
+            windows: Arc::new(dashmap::DashMap::new()),
+        }
+    }
+
+    /// Check rate limit. Returns Ok(()) if allowed, or the retry_after seconds.
+    fn check(&self, key: &str, max_requests: u32, window_seconds: u64) -> std::result::Result<(), u64> {
+        let now_ms = Self::now_ms();
+        let window_start_ms = now_ms.saturating_sub(window_seconds * 1000);
+
+        let mut entry = self.windows.entry(key.to_string()).or_insert_with(VecDeque::new);
+        let timestamps = entry.value_mut();
+
+        // Remove expired timestamps from front
+        while timestamps.front().map_or(false, |&ts| ts < window_start_ms) {
+            timestamps.pop_front();
+        }
+
+        if timestamps.len() >= max_requests as usize {
+            // Rate limited - compute retry_after from the oldest entry
+            let oldest = timestamps.front().copied().unwrap_or(now_ms);
+            let time_since_oldest = now_ms.saturating_sub(oldest);
+            let remaining_ms = (window_seconds * 1000).saturating_sub(time_since_oldest);
+            return Err((remaining_ms / 1000).max(1));
+        }
+
+        timestamps.push_back(now_ms);
+        Ok(())
+    }
+
+    /// Get remaining quota
+    fn quota(&self, key: &str, max_requests: u32, window_seconds: u64) -> (u32, u64) {
+        let now_ms = Self::now_ms();
+        let window_start_ms = now_ms.saturating_sub(window_seconds * 1000);
+
+        let mut entry = self.windows.entry(key.to_string()).or_insert_with(VecDeque::new);
+        let timestamps = entry.value_mut();
+
+        while timestamps.front().map_or(false, |&ts| ts < window_start_ms) {
+            timestamps.pop_front();
+        }
+
+        let current = timestamps.len() as u32;
+        let remaining = max_requests.saturating_sub(current);
+        let reset = timestamps.front().map_or(0, |&oldest| {
+            let time_since = now_ms.saturating_sub(oldest);
+            (window_seconds * 1000).saturating_sub(time_since) / 1000
+        });
+        (remaining, reset)
+    }
+
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64)
+    }
+}
+
 /// Rate limiter using Redis sliding window algorithm
 ///
 /// Uses Redis sorted sets to implement accurate sliding window rate limiting
-/// that works across multiple replicas.
+/// that works across multiple replicas. Falls back to per-instance in-memory
+/// rate limiting when Redis is not configured.
 #[derive(Clone)]
 pub struct RateLimiter {
     redis_conn: Option<redis::aio::ConnectionManager>,
     key_prefix: String,
+    /// In-memory fallback (always present, used when redis_conn is None)
+    in_memory: InMemoryRateLimiter,
 }
 
 impl RateLimiter {
     /// Create a new `RateLimiter`
     ///
-    /// If `redis_conn` is None, rate limiting is disabled (allows all requests)
+    /// If `redis_conn` is None, falls back to per-instance in-memory rate limiting.
     pub fn new(redis_conn: Option<redis::aio::ConnectionManager>, key_prefix: String) -> Self {
         if redis_conn.is_none() {
             tracing::warn!(
-                "Rate limiting is disabled: Redis not configured. All requests will be allowed. This is NOT safe for production."
+                "Rate limiting using in-memory fallback: Redis not configured. \
+                 Limits are per-instance only (not shared across replicas)."
             );
         }
         Self {
             redis_conn,
             key_prefix,
+            in_memory: InMemoryRateLimiter::new(),
         }
     }
 
-    /// Create a disabled `RateLimiter` (no Redis, allows all requests)
-    ///
-    /// This is a convenience constructor that never fails, useful as a fallback
-    /// when `RateLimiter::new` cannot be used with `?`.
+    /// Create a `RateLimiter` with in-memory fallback only (no Redis)
     #[must_use]
-    pub const fn disabled(key_prefix: String) -> Self {
+    pub fn in_memory_only(key_prefix: String) -> Self {
         Self {
             redis_conn: None,
             key_prefix,
+            in_memory: InMemoryRateLimiter::new(),
         }
     }
 
@@ -80,9 +155,11 @@ impl RateLimiter {
         max_requests: u32,
         window_seconds: u64,
     ) -> Result<(), RateLimitError> {
-        // If Redis not configured, allow all requests
+        // If Redis not configured, use in-memory fallback
         let Some(ref conn) = self.redis_conn else {
-            return Ok(());
+            let mem_key = format!("{}{}", self.key_prefix, key);
+            return self.in_memory.check(&mem_key, max_requests, window_seconds)
+                .map_err(|retry_after_seconds| RateLimitError::RateLimitExceeded { retry_after_seconds });
         };
 
         let mut conn = conn.clone();
@@ -148,9 +225,10 @@ impl RateLimiter {
         max_requests: u32,
         window_seconds: u64,
     ) -> Result<(u32, u64)> {
-        // If Redis not configured, return unlimited
+        // If Redis not configured, use in-memory fallback
         let Some(ref conn) = self.redis_conn else {
-            return Ok((max_requests, 0));
+            let mem_key = format!("{}{}", self.key_prefix, key);
+            return Ok(self.in_memory.quota(&mem_key, max_requests, window_seconds));
         };
 
         let mut conn = conn.clone();
@@ -191,14 +269,15 @@ impl RateLimiter {
 
     /// Reset rate limit for a key (for testing or admin purposes)
     pub async fn reset(&self, key: &str) -> Result<()> {
+        let full_key = format!("{}{}", self.key_prefix, key);
         if let Some(ref conn) = self.redis_conn {
             let mut conn = conn.clone();
-            let redis_key = format!("{}{}", self.key_prefix, key);
             let _: () = redis::cmd("DEL")
-                .arg(&redis_key)
+                .arg(&full_key)
                 .query_async(&mut conn)
                 .await?;
         }
+        self.in_memory.windows.remove(&full_key);
         Ok(())
     }
 
@@ -331,18 +410,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_without_redis_allows_all() {
+    async fn test_without_redis_uses_in_memory_fallback() {
         let limiter = RateLimiter::new(None, "test:".to_string());
 
-        // Should allow unlimited requests
-        for _ in 0..1000 {
+        let key = "user:test_mem:chat";
+
+        // First 10 requests should succeed
+        for i in 0..10 {
             limiter
-                .check_rate_limit("user:test:chat", 10, 1)
+                .check_rate_limit(key, 10, 1)
                 .await
-                .unwrap();
+                .unwrap_or_else(|_| panic!("In-memory request {} should succeed", i));
         }
 
-        let (remaining, _) = limiter.get_quota("user:test:chat", 10, 1).await.unwrap();
-        assert_eq!(remaining, 10); // Returns max as remaining
+        // 11th request should be rate limited
+        let result = limiter.check_rate_limit(key, 10, 1).await;
+        assert!(
+            matches!(result, Err(RateLimitError::RateLimitExceeded { .. })),
+            "In-memory rate limiter should enforce limits"
+        );
+
+        // Check quota reflects usage
+        let (remaining, _) = limiter.get_quota(key, 10, 1).await.unwrap();
+        assert_eq!(remaining, 0);
     }
 }

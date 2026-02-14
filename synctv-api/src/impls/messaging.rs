@@ -275,7 +275,8 @@ impl StreamMessageHandler {
     /// Create initial user joined message
     fn create_user_joined_message(&self, room_id: &str) -> ServerMessage {
         use crate::proto::client::server_message::Message;
-        use crate::proto::client::{UserJoinedRoom, RoomMember};
+        use crate::proto::client::UserJoinedRoom;
+        use synctv_proto::common::RoomMember;
 
         ServerMessage {
             message: Some(Message::UserJoined(UserJoinedRoom {
@@ -284,7 +285,7 @@ impl StreamMessageHandler {
                     room_id: room_id.to_string(),
                     user_id: self.user_id.as_str().to_string(),
                     username: self.username.clone(),
-                    role: "member".to_string(),
+                    role: synctv_proto::common::RoomMemberRole::Member as i32,
                     permissions: 0,
                     added_permissions: 0,
                     removed_permissions: 0,
@@ -687,7 +688,8 @@ fn cluster_event_to_server_message(
     room_id: &str,
 ) -> Option<ServerMessage> {
     use crate::proto::client::server_message::Message;
-    use crate::proto::client::{ServerMessage, ChatMessageReceive, PlaybackStateChanged, PlaybackState, UserJoinedRoom, RoomMember, UserLeftRoom, RoomSettingsChanged, ErrorMessage};
+    use crate::proto::client::{ServerMessage, ChatMessageReceive, PlaybackStateChanged, PlaybackState, UserJoinedRoom, UserLeftRoom, RoomSettingsChanged, ErrorMessage};
+    use synctv_proto::common::RoomMember;
     use synctv_cluster::sync::ClusterEvent;
 
     match event {
@@ -739,7 +741,7 @@ fn cluster_event_to_server_message(
                         room_id: room_id.to_string(),
                         user_id: user_id.as_str().to_string(),
                         username: username.clone(),
-                        role: "member".to_string(),
+                        role: synctv_proto::common::RoomMemberRole::Member as i32,
                         permissions: permissions.0,
                         added_permissions: 0,
                         removed_permissions: 0,
@@ -785,7 +787,7 @@ fn cluster_event_to_server_message(
                 message: Some(Message::PermissionChanged(crate::proto::client::PermissionChanged {
                     room_id: room_id.to_string(),
                     user_id: target_user_id.as_str().to_string(),
-                    role: String::new(),
+                    role: synctv_proto::common::RoomMemberRole::Unspecified as i32,
                     effective_permissions: new_permissions.0,
                     added_permissions: 0,
                     removed_permissions: 0,

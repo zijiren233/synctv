@@ -18,7 +18,11 @@ use crate::config::LoggingConfig;
 /// - Rotation: Daily (at midnight local time)
 /// - Filename format: synctv-YYYY-MM-DD.log
 /// - No automatic file count limit (use external logrotate for cleanup)
-pub fn init_logging(config: &LoggingConfig) -> anyhow::Result<()> {
+///
+/// Returns an optional `WorkerGuard` when file logging is enabled.
+/// The caller **must** hold this guard alive (e.g. in `main()`) so that
+/// buffered log entries are flushed on shutdown.
+pub fn init_logging(config: &LoggingConfig) -> anyhow::Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
     let log_level = parse_log_level(&config.level)?;
 
     // Create env filter from config level
@@ -51,14 +55,12 @@ pub fn init_logging(config: &LoggingConfig) -> anyhow::Result<()> {
                 .filename_suffix("log")
                 .build(log_dir)?;
 
-            let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
             let file_layer = json_layer.with_writer(non_blocking);
 
             registry.with(file_layer).init();
 
-            // Store guard to prevent it from being dropped
-            // In production, this should be stored in application state
-            std::mem::forget(_guard);
+            return Ok(Some(guard));
         } else {
             registry.with(json_layer).init();
         }
@@ -83,20 +85,18 @@ pub fn init_logging(config: &LoggingConfig) -> anyhow::Result<()> {
                 .filename_suffix("log")
                 .build(log_dir)?;
 
-            let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
             let file_layer = pretty_layer.with_writer(non_blocking);
 
             registry.with(file_layer).init();
 
-            // Store guard to prevent it from being dropped
-            // In production, this should be stored in application state
-            std::mem::forget(_guard);
+            return Ok(Some(guard));
         } else {
             registry.with(pretty_layer).init();
         }
     }
 
-    Ok(())
+    Ok(None)
 }
 
 /// Parse log level string to tracing Level
