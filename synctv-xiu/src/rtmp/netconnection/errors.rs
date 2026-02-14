@@ -1,22 +1,21 @@
-#![allow(non_local_definitions)]
 use {
     crate::rtmp::chunk::errors::PackError,
-    failure::{Backtrace, Fail},
-    std::fmt,
     crate::flv::amf0::errors::{Amf0ReadError, Amf0WriteError},
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct NetConnectionError {
     pub value: NetConnectionErrorValue,
 }
-#[derive(Debug, Fail)]
+
+#[derive(Debug, thiserror::Error)]
 pub enum NetConnectionErrorValue {
-    #[fail(display = "amf0 write error: {}", _0)]
+    #[error("amf0 write error: {0}")]
     Amf0WriteError(Amf0WriteError),
-    #[fail(display = "amf0 read error: {}", _0)]
+    #[error("amf0 read error: {0}")]
     Amf0ReadError(Amf0ReadError),
-    #[fail(display = "pack error")]
+    #[error("pack error")]
     PackError(PackError),
 }
 
@@ -41,21 +40,5 @@ impl From<PackError> for NetConnectionError {
         Self {
             value: NetConnectionErrorValue::PackError(error),
         }
-    }
-}
-
-impl fmt::Display for NetConnectionError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for NetConnectionError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

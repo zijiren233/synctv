@@ -1,5 +1,6 @@
 //! Emby/Jellyfin HTTP Client
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use reqwest::{Client, header::{HeaderMap, HeaderValue, CONTENT_TYPE}};
@@ -7,6 +8,21 @@ use serde_json::{json, Value};
 
 use super::error::EmbyError;
 use super::types::{AuthResponse, Item, UserInfo, ItemsResponse, SystemInfo, FsListResponse, PathInfo, PlaybackInfoResponse, default_device_profile};
+
+/// URL-encode a string for safe use in query parameters
+fn url_encode(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
+/// Shared HTTP client for all Emby requests (connection pooling)
+static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(10)
+        .build()
+        .expect("Failed to build Emby shared HTTP client")
+});
 
 const X_EMBY_TOKEN: &str = "X-Emby-Token";
 
@@ -19,20 +35,17 @@ pub struct EmbyClient {
 }
 
 impl EmbyClient {
-    /// Create a new Emby client
+    /// Create a new Emby client (reuses shared connection pool)
     pub fn new(host: impl Into<String>) -> Result<Self, EmbyError> {
         Ok(Self {
             host: host.into(),
             token: None,
             user_id: None,
-            client: Client::builder()
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(30))
-                .build()?,
+            client: SHARED_CLIENT.clone(),
         })
     }
 
-    /// Create a new Emby client with credentials
+    /// Create a new Emby client with credentials (reuses shared connection pool)
     pub fn with_credentials(
         host: impl Into<String>,
         token: impl Into<String>,
@@ -42,10 +55,7 @@ impl EmbyClient {
             host: host.into(),
             token: Some(token.into()),
             user_id: Some(user_id.into()),
-            client: Client::builder()
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(30))
-                .build()?,
+            client: SHARED_CLIENT.clone(),
         })
     }
 
@@ -112,8 +122,8 @@ impl EmbyClient {
         let url = format!("{}{}/Users/{}/Items?Ids={}",
             self.host,
             prefix,
-            self.user_id.as_ref().ok_or_else(|| EmbyError::InvalidConfig("Missing user_id".to_string()))?,
-            item_id
+            url_encode(self.user_id.as_ref().ok_or_else(|| EmbyError::InvalidConfig("Missing user_id".to_string()))?),
+            url_encode(item_id)
         );
 
         let response = self
@@ -172,11 +182,11 @@ impl EmbyClient {
             self.host, prefix, user_id);
 
         if let Some(pid) = parent_id {
-            url.push_str(&format!("&ParentId={pid}"));
+            url.push_str(&format!("&ParentId={}", url_encode(pid)));
         }
 
         if let Some(term) = search_term {
-            url.push_str(&format!("&SearchTerm={term}&Recursive=true"));
+            url.push_str(&format!("&SearchTerm={}&Recursive=true", url_encode(term)));
         } else {
             url.push_str("&Filters=IsNotFolder");
         }
@@ -251,11 +261,11 @@ impl EmbyClient {
         );
 
         if let Some(p) = path {
-            url.push_str(&format!("&ParentId={p}"));
+            url.push_str(&format!("&ParentId={}", url_encode(p)));
         }
 
         if let Some(term) = search_term {
-            url.push_str(&format!("&SearchTerm={term}&Recursive=true"));
+            url.push_str(&format!("&SearchTerm={}&Recursive=true", url_encode(term)));
         }
 
         let response = self

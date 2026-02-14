@@ -1,26 +1,22 @@
-#![allow(non_local_definitions)]
-use {
-    failure::{Backtrace, Fail},
-    crate::bytesio::bytes_errors::{BytesReadError, BytesWriteError},
-    std::fmt,
-};
+use crate::bytesio::bytes_errors::{BytesReadError, BytesWriteError};
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum UnpackErrorValue {
-    #[fail(display = "bytes read error: {}", _0)]
+    #[error("bytes read error: {0}")]
     BytesReadError(BytesReadError),
-    #[fail(display = "unknow read state")]
+    #[error("unknow read state")]
     UnknowReadState,
-    #[fail(display = "empty chunks")]
+    #[error("empty chunks")]
     EmptyChunks,
     //IO(io::Error),
-    #[fail(display = "cannot parse")]
+    #[error("cannot parse")]
     CannotParse,
-    #[fail(display = "message size {} exceeds maximum {}", _0, _1)]
+    #[error("message size {0} exceeds maximum {1}")]
     MessageTooLarge(usize, usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct UnpackError {
     pub value: UnpackErrorValue,
 }
@@ -39,17 +35,18 @@ impl From<BytesReadError> for UnpackError {
     }
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum PackErrorValue {
-    #[fail(display = "not exist header")]
+    #[error("not exist header")]
     NotExistHeader,
-    #[fail(display = "unknow read state")]
+    #[error("unknow read state")]
     UnknowReadState,
-    #[fail(display = "bytes writer error: {}", _0)]
+    #[error("bytes writer error: {0}")]
     BytesWriteError(BytesWriteError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct PackError {
     pub value: PackErrorValue,
 }
@@ -65,37 +62,5 @@ impl From<BytesWriteError> for PackError {
         Self {
             value: PackErrorValue::BytesWriteError(error),
         }
-    }
-}
-
-impl fmt::Display for PackError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for PackError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-impl fmt::Display for UnpackError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for UnpackError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

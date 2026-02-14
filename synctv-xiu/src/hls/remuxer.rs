@@ -454,7 +454,7 @@ impl StreamProcessor {
                 if video_data.frame_type == frame_type::KEY_FRAME {
                     flags = MPEG_FLAG_IDR_FRAME;
 
-                    if video_data.dts - self.last_segment_dts >= self.segment_duration_ms * 1000 {
+                    if video_data.dts - self.last_segment_dts >= self.segment_duration_ms {
                         self.finalize_segment(video_data.dts, false).await?;
                     }
                 }

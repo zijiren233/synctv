@@ -163,7 +163,7 @@ mod tests {
             credential: None,
         };
 
-        let json = serde_json::to_string(&server).unwrap();
+        let json = serde_json::to_string(&server).expect("IceServerConfig should serialize");
         assert!(json.contains("stun:stun.example.com:3478"));
         assert!(!json.contains("username"));
     }
@@ -176,7 +176,7 @@ mod tests {
             credential: Some("secret123".to_string()),
         };
 
-        let json = serde_json::to_string(&server).unwrap();
+        let json = serde_json::to_string(&server).expect("IceServerConfig should serialize");
         assert!(json.contains("turn:turn.example.com:3478"));
         assert!(json.contains("username"));
         assert!(json.contains("credential"));

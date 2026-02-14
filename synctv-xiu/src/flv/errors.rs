@@ -1,22 +1,20 @@
-#![allow(non_local_definitions)]
 use {
     crate::bytesio::bits_errors::BitError,
     crate::bytesio::bytes_errors::{BytesReadError, BytesWriteError},
-    failure::{Backtrace, Fail},
     crate::h264::errors::H264Error,
-    std::fmt,
 };
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum TagParseErrorValue {
-    #[fail(display = "bytes read error")]
+    #[error("bytes read error")]
     BytesReadError(BytesReadError),
-    #[fail(display = "tag data length error")]
+    #[error("tag data length error")]
     TagDataLength,
-    #[fail(display = "unknow tag type error")]
+    #[error("unknow tag type error")]
     UnknownTagType,
 }
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct TagParseError {
     pub value: TagParseErrorValue,
 }
@@ -29,31 +27,17 @@ impl From<BytesReadError> for TagParseError {
     }
 }
 
-impl fmt::Display for TagParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for TagParseError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct FlvMuxerError {
     pub value: MuxerErrorValue,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum MuxerErrorValue {
-    // #[fail(display = "server error")]
+    // #[error("server error")]
     // Error,
-    #[fail(display = "bytes write error")]
+    #[error("bytes write error")]
     BytesWriteError(BytesWriteError),
 }
 
@@ -65,39 +49,24 @@ impl From<BytesWriteError> for FlvMuxerError {
     }
 }
 
-impl fmt::Display for FlvMuxerError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for FlvMuxerError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct FlvDemuxerError {
     pub value: DemuxerErrorValue,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum DemuxerErrorValue {
-    // #[fail(display = "server error")]
+    // #[error("server error")]
     // Error,
-    #[fail(display = "bytes write error:{}", _0)]
-    BytesWriteError(#[cause] BytesWriteError),
-    #[fail(display = "bytes read error:{}", _0)]
-    BytesReadError(#[cause] BytesReadError),
-    #[fail(display = "mpeg avc error:{}", _0)]
-    MpegAvcError(#[cause] Mpeg4AvcHevcError),
-    #[fail(display = "mpeg aac error:{}", _0)]
-    MpegAacError(#[cause] MpegAacError),
+    #[error("bytes write error:{0}")]
+    BytesWriteError(#[source] BytesWriteError),
+    #[error("bytes read error:{0}")]
+    BytesReadError(#[source] BytesReadError),
+    #[error("mpeg avc error:{0}")]
+    MpegAvcError(#[source] Mpeg4AvcHevcError),
+    #[error("mpeg aac error:{0}")]
+    MpegAacError(#[source] MpegAacError),
 }
 
 impl From<BytesWriteError> for FlvDemuxerError {
@@ -132,42 +101,27 @@ impl From<MpegAacError> for FlvDemuxerError {
     }
 }
 
-impl fmt::Display for FlvDemuxerError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for FlvDemuxerError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum MpegErrorValue {
-    #[fail(display = "bytes read error:{}", _0)]
-    BytesReadError(#[cause] BytesReadError),
-    #[fail(display = "bytes write error:{}", _0)]
-    BytesWriteError(#[cause] BytesWriteError),
-    #[fail(display = "bits error:{}", _0)]
-    BitError(#[cause] BitError),
-    #[fail(display = "h264 error:{}", _0)]
-    H264Error(#[cause] H264Error),
-    #[fail(display = "there is not enough bits to read")]
+    #[error("bytes read error:{0}")]
+    BytesReadError(#[source] BytesReadError),
+    #[error("bytes write error:{0}")]
+    BytesWriteError(#[source] BytesWriteError),
+    #[error("bits error:{0}")]
+    BitError(#[source] BitError),
+    #[error("h264 error:{0}")]
+    H264Error(#[source] H264Error),
+    #[error("there is not enough bits to read")]
     NotEnoughBitsToRead,
-    #[fail(display = "should not come here")]
+    #[error("should not come here")]
     ShouldNotComeHere,
-    #[fail(display = "the sps nal unit type is not correct")]
+    #[error("the sps nal unit type is not correct")]
     SPSNalunitTypeNotCorrect,
-    #[fail(display = "not supported sampling frequency")]
+    #[error("not supported sampling frequency")]
     NotSupportedSamplingFrequency,
 }
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct Mpeg4AvcHevcError {
     pub value: MpegErrorValue,
 }
@@ -196,23 +150,8 @@ impl From<H264Error> for Mpeg4AvcHevcError {
     }
 }
 
-impl fmt::Display for Mpeg4AvcHevcError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for Mpeg4AvcHevcError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct MpegAacError {
     pub value: MpegErrorValue,
 }
@@ -241,28 +180,13 @@ impl From<BitError> for MpegAacError {
     }
 }
 
-impl fmt::Display for MpegAacError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for MpegAacError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum BitVecErrorValue {
-    #[fail(display = "not enough bits left")]
+    #[error("not enough bits left")]
     NotEnoughBits,
 }
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct BitVecError {
     pub value: BitVecErrorValue,
 }

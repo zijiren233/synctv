@@ -323,7 +323,7 @@ impl From<HttpMeResp> for crate::grpc::alist::MeResp {
         Self {
             id: resp.id,
             username: resp.username,
-            password: resp.password,
+            password: String::new(), // Redacted: never expose password hash over gRPC
             base_path: resp.base_path,
             role: resp.role,
             disabled: resp.disabled,

@@ -62,6 +62,8 @@ pub struct ClusterManager {
     node_id: String,
     /// Broadcast channel for admin events (kick, etc.) received from cluster
     admin_event_tx: broadcast::Sender<ClusterEvent>,
+    /// Redis Pub/Sub service (stored for graceful shutdown)
+    redis_pubsub: Option<Arc<RedisPubSub>>,
 }
 
 impl ClusterManager {
@@ -85,9 +87,9 @@ impl ClusterManager {
         let (admin_event_tx, _) = broadcast::channel(256);
 
         // Start Redis pub/sub if Redis URL is provided
-        let redis_publish_tx = if config.redis_url.is_empty() {
+        let (redis_publish_tx, redis_pubsub) = if config.redis_url.is_empty() {
             warn!("Redis URL not provided, running in single-node mode");
-            None
+            (None, None)
         } else {
             let redis_pubsub = Arc::new(
                 RedisPubSub::new(
@@ -96,10 +98,12 @@ impl ClusterManager {
                     config.node_id.clone(),
                     admin_event_tx.clone(),
                     permission_service,
+                    deduplicator.clone(),
                 )?
             );
 
-            Some(redis_pubsub.clone().start().await?)
+            let tx = redis_pubsub.clone().start().await?;
+            (Some(tx), Some(redis_pubsub))
         };
 
         Ok(Self {
@@ -108,6 +112,7 @@ impl ClusterManager {
             redis_publish_tx,
             node_id: config.node_id,
             admin_event_tx,
+            redis_pubsub,
         })
     }
 
@@ -144,6 +149,17 @@ impl ClusterManager {
     #[must_use] 
     pub const fn admin_event_tx(&self) -> &broadcast::Sender<ClusterEvent> {
         &self.admin_event_tx
+    }
+
+    /// Gracefully shut down the cluster manager and all background tasks
+    pub fn shutdown(&self) {
+        info!("Shutting down ClusterManager");
+        // Cancel Redis Pub/Sub tasks
+        if let Some(ref pubsub) = self.redis_pubsub {
+            pubsub.shutdown();
+        }
+        // Shut down deduplicator cleanup task
+        self.deduplicator.shutdown();
     }
 
     /// Broadcast an event to all subscribers

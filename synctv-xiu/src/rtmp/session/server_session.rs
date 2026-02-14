@@ -128,8 +128,21 @@ impl ServerSession {
     async fn handshake(&mut self) -> Result<(), SessionError> {
         let mut bytes_len = 0;
 
+        // Timeout to prevent slowloris attacks holding handshake slots indefinitely
+        let handshake_timeout = tokio::time::Duration::from_secs(10);
+        let handshake_start = tokio::time::Instant::now();
+
         while bytes_len < handshake::define::RTMP_HANDSHAKE_SIZE {
-            self.bytesio_data = self.io.lock().await.read().await?;
+            let remaining = handshake_timeout.checked_sub(handshake_start.elapsed())
+                .ok_or(SessionError {
+                    value: super::errors::SessionErrorValue::Timeout,
+                })?;
+            self.bytesio_data = match tokio::time::timeout(remaining, self.io.lock().await.read()).await {
+                Ok(result) => result?,
+                Err(_) => return Err(SessionError {
+                    value: super::errors::SessionErrorValue::Timeout,
+                }),
+            };
             bytes_len += self.bytesio_data.len();
             self.handshaker.extend_data(&self.bytesio_data[..])?;
         }

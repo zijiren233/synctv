@@ -5,6 +5,7 @@ use redis::streams::StreamReadReply;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// Timeout for Redis operations in seconds
@@ -21,6 +22,7 @@ const EVENT_STREAM_KEY: &str = "synctv:events:stream";
 /// Max length of the event stream (approximate)
 const MAX_STREAM_LENGTH: usize = 10000;
 
+use super::dedup::{DedupKey, MessageDeduplicator};
 use super::events::ClusterEvent;
 use super::room_hub::RoomMessageHub;
 use synctv_core::models::id::RoomId;
@@ -40,6 +42,8 @@ pub struct RedisPubSub {
     node_id: String,
     admin_event_tx: broadcast::Sender<ClusterEvent>,
     permission_service: Option<PermissionService>,
+    deduplicator: Arc<MessageDeduplicator>,
+    cancel_token: CancellationToken,
 }
 
 impl RedisPubSub {
@@ -50,6 +54,7 @@ impl RedisPubSub {
         node_id: String,
         admin_event_tx: broadcast::Sender<ClusterEvent>,
         permission_service: Option<PermissionService>,
+        deduplicator: Arc<MessageDeduplicator>,
     ) -> Result<Self> {
         let redis_client = RedisClient::open(redis_url).context("Failed to create Redis client")?;
 
@@ -59,7 +64,21 @@ impl RedisPubSub {
             node_id,
             admin_event_tx,
             permission_service,
+            deduplicator,
+            cancel_token: CancellationToken::new(),
         })
+    }
+
+    /// Get the cancellation token for external shutdown signaling
+    #[must_use]
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
+    }
+
+    /// Shut down the Pub/Sub service (cancels subscriber and publisher tasks)
+    pub fn shutdown(&self) {
+        info!("Shutting down RedisPubSub service");
+        self.cancel_token.cancel();
     }
 
     /// Start the Pub/Sub service
@@ -71,6 +90,7 @@ impl RedisPubSub {
         // Clone for the publish task
         let publish_client = self.redis_client.clone();
         let node_id = self.node_id.clone();
+        let cancel_publisher = self.cancel_token.clone();
 
         // Spawn task to handle publishing with reconnection logic
         tokio::spawn(async move {
@@ -139,9 +159,16 @@ impl RedisPubSub {
                     }
                 }
 
-                // Process events until connection breaks
+                // Process events until connection breaks or cancelled
                 loop {
-                    if let Some(req) = publish_rx.recv().await {
+                    let req = tokio::select! {
+                        _ = cancel_publisher.cancelled() => {
+                            info!("Redis publisher task cancelled");
+                            return;
+                        }
+                        req = publish_rx.recv() => req,
+                    };
+                    if let Some(req) = req {
                         let event_type = req.event.event_type();
                         match Self::publish_event(&mut conn, &node_id, req.event.clone()).await {
                             Ok(subscribers) => {
@@ -177,6 +204,7 @@ impl RedisPubSub {
 
         // Clone for the subscriber task
         let self_clone = self;
+        let cancel_subscriber = self_clone.cancel_token.clone();
 
         // Spawn task to handle subscribing with exponential backoff on reconnection
         tokio::spawn(async move {
@@ -188,6 +216,12 @@ impl RedisPubSub {
             let mut last_stream_id = "$".to_string();
 
             loop {
+                // Check cancellation before each reconnect attempt
+                if cancel_subscriber.is_cancelled() {
+                    info!("Redis subscriber task cancelled");
+                    return;
+                }
+
                 match self_clone.run_subscriber(&mut last_stream_id).await {
                     SubscriberExit::Disconnected => {
                         // Connection was healthy before it dropped.
@@ -208,7 +242,14 @@ impl RedisPubSub {
                     }
                 }
 
-                tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                // Wait with cancellation support
+                tokio::select! {
+                    _ = cancel_subscriber.cancelled() => {
+                        info!("Redis subscriber task cancelled during backoff");
+                        return;
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
+                }
 
                 // Exponential backoff: double the delay, cap at MAX_BACKOFF_SECS
                 backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
@@ -363,9 +404,20 @@ impl RedisPubSub {
 
     /// Dispatch a single event received from Redis (either live or from catch-up).
     ///
-    /// Handles admin channel routing, permission cache invalidation, and local
-    /// broadcast to room subscribers.
+    /// Handles deduplication, admin channel routing, permission cache invalidation,
+    /// and local broadcast to room subscribers.
     async fn dispatch_event(&self, channel: &str, event: ClusterEvent) {
+        // Deduplicate events (prevents duplicate delivery during catch-up + live overlap)
+        let dedup_key = DedupKey::from_event(&event);
+        if !self.deduplicator.should_process(&dedup_key) {
+            debug!(
+                channel = %channel,
+                event_type = %event.event_type(),
+                "Skipping duplicate event from Redis"
+            );
+            return;
+        }
+
         debug!(
             channel = %channel,
             event_type = %event.event_type(),
@@ -527,9 +579,10 @@ impl RedisPubSub {
         // Each StreamId has `id` (e.g. "1234567890-0") and `map: HashMap<String, Value>`.
         let reply: StreamReadReply = timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
-            conn.xread(
+            conn.xread_options(
                 &[EVENT_STREAM_KEY],
                 &[last_id],
+                &redis::streams::StreamReadOptions::default().count(1000),
             ),
         )
         .await

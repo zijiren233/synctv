@@ -1,36 +1,29 @@
-#![allow(non_local_definitions)]
 use {
     crate::rtmp::chunk::errors::PackError,
     crate::bytesio::bytes_errors::BytesReadError,
-    failure::{Backtrace, Fail},
     crate::h264::errors::H264Error,
-    std::fmt,
     crate::flv::amf0::errors::Amf0WriteError,
     crate::flv::errors::{FlvDemuxerError, Mpeg4AvcHevcError, MpegAacError},
 };
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum CacheErrorValue {
-    #[fail(display = "cache tag parse error")]
+    #[error("cache tag parse error")]
     DemuxerError(FlvDemuxerError),
-    #[fail(display = "mpeg aac error")]
+    #[error("mpeg aac error")]
     MpegAacError(MpegAacError),
-    #[fail(display = "mpeg avc error")]
+    #[error("mpeg avc error")]
     MpegAvcError(Mpeg4AvcHevcError),
-    #[fail(display = "pack error")]
+    #[error("pack error")]
     PackError(PackError),
-    #[fail(display = "read bytes error")]
+    #[error("read bytes error")]
     BytesReadError(BytesReadError),
-    #[fail(display = "h264 error")]
+    #[error("h264 error")]
     H264Error(H264Error),
 }
 
-impl fmt::Display for CacheError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct CacheError {
     pub value: CacheErrorValue,
 }
@@ -83,26 +76,18 @@ impl From<PackError> for CacheError {
     }
 }
 
-impl Fail for CacheError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum MetadataErrorValue {
-    #[fail(display = "metadata tag parse error")]
+    #[error("metadata tag parse error")]
     DemuxerError(FlvDemuxerError),
-    #[fail(display = "pack error")]
+    #[error("pack error")]
     PackError(PackError),
-    #[fail(display = "amf write error")]
+    #[error("amf write error")]
     Amf0WriteError(Amf0WriteError),
 }
-#[derive(Debug)]
+
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct MetadataError {
     pub value: MetadataErrorValue,
 }
@@ -112,21 +97,5 @@ impl From<Amf0WriteError> for MetadataError {
         Self {
             value: MetadataErrorValue::Amf0WriteError(error),
         }
-    }
-}
-
-impl Fail for MetadataError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-impl fmt::Display for MetadataError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
     }
 }

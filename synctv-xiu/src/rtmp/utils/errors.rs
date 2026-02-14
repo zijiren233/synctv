@@ -1,31 +1,11 @@
-#![allow(non_local_definitions)]
-use {
-    failure::{Backtrace, Fail},
-    std::fmt,
-};
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct RtmpUrlParseError {
     pub value: RtmpUrlParseErrorValue,
 }
-#[derive(Debug, Fail)]
+
+#[derive(Debug, thiserror::Error)]
 pub enum RtmpUrlParseErrorValue {
-    #[fail(display = "The url is not valid")]
+    #[error("The url is not valid")]
     Notvalid,
-}
-
-impl fmt::Display for RtmpUrlParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for RtmpUrlParseError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
 }

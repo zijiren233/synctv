@@ -84,6 +84,10 @@ pub struct ClientSession {
     sub_stream_name: Option<String>,
     /*configure how many gops will be cached.*/
     gop_num: usize,
+    /// Tracks whether this session has an active subscription to the StreamHub
+    is_subscribed: bool,
+    /// Tracks whether this session has published to the StreamHub
+    is_publishing: bool,
 }
 
 impl ClientSession {
@@ -130,6 +134,8 @@ impl ClientSession {
             sub_app_name: None,
             sub_stream_name: None,
             gop_num,
+            is_subscribed: false,
+            is_publishing: false,
         }
     }
     
@@ -138,6 +144,49 @@ impl ClientSession {
     }
 
     pub async fn run(&mut self) -> Result<(), SessionError> {
+        let result = self.run_inner().await;
+
+        // Clean up StreamHub registrations on disconnect (regardless of error or normal exit)
+        if let Err(e) = self.cleanup().await {
+            log::warn!("ClientSession cleanup error: {e}");
+        }
+
+        result
+    }
+
+    /// Clean up StreamHub subscriptions/publications on disconnect
+    async fn cleanup(&mut self) -> Result<(), SessionError> {
+        if self.is_publishing {
+            log::info!(
+                "ClientSession cleanup: unpublishing app={} stream={}",
+                self.app_name, self.stream_name
+            );
+            self.common
+                .unpublish_to_stream_hub(self.app_name.clone(), self.stream_name.clone())
+                .await?;
+            self.is_publishing = false;
+        }
+        if self.is_subscribed {
+            let (app, stream) = if let (Some(app), Some(stream)) =
+                (&self.sub_app_name, &self.sub_stream_name)
+            {
+                (app.clone(), stream.clone())
+            } else {
+                (self.app_name.clone(), self.stream_name.clone())
+            };
+            log::info!(
+                "ClientSession cleanup: unsubscribing app={} stream={}",
+                app, stream
+            );
+            self.common
+                .unsubscribe_from_stream_hub(app, stream)
+                .await?;
+            self.is_subscribed = false;
+        }
+        Ok(())
+    }
+
+    async fn run_inner(&mut self) -> Result<(), SessionError> {
         loop {
             match self.state {
                 ClientSessionState::Handshake => {
@@ -538,6 +587,7 @@ impl ClientSession {
                             )
                             .await?;
                     }
+                    self.is_subscribed = true;
                 }
                 "NetStream.Publish.Reset" => {}
                 "NetStream.Play.Start" => {
@@ -549,6 +599,7 @@ impl ClientSession {
                             self.gop_num,
                         )
                         .await?;
+                    self.is_publishing = true;
                 }
                 _ => {}
             }

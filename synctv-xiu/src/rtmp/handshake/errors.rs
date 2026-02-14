@@ -1,25 +1,23 @@
-#![allow(non_local_definitions)]
 use {
     crate::bytesio::bytes_errors::{BytesReadError, BytesWriteError},
-    failure::{Backtrace, Fail},
-    std::{fmt, io::Error, time::SystemTimeError},
+    std::{io::Error, time::SystemTimeError},
 };
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum HandshakeErrorValue {
-    #[fail(display = "bytes read error: {}", _0)]
+    #[error("bytes read error: {0}")]
     BytesReadError(BytesReadError),
-    #[fail(display = "bytes write error: {}", _0)]
+    #[error("bytes write error: {0}")]
     BytesWriteError(BytesWriteError),
-    #[fail(display = "system time error: {}", _0)]
+    #[error("system time error: {0}")]
     SysTimeError(SystemTimeError),
-    #[fail(display = "digest error: {}", _0)]
+    #[error("digest error: {0}")]
     DigestError(DigestError),
-    #[fail(display = "Digest not found error")]
+    #[error("Digest not found error")]
     DigestNotFound,
-    #[fail(display = "s0 version not correct error")]
+    #[error("s0 version not correct error")]
     S0VersionNotCorrect,
-    #[fail(display = "io error")]
+    #[error("io error")]
     IOError(Error),
 }
 
@@ -31,7 +29,8 @@ impl From<Error> for HandshakeError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct HandshakeError {
     pub value: HandshakeErrorValue,
 }
@@ -74,38 +73,23 @@ impl From<DigestError> for HandshakeError {
     }
 }
 
-impl fmt::Display for HandshakeError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for HandshakeError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct DigestError {
     pub value: DigestErrorValue,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum DigestErrorValue {
-    #[fail(display = "bytes read error: {}", _0)]
+    #[error("bytes read error: {0}")]
     BytesReadError(BytesReadError),
-    #[fail(display = "digest length not correct")]
+    #[error("digest length not correct")]
     DigestLengthNotCorrect,
-    #[fail(display = "cannot generate digest")]
+    #[error("cannot generate digest")]
     CannotGenerate,
-    #[fail(display = "unknow schema")]
+    #[error("unknow schema")]
     UnknowSchema,
-    #[fail(display = "HMAC key initialization failed")]
+    #[error("HMAC key initialization failed")]
     HmacInitError,
 }
 
@@ -114,21 +98,5 @@ impl From<BytesReadError> for DigestError {
         Self {
             value: DigestErrorValue::BytesReadError(error),
         }
-    }
-}
-
-impl fmt::Display for DigestError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for DigestError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

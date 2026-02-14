@@ -1,4 +1,3 @@
-#![allow(non_local_definitions)]
 use {
     crate::rtmp::{
         cache::errors::CacheError,
@@ -11,77 +10,78 @@ use {
         user_control_messages::errors::EventMessagesError,
     },
     crate::bytesio::{bytes_errors::BytesWriteError, bytesio_errors::BytesIOError},
-    failure::{Backtrace, Fail},
-    std::fmt,
     crate::streamhub::errors::StreamHubError,
     tokio::sync::oneshot::error::RecvError,
     crate::flv::amf0::errors::Amf0WriteError,
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct SessionError {
     pub value: SessionErrorValue,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum SessionErrorValue {
-    #[fail(display = "amf0 write error: {}", _0)]
-    Amf0WriteError(#[cause] Amf0WriteError),
-    #[fail(display = "bytes write error: {}", _0)]
-    BytesWriteError(#[cause] BytesWriteError),
-    #[fail(display = "unpack error: {}", _0)]
-    UnPackError(#[cause] UnpackError),
+    #[error("amf0 write error: {0}")]
+    Amf0WriteError(#[source] Amf0WriteError),
+    #[error("bytes write error: {0}")]
+    BytesWriteError(#[source] BytesWriteError),
+    #[error("unpack error: {0}")]
+    UnPackError(#[source] UnpackError),
 
-    #[fail(display = "message error: {}", _0)]
-    MessageError(#[cause] MessageError),
-    #[fail(display = "control message error: {}", _0)]
-    ControlMessagesError(#[cause] ControlMessagesError),
-    #[fail(display = "net connection error: {}", _0)]
-    NetConnectionError(#[cause] NetConnectionError),
-    #[fail(display = "net stream error: {}", _0)]
-    NetStreamError(#[cause] NetStreamError),
+    #[error("message error: {0}")]
+    MessageError(#[source] MessageError),
+    #[error("control message error: {0}")]
+    ControlMessagesError(#[source] ControlMessagesError),
+    #[error("net connection error: {0}")]
+    NetConnectionError(#[source] NetConnectionError),
+    #[error("net stream error: {0}")]
+    NetStreamError(#[source] NetStreamError),
 
-    #[fail(display = "event messages error: {}", _0)]
-    EventMessagesError(#[cause] EventMessagesError),
-    #[fail(display = "net io error: {}", _0)]
-    BytesIOError(#[cause] BytesIOError),
-    #[fail(display = "pack error: {}", _0)]
-    PackError(#[cause] PackError),
-    #[fail(display = "handshake error: {}", _0)]
-    HandshakeError(#[cause] HandshakeError),
-    #[fail(display = "cache error name: {}", _0)]
-    CacheError(#[cause] CacheError),
-    #[fail(display = "tokio: oneshot receiver err: {}", _0)]
-    RecvError(#[cause] RecvError),
-    #[fail(display = "streamhub channel err: {}", _0)]
-    ChannelError(#[cause] StreamHubError),
+    #[error("event messages error: {0}")]
+    EventMessagesError(#[source] EventMessagesError),
+    #[error("net io error: {0}")]
+    BytesIOError(#[source] BytesIOError),
+    #[error("pack error: {0}")]
+    PackError(#[source] PackError),
+    #[error("handshake error: {0}")]
+    HandshakeError(#[source] HandshakeError),
+    #[error("cache error name: {0}")]
+    CacheError(#[source] CacheError),
+    #[error("tokio: oneshot receiver err: {0}")]
+    RecvError(#[source] RecvError),
+    #[error("streamhub channel err: {0}")]
+    ChannelError(#[source] StreamHubError),
 
-    #[fail(display = "amf0 count not correct error")]
+    #[error("amf0 count not correct error")]
     Amf0ValueCountNotCorrect,
-    #[fail(display = "amf0 value type not correct error")]
+    #[error("amf0 value type not correct error")]
     Amf0ValueTypeNotCorrect,
-    #[fail(display = "stream hub event send error")]
+    #[error("stream hub event send error")]
     StreamHubEventSendErr,
-    #[fail(display = "none frame data sender error")]
+    #[error("none frame data sender error")]
     NoneFrameDataSender,
-    #[fail(display = "none frame data receiver error")]
+    #[error("none frame data receiver error")]
     NoneFrameDataReceiver,
-    #[fail(display = "send frame data error")]
+    #[error("send frame data error")]
     SendFrameDataErr,
-    #[fail(display = "subscribe count limit is reached.")]
+    #[error("subscribe count limit is reached.")]
     SubscribeCountLimitReach,
 
-    #[fail(display = "no app name error")]
+    #[error("no app name error")]
     NoAppName,
-    #[fail(display = "no stream name error")]
+    #[error("no stream name error")]
     NoStreamName,
-    #[fail(display = "no media data can be received now.")]
+    #[error("no media data can be received now.")]
     NoMediaDataReceived,
 
-    #[fail(display = "session is finished.")]
+    #[error("session is finished.")]
     Finish,
-    #[fail(display = "auth failed: {}", _0)]
+    #[error("auth failed: {0}")]
     AuthFailed(String),
+    #[error("handshake timeout")]
+    Timeout,
 }
 
 impl From<Amf0WriteError> for SessionError {
@@ -193,21 +193,5 @@ impl From<StreamHubError> for SessionError {
         Self {
             value: SessionErrorValue::ChannelError(error),
         }
-    }
-}
-
-impl fmt::Display for SessionError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for SessionError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

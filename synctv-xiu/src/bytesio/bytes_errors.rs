@@ -1,34 +1,31 @@
-#![allow(non_local_definitions)]
 use super::bytesio_errors::BytesIOError;
 use std::io;
 // use tokio::time::Elapsed;
 
-use failure::{Backtrace, Fail};
-use std::fmt;
-
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum BytesReadErrorValue {
-    #[fail(display = "not enough bytes to read")]
+    #[error("not enough bytes to read")]
     NotEnoughBytes,
-    #[fail(display = "empty stream")]
+    #[error("empty stream")]
     EmptyStream,
-    #[fail(display = "io error: {}", _0)]
-    IO(#[cause] io::Error),
-    #[fail(display = "index out of range")]
+    #[error("io error: {0}")]
+    IO(#[source] io::Error),
+    #[error("index out of range")]
     IndexOutofRange,
-    #[fail(display = "bytesio read error: {}", _0)]
+    #[error("bytesio read error: {0}")]
     BytesIOError(BytesIOError),
-    #[fail(display = "buffer overflow: {} + {} > {} max", current, additional, max)]
+    #[error("buffer overflow: {current} + {additional} > {max} max")]
     BufferOverflow {
         current: usize,
         additional: usize,
         max: usize,
     },
-    // #[fail(display = "elapsed: {}", _0)]
-    // TimeoutError(#[cause] Elapsed),
+    // #[error("elapsed: {0}")]
+    // TimeoutError(#[source] Elapsed),
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct BytesReadError {
     pub value: BytesReadErrorValue,
 }
@@ -63,20 +60,21 @@ impl From<BytesIOError> for BytesReadError {
 //     }
 // }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct BytesWriteError {
     pub value: BytesWriteErrorValue,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum BytesWriteErrorValue {
-    #[fail(display = "io error")]
+    #[error("io error")]
     IO(io::Error),
-    #[fail(display = "bytes io error: {}", _0)]
+    #[error("bytes io error: {0}")]
     BytesIOError(BytesIOError),
-    #[fail(display = "write time out")]
+    #[error("write time out")]
     Timeout,
-    #[fail(display = "outof index")]
+    #[error("outof index")]
     OutofIndex,
 }
 
@@ -93,37 +91,5 @@ impl From<BytesIOError> for BytesWriteError {
         Self {
             value: BytesWriteErrorValue::BytesIOError(error),
         }
-    }
-}
-
-impl fmt::Display for BytesReadError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for BytesReadError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-impl fmt::Display for BytesWriteError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for BytesWriteError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

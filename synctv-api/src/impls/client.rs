@@ -49,12 +49,13 @@ pub struct ClientApiImpl {
     pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     pub providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
+    pub redis_publish_tx: Option<tokio::sync::mpsc::UnboundedSender<synctv_cluster::sync::PublishRequest>>,
 }
 
 impl ClientApiImpl {
     #[allow(clippy::too_many_arguments)]
     #[must_use]
-    pub const fn new(
+    pub fn new(
         user_service: Arc<UserService>,
         room_service: Arc<RoomService>,
         connection_manager: Arc<ConnectionManager>,
@@ -77,6 +78,37 @@ impl ClientApiImpl {
             live_streaming_infrastructure,
             providers_manager,
             settings_registry,
+            redis_publish_tx: None,
+        }
+    }
+
+    /// Set the Redis publish channel for cross-replica cache invalidation
+    #[must_use]
+    pub fn with_redis_publish_tx(mut self, tx: Option<tokio::sync::mpsc::UnboundedSender<synctv_cluster::sync::PublishRequest>>) -> Self {
+        self.redis_publish_tx = tx;
+        self
+    }
+
+    /// Publish a permission change event to other cluster replicas
+    fn publish_permission_changed(
+        &self,
+        room_id: &RoomId,
+        target_user_id: &UserId,
+        changed_by: &UserId,
+    ) {
+        if let Some(ref tx) = self.redis_publish_tx {
+            let _ = tx.send(synctv_cluster::sync::PublishRequest {
+                room_id: Some(room_id.clone()),
+                event: synctv_cluster::sync::ClusterEvent::PermissionChanged {
+                    room_id: room_id.clone(),
+                    target_user_id: target_user_id.clone(),
+                    target_username: String::new(), // filled by receiver if needed
+                    changed_by: changed_by.clone(),
+                    changed_by_username: String::new(),
+                    new_permissions: synctv_core::models::PermissionBits::empty(),
+                    timestamp: chrono::Utc::now(),
+                },
+            });
         }
     }
 
@@ -86,17 +118,7 @@ impl ClientApiImpl {
         &self,
         req: crate::proto::client::RegisterRequest,
     ) -> Result<crate::proto::client::RegisterResponse, String> {
-        // Validate input
-        if req.username.is_empty() {
-            return Err("Username cannot be empty".to_string());
-        }
-        if req.password.len() < 8 {
-            return Err("Password must be at least 8 characters".to_string());
-        }
-        if req.password.len() > 128 {
-            return Err("Password must be at most 128 characters".to_string());
-        }
-
+        // Validation is handled by UserService::register() using production validators
         let email = if req.email.is_empty() {
             None
         } else {
@@ -1588,12 +1610,15 @@ impl ClientApiImpl {
 
         self.room_service.set_member_permission(
             rid.clone(),
-            uid,
+            uid.clone(),
             target_uid.clone(),
             added,
             removed,
         ).await
             .map_err(|e| e.to_string())?;
+
+        // Notify other replicas to invalidate permission cache
+        self.publish_permission_changed(&rid, &target_uid, &uid);
 
         // Get updated member
         let members = self.room_service.get_room_members(&rid).await
@@ -1617,11 +1642,14 @@ impl ClientApiImpl {
         let rid = RoomId::from_string(room_id.to_string());
         let target_uid = UserId::from_string(req.user_id.clone());
 
-        self.room_service.kick_member(rid.clone(), uid, target_uid.clone()).await
+        self.room_service.kick_member(rid.clone(), uid.clone(), target_uid.clone()).await
             .map_err(|e| e.to_string())?;
 
         // Force disconnect the kicked user's connections in this specific room
         self.connection_manager.disconnect_user_from_room(&target_uid, &rid);
+
+        // Notify other replicas to invalidate permission cache
+        self.publish_permission_changed(&rid, &target_uid, &uid);
 
         Ok(crate::proto::client::KickMemberResponse {
             success: true,
@@ -1640,12 +1668,15 @@ impl ClientApiImpl {
         let reason = if req.reason.is_empty() { None } else { Some(req.reason) };
 
         self.room_service.member_service()
-            .ban_member(rid.clone(), uid, target_uid.clone(), reason)
+            .ban_member(rid.clone(), uid.clone(), target_uid.clone(), reason)
             .await
             .map_err(|e| e.to_string())?;
 
         // Force disconnect the banned user's connections in this specific room
         self.connection_manager.disconnect_user_from_room(&target_uid, &rid);
+
+        // Notify other replicas to invalidate permission cache
+        self.publish_permission_changed(&rid, &target_uid, &uid);
 
         Ok(crate::proto::client::BanMemberResponse { success: true })
     }

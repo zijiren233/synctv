@@ -1,14 +1,13 @@
-#![allow(non_local_definitions)]
 use crate::bytesio::bits_errors::BitError;
-use failure::{Backtrace, Fail};
-use std::fmt;
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum H264ErrorValue {
-    #[fail(display = "bit error")]
+    #[error("bit error")]
     BitError(BitError),
 }
-#[derive(Debug)]
+
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct H264Error {
     pub value: H264ErrorValue,
 }
@@ -18,21 +17,5 @@ impl From<BitError> for H264Error {
         Self {
             value: H264ErrorValue::BitError(error),
         }
-    }
-}
-
-impl fmt::Display for H264Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for H264Error {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

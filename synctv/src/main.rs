@@ -45,18 +45,12 @@ async fn main() -> Result<()> {
         for e in &errors {
             eprintln!("Config validation error: {e}");
         }
-        // JWT key warnings are non-fatal (keys may be generated later)
-        let fatal: Vec<_> = errors
-            .iter()
-            .filter(|e| !e.contains("JWT"))
-            .collect();
-        if !fatal.is_empty() {
+        if !errors.is_empty() {
             return Err(anyhow::anyhow!(
                 "Configuration validation failed with {} error(s)",
-                fatal.len()
+                errors.len()
             ));
         }
-        eprintln!("Continuing with JWT key warnings (keys may be generated at runtime)");
     }
 
     // 2. Initialize logging
@@ -307,11 +301,8 @@ async fn main() -> Result<()> {
                     static_secret: config.webrtc.external_turn_static_secret
                         .clone()
                         .unwrap_or_else(|| {
-                            error!("No TURN static_secret configured! Please set webrtc.external_turn_static_secret in config. Using ephemeral secret (will change on restart).");
-                            format!("synctv-ephemeral-{}", std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_nanos())
+                            error!("No TURN static_secret configured! Please set webrtc.external_turn_static_secret in config. Using ephemeral random secret (will change on restart).");
+                            nanoid::nanoid!(48)
                         }),
                     realm: config.webrtc.turn_realm
                         .clone()

@@ -402,7 +402,7 @@ impl NodeRegistry {
         Ok(())
     }
 
-    /// Update heartbeat for a remote node
+    /// Update heartbeat for a remote node (atomic via Lua script)
     pub async fn heartbeat_remote(&self, node_id: &str) -> Result<()> {
         if let Some(ref client) = self.redis_client {
             let mut conn = timeout(
@@ -414,37 +414,33 @@ impl NodeRegistry {
             .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(node_id);
+            let now = Utc::now().to_rfc3339();
+            let ttl = self.heartbeat_timeout_secs * 2;
 
-            // Read current value, update last_heartbeat, write back with fresh TTL
-            let value: Option<String> = timeout(
+            // Atomic Lua: read → update last_heartbeat → write back with fresh TTL
+            let script = redis::Script::new(
+                r#"
+                local val = redis.call('GET', KEYS[1])
+                if not val then return nil end
+                local obj = cjson.decode(val)
+                obj['last_heartbeat'] = ARGV[1]
+                local updated = cjson.encode(obj)
+                redis.call('SETEX', KEYS[1], ARGV[2], updated)
+                return updated
+                "#,
+            );
+
+            let result: Option<String> = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("GET")
-                    .arg(&key)
-                    .query_async(&mut conn),
+                script.key(&key).arg(&now).arg(ttl).invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis heartbeat script timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis heartbeat script failed: {e}")))?;
 
-            if let Some(value) = value {
-                if let Ok(mut node_info) = serde_json::from_str::<NodeInfo>(&value) {
-                    node_info.last_heartbeat = Utc::now();
-                    let updated = serde_json::to_string(&node_info)
-                        .map_err(|e| Error::Serialization(format!("Failed to serialize: {e}")))?;
-
-                    timeout(
-                        Duration::from_secs(REDIS_TIMEOUT_SECS),
-                        redis::cmd("SETEX")
-                            .arg(&key)
-                            .arg(self.heartbeat_timeout_secs * 2)
-                            .arg(&updated)
-                            .query_async::<()>(&mut conn),
-                    )
-                    .await
-                    .map_err(|_| Error::Timeout("Redis SETEX timed out".to_string()))?
-                    .map_err(|e| Error::Database(format!("Redis SETEX failed: {e}")))?;
-
-                    // Update local cache
+            // Update local cache from the returned value
+            if let Some(updated_json) = result {
+                if let Ok(node_info) = serde_json::from_str::<NodeInfo>(&updated_json) {
                     let mut nodes = self.local_nodes.write().await;
                     nodes.insert(node_id.to_string(), node_info);
                 }

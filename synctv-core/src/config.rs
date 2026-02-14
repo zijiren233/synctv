@@ -58,6 +58,10 @@ pub struct ServerConfig {
     /// In production, this should be set to specific domains.
     /// Example: ["https://app.example.com", "https://admin.example.com"]
     pub cors_allowed_origins: Vec<String>,
+    /// Shared secret for authenticating cluster gRPC calls between nodes.
+    /// When set, all inter-node gRPC requests must include this secret in the
+    /// `x-cluster-secret` metadata header. If empty, cluster endpoints are disabled.
+    pub cluster_secret: String,
 }
 
 impl Default for ServerConfig {
@@ -70,6 +74,7 @@ impl Default for ServerConfig {
             development_mode: false,
             trusted_proxies: Vec::new(),
             cors_allowed_origins: Vec::new(),
+            cluster_secret: String::new(),
         }
     }
 }
@@ -527,7 +532,8 @@ impl Config {
             errors.push("JWT secret is empty".to_string());
         } else if self.jwt.secret == "change-me-in-production" {
             if self.server.development_mode {
-                errors.push("JWT secret is set to default value 'change-me-in-production' - this is only allowed in development mode".to_string());
+                // Allow default secret in dev mode (just log a warning at startup)
+                tracing::warn!("Using default JWT secret in development mode - do NOT use in production");
             } else {
                 errors.push("JWT secret is set to default value 'change-me-in-production'. Set SYNCTV__JWT__SECRET environment variable or server.development_mode=true for local development".to_string());
             }
@@ -576,6 +582,11 @@ impl Config {
                 "webrtc.builtin_turn_min_port ({}) must be less than builtin_turn_max_port ({})",
                 self.webrtc.builtin_turn_min_port, self.webrtc.builtin_turn_max_port
             ));
+        }
+
+        // Warn about missing Redis in production (security features degrade)
+        if !self.server.development_mode && self.redis.url.is_empty() {
+            tracing::warn!("Redis is not configured in production mode — token blacklist and rate limiting will be DISABLED");
         }
 
         // Validate connection limits

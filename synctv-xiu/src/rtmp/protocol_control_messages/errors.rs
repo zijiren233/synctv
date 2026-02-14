@@ -1,19 +1,15 @@
-#![allow(non_local_definitions)]
-use {
-    failure::{Backtrace, Fail},
-    crate::bytesio::bytes_errors::{BytesReadError, BytesWriteError},
-    std::fmt,
-};
+use crate::bytesio::bytes_errors::{BytesReadError, BytesWriteError};
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct ControlMessagesError {
     pub value: ControlMessagesErrorValue,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum ControlMessagesErrorValue {
     //Amf0WriteError(Amf0WriteError),
-    #[fail(display = "bytes write error: {}", _0)]
+    #[error("bytes write error: {0}")]
     BytesWriteError(BytesWriteError),
 }
 
@@ -25,30 +21,15 @@ impl From<BytesWriteError> for ControlMessagesError {
     }
 }
 
-impl fmt::Display for ControlMessagesError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for ControlMessagesError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct ProtocolControlMessageReaderError {
     pub value: ProtocolControlMessageReaderErrorValue,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum ProtocolControlMessageReaderErrorValue {
-    #[fail(display = "bytes read error: {}", _0)]
+    #[error("bytes read error: {0}")]
     BytesReadError(BytesReadError),
 }
 
@@ -57,21 +38,5 @@ impl From<BytesReadError> for ProtocolControlMessageReaderError {
         Self {
             value: ProtocolControlMessageReaderErrorValue::BytesReadError(error),
         }
-    }
-}
-
-impl fmt::Display for ProtocolControlMessageReaderError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for ProtocolControlMessageReaderError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

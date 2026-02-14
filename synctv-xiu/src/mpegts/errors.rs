@@ -1,35 +1,34 @@
-#![allow(non_local_definitions)]
 use {
     crate::bytesio::bytes_errors::{BytesReadError, BytesWriteError},
-    failure::{Backtrace, Fail},
-    std::fmt,
     std::io::Error,
 };
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum MpegTsErrorValue {
-    #[fail(display = "bytes read error")]
+    #[error("bytes read error")]
     BytesReadError(BytesReadError),
 
-    #[fail(display = "bytes write error")]
+    #[error("bytes write error")]
     BytesWriteError(BytesWriteError),
 
-    #[fail(display = "io error")]
+    #[error("io error")]
     IOError(Error),
 
-    #[fail(display = "program number exists")]
+    #[error("program number exists")]
     ProgramNumberExists,
 
-    #[fail(display = "pmt count execeed")]
+    #[error("pmt count execeed")]
     PmtCountExeceed,
 
-    #[fail(display = "stream count execeed")]
+    #[error("stream count execeed")]
     StreamCountExeceed,
 
-    #[fail(display = "stream not found")]
+    #[error("stream not found")]
     StreamNotFound,
 }
-#[derive(Debug)]
+
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct MpegTsError {
     pub value: MpegTsErrorValue,
 }
@@ -55,21 +54,5 @@ impl From<Error> for MpegTsError {
         Self {
             value: MpegTsErrorValue::IOError(error),
         }
-    }
-}
-
-impl fmt::Display for MpegTsError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for MpegTsError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

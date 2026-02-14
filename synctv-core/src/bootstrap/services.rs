@@ -82,7 +82,7 @@ pub async fn init_services(
     if token_blacklist.is_enabled() {
         info!("Token blacklist service initialized with Redis");
     } else {
-        info!("Token blacklist service disabled (Redis not configured)");
+        warn!("⚠ Token blacklist DISABLED (no Redis) — revoked tokens will remain valid until expiry");
     }
 
     // Initialize username cache
@@ -113,10 +113,16 @@ pub async fn init_services(
     // Initialize rate limiter
     let rate_limiter = RateLimiter::new(redis_conn.clone(), config.redis.key_prefix.clone());
     let rate_limit_config = RateLimitConfig::default();
-    info!(
-        "Rate limiter initialized (chat: {}/s, danmaku: {}/s)",
-        rate_limit_config.chat_per_second, rate_limit_config.danmaku_per_second
-    );
+    if redis_conn.is_some() {
+        info!(
+            "Rate limiter initialized (chat: {}/s, danmaku: {}/s)",
+            rate_limit_config.chat_per_second, rate_limit_config.danmaku_per_second
+        );
+    } else {
+        warn!(
+            "⚠ Rate limiting DISABLED (no Redis) — all rate limits are unenforced"
+        );
+    }
 
     // Initialize content filter
     let content_filter = ContentFilter::new();
@@ -343,8 +349,12 @@ fn load_jwt_service(config: &Config) -> Result<JwtService, anyhow::Error> {
         warn!("Please set SYNCTV__JWT__SECRET to a strong random value.");
     }
 
-    JwtService::new(&config.jwt.secret)
-        .map_err(|e| anyhow::anyhow!("Failed to initialize JWT service: {e}"))
+    JwtService::with_durations(
+        &config.jwt.secret,
+        config.jwt.access_token_duration_hours,
+        config.jwt.refresh_token_duration_days,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to initialize JWT service: {e}"))
 }
 
 /// Initialize Email service (optional - requires SMTP configuration)

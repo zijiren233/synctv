@@ -172,12 +172,11 @@ impl UsernameCache {
 
     /// Invalidate a cached username
     ///
-    /// Removes the username from both memory and Redis cache.
+    /// Removes the username from both Redis (L2) and memory (L1) cache.
+    /// Important: L2 must be invalidated FIRST to prevent concurrent reads from
+    /// re-populating L1 with stale L2 data between L1 and L2 invalidation.
     pub async fn invalidate(&self, user_id: &UserId) -> Result<()> {
-        // Remove from memory cache
-        self.memory_cache.invalidate(user_id).await;
-
-        // Remove from Redis cache
+        // Remove from Redis cache FIRST (L2 before L1)
         if let Some(ref conn) = self.redis_conn {
             let mut conn = conn.clone();
 
@@ -189,6 +188,9 @@ impl UsernameCache {
 
             tracing::debug!(user_id = %user_id.as_str(), "Username cache invalidated");
         }
+
+        // Then remove from memory cache (L1)
+        self.memory_cache.invalidate(user_id).await;
 
         Ok(())
     }

@@ -411,66 +411,29 @@ impl UserService {
         )))
     }
 
-    /// Validate username
+    /// Validate username using production-grade validator
     fn validate_username(&self, username: &str) -> Result<()> {
-        if username.len() < 3 {
-            return Err(Error::InvalidInput(
-                "Username must be at least 3 characters".to_string(),
-            ));
-        }
-        if username.len() > 50 {
-            return Err(Error::InvalidInput(
-                "Username must be at most 50 characters".to_string(),
-            ));
-        }
-        if !username
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-        {
-            return Err(Error::InvalidInput(
-                "Username can only contain alphanumeric characters, underscores, and hyphens".to_string(),
-            ));
-        }
-        Ok(())
+        crate::validation::UsernameValidator::new()
+            .validate(username)
+            .map_err(|e| Error::InvalidInput(e.to_string()))
     }
 
-    /// Validate email
+    /// Validate email using regex-based validator
     fn validate_email(&self, email: &str) -> Result<()> {
         let email = email.trim();
-
-        // Check if empty after trim
         if email.is_empty() {
-            return Err(Error::InvalidInput("Email cannot be empty or whitespace only".to_string()));
+            return Err(Error::InvalidInput("Email cannot be empty".to_string()));
         }
-
-        // Check for @ symbol
-        if !email.contains('@') {
-            return Err(Error::InvalidInput("Invalid email address".to_string()));
-        }
-
-        // Check length
-        if email.len() > 255 {
-            return Err(Error::InvalidInput(
-                "Email must be at most 255 characters".to_string(),
-            ));
-        }
-
-        Ok(())
+        crate::validation::EmailValidator::new()
+            .validate(email)
+            .map_err(|e| Error::InvalidInput(e.to_string()))
     }
 
-    /// Validate password
+    /// Validate password with complexity requirements
     fn validate_password(&self, password: &str) -> Result<()> {
-        if password.len() < 8 {
-            return Err(Error::InvalidInput(
-                "Password must be at least 8 characters".to_string(),
-            ));
-        }
-        if password.len() > 128 {
-            return Err(Error::InvalidInput(
-                "Password must be at most 128 characters".to_string(),
-            ));
-        }
-        Ok(())
+        crate::validation::PasswordValidator::new()
+            .validate(password)
+            .map_err(|e| Error::InvalidInput(e.to_string()))
     }
 
     /// Get username for a user ID (from cache or database)
@@ -506,14 +469,14 @@ impl UserService {
             .cloned()
             .collect();
 
-        // Fetch missing usernames from database
+        // Fetch missing usernames from database in a single batch query
         if !missing_ids.is_empty() {
-            for user_id in &missing_ids {
-                if let Some(user) = self.repository.get_by_id(user_id).await? {
-                    let username = user.username.clone();
-                    self.username_cache.set(user_id, &username).await?;
-                    result.insert(user_id.clone(), username);
-                }
+            let users = self.repository.get_by_ids(&missing_ids).await?;
+            for user in users {
+                let user_id = user.id.clone();
+                let username = user.username.clone();
+                self.username_cache.set(&user_id, &username).await?;
+                result.insert(user_id, username);
             }
         }
 

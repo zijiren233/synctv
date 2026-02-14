@@ -7,7 +7,8 @@ license.workspace = true
 
 [dependencies]
 axum.workspace = true
-reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["rustls-tls", "stream"], default-features = false }
+futures.workspace = true
 url.workspace = true
 anyhow.workspace = true
 tokio = { workspace = true, features = ["time"] }

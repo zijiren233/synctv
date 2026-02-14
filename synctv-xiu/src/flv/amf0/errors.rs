@@ -1,27 +1,24 @@
-#![allow(non_local_definitions)]
 use {
     crate::bytesio::bytes_errors::{BytesReadError, BytesWriteError},
-    failure::{Backtrace, Fail},
-    std::{
-        fmt, {io, string},
-    },
+    std::{io, string},
 };
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum Amf0ReadErrorValue {
-    #[fail(display = "Encountered unknown marker: {}", marker)]
+    #[error("Encountered unknown marker: {marker}")]
     UnknownMarker { marker: u8 },
-    #[fail(display = "parser string error: {}", _0)]
-    StringParseError(#[cause] string::FromUtf8Error),
-    #[fail(display = "bytes read error :{}", _0)]
+    #[error("parser string error: {0}")]
+    StringParseError(#[source] string::FromUtf8Error),
+    #[error("bytes read error :{0}")]
     BytesReadError(BytesReadError),
-    #[fail(display = "wrong type")]
+    #[error("wrong type")]
     WrongType,
-    #[fail(display = "string length {} exceeds maximum {}", length, max)]
+    #[error("string length {length} exceeds maximum {max}")]
     StringTooLong { length: usize, max: usize },
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct Amf0ReadError {
     pub value: Amf0ReadErrorValue,
 }
@@ -42,17 +39,18 @@ impl From<BytesReadError> for Amf0ReadError {
     }
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum Amf0WriteErrorValue {
-    #[fail(display = "normal string too long")]
+    #[error("normal string too long")]
     NormalStringTooLong,
-    #[fail(display = "io error")]
+    #[error("io error")]
     BufferWriteError(io::Error),
-    #[fail(display = "bytes write error")]
+    #[error("bytes write error")]
     BytesWriteError(BytesWriteError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct Amf0WriteError {
     pub value: Amf0WriteErrorValue,
 }
@@ -70,37 +68,5 @@ impl From<BytesWriteError> for Amf0WriteError {
         Self {
             value: Amf0WriteErrorValue::BytesWriteError(error),
         }
-    }
-}
-
-impl fmt::Display for Amf0ReadError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for Amf0ReadError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}
-
-impl fmt::Display for Amf0WriteError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for Amf0WriteError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

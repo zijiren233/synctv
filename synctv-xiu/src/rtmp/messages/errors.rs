@@ -1,32 +1,30 @@
-#![allow(non_local_definitions)]
 use {
     crate::rtmp::{
         protocol_control_messages::errors::ProtocolControlMessageReaderError,
         user_control_messages::errors::EventMessagesError,
     },
     crate::bytesio::bytes_errors::BytesReadError,
-    failure::{Backtrace, Fail},
-    std::fmt,
     crate::flv::amf0::errors::Amf0ReadError,
 };
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum MessageErrorValue {
-    #[fail(display = "bytes read error: {}", _0)]
+    #[error("bytes read error: {0}")]
     BytesReadError(BytesReadError),
-    #[fail(display = "unknow read state")]
+    #[error("unknow read state")]
     UnknowReadState,
-    #[fail(display = "amf0 read error: {}", _0)]
+    #[error("amf0 read error: {0}")]
     Amf0ReadError(Amf0ReadError),
-    #[fail(display = "unknown message type")]
+    #[error("unknown message type")]
     UnknowMessageType,
-    #[fail(display = "protocol control message read error: {}", _0)]
+    #[error("protocol control message read error: {0}")]
     ProtocolControlMessageReaderError(ProtocolControlMessageReaderError),
-    #[fail(display = "user control message read error: {}", _0)]
+    #[error("user control message read error: {0}")]
     EventMessagesError(EventMessagesError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct MessageError {
     pub value: MessageErrorValue,
 }
@@ -66,21 +64,5 @@ impl From<EventMessagesError> for MessageError {
         Self {
             value: MessageErrorValue::EventMessagesError(error),
         }
-    }
-}
-
-impl fmt::Display for MessageError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for MessageError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

@@ -27,8 +27,7 @@ pub mod provider_common;
 pub mod providers;
 
 use axum::{
-    body::Body,
-    http::{Request, Method, HeaderName, HeaderValue},
+    http::{Method, HeaderName, HeaderValue},
     middleware as axum_middleware,
     routing::{get, post},
     Router,
@@ -169,7 +168,7 @@ fn create_router(
         live_streaming_infrastructure.clone(),
         None, // providers_manager - HTTP uses individual provider instances
         settings_registry.clone(),
-    ));
+    ).with_redis_publish_tx(redis_publish_tx.clone()));
 
     // AdminApi requires SettingsService and EmailService
     // If they're not configured, we need to handle this appropriately
@@ -493,7 +492,7 @@ fn create_router(
         .layer(cors)
         // Limit request body size to prevent DoS attacks (10MB for general endpoints)
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
-        .layer(axum_middleware::from_fn(security_headers_middleware))
+        .layer(axum_middleware::from_fn(middleware::security_headers_middleware))
         .layer(axum_middleware::from_fn(
             crate::observability::metrics_middleware::metrics_layer,
         ))
@@ -531,60 +530,3 @@ pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
     )
 }
 
-/// Middleware that adds security headers to all HTTP responses.
-async fn security_headers_middleware(
-    request: Request<Body>,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    let mut response = next.run(request).await;
-    let headers = response.headers_mut();
-
-    // Use const header names to avoid unwrap - these are compile-time validated
-    let _ = headers.insert(
-        HeaderName::from_static("x-content-type-options"),
-        HeaderValue::from_static("nosniff"),
-    );
-    let _ = headers.insert(
-        HeaderName::from_static("x-frame-options"),
-        HeaderValue::from_static("DENY"),
-    );
-    let _ = headers.insert(
-        HeaderName::from_static("x-xss-protection"),
-        HeaderValue::from_static("1; mode=block"),
-    );
-    let _ = headers.insert(
-        HeaderName::from_static("referrer-policy"),
-        HeaderValue::from_static("strict-origin-when-cross-origin"),
-    );
-
-    // Content-Security-Policy - restrictive policy for API server
-    // Since this is an API server, we use a restrictive CSP
-    // - default-src 'none': No content is allowed by default
-    // - frame-ancestors 'none': Prevents embedding in iframes (equivalent to X-Frame-Options: DENY)
-    // - base-uri 'self': Restricts <base> element to same origin
-    // - form-action 'self': Restricts form submissions to same origin
-    let _ = headers.insert(
-        HeaderName::from_static("content-security-policy"),
-        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"),
-    );
-
-    // HTTP Strict Transport Security (HSTS)
-    // - max-age=31536000: 1 year in seconds
-    // - includeSubDomains: Apply to all subdomains
-    // - preload: Allow inclusion in browser preload lists
-    // Note: Only enable when served over HTTPS in production
-    // This header is added but browsers will only honor it over HTTPS connections
-    let _ = headers.insert(
-        HeaderName::from_static("strict-transport-security"),
-        HeaderValue::from_static("max-age=31536000; includeSubDomains; preload"),
-    );
-
-    // Permissions Policy (formerly Feature Policy)
-    // Disable all browser features for API server
-    let _ = headers.insert(
-        HeaderName::from_static("permissions-policy"),
-        HeaderValue::from_static("accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"),
-    );
-
-    response
-}

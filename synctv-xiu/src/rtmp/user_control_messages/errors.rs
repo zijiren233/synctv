@@ -1,25 +1,23 @@
-#![allow(non_local_definitions)]
 use {
     crate::bytesio::bytes_errors::{BytesReadError, BytesWriteError},
-    failure::{Backtrace, Fail},
-    std::fmt,
     crate::flv::amf0::errors::Amf0WriteError,
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct EventMessagesError {
     pub value: EventMessagesErrorValue,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum EventMessagesErrorValue {
-    #[fail(display = "amf0 write error: {}", _0)]
+    #[error("amf0 write error: {0}")]
     Amf0WriteError(Amf0WriteError),
-    #[fail(display = "bytes write error: {}", _0)]
+    #[error("bytes write error: {0}")]
     BytesWriteError(BytesWriteError),
-    #[fail(display = "bytes read error: {}", _0)]
+    #[error("bytes read error: {0}")]
     BytesReadError(BytesReadError),
-    #[fail(display = "unknow event message type")]
+    #[error("unknow event message type")]
     UnknowEventMessageType,
 }
 
@@ -44,21 +42,5 @@ impl From<BytesReadError> for EventMessagesError {
         Self {
             value: EventMessagesErrorValue::BytesReadError(error),
         }
-    }
-}
-
-impl fmt::Display for EventMessagesError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for EventMessagesError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

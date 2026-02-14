@@ -97,7 +97,7 @@ fn apply_provider_headers(
 
 /// Fetch a remote URL and return the response.
 pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, anyhow::Error> {
-    validate_proxy_url(cfg.url)?;
+    validate_proxy_url(cfg.url).await?;
 
     let mut request = PROXY_CLIENT.get(cfg.url);
 
@@ -124,25 +124,13 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
     let status = proxy_response.status();
     let response_headers = proxy_response.headers().clone();
 
-    // Check Content-Length hint before reading (not authoritative, but catches obvious cases)
+    // Check Content-Length hint before streaming (not authoritative, but catches obvious cases)
     if let Some(cl) = proxy_response.content_length() {
         if cl as usize > MAX_PROXY_BODY_SIZE {
             return Err(anyhow::anyhow!(
                 "Response too large ({cl} bytes, max {MAX_PROXY_BODY_SIZE})"
             ));
         }
-    }
-
-    let body_bytes = tokio::time::timeout(BODY_READ_TIMEOUT, proxy_response.bytes())
-        .await
-        .map_err(|_| anyhow::anyhow!("Body read timed out after {}s", BODY_READ_TIMEOUT.as_secs()))?
-        .map_err(|e| anyhow::anyhow!("Failed to read response body: {e}"))?;
-
-    if body_bytes.len() > MAX_PROXY_BODY_SIZE {
-        return Err(anyhow::anyhow!(
-            "Response too large ({} bytes, max {MAX_PROXY_BODY_SIZE})",
-            body_bytes.len()
-        ));
     }
 
     let mut builder = Response::builder().status(status);
@@ -162,8 +150,15 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
     builder = builder.header("Cache-Control", "no-cache");
     builder = builder.header("Pragma", "no-cache");
 
+    // Stream the body directly instead of buffering entirely in memory
+    use futures::TryStreamExt;
+    let body_stream = proxy_response
+        .bytes_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    let body = Body::from_stream(body_stream);
+
     builder
-        .body(Body::from(body_bytes))
+        .body(body)
         .map_err(|e| anyhow::anyhow!("Failed to build response: {e}"))
 }
 
@@ -174,7 +169,7 @@ pub async fn proxy_m3u8_and_rewrite(
     provider_headers: &HashMap<String, String>,
     proxy_base: &str,
 ) -> Result<Response, anyhow::Error> {
-    validate_proxy_url(url)?;
+    validate_proxy_url(url).await?;
 
     let request = apply_provider_headers(PROXY_CLIENT.get(url), url, provider_headers);
 
@@ -318,11 +313,14 @@ pub fn percent_encode(input: &str) -> String {
 // ------------------------------------------------------------------
 
 /// Build a redirect policy that validates each hop against SSRF rules.
+///
+/// Uses synchronous string-level checks only (redirect callbacks are sync).
+/// The initial URL is already checked with full async DNS validation before the request.
 fn ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
         if attempt.previous().len() >= 5 {
             attempt.error(anyhow::anyhow!("Too many redirects"))
-        } else if let Err(e) = validate_proxy_url(attempt.url().as_str()) {
+        } else if let Err(e) = validate_proxy_url_static(attempt.url().as_str()) {
             attempt.error(e)
         } else {
             attempt.follow()
@@ -335,7 +333,43 @@ fn ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
 // ------------------------------------------------------------------
 
 /// Validate that a URL is safe to proxy (not targeting internal services).
-pub fn validate_proxy_url(raw: &str) -> Result<(), anyhow::Error> {
+///
+/// Performs DNS resolution to guard against DNS rebinding attacks where a
+/// hostname passes string-level checks but resolves to a private IP.
+pub async fn validate_proxy_url(raw: &str) -> Result<(), anyhow::Error> {
+    validate_proxy_url_static(raw)?;
+
+    // Resolve hostname and check all resolved IPs to prevent DNS rebinding
+    let parsed = url::Url::parse(raw)?;
+    let host = parsed.host_str().unwrap_or("");
+    // Only resolve if the host is NOT already a literal IP (already checked above)
+    if host.parse::<IpAddr>().is_err() {
+        let port = parsed.port().unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+        let addrs = tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|e| anyhow::anyhow!("DNS lookup failed for {host}: {e}"))?;
+
+        let mut found = false;
+        for addr in addrs {
+            if is_private_ip(addr.ip()) {
+                return Err(anyhow::anyhow!(
+                    "Hostname {host} resolves to private/reserved IP {}",
+                    addr.ip()
+                ));
+            }
+            found = true;
+        }
+        if !found {
+            return Err(anyhow::anyhow!("Hostname {host} resolved to no addresses"));
+        }
+    }
+
+    Ok(())
+}
+
+/// Synchronous URL string validation (scheme, hostname blocklist, literal IP checks).
+/// Used by redirect policy where async is not available.
+fn validate_proxy_url_static(raw: &str) -> Result<(), anyhow::Error> {
     let parsed = url::Url::parse(raw)
         .map_err(|_| anyhow::anyhow!("Invalid proxy URL"))?;
 

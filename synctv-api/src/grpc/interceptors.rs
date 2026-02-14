@@ -224,3 +224,45 @@ impl Debug for TimeoutInterceptor {
             .finish()
     }
 }
+
+/// Shared-secret interceptor for cluster gRPC endpoints.
+///
+/// Validates that incoming inter-node requests carry the correct shared secret
+/// in the `x-cluster-secret` metadata header.
+#[derive(Clone)]
+pub struct ClusterAuthInterceptor {
+    secret: Arc<String>,
+}
+
+impl ClusterAuthInterceptor {
+    #[must_use]
+    pub fn new(secret: String) -> Self {
+        Self {
+            secret: Arc::new(secret),
+        }
+    }
+
+    /// Validate the shared secret from request metadata
+    #[allow(clippy::result_large_err)]
+    pub fn validate<T>(&self, request: Request<T>) -> Result<Request<T>, Status> {
+        let token = request
+            .metadata()
+            .get("x-cluster-secret")
+            .ok_or_else(|| Status::unauthenticated("Missing x-cluster-secret header"))?
+            .to_str()
+            .map_err(|_| Status::unauthenticated("Invalid x-cluster-secret header"))?;
+
+        if token != self.secret.as_str() {
+            warn!("Cluster gRPC auth failed: invalid secret");
+            return Err(Status::unauthenticated("Invalid cluster secret"));
+        }
+
+        Ok(request)
+    }
+}
+
+impl Debug for ClusterAuthInterceptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClusterAuthInterceptor").finish()
+    }
+}

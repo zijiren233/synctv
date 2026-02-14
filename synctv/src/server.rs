@@ -121,7 +121,7 @@ impl SyncTvServer {
         );
 
         // Start gRPC server
-        let grpc_handle = self.start_grpc_server().await?;
+        let grpc_handle = self.start_grpc_server(shutdown_rx.clone()).await?;
         self.grpc_handle = Some(grpc_handle);
 
         // Start HTTP server with graceful shutdown
@@ -252,7 +252,14 @@ impl SyncTvServer {
             info!("Livestream infrastructure shut down");
         }
 
-        // 5. Redis publish channel closes when sender is dropped
+        // 5. Shut down cluster manager (cancels Redis Pub/Sub + deduplicator tasks)
+        if let Some(ref cluster_mgr) = self.services.cluster_manager {
+            info!("Shutting down cluster manager...");
+            cluster_mgr.shutdown();
+            info!("Cluster manager shut down");
+        }
+
+        // 6. Redis publish channel closes when sender is dropped
         if self.services.redis_publish_tx.is_some() {
             info!("Closing Redis publish channel");
         }
@@ -266,7 +273,7 @@ impl SyncTvServer {
     }
 
     /// Start gRPC server
-    async fn start_grpc_server(&self) -> anyhow::Result<JoinHandle<()>> {
+    async fn start_grpc_server(&self, shutdown_rx: watch::Receiver<bool>) -> anyhow::Result<JoinHandle<()>> {
         let config = self.config.clone();
         let user_service = self.services.user_service.clone();
         let room_service = self.services.room_service.clone();
@@ -324,6 +331,7 @@ impl SyncTvServer {
                 sfu_manager,
                 live_streaming_infrastructure,
                 Some(publish_key_service),
+                Some(shutdown_rx),
             )
             .await
             {

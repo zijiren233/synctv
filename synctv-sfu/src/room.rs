@@ -102,14 +102,18 @@ impl SfuRoom {
         }
     }
 
-    /// Add a peer to the room
+    /// Add a peer to the room (atomic via entry API to prevent TOCTOU)
     pub async fn add_peer(&self, peer_id: PeerId) -> Result<Arc<SfuPeer>> {
-        if self.peers.contains_key(&peer_id) {
-            return Err(anyhow!("Peer already exists in room"));
-        }
+        use dashmap::mapref::entry::Entry;
 
-        let peer = Arc::new(SfuPeer::new(peer_id.clone()));
-        self.peers.insert(peer_id.clone(), peer.clone());
+        let peer = match self.peers.entry(peer_id.clone()) {
+            Entry::Occupied(_) => return Err(anyhow!("Peer already exists in room")),
+            Entry::Vacant(entry) => {
+                let p = Arc::new(SfuPeer::new(peer_id.clone()));
+                entry.insert(p.clone());
+                p
+            }
+        };
 
         // Update statistics
         {
@@ -182,19 +186,19 @@ impl SfuRoom {
         Ok(())
     }
 
-    /// Add a published track
+    /// Add a published track (holds peer reference to prevent TOCTOU)
     pub async fn add_published_track(
         &self,
         peer_id: &PeerId,
         track_id: TrackId,
         track: Arc<MediaTrack>,
     ) -> Result<()> {
-        // Verify peer exists
-        if !self.peers.contains_key(peer_id) {
-            return Err(anyhow!("Peer not found in room"));
-        }
+        // Verify peer exists by holding a reference during insert
+        let _peer_ref = self.peers
+            .get(peer_id)
+            .ok_or_else(|| anyhow!("Peer not found in room"))?;
 
-        // Store track
+        // Store track (safe: peer reference still held)
         self.published_tracks
             .insert(track_id.clone(), (peer_id.clone(), track.clone()));
 
@@ -268,23 +272,21 @@ impl SfuRoom {
         Ok(())
     }
 
-    /// Subscribe to a track
+    /// Subscribe to a track (holds references to prevent TOCTOU)
     pub async fn subscribe_track(
         &self,
         subscriber_peer_id: &PeerId,
         track_id: &TrackId,
     ) -> Result<()> {
-        // Verify subscriber peer exists
-        if !self.peers.contains_key(subscriber_peer_id) {
-            return Err(anyhow!("Subscriber peer not found in room"));
-        }
+        // Verify by holding references during insert
+        let _peer_ref = self.peers
+            .get(subscriber_peer_id)
+            .ok_or_else(|| anyhow!("Subscriber peer not found in room"))?;
+        let _track_ref = self.published_tracks
+            .get(track_id)
+            .ok_or_else(|| anyhow!("Track not found in room"))?;
 
-        // Verify track exists
-        if !self.published_tracks.contains_key(track_id) {
-            return Err(anyhow!("Track not found in room"));
-        }
-
-        // Add subscription
+        // Add subscription (safe: references still held)
         self.subscriptions
             .insert((subscriber_peer_id.clone(), track_id.clone()), ());
 

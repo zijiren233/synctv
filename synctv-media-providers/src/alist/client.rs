@@ -2,6 +2,7 @@
 //!
 //! Pure HTTP client for Alist API, no dependency on `MediaProvider`
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT}};
@@ -9,6 +10,16 @@ use serde_json::json;
 
 use super::error::AlistError;
 use super::types::{AlistResp, LoginData, HttpFsGetResp, HttpFsListResp, HttpFsOtherResp, HttpMeResp, HttpFsSearchResp};
+
+/// Shared HTTP client for all Alist requests (connection pooling)
+static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(10)
+        .build()
+        .expect("Failed to build Alist shared HTTP client")
+});
 
 /// Alist HTTP Client
 ///
@@ -22,27 +33,21 @@ pub struct AlistClient {
 }
 
 impl AlistClient {
-    /// Create a new Alist client
+    /// Create a new Alist client (reuses shared connection pool)
     pub fn new(host: impl Into<String>) -> Result<Self, AlistError> {
         Ok(Self {
             host: host.into(),
             token: None,
-            client: Client::builder()
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(30))
-                .build()?,
+            client: SHARED_CLIENT.clone(),
         })
     }
 
-    /// Create a new Alist client with token
+    /// Create a new Alist client with token (reuses shared connection pool)
     pub fn with_token(host: impl Into<String>, token: impl Into<String>) -> Result<Self, AlistError> {
         Ok(Self {
             host: host.into(),
             token: Some(token.into()),
-            client: Client::builder()
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(30))
-                .build()?,
+            client: SHARED_CLIENT.clone(),
         })
     }
 

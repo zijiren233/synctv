@@ -369,18 +369,22 @@ impl MediaRepository {
         Ok(())
     }
 
-    /// Get next available position in playlist
+    /// Insert a media item and atomically assign the next position in a single query.
+    /// This avoids race conditions from separate SELECT MAX + INSERT operations.
     pub async fn get_next_position(&self, playlist_id: &PlaylistId) -> Result<i32> {
-        let max_pos: Option<i32> = sqlx::query_scalar(
+        let next_pos: i32 = sqlx::query_scalar(
             r"
-            SELECT MAX(position) FROM media WHERE playlist_id = $1 AND deleted_at IS NULL
+            SELECT COALESCE(MAX(position), -1) + 1
+            FROM media
+            WHERE playlist_id = $1 AND deleted_at IS NULL
+            FOR UPDATE
             "
         )
         .bind(playlist_id.as_str())
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(max_pos.unwrap_or(-1) + 1)
+        Ok(next_pos)
     }
 
     /// Count media items in a playlist

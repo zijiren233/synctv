@@ -99,6 +99,8 @@ pub struct JwtService {
     encoding_key: Arc<EncodingKey>,
     decoding_key: Arc<DecodingKey>,
     algorithm: Algorithm,
+    access_token_duration_hours: u64,
+    refresh_token_duration_days: u64,
 }
 
 impl std::fmt::Debug for JwtService {
@@ -113,15 +115,26 @@ impl std::fmt::Debug for JwtService {
 const MIN_JWT_SECRET_ENTROPY_BITS: usize = 256;
 
 impl JwtService {
-    /// Create a new JWT service with HS256 secret
+    /// Create a new JWT service with HS256 secret and configurable token durations
     ///
     /// # Arguments
     /// * `secret` - Secret string for HMAC signing
+    /// * `access_token_duration_hours` - Access token lifetime in hours (default: 1)
+    /// * `refresh_token_duration_days` - Refresh token lifetime in days (default: 30)
     ///
     /// # Security
     /// The secret must have sufficient entropy (at least 256 bits / 32 characters).
     /// Weak secrets will be rejected with an error.
     pub fn new(secret: &str) -> Result<Self> {
+        Self::with_durations(secret, 1, 30)
+    }
+
+    /// Create a new JWT service with custom token durations
+    pub fn with_durations(
+        secret: &str,
+        access_token_duration_hours: u64,
+        refresh_token_duration_days: u64,
+    ) -> Result<Self> {
         if secret.is_empty() {
             return Err(Error::Internal("JWT secret cannot be empty".to_string()));
         }
@@ -143,6 +156,8 @@ impl JwtService {
             encoding_key: Arc::new(encoding_key),
             decoding_key: Arc::new(decoding_key),
             algorithm: Algorithm::HS256,
+            access_token_duration_hours,
+            refresh_token_duration_days,
         })
     }
 
@@ -204,9 +219,9 @@ impl JwtService {
     ) -> Result<String> {
         let now = Utc::now();
         let duration = match token_type {
-            TokenType::Access => Duration::hours(1),
-            TokenType::Refresh => Duration::days(30),
-            TokenType::Guest => Duration::hours(4), // Not used for user tokens
+            TokenType::Access => Duration::hours(self.access_token_duration_hours as i64),
+            TokenType::Refresh => Duration::days(self.refresh_token_duration_days as i64),
+            TokenType::Guest => Duration::hours(4),
         };
 
         let claims = Claims {

@@ -18,7 +18,6 @@ bytes = "1.9"
 rand = "0.8"
 
 # Error handling
-failure = "0.1.8"
 thiserror = "1.0"
 anyhow = "1.0"
 

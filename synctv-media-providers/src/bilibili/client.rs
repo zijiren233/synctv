@@ -21,6 +21,17 @@ static RE_LIVE_ROOM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/live/(\d+)
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
 const REFERER: &str = "https://www.bilibili.com";
 
+/// Shared HTTP client for all Bilibili requests (connection pooling)
+static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(10)
+        .build()
+        .expect("Failed to build Bilibili shared HTTP client")
+});
+
 /// Bilibili HTTP Client
 pub struct BilibiliClient {
     client: Client,
@@ -28,32 +39,18 @@ pub struct BilibiliClient {
 }
 
 impl BilibiliClient {
-    /// Create a new Bilibili client
+    /// Create a new Bilibili client (reuses shared connection pool)
     pub fn new() -> Result<Self, BilibiliError> {
-        let client = Client::builder()
-            .user_agent(USER_AGENT)
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| BilibiliError::Network(e.to_string()))?;
-
         Ok(Self {
-            client,
+            client: SHARED_CLIENT.clone(),
             cookies: None,
         })
     }
 
-    /// Create a new Bilibili client with cookies
+    /// Create a new Bilibili client with cookies (reuses shared connection pool)
     pub fn with_cookies(cookies: HashMap<String, String>) -> Result<Self, BilibiliError> {
-        let client = Client::builder()
-            .user_agent(USER_AGENT)
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| BilibiliError::Network(e.to_string()))?;
-
         Ok(Self {
-            client,
+            client: SHARED_CLIENT.clone(),
             cookies: Some(cookies),
         })
     }

@@ -1,23 +1,21 @@
-#![allow(non_local_definitions)]
 use {
     crate::rtmp::chunk::errors::PackError,
-    failure::{Backtrace, Fail},
-    std::fmt,
     crate::flv::amf0::errors::Amf0WriteError,
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct NetStreamError {
     pub value: NetStreamErrorValue,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum NetStreamErrorValue {
-    #[fail(display = "amf0 write error: {}", _0)]
+    #[error("amf0 write error: {0}")]
     Amf0WriteError(Amf0WriteError),
-    #[fail(display = "invalid max chunk size")]
+    #[error("invalid max chunk size")]
     InvalidMaxChunkSize { chunk_size: usize },
-    #[fail(display = "pack error")]
+    #[error("pack error")]
     PackError(PackError),
 }
 
@@ -34,21 +32,5 @@ impl From<PackError> for NetStreamError {
         Self {
             value: NetStreamErrorValue::PackError(error),
         }
-    }
-}
-
-impl fmt::Display for NetStreamError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for NetStreamError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
     }
 }

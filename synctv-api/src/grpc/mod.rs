@@ -15,7 +15,8 @@ pub mod providers;
 pub use admin_service::AdminServiceImpl;
 pub use client_service::ClientServiceImpl;
 pub use interceptors::{
-    AuthInterceptor, LoggingInterceptor, TimeoutInterceptor, ValidationInterceptor,
+    AuthInterceptor, ClusterAuthInterceptor, LoggingInterceptor, TimeoutInterceptor,
+    ValidationInterceptor,
 };
 
 // Use synctv_proto for all server traits and message types (single source of truth)
@@ -62,6 +63,7 @@ pub struct GrpcServerConfig<'a> {
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
+    pub shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 /// Build and start the gRPC server
@@ -90,6 +92,7 @@ pub async fn serve(
     sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
+    shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
 
@@ -134,7 +137,7 @@ pub async fn serve(
         live_streaming_infrastructure.clone(),
         providers_manager_for_client.clone(),
         settings_registry.clone(),
-    ));
+    ).with_redis_publish_tx(redis_publish_tx.clone()));
 
     let client_service = ClientServiceImpl::new(
         user_service_clone,
@@ -262,7 +265,7 @@ pub async fn serve(
                 None, // No live_streaming_infrastructure for provider gRPC
                 None, // No providers_manager for provider gRPC
                 None, // No settings_registry for provider gRPC
-            )),
+            ).with_redis_publish_tx(redis_publish_tx.clone())),
             admin_api: None,
         });
 
@@ -282,12 +285,44 @@ pub async fn serve(
         ));
     }
 
+    // Register cluster gRPC service (requires cluster_secret to be configured)
+    if !config.server.cluster_secret.is_empty() {
+        let redis_url = if config.redis.url.is_empty() {
+            None
+        } else {
+            Some(config.redis.url.clone())
+        };
+        match synctv_cluster::discovery::NodeRegistry::new(redis_url, "self".to_string(), 30) {
+            Ok(node_registry) => {
+                let cluster_server = synctv_cluster::grpc::ClusterServer::new(
+                    std::sync::Arc::new(node_registry),
+                    "self".to_string(),
+                );
+                let cluster_interceptor = ClusterAuthInterceptor::new(config.server.cluster_secret.clone());
+                router = router.add_service(
+                    synctv_cluster::grpc::ClusterServiceServer::with_interceptor(
+                        cluster_server,
+                        move |req| cluster_interceptor.validate(req),
+                    ),
+                );
+                tracing::info!("Cluster gRPC service registered with shared-secret auth");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create NodeRegistry for cluster gRPC: {e}");
+            }
+        }
+    }
+
     // Start server with graceful shutdown support
     router
-        .serve_with_shutdown(addr, async {
-            // This future resolves on tokio runtime drop or Ctrl+C,
-            // allowing tonic to finish in-flight requests gracefully.
-            tokio::signal::ctrl_c().await.ok();
+        .serve_with_shutdown(addr, async move {
+            if let Some(mut rx) = shutdown_rx {
+                // Use centralized shutdown signal from the server
+                let _ = rx.changed().await;
+            } else {
+                // Fallback: listen for Ctrl+C
+                tokio::signal::ctrl_c().await.ok();
+            }
         })
         .await
         .map_err(|e| anyhow::anyhow!("gRPC server error: {e}"))?;
@@ -319,6 +354,7 @@ pub async fn serve_from_config(config: GrpcServerConfig<'_>) -> anyhow::Result<(
         config.sfu_manager,
         config.live_streaming_infrastructure,
         config.publish_key_service,
+        config.shutdown_rx,
     )
     .await
 }

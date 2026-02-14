@@ -1,23 +1,22 @@
-#![allow(non_local_definitions)]
 use super::bytes_errors::BytesReadError;
 use super::bytes_errors::BytesWriteError;
-use failure::{Backtrace, Fail};
-use std::fmt;
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum BitErrorValue {
-    #[fail(display = "bytes read error")]
+    #[error("bytes read error")]
     BytesReadError(BytesReadError),
-    #[fail(display = "bytes write error")]
+    #[error("bytes write error")]
     BytesWriteError(BytesWriteError),
-    #[fail(display = "the size is bigger than 64")]
+    #[error("the size is bigger than 64")]
     TooBig,
-    #[fail(display = "cannot write the whole 8 bits")]
+    #[error("cannot write the whole 8 bits")]
     CannotWrite8Bit,
-    #[fail(display = "cannot read byte")]
+    #[error("cannot read byte")]
     CannotReadByte,
 }
-#[derive(Debug)]
+
+#[derive(Debug, thiserror::Error)]
+#[error("{value}")]
 pub struct BitError {
     pub value: BitErrorValue,
 }
@@ -51,19 +50,3 @@ impl From<BytesWriteError> for BitError {
 //         }
 //     }
 // }
-
-impl fmt::Display for BitError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl Fail for BitError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.value.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.value.backtrace()
-    }
-}

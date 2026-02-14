@@ -85,6 +85,27 @@ impl UserRepository {
         }
     }
 
+    /// Get multiple users by IDs in a single batch query
+    pub async fn get_by_ids(&self, user_ids: &[UserId]) -> Result<Vec<User>> {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let ids: Vec<&str> = user_ids.iter().map(|id| id.as_str()).collect();
+        let rows = sqlx::query(
+            r"
+            SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
+            FROM users
+            WHERE id = ANY($1) AND deleted_at IS NULL
+            ",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(|row| self.row_to_user(row)).collect()
+    }
+
     /// Get user by username
     pub async fn get_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
