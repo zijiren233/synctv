@@ -710,6 +710,7 @@ mod tests {
                 development_mode: false,
                 trusted_proxies: Vec::new(),
                 cors_allowed_origins: Vec::new(),
+                cluster_secret: String::new(),
             },
             database: DatabaseConfig::default(),
             redis: RedisConfig::default(),

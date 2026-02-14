@@ -5,7 +5,9 @@ server:
   enable_reflection: true
 
 database:
-  url: "postgresql://synctv:synctv@localhost:5432/synctv"
+  # SECURITY: Database URL should be provided via environment variable DATABASE_URL
+  # Example: DATABASE_URL="postgresql://user:password@host:5432/dbname"
+  url: ""
   max_connections: 20
   min_connections: 5
   connect_timeout_seconds: 10
@@ -18,7 +20,10 @@ redis:
   key_prefix: "synctv:"
 
 jwt:
-  secret: "test-secret-for-functional-testing-this-is-a-long-secure-secret"
+  # SECURITY: JWT secret must be provided via environment variable SYNCTV__JWT__SECRET
+  # Example: SYNCTV__JWT__SECRET="your-secure-random-string-at-least-32-chars"
+  # The secret will be validated at startup - default empty value will cause startup failure
+  secret: ""
   access_token_duration_hours: 1
   refresh_token_duration_days: 30
 

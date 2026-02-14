@@ -15,8 +15,9 @@ A production-grade real-time synchronized video watching platform built in Rust.
 
 - **synctv-core**: Core business logic library
 - **synctv-api**: gRPC + HTTP API service
-- **synctv-stream**: Live streaming service (RTMP/HLS/FLV)
+- **synctv-livestream**: Live streaming service (RTMP/HLS/FLV)
 - **synctv-cluster**: Cluster coordination library
+- **synctv-xiu**: Consolidated streaming library (RTMP/HLS/HTTP-FLV protocols)
 
 ## Quick Start
 
@@ -63,7 +64,10 @@ sqlx migrate run --database-url $SYNCTV__DATABASE__URL
 ### 4. Start the Server
 
 ```bash
-cargo run --bin synctv-api
+# Set JWT secret (required for production)
+export SYNCTV__JWT__SECRET="your-secure-random-string-at-least-32-chars"
+
+cargo run --bin synctv
 ```
 
 The gRPC server will start on `0.0.0.0:50051` and HTTP on `0.0.0.0:8080`.
@@ -79,7 +83,7 @@ cargo test --workspace
 ### Run with Logging
 
 ```bash
-RUST_LOG=debug cargo run --bin synctv-api
+RUST_LOG=debug cargo run --bin synctv
 ```
 
 ### Build Release
@@ -169,12 +173,20 @@ Contributions are welcome! Please read CONTRIBUTING.md for guidelines.
 
 ## Status
 
-**Current Milestone**: M1 - User Authentication ✓
+**Current Status**: Production-ready core features
 
-- [x] User registration
-- [x] User login
-- [x] JWT token generation
-- [x] Token refresh
-- [ ] JWT authentication interceptor (in progress)
+### Completed Features
+- [x] User authentication (registration, login, JWT tokens)
+- [x] Room management and real-time synchronization
+- [x] Multi-provider media support (Bilibili, Alist, Emby)
+- [x] Live streaming (RTMP push, HLS/FLV playback)
+- [x] Multi-replica cluster support
+- [x] OAuth2 integration (GitHub, Google, OIDC)
+- [x] Permission system with 64-bit bitmask
+- [x] WebSocket real-time communication
 
-**Next Milestone**: M2 - Room Management & Real-Time Sync
+### In Progress
+- [ ] WebRTC SFU for large rooms
+- [ ] Cross-replica cache invalidation via Redis Pub/Sub
+
+**Next Milestone**: Production hardening and performance optimization

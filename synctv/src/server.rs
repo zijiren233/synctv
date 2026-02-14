@@ -364,6 +364,24 @@ impl SyncTvServer {
         let live_streaming_infrastructure = self.services.live_streaming_infrastructure.clone();
         let sfu_manager = self.services.sfu_manager.clone();
 
+        // Create WebSocket ticket service if Redis is configured
+        let ws_ticket_service = if self.config.redis.url.is_empty() {
+            None
+        } else {
+            match redis::Client::open(self.config.redis.url.clone()) {
+                Ok(redis_client) => {
+                    Some(Arc::new(synctv_core::service::WsTicketService::new(
+                        Some(redis_client),
+                        None,
+                    )))
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to create Redis client for ws_ticket_service: {}", e);
+                    None
+                }
+            }
+        };
+
         let http_router = synctv_api::http::create_router_from_config(
             synctv_api::http::RouterConfig {
                 config: Arc::new(self.config.clone()),
@@ -388,6 +406,7 @@ impl SyncTvServer {
                 live_streaming_infrastructure,
                 sfu_manager,
                 rate_limiter: self.services.rate_limiter.clone(),
+                ws_ticket_service,
             },
         );
 

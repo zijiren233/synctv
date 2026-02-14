@@ -16,6 +16,7 @@ pub mod public;
 pub mod publish_key;
 pub mod room;
 pub mod room_extra;
+pub mod ticket;
 pub mod user;
 pub mod validation;
 pub mod webrtc;
@@ -72,6 +73,8 @@ pub struct RouterConfig {
     pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     pub rate_limiter: synctv_core::service::rate_limit::RateLimiter,
+    /// WebSocket ticket service for secure WebSocket authentication (HTTP only)
+    pub ws_ticket_service: Option<Arc<synctv_core::service::WsTicketService>>,
 }
 
 /// Shared application state
@@ -98,6 +101,8 @@ pub struct AppState {
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
     pub rate_limiter: synctv_core::service::rate_limit::RateLimiter,
+    /// WebSocket ticket service for secure WebSocket authentication (HTTP only)
+    pub ws_ticket_service: Option<Arc<synctv_core::service::WsTicketService>>,
     // Unified API implementation layer
     pub client_api: Arc<crate::impls::ClientApiImpl>,
     pub admin_api: Option<Arc<crate::impls::AdminApiImpl>>,
@@ -155,6 +160,7 @@ fn create_router(
     live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
     sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     rate_limiter: synctv_core::service::rate_limit::RateLimiter,
+    ws_ticket_service: Option<Arc<synctv_core::service::WsTicketService>>,
 ) -> axum::Router {
     // Create the unified API implementation layer
     let client_api = Arc::new(crate::impls::ClientApiImpl::new(
@@ -211,6 +217,7 @@ fn create_router(
         notification_service,
         live_streaming_infrastructure,
         rate_limiter,
+        ws_ticket_service,
         client_api,
         admin_api,
     };
@@ -369,6 +376,8 @@ fn create_router(
         .route("/api/user", get(user::get_me))
         .route("/api/user/rooms", get(user::get_joined_rooms))
         .route("/api/user/rooms/created", get(user::list_created_rooms))
+        // WebSocket ticket route (for secure WebSocket authentication)
+        .route("/api/tickets", post(ticket::create_ticket))
         // Room discovery routes (public)
         .route("/api/rooms", get(room::list_or_get_rooms))
         .route("/api/rooms/hot", get(room::get_hot_rooms))
@@ -527,6 +536,7 @@ pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
         config.live_streaming_infrastructure,
         config.sfu_manager,
         config.rate_limiter,
+        config.ws_ticket_service,
     )
 }
 

@@ -1,5 +1,15 @@
+//! CRC32 calculation for MPEG-TS tables (PAT/PMT)
+//!
+//! MPEG-TS uses a specific CRC32 algorithm with the polynomial 0x04C11DB7,
+//! which is different from the standard IEEE CRC32 (0xEDB88320).
+//!
+//! Note: We cannot use `crc32fast` here because MPEG-TS uses a different
+//! polynomial. This implementation uses a pre-computed lookup table for
+//! performance.
+
 use bytes::BytesMut;
-//const RTMP_SERVER_KEY: [u8; 68]
+
+/// MPEG-TS CRC32 lookup table (polynomial: 0x04C11DB7)
 const CRC32_TABLE: [u32; 256] = [
     0x00000000, 0xB71DC104, 0x6E3B8209, 0xD926430D, 0xDC760413, 0x6B6BC517, 0xB24D861A, 0x0550471E,
     0xB8ED0826, 0x0FF0C922, 0xD6D68A2F, 0x61CB4B2B, 0x649B0C35, 0xD386CD31, 0x0AA08E3C, 0xBDBD4F38,
@@ -35,7 +45,15 @@ const CRC32_TABLE: [u32; 256] = [
     0xB110B0AF, 0x060D71AB, 0xDF2B32A6, 0x6836F3A2, 0x6D66B4BC, 0xDA7B75B8, 0x035D36B5, 0xB440F7B1,
 ];
 
-#[must_use] 
+/// Calculate CRC32 for MPEG-TS tables using the MPEG-TS polynomial
+///
+/// # Arguments
+/// * `crc` - Initial CRC value (typically 0xFFFFFFFF for MPEG-TS)
+/// * `buffer` - Data to calculate CRC over
+///
+/// # Returns
+/// The CRC32 checksum
+#[must_use]
 pub fn gen_crc32(crc: u32, buffer: BytesMut) -> u32 {
     let mut result: u32 = crc;
 
@@ -50,13 +68,12 @@ pub fn gen_crc32(crc: u32, buffer: BytesMut) -> u32 {
 
 #[cfg(test)]
 mod tests {
-
-    use super::gen_crc32;
-
+    use super::*;
     use bytes::BytesMut;
 
     #[test]
     fn test_gen_crc32() {
+        // Test data from MPEG-TS specification
         let data: [u8; 12] = [
             0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE1, 0x00,
         ];
@@ -67,16 +84,36 @@ mod tests {
         let result = gen_crc32(0xffffffff, payload);
 
         let aa0 = result & 0xFF;
-
         let bb0 = (result >> 8) & 0xFF;
-
         let cc0 = (result >> 16) & 0xFF;
-
         let dd0 = (result >> 24) & 0xFF;
 
-        assert_eq!(aa0, 0xE8, "not success");
-        assert_eq!(bb0, 0xF9, "not success");
-        assert_eq!(cc0, 0x5E, "not success");
-        assert_eq!(dd0, 0x7D, "not success");
+        assert_eq!(aa0, 0xE8, "CRC byte 0 mismatch");
+        assert_eq!(bb0, 0xF9, "CRC byte 1 mismatch");
+        assert_eq!(cc0, 0x5E, "CRC byte 2 mismatch");
+        assert_eq!(dd0, 0x7D, "CRC byte 3 mismatch");
+    }
+
+    #[test]
+    fn test_crc32_consistency() {
+        let data = b"Hello, World!";
+
+        let mut payload1 = BytesMut::new();
+        payload1.extend_from_slice(data);
+        let mut payload2 = BytesMut::new();
+        payload2.extend_from_slice(data);
+
+        // Calculate twice to ensure consistency
+        let crc1 = gen_crc32(0xFFFFFFFF, payload1);
+        let crc2 = gen_crc32(0xFFFFFFFF, payload2);
+
+        assert_eq!(crc1, crc2, "CRC32 should be deterministic");
+    }
+
+    #[test]
+    fn test_crc32_empty() {
+        let payload = BytesMut::new();
+        let crc = gen_crc32(0xFFFFFFFF, payload);
+        assert_eq!(crc, 0xFFFFFFFF, "CRC32 of empty data should equal initial value");
     }
 }

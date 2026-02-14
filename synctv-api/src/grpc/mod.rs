@@ -254,6 +254,7 @@ pub async fn serve(
             notification_service: None,
             live_streaming_infrastructure: None,
             rate_limiter: rate_limiter_for_provider,
+            ws_ticket_service: None, // WebSocket ticket is HTTP-only
             client_api: Arc::new(crate::impls::ClientApiImpl::new(
                 user_service_for_provider,
                 room_service_for_provider,
@@ -297,6 +298,8 @@ pub async fn serve(
                 let cluster_server = synctv_cluster::grpc::ClusterServer::new(
                     std::sync::Arc::new(node_registry),
                     "self".to_string(),
+                ).with_connection_manager(
+                    std::sync::Arc::new(connection_manager_for_provider.clone()),
                 );
                 let cluster_interceptor = ClusterAuthInterceptor::new(config.server.cluster_secret.clone());
                 router = router.add_service(

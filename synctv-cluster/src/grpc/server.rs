@@ -6,8 +6,9 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use super::synctv::cluster::cluster_service_server::ClusterService;
-use super::synctv::cluster::{NodeInfo, RegisterNodeRequest, RegisterNodeResponse, HeartbeatRequest, HeartbeatResponse, GetNodesRequest, GetNodesResponse, DeregisterNodeRequest, DeregisterNodeResponse, SyncRoomStateRequest, SyncRoomStateResponse, BroadcastEventRequest, BroadcastEventResponse, GetUserOnlineStatusRequest, GetUserOnlineStatusResponse, GetRoomConnectionsRequest, GetRoomConnectionsResponse};
+use super::synctv::cluster::{NodeInfo, RegisterNodeRequest, RegisterNodeResponse, HeartbeatRequest, HeartbeatResponse, GetNodesRequest, GetNodesResponse, DeregisterNodeRequest, DeregisterNodeResponse, SyncRoomStateRequest, SyncRoomStateResponse, BroadcastEventRequest, BroadcastEventResponse, GetUserOnlineStatusRequest, GetUserOnlineStatusResponse, UserOnlineStatus, GetRoomConnectionsRequest, GetRoomConnectionsResponse, RoomConnection};
 use crate::discovery::{NodeInfo as DiscoveryNodeInfo, NodeRegistry};
+use crate::sync::connection_manager::ConnectionManager;
 
 /// Cluster gRPC service
 ///
@@ -15,15 +16,26 @@ use crate::discovery::{NodeInfo as DiscoveryNodeInfo, NodeRegistry};
 #[derive(Clone)]
 pub struct ClusterServer {
     node_registry: Arc<NodeRegistry>,
+    connection_manager: Option<Arc<ConnectionManager>>,
+    node_id: String,
 }
 
 impl ClusterServer {
     /// Create a new cluster server
-    #[must_use] 
-    pub fn new(node_registry: Arc<NodeRegistry>, _node_id: String) -> Self {
+    #[must_use]
+    pub fn new(node_registry: Arc<NodeRegistry>, node_id: String) -> Self {
         Self {
             node_registry,
+            connection_manager: None,
+            node_id,
         }
+    }
+
+    /// Set the connection manager for user/room connection queries
+    #[must_use]
+    pub fn with_connection_manager(mut self, cm: Arc<ConnectionManager>) -> Self {
+        self.connection_manager = Some(cm);
+        self
     }
 
     /// Convert discovery `NodeInfo` to proto `NodeInfo`
@@ -170,48 +182,118 @@ impl ClusterService for ClusterServer {
     }
 
     /// Synchronize room state between nodes
+    ///
+    /// NOTE: Room state synchronization is handled via Redis Pub/Sub in the sync module.
+    /// This RPC method is provided for future direct node-to-node state sync but is
+    /// currently not implemented. Use Redis Pub/Sub for real-time state sync.
     async fn sync_room_state(
         &self,
         _request: Request<SyncRoomStateRequest>,
     ) -> std::result::Result<Response<SyncRoomStateResponse>, Status> {
         // Room state synchronization is handled via Redis Pub/Sub in the sync module
-        // This is a placeholder for future direct state sync
-
+        // Return empty response - clients should use Redis Pub/Sub for real-time sync
+        tracing::debug!("sync_room_state called - use Redis Pub/Sub for real-time sync");
         Ok(Response::new(SyncRoomStateResponse { state: None }))
     }
 
     /// Broadcast an event to all nodes
+    ///
+    /// NOTE: Events are broadcast via Redis Pub/Sub through ClusterManager.
+    /// This RPC method returns success with 0 nodes reached to indicate
+    /// the caller should use Redis Pub/Sub for actual broadcasting.
     async fn broadcast_event(
         &self,
         _request: Request<BroadcastEventRequest>,
     ) -> std::result::Result<Response<BroadcastEventResponse>, Status> {
-        // Events are broadcast via Redis Pub/Sub
+        // Events are broadcast via Redis Pub/Sub through ClusterManager
+        tracing::debug!("broadcast_event called - use ClusterManager for event broadcasting");
         Ok(Response::new(BroadcastEventResponse {
             success: true,
-            nodes_reached: 0,
+            nodes_reached: 0, // Indicates Redis Pub/Sub should be used
         }))
     }
 
-    /// Get online status of users
+    /// Get online status of users on this node
+    ///
+    /// Returns the online status for requested users based on this node's
+    /// ConnectionManager. In a multi-replica setup, the caller should fan out
+    /// this query to all nodes to get the global picture.
     async fn get_user_online_status(
         &self,
-        _request: Request<GetUserOnlineStatusRequest>,
+        request: Request<GetUserOnlineStatusRequest>,
     ) -> std::result::Result<Response<GetUserOnlineStatusResponse>, Status> {
-        // User tracking is handled via sync module
-        Ok(Response::new(GetUserOnlineStatusResponse {
-            statuses: Vec::new(),
-        }))
+        let req = request.into_inner();
+
+        let Some(ref cm) = self.connection_manager else {
+            return Ok(Response::new(GetUserOnlineStatusResponse {
+                statuses: Vec::new(),
+            }));
+        };
+
+        let statuses: Vec<UserOnlineStatus> = req
+            .user_ids
+            .iter()
+            .map(|uid| {
+                let user_id = synctv_core::models::UserId::from_string(uid.clone());
+                let connections = cm.get_user_connections(&user_id);
+                let is_online = !connections.is_empty();
+                let room_ids: Vec<String> = connections
+                    .iter()
+                    .filter_map(|c| c.room_id.as_ref().map(|r| r.as_str().to_string()))
+                    .collect();
+
+                UserOnlineStatus {
+                    user_id: uid.clone(),
+                    is_online,
+                    room_ids,
+                    node_id: self.node_id.clone(),
+                }
+            })
+            .collect();
+
+        Ok(Response::new(GetUserOnlineStatusResponse { statuses }))
     }
 
-    /// Get connection count for rooms
+    /// Get connections for a room on this node
+    ///
+    /// Returns the active connections in a specific room based on this node's
+    /// ConnectionManager. In a multi-replica setup, the caller should fan out
+    /// this query to all nodes to get the global room connections.
     async fn get_room_connections(
         &self,
-        _request: Request<GetRoomConnectionsRequest>,
+        request: Request<GetRoomConnectionsRequest>,
     ) -> std::result::Result<Response<GetRoomConnectionsResponse>, Status> {
-        // Room connections are tracked via sync module
-        let response = GetRoomConnectionsResponse {
-            connections: Vec::new(),
+        let req = request.into_inner();
+
+        let Some(ref cm) = self.connection_manager else {
+            return Ok(Response::new(GetRoomConnectionsResponse {
+                connections: Vec::new(),
+            }));
         };
-        Ok(Response::new(response))
+
+        let room_id = synctv_core::models::RoomId::from_string(req.room_id);
+        let room_conns = cm.get_room_connections(&room_id);
+
+        let connections: Vec<RoomConnection> = room_conns
+            .iter()
+            .map(|conn| {
+                // Convert Instant durations to Unix timestamps (approximate)
+                let now_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let connected_secs_ago = conn.connected_at.elapsed().as_secs() as i64;
+                let last_activity_secs_ago = conn.last_activity.elapsed().as_secs() as i64;
+
+                RoomConnection {
+                    user_id: conn.user_id.as_str().to_string(),
+                    node_id: self.node_id.clone(),
+                    connected_at: now_unix - connected_secs_ago,
+                    last_activity: now_unix - last_activity_secs_ago,
+                }
+            })
+            .collect();
+
+        Ok(Response::new(GetRoomConnectionsResponse { connections }))
     }
 }

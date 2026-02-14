@@ -75,6 +75,35 @@ impl Default for BilibiliService {
     }
 }
 
+/// Create a BilibiliClient from a cookies map (from proto requests)
+fn client_from_cookies(cookies: &HashMap<String, String>) -> Result<BilibiliClient, BilibiliError> {
+    if cookies.is_empty() {
+        BilibiliClient::new()
+    } else {
+        BilibiliClient::with_cookies(cookies.clone())
+    }
+}
+
+/// Convert client-layer VideoPageInfo to proto VideoPageInfo
+fn to_proto_page_info(page_info: super::client::VideoPageInfo) -> VideoPageInfo {
+    VideoPageInfo {
+        title: page_info.title,
+        actors: page_info.actors.join(", "),
+        video_infos: page_info
+            .video_infos
+            .into_iter()
+            .map(|v| VideoInfo {
+                bvid: v.bvid,
+                cid: v.cid,
+                epid: v.epid,
+                name: v.name,
+                cover_image: v.cover_image,
+                live: v.live,
+            })
+            .collect(),
+    }
+}
+
 #[async_trait]
 impl BilibiliInterface for BilibiliService {
     async fn new_qr_code(&self, _request: Empty) -> Result<NewQrCodeResp, BilibiliError> {
@@ -128,56 +157,14 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn parse_video_page(&self, request: ParseVideoPageReq) -> Result<VideoPageInfo, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
         let page_info = client.parse_video_page(request.aid, &request.bvid).await?;
-
-        Ok(VideoPageInfo {
-            title: page_info.title,
-            actors: page_info.actors.join(", "),
-            video_infos: page_info.video_infos
-                .into_iter()
-                .map(|v| VideoInfo {
-                    bvid: v.bvid,
-                    cid: v.cid,
-                    epid: v.epid,
-                    name: v.name,
-                    cover_image: v.cover_image,
-                    live: v.live,
-                })
-                .collect(),
-        })
+        Ok(to_proto_page_info(page_info))
     }
 
     async fn get_video_url(&self, request: GetVideoUrlReq) -> Result<VideoUrl, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
-        let quality = if request.quality == 0 {
-            None
-        } else {
-            Some(request.quality as u32)
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
+        let quality = if request.quality == 0 { None } else { Some(request.quality as u32) };
         let url_info = client.get_video_url(request.aid, &request.bvid, request.cid, quality).await?;
 
         Ok(VideoUrl {
@@ -189,99 +176,30 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn get_dash_video_url(&self, request: GetDashVideoUrlReq) -> Result<GetDashVideoUrlResp, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
         let (dash, hevc_dash) = client.get_dash_video_url(request.aid, &request.bvid, request.cid).await?;
 
         Ok(GetDashVideoUrlResp {
             dash: Some((&dash).into()),
-            hevc_dash: if hevc_dash.video_streams.is_empty() {
-                None
-            } else {
-                Some((&hevc_dash).into())
-            },
+            hevc_dash: if hevc_dash.video_streams.is_empty() { None } else { Some((&hevc_dash).into()) },
         })
     }
 
     async fn get_subtitles(&self, request: GetSubtitlesReq) -> Result<GetSubtitlesResp, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
         let subtitles = client.get_subtitles(request.aid, &request.bvid, request.cid).await?;
-
         Ok(GetSubtitlesResp { subtitles })
     }
 
     async fn parse_pgc_page(&self, request: ParsePgcPageReq) -> Result<VideoPageInfo, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
         let page_info = client.parse_pgc_page(request.epid, request.ssid).await?;
-
-        Ok(VideoPageInfo {
-            title: page_info.title,
-            actors: page_info.actors.join(", "),
-            video_infos: page_info.video_infos
-                .into_iter()
-                .map(|v| VideoInfo {
-                    bvid: v.bvid,
-                    cid: v.cid,
-                    epid: v.epid,
-                    name: v.name,
-                    cover_image: v.cover_image,
-                    live: v.live,
-                })
-                .collect(),
-        })
+        Ok(to_proto_page_info(page_info))
     }
 
     async fn get_pgcurl(&self, request: GetPgcurlReq) -> Result<VideoUrl, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
-        let quality = if request.quality == 0 {
-            None
-        } else {
-            Some(request.quality as u32)
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
+        let quality = if request.quality == 0 { None } else { Some(request.quality as u32) };
         let url_info = client.get_pgc_url(request.epid, request.cid, quality).await?;
 
         Ok(VideoUrl {
@@ -293,43 +211,17 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn get_dash_pgcurl(&self, request: GetDashPgcurlReq) -> Result<GetDashPgcurlResp, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
         let (dash, hevc_dash) = client.get_dash_pgc_url(request.epid, request.cid).await?;
 
         Ok(GetDashPgcurlResp {
             dash: Some((&dash).into()),
-            hevc_dash: if hevc_dash.video_streams.is_empty() {
-                None
-            } else {
-                Some((&hevc_dash).into())
-            },
+            hevc_dash: if hevc_dash.video_streams.is_empty() { None } else { Some((&hevc_dash).into()) },
         })
     }
 
     async fn user_info(&self, request: UserInfoReq) -> Result<UserInfoResp, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
         let user_info = client.user_info().await?;
 
         Ok(UserInfoResp {
@@ -349,18 +241,7 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn get_live_streams(&self, request: GetLiveStreamsReq) -> Result<GetLiveStreamsResp, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
         let streams = client.get_live_streams(request.cid, request.hls).await?;
 
         use crate::grpc::bilibili::LiveStream;
@@ -377,50 +258,13 @@ impl BilibiliInterface for BilibiliService {
     }
 
     async fn parse_live_page(&self, request: ParseLivePageReq) -> Result<VideoPageInfo, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
         let page_info = client.parse_live_page(request.room_id).await?;
-
-        Ok(VideoPageInfo {
-            title: page_info.title,
-            actors: page_info.actors.join(", "),
-            video_infos: page_info.video_infos
-                .into_iter()
-                .map(|v| VideoInfo {
-                    bvid: v.bvid,
-                    cid: v.cid,
-                    epid: v.epid,
-                    name: v.name,
-                    cover_image: v.cover_image,
-                    live: v.live,
-                })
-                .collect(),
-        })
+        Ok(to_proto_page_info(page_info))
     }
 
     async fn get_live_danmu_info(&self, request: GetLiveDanmuInfoReq) -> Result<GetLiveDanmuInfoResp, BilibiliError> {
-        let cookies = if request.cookies.is_empty() {
-            HashMap::new()
-        } else {
-            request.cookies.clone()
-        };
-
-        let client = if cookies.is_empty() {
-            BilibiliClient::new()?
-        } else {
-            BilibiliClient::with_cookies(cookies)?
-        };
-
+        let client = client_from_cookies(&request.cookies)?;
         let danmu_info = client.get_live_danmu_info(request.room_id).await?;
 
         use crate::grpc::bilibili::get_live_danmu_info_resp::Host;

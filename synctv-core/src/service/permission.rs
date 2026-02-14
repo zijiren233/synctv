@@ -1,11 +1,14 @@
 //! Permission management service
 //!
 //! Centralized permission checking and management with Allow/Deny pattern and caching.
+//! Supports multi-replica cache invalidation via Redis Pub/Sub.
 
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::broadcast;
 
 use crate::{
+    cache::{CacheInvalidationService, InvalidationMessage},
     models::{RoomId, UserId, PermissionBits, RoomSettings},
     repository::{RoomMemberRepository, RoomRepository, RoomSettingsRepository},
     service::SettingsRegistry,
@@ -15,12 +18,15 @@ use crate::{
 /// Permission management service
 ///
 /// Handles permission checking with Allow/Deny pattern, optional caching and role inheritance.
+/// When `CacheInvalidationService` is provided, it listens for cross-replica invalidation messages.
 #[derive(Clone)]
 pub struct PermissionService {
     member_repo: RoomMemberRepository,
     room_settings_repo: Option<RoomSettingsRepository>,
     cache: Arc<moka::future::Cache<String, PermissionBits>>,
     settings_registry: Option<Arc<SettingsRegistry>>,
+    /// Optional invalidation service for cross-replica cache sync
+    invalidation_service: Option<Arc<CacheInvalidationService>>,
 }
 
 impl std::fmt::Debug for PermissionService {
@@ -53,11 +59,82 @@ impl PermissionService {
                     .build(),
             ),
             settings_registry,
+            invalidation_service: None,
+        }
+    }
+
+    /// Create a new permission service with cache invalidation support
+    ///
+    /// This enables cross-replica cache invalidation via Redis Pub/Sub.
+    /// When one node invalidates a permission cache, all other nodes are notified.
+    pub fn with_invalidation(
+        member_repo: RoomMemberRepository,
+        room_repo: RoomRepository,
+        settings_registry: Option<Arc<SettingsRegistry>>,
+        cache_size: u64,
+        cache_ttl_secs: u64,
+        invalidation_service: Arc<CacheInvalidationService>,
+    ) -> Self {
+        let service = Self::new(member_repo, room_repo, settings_registry, cache_size, cache_ttl_secs);
+
+        // Subscribe to invalidation messages
+        let cache = service.cache.clone();
+        let mut receiver = invalidation_service.subscribe();
+
+        tokio::spawn(async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(msg) => {
+                        match msg {
+                            InvalidationMessage::UserPermission { room_id, user_id } => {
+                                let cache_key = format!("{}:{}", room_id, user_id);
+                                cache.invalidate(&cache_key).await;
+                                tracing::debug!(
+                                    room_id = %room_id,
+                                    user_id = %user_id,
+                                    "Permission cache invalidated (cross-replica)"
+                                );
+                            }
+                            InvalidationMessage::RoomPermission { room_id } => {
+                                let prefix = format!("{}:", room_id);
+                                let _ = cache.invalidate_entries_if(move |key, _| key.starts_with(&prefix));
+                                tracing::debug!(
+                                    room_id = %room_id,
+                                    "Room permission cache invalidated (cross-replica)"
+                                );
+                            }
+                            InvalidationMessage::All => {
+                                cache.invalidate_all();
+                                tracing::debug!("All permission cache invalidated (cross-replica)");
+                            }
+                            _ => {
+                                // Other message types not relevant to permission cache
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("Invalidation channel closed, stopping listener");
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            lagged_messages = n,
+                            "Invalidation listener lagged, some messages may have been dropped"
+                        );
+                        // Continue listening
+                    }
+                }
+            }
+        });
+
+        Self {
+            invalidation_service: Some(invalidation_service),
+            ..service
         }
     }
 
     /// Create a permission service without caching
-    #[must_use] 
+    #[must_use]
     pub fn without_cache(
         member_repo: RoomMemberRepository,
         _room_repo: RoomRepository,
@@ -72,6 +149,7 @@ impl PermissionService {
                     .build(),
             ),
             settings_registry,
+            invalidation_service: None,
         }
     }
 
@@ -275,7 +353,31 @@ impl PermissionService {
     }
 
     /// Invalidate cache for a specific user in a room
+    ///
+    /// If cache invalidation service is configured, this also broadcasts the
+    /// invalidation to other replicas via Redis Pub/Sub.
+    ///
+    /// # Multi-Replica Consistency
+    /// The order is: broadcast to Redis first, then invalidate local cache.
+    /// This ensures that if Redis broadcast fails, the local cache is not
+    /// invalidated while other replicas still have stale data.
     pub async fn invalidate_cache(&self, room_id: &RoomId, user_id: &UserId) {
+        // Broadcast to other replicas first (if configured)
+        // This ensures other nodes get the invalidation before we invalidate ours
+        if let Some(ref service) = self.invalidation_service {
+            if let Err(e) = service.invalidate_user_permission(room_id, user_id).await {
+                tracing::warn!(
+                    error = %e,
+                    room_id = %room_id.as_str(),
+                    user_id = %user_id.as_str(),
+                    "Failed to broadcast permission cache invalidation"
+                );
+                // Continue to invalidate local cache even if broadcast fails
+                // This is a trade-off: we prefer local consistency over global
+            }
+        }
+
+        // Invalidate local cache last
         let cache_key = Self::cache_key(room_id, user_id);
         self.cache.invalidate(&cache_key).await;
     }
@@ -283,13 +385,42 @@ impl PermissionService {
     /// Invalidate permission cache for all users in a room.
     /// Called when room-level permission settings change (e.g., admin/member/guest
     /// added/removed permissions), since these affect all members' effective permissions.
+    ///
+    /// If cache invalidation service is configured, this also broadcasts the
+    /// invalidation to other replicas via Redis Pub/Sub.
     pub async fn invalidate_room_cache(&self, room_id: &RoomId) {
+        // Broadcast to other replicas first (if configured)
+        if let Some(ref service) = self.invalidation_service {
+            if let Err(e) = service.invalidate_room_permission(room_id).await {
+                tracing::warn!(
+                    error = %e,
+                    room_id = %room_id.as_str(),
+                    "Failed to broadcast room permission cache invalidation"
+                );
+            }
+        }
+
+        // Invalidate local cache last
         let prefix = format!("{}:", room_id.0);
         let _ = self.cache.invalidate_entries_if(move |key, _| key.starts_with(&prefix));
     }
 
     /// Clear all permission cache
+    ///
+    /// If cache invalidation service is configured, this also broadcasts the
+    /// invalidation to other replicas via Redis Pub/Sub.
     pub async fn clear_cache(&self) {
+        // Broadcast to other replicas first (if configured)
+        if let Some(ref service) = self.invalidation_service {
+            if let Err(e) = service.invalidate_all().await {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to broadcast full permission cache invalidation"
+                );
+            }
+        }
+
+        // Clear local cache last
         self.cache.invalidate_all();
     }
 

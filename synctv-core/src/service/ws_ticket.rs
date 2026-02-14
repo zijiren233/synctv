@@ -1,0 +1,382 @@
+//! WebSocket Ticket Service
+//!
+//! Provides short-lived, one-time-use tickets for WebSocket authentication.
+//! This is more secure than passing JWT tokens directly in WebSocket URLs,
+//! as tickets:
+//! - Are short-lived (default 30 seconds)
+//! - Can only be used once
+//! - Don't expose the actual JWT token in URLs/logs
+//!
+//! ## Storage Backends
+//!
+//! - **Redis** (recommended for multi-replica): Tickets are stored in Redis with TTL,
+//!   ensuring they work across all replicas.
+//! - **Memory** (single-replica only): Tickets are stored in memory. This is suitable
+//!   for single-instance deployments but will not work correctly with multiple replicas.
+
+use base64::Engine;
+use redis::{AsyncCommands, Client};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::RwLock;
+use tracing::{debug, warn};
+
+use crate::models::UserId;
+use crate::{Error, Result};
+
+/// Redis key prefix for WebSocket tickets
+const WS_TICKET_PREFIX: &str = "synctv:ws_ticket:";
+/// Default ticket TTL in seconds
+const DEFAULT_TICKET_TTL_SECS: u64 = 30;
+/// Ticket length in bytes (256 bits of entropy)
+const TICKET_LENGTH: usize = 32;
+
+/// WebSocket ticket data stored in Redis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WsTicketData {
+    /// User ID associated with this ticket
+    pub user_id: String,
+    /// When the ticket was created (Unix timestamp)
+    pub created_at: u64,
+}
+
+/// In-memory ticket entry with expiration
+#[derive(Debug, Clone)]
+struct MemoryTicketEntry {
+    data: WsTicketData,
+    expires_at: Instant,
+}
+
+/// In-memory ticket storage for single-replica deployments
+#[derive(Debug, Default)]
+struct MemoryTicketStore {
+    tickets: HashMap<String, MemoryTicketEntry>,
+}
+
+impl MemoryTicketStore {
+    fn new() -> Self {
+        Self {
+            tickets: HashMap::new(),
+        }
+    }
+
+    fn insert(&mut self, ticket: String, data: WsTicketData, ttl_secs: u64) {
+        let entry = MemoryTicketEntry {
+            data,
+            expires_at: Instant::now() + std::time::Duration::from_secs(ttl_secs),
+        };
+        self.tickets.insert(ticket, entry);
+    }
+
+    fn get_and_remove(&mut self, ticket: &str) -> Option<WsTicketData> {
+        // First, clean up expired tickets
+        let now = Instant::now();
+        self.tickets.retain(|_, entry| entry.expires_at > now);
+
+        // Then get and remove the requested ticket
+        self.tickets.remove(ticket).map(|entry| entry.data)
+    }
+}
+
+/// Service for creating and validating WebSocket tickets
+#[derive(Clone)]
+pub struct WsTicketService {
+    /// Redis client for ticket storage (multi-replica mode)
+    redis_client: Option<Client>,
+    /// In-memory store for single-replica mode
+    memory_store: Option<Arc<RwLock<MemoryTicketStore>>>,
+    /// Ticket TTL in seconds
+    ticket_ttl_secs: u64,
+}
+
+impl std::fmt::Debug for WsTicketService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WsTicketService")
+            .field("redis_enabled", &self.redis_client.is_some())
+            .field("memory_mode", &self.memory_store.is_some())
+            .field("ticket_ttl_secs", &self.ticket_ttl_secs)
+            .finish()
+    }
+}
+
+impl WsTicketService {
+    /// Create a new WebSocket ticket service
+    ///
+    /// # Arguments
+    /// * `redis_client` - Redis client for distributed ticket storage (recommended for multi-replica)
+    /// * `ticket_ttl_secs` - Ticket lifetime in seconds (default: 30)
+    ///
+    /// # Note
+    /// If `redis_client` is `None`, the service will use in-memory storage,
+    /// which is only suitable for single-replica deployments.
+    pub fn new(redis_client: Option<Client>, ticket_ttl_secs: Option<u64>) -> Self {
+        let ttl = ticket_ttl_secs.unwrap_or(DEFAULT_TICKET_TTL_SECS);
+
+        if redis_client.is_some() {
+            Self {
+                redis_client,
+                memory_store: None,
+                ticket_ttl_secs: ttl,
+            }
+        } else {
+            // Fall back to memory storage for single-replica deployments
+            warn!(
+                "WebSocket ticket service using in-memory storage. \
+                 This is only suitable for single-replica deployments. \
+                 For multi-replica setups, configure Redis."
+            );
+            Self {
+                redis_client: None,
+                memory_store: Some(Arc::new(RwLock::new(MemoryTicketStore::new()))),
+                ticket_ttl_secs: ttl,
+            }
+        }
+    }
+
+    /// Create a new WebSocket ticket service with Redis (multi-replica mode)
+    pub fn with_redis(redis_client: Client, ticket_ttl_secs: Option<u64>) -> Self {
+        Self::new(Some(redis_client), ticket_ttl_secs)
+    }
+
+    /// Create a new WebSocket ticket service with memory storage (single-replica mode)
+    pub fn with_memory(ticket_ttl_secs: Option<u64>) -> Self {
+        Self {
+            redis_client: None,
+            memory_store: Some(Arc::new(RwLock::new(MemoryTicketStore::new()))),
+            ticket_ttl_secs: ticket_ttl_secs.unwrap_or(DEFAULT_TICKET_TTL_SECS),
+        }
+    }
+
+    /// Create a new ticket for a user
+    ///
+    /// Returns a ticket string that can be used once for WebSocket authentication.
+    /// The ticket expires after `ticket_ttl_secs` seconds.
+    pub async fn create_ticket(&self, user_id: &UserId) -> Result<String> {
+        // Generate a random ticket
+        let ticket = Self::generate_ticket();
+
+        let ticket_data = WsTicketData {
+            user_id: user_id.as_str().to_string(),
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+
+        if let Some(ref client) = self.redis_client {
+            // Store in Redis with TTL (multi-replica mode)
+            let key = format!("{WS_TICKET_PREFIX}{ticket}");
+            let json = serde_json::to_string(&ticket_data).map_err(|e| {
+                Error::Internal(format!("Failed to serialize ticket data: {e}"))
+            })?;
+
+            let mut conn = client
+                .get_multiplexed_async_connection()
+                .await
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+
+            let _: () = conn
+                .set_ex(&key, json, self.ticket_ttl_secs)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to store ticket: {e}")))?;
+
+            debug!(
+                user_id = %user_id.as_str(),
+                ttl_secs = self.ticket_ttl_secs,
+                mode = "redis",
+                "WebSocket ticket created"
+            );
+        } else if let Some(ref store) = self.memory_store {
+            // Store in memory (single-replica mode)
+            let mut store = store.write().await;
+            store.insert(ticket.clone(), ticket_data, self.ticket_ttl_secs);
+
+            debug!(
+                user_id = %user_id.as_str(),
+                ttl_secs = self.ticket_ttl_secs,
+                mode = "memory",
+                "WebSocket ticket created"
+            );
+        } else {
+            // This should never happen as new() always sets one of the two backends
+            return Err(Error::Internal(
+                "No ticket storage backend configured".to_string(),
+            ));
+        }
+
+        Ok(ticket)
+    }
+
+    /// Validate and consume a ticket
+    ///
+    /// Returns the user ID associated with the ticket if valid.
+    /// The ticket is deleted after use (one-time use).
+    pub async fn validate_and_consume(&self, ticket: &str) -> Result<UserId> {
+        // Try Redis first (multi-replica mode)
+        if let Some(ref client) = self.redis_client {
+            let key = format!("{WS_TICKET_PREFIX}{ticket}");
+            let mut conn = client
+                .get_multiplexed_async_connection()
+                .await
+                .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+
+            // Get and delete atomically using Lua script
+            let lua_script = redis::Script::new(r#"
+                local value = redis.call("GET", KEYS[1])
+                if value then
+                    redis.call("DEL", KEYS[1])
+                end
+                return value
+            "#);
+
+            let json: Option<String> = lua_script
+                .key(&key)
+                .invoke_async(&mut conn)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to validate ticket: {e}")))?;
+
+            let Some(json) = json else {
+                debug!(ticket = %ticket, mode = "redis", "WebSocket ticket not found or expired");
+                return Err(Error::Authorization("Invalid or expired ticket".to_string()));
+            };
+
+            let ticket_data: WsTicketData = serde_json::from_str(&json).map_err(|e| {
+                Error::Internal(format!("Failed to deserialize ticket data: {e}"))
+            })?;
+
+            debug!(
+                user_id = %ticket_data.user_id,
+                mode = "redis",
+                "WebSocket ticket validated and consumed"
+            );
+
+            return Ok(UserId::from_string(ticket_data.user_id));
+        }
+
+        // Try memory storage (single-replica mode)
+        if let Some(ref store) = self.memory_store {
+            let mut store = store.write().await;
+
+            let Some(ticket_data) = store.get_and_remove(ticket) else {
+                debug!(ticket = %ticket, mode = "memory", "WebSocket ticket not found or expired");
+                return Err(Error::Authorization("Invalid or expired ticket".to_string()));
+            };
+
+            debug!(
+                user_id = %ticket_data.user_id,
+                mode = "memory",
+                "WebSocket ticket validated and consumed"
+            );
+
+            return Ok(UserId::from_string(ticket_data.user_id));
+        }
+
+        Err(Error::Internal(
+            "No ticket storage backend configured".to_string(),
+        ))
+    }
+
+    /// Generate a secure random ticket string
+    fn generate_ticket() -> String {
+        // Generate cryptographically secure random bytes
+        let mut rng = rand::thread_rng();
+        let mut bytes = [0u8; TICKET_LENGTH];
+        rand::RngCore::fill_bytes(&mut rng, &mut bytes);
+
+        // Encode as URL-safe base64 (no special characters that could cause issues in URLs)
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_user_id(id: &str) -> UserId {
+        UserId::from_string(id.to_string())
+    }
+
+    #[test]
+    fn test_ticket_generation() {
+        let ticket1 = WsTicketService::generate_ticket();
+        let ticket2 = WsTicketService::generate_ticket();
+
+        // Tickets should be different
+        assert_ne!(ticket1, ticket2);
+
+        // Tickets should be URL-safe base64
+        assert!(!ticket1.contains('+'));
+        assert!(!ticket1.contains('/'));
+        assert!(!ticket1.contains('='));
+    }
+
+    #[test]
+    fn test_ticket_data_serialization() {
+        let data = WsTicketData {
+            user_id: "user123".to_string(),
+            created_at: 1234567890,
+        };
+
+        let json = serde_json::to_string(&data).unwrap();
+        let decoded: WsTicketData = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(data.user_id, decoded.user_id);
+        assert_eq!(data.created_at, decoded.created_at);
+    }
+
+    #[tokio::test]
+    async fn test_ticket_service_memory_mode() {
+        let service = WsTicketService::with_memory(Some(30));
+        let user_id = create_test_user_id("user1");
+
+        // Should work in memory mode
+        let ticket = service.create_ticket(&user_id).await;
+        assert!(ticket.is_ok());
+
+        // Validate and consume
+        let result = service.validate_and_consume(&ticket.unwrap()).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().as_str(), "user1");
+    }
+
+    #[tokio::test]
+    async fn test_ticket_one_time_use_memory_mode() {
+        let service = WsTicketService::with_memory(Some(30));
+        let user_id = create_test_user_id("user1");
+
+        let ticket = service.create_ticket(&user_id).await.unwrap();
+
+        // First use should succeed
+        let result1 = service.validate_and_consume(&ticket).await;
+        assert!(result1.is_ok());
+
+        // Second use should fail
+        let result2 = service.validate_and_consume(&ticket).await;
+        assert!(result2.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_ticket_expiration_memory_mode() {
+        let service = WsTicketService::with_memory(Some(1)); // 1 second TTL
+        let user_id = create_test_user_id("user1");
+
+        let ticket = service.create_ticket(&user_id).await.unwrap();
+
+        // Wait for expiration
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        // Should be expired
+        let result = service.validate_and_consume(&ticket).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_invalid_ticket_memory_mode() {
+        let service = WsTicketService::with_memory(Some(30));
+
+        let result = service.validate_and_consume("invalid_ticket").await;
+        assert!(result.is_err());
+    }
+}

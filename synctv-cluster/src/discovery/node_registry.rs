@@ -131,9 +131,12 @@ impl NodeRegistry {
 
     /// Register this node in the registry with epoch-based fencing
     ///
-    /// This operation is atomic - it reads the current epoch from Redis,
-    /// increments it, and writes the new registration. If another node
-    /// registers with the same ID concurrently, only one will succeed.
+    /// This operation is atomic - it uses a Lua script to atomically:
+    /// 1. Read existing epoch
+    /// 2. Increment epoch
+    /// 3. Write new registration with TTL
+    ///
+    /// This prevents race conditions when multiple instances register concurrently.
     pub async fn register(&self, grpc_address: String, http_address: String) -> Result<()> {
         if let Some(ref client) = self.redis_client {
             let mut conn = timeout(
@@ -145,69 +148,82 @@ impl NodeRegistry {
             .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
 
             let key = Self::node_key(&self.node_id);
-
-            // Read existing node info to get current epoch (if any)
-            let existing_epoch: Option<String> = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("GET")
-                    .arg(&key)
-                    .query_async(&mut conn),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
-
-            // Determine new epoch: max(existing + 1, local_epoch + 1, 1)
-            let new_epoch = if let Some(existing) = existing_epoch {
-                if let Ok(existing_info) = serde_json::from_str::<NodeInfo>(&existing) {
-                    // Verify the existing node is actually this node
-                    if existing_info.node_id == self.node_id {
-                        existing_info.epoch + 1
-                    } else {
-                        // Different node had this ID, start fresh
-                        1
-                    }
-                } else {
-                    1
-                }
-            } else {
-                1
-            };
-
-            // Ensure we always increment (never go backwards)
             let local_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
-            let final_epoch = new_epoch.max(local_epoch + 1);
-            self.current_epoch.store(final_epoch, std::sync::atomic::Ordering::SeqCst);
+            let ttl = self.heartbeat_timeout_secs * 2;
 
-            let node_info = NodeInfo::new(self.node_id.clone(), grpc_address, http_address)
-                .with_epoch(final_epoch);
-
-            let value = serde_json::to_string(&node_info)
+            // Create node info template
+            let mut node_info = NodeInfo::new(self.node_id.clone(), grpc_address, http_address);
+            node_info.metadata.insert("local_epoch".to_string(), local_epoch.to_string());
+            let node_json = serde_json::to_string(&node_info)
                 .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?;
 
-            // Use SET with NX and EX for atomic registration with expiration
-            // This prevents race conditions during registration
-            let _set_result: Option<String> = timeout(
+            // Atomic Lua script: read epoch, increment, write with TTL
+            // Returns the new epoch assigned
+            let script = redis::Script::new(
+                r#"
+                local key = KEYS[1]
+                local new_node_json = ARGV[1]
+                local ttl = tonumber(ARGV[2])
+                local local_epoch = tonumber(ARGV[3])
+                local node_id = ARGV[4]
+
+                -- Parse incoming node info
+                local new_node = cjson.decode(new_node_json)
+
+                -- Read existing value
+                local existing = redis.call('GET', key)
+                local existing_epoch = 0
+
+                if existing then
+                    local existing_info = cjson.decode(existing)
+                    -- Only use existing epoch if it's the same node
+                    if existing_info.node_id == node_id then
+                        existing_epoch = existing_info.epoch or 0
+                    end
+                end
+
+                -- Calculate new epoch: max(existing + 1, local_epoch + 1, 1)
+                local new_epoch = math.max(existing_epoch + 1, local_epoch + 1, 1)
+
+                -- Update node info with new epoch and current timestamp
+                new_node['epoch'] = new_epoch
+                new_node['last_heartbeat'] = nil  -- Let the Go side set this
+
+                -- Write with TTL
+                local final_json = cjson.encode(new_node)
+                redis.call('SETEX', key, ttl, final_json)
+
+                return new_epoch
+                "#,
+            );
+
+            let new_epoch: u64 = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("SET")
-                    .arg(&key)
-                    .arg(&value)
-                    .arg("EX")
-                    .arg(self.heartbeat_timeout_secs * 2)
-                    .query_async(&mut conn),
+                script
+                    .key(&key)
+                    .arg(&node_json)
+                    .arg(ttl)
+                    .arg(local_epoch)
+                    .arg(&self.node_id)
+                    .invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis SET timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis SET failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis register script timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis register script failed: {e}")))?;
 
-            // SET without NX always succeeds, so we update local cache
+            // Update local epoch
+            self.current_epoch.store(new_epoch, std::sync::atomic::Ordering::SeqCst);
+
+            // Update local cache
+            node_info.epoch = new_epoch;
+            node_info.last_heartbeat = Utc::now();
             let mut nodes = self.local_nodes.write().await;
             nodes.insert(self.node_id.clone(), node_info);
 
             tracing::debug!(
                 node_id = %self.node_id,
-                epoch = final_epoch,
-                "Node registered with fencing token"
+                epoch = new_epoch,
+                "Node registered with fencing token (atomic)"
             );
         } else {
             // Local-only mode
@@ -601,6 +617,18 @@ impl NodeRegistry {
             // Local mode: check cache
             let nodes = self.local_nodes.read().await;
             Ok(nodes.get(node_id).cloned())
+        }
+    }
+
+    /// Update metadata for this node in the local cache
+    ///
+    /// This should be called periodically by the heartbeat loop to include
+    /// connection counts and other metrics. The metadata will be persisted
+    /// to Redis on the next heartbeat.
+    pub async fn update_local_metadata(&self, key: &str, value: String) {
+        let mut nodes = self.local_nodes.write().await;
+        if let Some(node) = nodes.get_mut(&self.node_id) {
+            node.metadata.insert(key.to_string(), value);
         }
     }
 

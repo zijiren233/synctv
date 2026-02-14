@@ -43,6 +43,7 @@ serde_yaml.workspace = true
 moka.workspace = true
 dashmap.workspace = true
 growable-bloom-filter = "2.1"
+async_singleflight = "0.6"
 
 # IDs & Crypto
 nanoid.workspace = true

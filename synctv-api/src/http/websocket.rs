@@ -10,13 +10,13 @@
 //!
 //! Authentication can be provided via:
 //! 1. Authorization header: `Authorization: Bearer <jwt>` (preferred, more secure)
-//! 2. Query parameter: `?token=<jwt>` (fallback for browser WebSocket API, appears in logs/history)
+//! 2. Query parameter: `?ticket=<ticket>` (recommended for browser clients, short-lived one-time-use)
+//! 3. Query parameter: `?token=<jwt>` (legacy fallback, appears in logs/history)
 //!
-//! For browser clients, query parameter is the only option due to WebSocket API limitations.
-//! To mitigate risks:
-//! - Use short-lived tokens for WebSocket connections
-//! - Consider implementing a ticket-based system where a short-lived ticket is obtained via HTTP first
-//! - Ensure server logs do not log the full URL with tokens
+//! For browser clients, the ticket system is recommended:
+//! - First call POST /api/tickets to get a short-lived ticket
+//! - Then use `ws://host/ws/room/{room_id}?ticket=xxx`
+//! - Tickets are single-use and expire quickly (30 seconds by default)
 
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
@@ -37,27 +37,79 @@ use synctv_core::service::{auth::JwtValidator, ContentFilter, RateLimitConfig};
 /// Query parameters for WebSocket connection
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
-    /// JWT token for authentication (fallback method)
+    /// JWT token for authentication (legacy method)
     /// NOTE: Token in URL may appear in server logs and browser history.
-    /// Consider using Authorization header when possible.
+    /// Consider using ?ticket= instead for better security.
     pub token: Option<String>,
+
+    /// WebSocket ticket for authentication (recommended)
+    /// Short-lived, one-time-use ticket obtained via POST /api/tickets
+    /// More secure than passing JWT in URL.
+    pub ticket: Option<String>,
 }
 
-/// Extract JWT token from either Authorization header or query parameter
+/// Authentication method used for WebSocket connection
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthMethod {
+    /// Authorization header (most secure)
+    Header,
+    /// Ticket query parameter (recommended for browsers)
+    Ticket,
+    /// JWT token query parameter (legacy, less secure)
+    TokenQuery,
+}
+
+/// Extract user ID from authentication credentials
 ///
-/// Priority: Authorization header > Query parameter
-fn extract_token(headers: &HeaderMap, query: &WsQuery) -> Option<String> {
-    // First, try Authorization header (more secure)
+/// Priority:
+/// 1. Authorization header (most secure)
+/// 2. Ticket query parameter (recommended for browsers)
+/// 3. JWT token query parameter (legacy fallback)
+async fn extract_user_id(
+    state: &AppState,
+    headers: &HeaderMap,
+    query: &WsQuery,
+) -> Result<(UserId, AuthMethod), AppError> {
+    // First, try Authorization header (most secure)
     if let Some(auth_header) = headers.get("Authorization") {
         if let Ok(auth_str) = auth_header.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                return Some(token.to_string());
+                let validator = Arc::new(JwtValidator::new(Arc::new(state.jwt_service.clone())));
+                let user_id = validator
+                    .validate_and_extract_user_id(token)
+                    .map_err(|e| AppError::unauthorized(format!("Invalid token: {e}")))?;
+                return Ok((user_id, AuthMethod::Header));
             }
         }
     }
 
-    // Fallback to query parameter (less secure, but standard for browser WebSocket API)
-    query.token.clone()
+    // Second, try ticket query parameter (recommended for browsers)
+    if let Some(ref ticket) = query.ticket {
+        if let Some(ref ws_ticket_service) = state.ws_ticket_service {
+            let user_id = ws_ticket_service
+                .validate_and_consume(ticket)
+                .await
+                .map_err(|e| AppError::unauthorized(format!("Invalid or expired ticket: {e}")))?;
+            return Ok((user_id, AuthMethod::Ticket));
+        } else {
+            return Err(AppError::internal_server_error(
+                "WebSocket ticket service not configured (Redis required)",
+            ));
+        }
+    }
+
+    // Finally, try JWT token query parameter (legacy fallback)
+    if let Some(ref token) = query.token {
+        let validator = Arc::new(JwtValidator::new(Arc::new(state.jwt_service.clone())));
+        let user_id = validator
+            .validate_and_extract_user_id(token)
+            .map_err(|e| AppError::unauthorized(format!("Invalid token: {e}")))?;
+        return Ok((user_id, AuthMethod::TokenQuery));
+    }
+
+    Err(AppError::unauthorized(
+        "Missing authentication: provide token via Authorization header, ?ticket=, or ?token=",
+    ))
 }
 
 /// WebSocket stream implementation of `StreamMessage` trait
@@ -129,13 +181,15 @@ impl crate::impls::messaging::MessageSender for WebSocketMessageSender {
 
 /// WebSocket handler for room real-time updates
 ///
-/// Clients can provide JWT token via:
-/// 1. Authorization header: `Authorization: Bearer <token>` (preferred, more secure)
-/// 2. Query parameter: `?token=<jwt>` (fallback for browser WebSocket API)
+/// Clients can authenticate via:
+/// 1. Authorization header: `Authorization: Bearer <token>` (most secure)
+/// 2. Ticket query parameter: `?ticket=<ticket>` (recommended for browsers)
+/// 3. Token query parameter: `?token=<jwt>` (legacy fallback)
 ///
 /// Example:
 /// - Native clients: `ws://host/ws/room/{room_id}` with `Authorization: Bearer <token>`
-/// - Browser clients: `ws://host/ws/room/{room_id}?token=<jwt>`
+/// - Browser clients: `ws://host/ws/room/{room_id}?ticket=<ticket>` (obtained from POST /api/tickets)
+/// - Legacy browser: `ws://host/ws/room/{room_id}?token=<jwt>` (appears in logs)
 pub async fn websocket_handler(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
@@ -143,28 +197,16 @@ pub async fn websocket_handler(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, AppError> {
-    // Extract token from header (preferred) or query parameter (fallback)
-    let token = extract_token(&headers, &query).ok_or_else(|| {
-        AppError::unauthorized(
-            "Missing authentication: provide token via Authorization header or query parameter",
-        )
-    })?;
+    // Extract user ID from authentication credentials
+    let (user_id, auth_method) = extract_user_id(&state, &headers, &query).await?;
 
-    // Log warning if using query parameter (less secure)
-    if query.token.is_some() && !headers.contains_key("Authorization") {
+    // Log warning if using legacy token query parameter (less secure)
+    if auth_method == AuthMethod::TokenQuery {
         warn!(
             room_id = %room_id,
-            "WebSocket authentication via query parameter (consider using Authorization header for better security)"
+            "WebSocket authentication via ?token= query parameter (consider using ?ticket= or Authorization header for better security)"
         );
     }
-
-    // Create JWT validator
-    let validator = Arc::new(JwtValidator::new(Arc::new(state.jwt_service.clone())));
-
-    // Validate token and extract user_id
-    let user_id = validator
-        .validate_and_extract_user_id(&token)
-        .map_err(|e| AppError::unauthorized(format!("Invalid token: {e}")))?;
 
     // Check room membership before upgrading
     let rid = synctv_core::models::RoomId::from_string(room_id.clone());
@@ -181,7 +223,7 @@ pub async fn websocket_handler(
         return Err(AppError::forbidden("Not a member of this room"));
     }
 
-    // Token is valid and user is a member, upgrade to WebSocket
+    // Authentication and membership verified, upgrade to WebSocket
     // Limit max message size to 64KB (default is 64MB which is excessive for signaling)
     Ok(ws.max_message_size(64 * 1024)
         .on_upgrade(move |socket| handle_socket(socket, state, room_id, user_id)))

@@ -688,11 +688,13 @@ mod tests {
         let (admin_tx, _) = broadcast::channel(256);
 
         // Create two PubSub instances simulating different nodes
+        let dedup1 = Arc::new(MessageDeduplicator::with_defaults());
+        let dedup2 = Arc::new(MessageDeduplicator::with_defaults());
         let pubsub1 = Arc::new(
-            RedisPubSub::new(redis_url, message_hub.clone(), "node1".to_string(), admin_tx.clone(), None).unwrap(),
+            RedisPubSub::new(redis_url, message_hub.clone(), "node1".to_string(), admin_tx.clone(), None, dedup1).unwrap(),
         );
         let pubsub2 = Arc::new(
-            RedisPubSub::new(redis_url, message_hub.clone(), "node2".to_string(), admin_tx.clone(), None).unwrap(),
+            RedisPubSub::new(redis_url, message_hub.clone(), "node2".to_string(), admin_tx.clone(), None, dedup2).unwrap(),
         );
 
         // Start both

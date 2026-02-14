@@ -4,7 +4,7 @@ use std::fmt;
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
 pub enum StreamIdentifier {
     #[default]
-    Unkonwn,
+    Unknown,
     #[serde(rename = "rtmp")]
     Rtmp {
         app_name: String,
@@ -20,8 +20,8 @@ impl fmt::Display for StreamIdentifier {
             } => {
                 write!(f, "RTMP - app_name: {app_name}, stream_name: {stream_name}")
             }
-            Self::Unkonwn => {
-                write!(f, "Unkonwn")
+            Self::Unknown => {
+                write!(f, "Unknown")
             }
         }
     }

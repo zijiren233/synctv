@@ -29,6 +29,7 @@ pub mod email_templates;
 pub mod stun;
 pub mod turn;
 pub mod turn_server;
+pub mod ws_ticket;
 
 pub use auth::{hash_password, verify_password, JwtService, TokenType, Claims};
 pub use chat::ChatService;
@@ -64,3 +65,4 @@ pub use email_templates::{EmailTemplateManager, EmailTemplateType};
 pub use stun::{StunServer, StunServerConfig, StunMetrics};
 pub use turn::{TurnCredentialService, TurnConfig, TurnCredential, COTURN_DEPLOYMENT_GUIDE};
 pub use turn_server::{TurnServer, TurnServerConfig as TurnBuiltinServerConfig, TurnMetrics};
+pub use ws_ticket::{WsTicketService, WsTicketData};

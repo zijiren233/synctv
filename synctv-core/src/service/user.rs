@@ -552,10 +552,12 @@ mod tests {
     async fn test_validate_password() {
         let service = create_test_service();
 
-        assert!(service.validate_password("password123").is_ok());
+        // PasswordValidator requires: min 8 chars, uppercase, lowercase, digit
+        assert!(service.validate_password("Password123").is_ok());
         assert!(service.validate_password("Pass123!").is_ok());
 
         assert!(service.validate_password("short").is_err()); // Too short
+        assert!(service.validate_password("password123").is_err()); // No uppercase
         assert!(service.validate_password(&"a".repeat(129)).is_err()); // Too long
     }
 }

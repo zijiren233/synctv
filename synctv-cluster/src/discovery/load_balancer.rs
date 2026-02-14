@@ -1,11 +1,13 @@
 //! Load balancing for cluster requests
 //!
 //! Distributes requests across available cluster nodes.
+//! Integrates with HealthMonitor to exclude unhealthy nodes.
 
 use rand::seq::SliceRandom;
 use std::sync::Arc;
 
-use super::node_registry::NodeRegistry;
+use super::health_monitor::{HealthMonitor, NodeHealth};
+use super::node_registry::{NodeInfo, NodeRegistry};
 use crate::error::{Error, Result};
 
 /// Load balancing strategy
@@ -16,37 +18,67 @@ pub enum LoadBalancingStrategy {
     /// Round-robin
     RoundRobin,
     /// Least connections (select node with fewest active connections)
+    /// Nodes must report connection count in metadata["connections"] via heartbeat.
     LeastConnections,
 }
 
 /// Load balancer for cluster node selection
 pub struct LoadBalancer {
     node_registry: Arc<NodeRegistry>,
+    health_monitor: Option<Arc<HealthMonitor>>,
     strategy: LoadBalancingStrategy,
     round_robin_index: std::sync::atomic::AtomicUsize,
 }
 
 impl LoadBalancer {
     /// Create a new load balancer
-    #[must_use] 
+    #[must_use]
     pub const fn new(node_registry: Arc<NodeRegistry>, strategy: LoadBalancingStrategy) -> Self {
         Self {
             node_registry,
+            health_monitor: None,
             strategy,
             round_robin_index: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
-    /// Select a node for the next request
-    pub async fn select_node(&self) -> Result<String> {
+    /// Attach a health monitor to filter out unhealthy nodes
+    #[must_use]
+    pub fn with_health_monitor(mut self, monitor: Arc<HealthMonitor>) -> Self {
+        self.health_monitor = Some(monitor);
+        self
+    }
+
+    /// Get healthy nodes, filtering by health monitor if available
+    async fn get_healthy_nodes(&self) -> Result<Vec<NodeInfo>> {
         let nodes = self.node_registry.get_all_nodes().await?;
 
-        if nodes.is_empty() {
-            return Err(Error::NotFound("No available nodes".to_string()));
-        }
+        // If no health monitor, return all nodes (stale nodes already filtered by registry)
+        let Some(ref monitor) = self.health_monitor else {
+            return Ok(nodes);
+        };
 
-        // Filter out this node (if we want to avoid self-selection)
-        // For now, include all nodes
+        let statuses = monitor.get_all_status().await;
+
+        let healthy: Vec<NodeInfo> = nodes
+            .into_iter()
+            .filter(|n| {
+                statuses
+                    .get(&n.node_id)
+                    .map_or(true, |s| *s != NodeHealth::Unhealthy)
+            })
+            .collect();
+
+        Ok(healthy)
+    }
+
+    /// Select a node for the next request
+    pub async fn select_node(&self) -> Result<String> {
+        let nodes = self.get_healthy_nodes().await?;
+
+        if nodes.is_empty() {
+            return Err(Error::NotFound("No available healthy nodes".to_string()));
+        }
 
         let selected_node = match self.strategy {
             LoadBalancingStrategy::Random => {
@@ -64,8 +96,10 @@ impl LoadBalancer {
                 nodes[index].node_id.clone()
             }
             LoadBalancingStrategy::LeastConnections => {
-                // Select node with fewest connections based on metadata
-                // Nodes report connection count in metadata["connections"]
+                // Select node with fewest connections based on metadata.
+                // Nodes report connection count in metadata["connections"] via heartbeat.
+                // Nodes without connection metadata are treated as having 0 connections
+                // (useful for newly joined nodes).
                 nodes
                     .iter()
                     .min_by_key(|n| {
@@ -94,15 +128,15 @@ impl LoadBalancer {
         Ok(node.node_id)
     }
 
-    /// Get all available nodes
+    /// Get all available healthy nodes
     pub async fn get_available_nodes(&self) -> Result<Vec<String>> {
-        let nodes = self.node_registry.get_all_nodes().await?;
+        let nodes = self.get_healthy_nodes().await?;
         Ok(nodes.into_iter().map(|n| n.node_id).collect())
     }
 
-    /// Get count of available nodes
+    /// Get count of available healthy nodes
     pub async fn available_count(&self) -> Result<usize> {
-        let nodes = self.node_registry.get_all_nodes().await?;
+        let nodes = self.get_healthy_nodes().await?;
         Ok(nodes.len())
     }
 }

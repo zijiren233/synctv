@@ -12,24 +12,10 @@
 pub mod grpc;
 pub mod xiu_integration;
 pub mod error;
-
-// Libraries (defined in sibling directory)
-#[path = "../libraries/mod.rs"]
 pub mod libraries;
-
-// Protocols (defined in sibling directory)
-#[path = "../protocols/mod.rs"]
 pub mod protocols;
-
-// Relay (defined in sibling directory)
-#[path = "../relay/mod.rs"]
 pub mod relay;
-
-// API (defined in sibling directory)
-#[path = "../api/mod.rs"]
 pub mod api;
-
-// Server orchestration (in src/)
 pub mod livestream;
 
 // Re-exports for convenience
