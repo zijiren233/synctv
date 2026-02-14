@@ -255,7 +255,7 @@ impl SyncTvServer {
         // 5. Shut down cluster manager (cancels Redis Pub/Sub + deduplicator tasks)
         if let Some(ref cluster_mgr) = self.services.cluster_manager {
             info!("Shutting down cluster manager...");
-            cluster_mgr.shutdown();
+            cluster_mgr.shutdown().await;
             info!("Cluster manager shut down");
         }
 

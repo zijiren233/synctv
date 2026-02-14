@@ -104,7 +104,6 @@ pub async fn serve(
     let user_service_for_provider = user_service.clone();
 
     let room_service_for_client = room_service.clone();
-    let room_service_for_admin = room_service.clone();
     let room_service_for_provider = room_service.clone();
 
     let jwt_service_for_provider = jwt_service.clone();
@@ -156,14 +155,27 @@ pub async fn serve(
         client_api.clone(),
     );
 
-    let admin_service = AdminServiceImpl::new(
-        Arc::try_unwrap(user_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
-        Arc::try_unwrap(room_service_for_admin).unwrap_or_else(|arc| (*arc).clone()),
-        provider_instance_manager,
+    // Build the shared AdminApiImpl for gRPC handlers (same impls layer used by HTTP)
+    // AdminApiImpl requires EmailService; if not configured, create with None config
+    // so send_test_email fails gracefully.
+    let email_svc_for_admin_api = email_service_for_admin
+        .unwrap_or_else(|| Arc::new(EmailService::new(None).expect("EmailService::new(None) should not fail")));
+
+    let admin_api = Arc::new(crate::impls::AdminApiImpl::new(
+        room_service.clone(),
+        user_service_for_admin.clone(),
         settings_service.clone(),
-        settings_registry,
-        email_service_for_admin,
+        settings_registry.clone(),
+        email_svc_for_admin_api,
+        Arc::new(connection_manager_for_provider.clone()),
+        provider_instance_manager,
         live_streaming_infrastructure,
+        redis_publish_tx.clone(),
+    ));
+
+    let admin_service = AdminServiceImpl::new(
+        user_service_for_admin,
+        admin_api,
     );
 
     // Create server builder

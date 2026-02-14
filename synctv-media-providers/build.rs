@@ -1,10 +1,13 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Configure tonic build to generate both client and server implementations
-    // - Server: For exposing provider APIs to external clients (parse, browse, etc.)
-    // - Client: For internal use by synctv-core (cross-provider communication)
+    // Compile media provider proto files to src/proto/
+    // - Server: For the standalone media-provider-server binary
+    // - Client: For synctv-core inter-service communication
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
+        .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .file_descriptor_set_path("src/proto/descriptor.bin")
+        .out_dir("src/proto")
         .compile_protos(
             &[
                 "proto/alist.proto",
@@ -14,7 +17,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &["proto"],
         )?;
 
-    // Trigger rebuild if proto files change
     println!("cargo:rerun-if-changed=proto/alist.proto");
     println!("cargo:rerun-if-changed=proto/bilibili.proto");
     println!("cargo:rerun-if-changed=proto/emby.proto");

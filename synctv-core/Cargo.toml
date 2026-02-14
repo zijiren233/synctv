@@ -7,8 +7,8 @@ license.workspace = true
 
 [dependencies]
 # Internal
-synctv-proto = { path = "../synctv-proto" }
-synctv-media-providers = { path = "../synctv-media-providers" }
+synctv-proto.workspace = true
+synctv-media-providers.workspace = true
 
 # Async
 tokio.workspace = true
@@ -49,7 +49,7 @@ async_singleflight = "0.6"
 nanoid.workspace = true
 uuid.workspace = true
 rand.workspace = true
-md5.workspace = true
+sha2.workspace = true
 humantime.workspace = true
 hex.workspace = true
 
@@ -80,7 +80,6 @@ chrono.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
-log.workspace = true
 
 # Configuration
 config.workspace = true
@@ -91,7 +90,7 @@ lettre = { version = "0.11", default-features = false, features = ["tokio1-rustl
 handlebars = "5.1"
 
 # WebRTC/TURN credentials
-hmac = "0.12"
+hmac.workspace = true
 sha1 = "0.10"
 base64 = "0.22"
 

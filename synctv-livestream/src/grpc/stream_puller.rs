@@ -205,20 +205,9 @@ impl GrpcStreamPuller {
         Ok(())
     }
 
-    /// Exponential backoff with jitter.
+    /// Exponential backoff with jitter (delegated to shared utility).
     async fn backoff(attempt: u32, initial_ms: u64, max_ms: u64) {
-        let base = initial_ms.saturating_mul(1u64 << attempt.min(16).saturating_sub(1));
-        let capped = base.min(max_ms);
-        // Add jitter: ±25%
-        let jitter = capped / 4;
-        let random_offset = u64::from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .subsec_nanos(),
-        ) % (jitter * 2 + 1);
-        let delay = capped.saturating_sub(jitter) + random_offset;
-        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        crate::util::backoff(attempt, initial_ms, max_ms).await;
     }
 
     /// Publish to local `StreamHub` (similar to xiu `ClientSession::publish_to_stream_hub`)

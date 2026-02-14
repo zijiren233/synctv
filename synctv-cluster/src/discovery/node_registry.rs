@@ -685,12 +685,24 @@ impl NodeRegistry {
                 }
             }
 
-            // Update local cache
+            // Merge Redis results into local cache instead of destructively clearing.
+            // This preserves locally-known nodes that may be transiently absent from
+            // Redis (e.g., during a partial outage). Nodes confirmed absent from Redis
+            // AND stale are pruned.
             let mut local_nodes = self.local_nodes.write().await;
-            local_nodes.clear();
+            let redis_node_ids: std::collections::HashSet<String> =
+                nodes.iter().map(|n| n.node_id.clone()).collect();
+
+            // Update/insert nodes found in Redis
             for node in &nodes {
                 local_nodes.insert(node.node_id.clone(), node.clone());
             }
+
+            // Remove local nodes that are absent from Redis AND stale
+            local_nodes.retain(|node_id, info| {
+                redis_node_ids.contains(node_id)
+                    || !info.is_stale(self.heartbeat_timeout_secs)
+            });
 
             Ok(nodes)
         } else {

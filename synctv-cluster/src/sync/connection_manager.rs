@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use synctv_core::models::id::{RoomId, UserId};
@@ -103,6 +103,10 @@ pub struct ConnectionManager {
     /// Connection limits
     limits: Arc<ConnectionLimits>,
 
+    /// Atomic total connection count for race-free limit enforcement.
+    /// Incremented atomically during register(), decremented during unregister().
+    total_connections: Arc<AtomicUsize>,
+
     /// Metrics
     total_connections_ever: Arc<AtomicU64>,
     total_messages: Arc<AtomicU64>,
@@ -121,6 +125,7 @@ impl ConnectionManager {
             user_connections: Arc::new(DashMap::new()),
             room_connections: Arc::new(DashMap::new()),
             limits: Arc::new(limits),
+            total_connections: Arc::new(AtomicUsize::new(0)),
             total_connections_ever: Arc::new(AtomicU64::new(0)),
             total_messages: Arc::new(AtomicU64::new(0)),
             disconnect_tx: Arc::new(disconnect_tx),
@@ -192,8 +197,12 @@ impl ConnectionManager {
     ///
     /// Returns Ok(()) if connection is allowed, or Err with reason if rejected
     pub fn register(&self, connection_id: String, user_id: UserId) -> Result<(), String> {
-        // Check total limit
-        if self.connections.len() >= self.limits.max_total {
+        // Atomically reserve a slot in the total connection count.
+        // fetch_add returns the previous value; if it was already at the limit,
+        // roll back and reject.
+        let prev = self.total_connections.fetch_add(1, Ordering::AcqRel);
+        if prev >= self.limits.max_total {
+            self.total_connections.fetch_sub(1, Ordering::AcqRel);
             return Err(format!(
                 "Server at capacity ({} connections)",
                 self.limits.max_total
@@ -206,6 +215,8 @@ impl ConnectionManager {
         {
             let mut user_entry = self.user_connections.entry(user_id.clone()).or_default();
             if user_entry.len() >= self.limits.max_per_user {
+                // Roll back the total connection reservation
+                self.total_connections.fetch_sub(1, Ordering::AcqRel);
                 return Err(format!(
                     "Too many connections for this user (max {})",
                     self.limits.max_per_user
@@ -225,7 +236,7 @@ impl ConnectionManager {
         info!(
             connection_id = %connection_id,
             user_id = %user_id.as_str(),
-            total_connections_ever = self.connections.len(),
+            total_connections = self.total_connections.load(Ordering::Relaxed),
             "Connection registered"
         );
 
@@ -281,6 +292,9 @@ impl ConnectionManager {
     /// Unregister a connection
     pub fn unregister(&self, connection_id: &str) {
         if let Some((_, conn_info)) = self.connections.remove(connection_id) {
+            // Decrement the atomic total connection count
+            self.total_connections.fetch_sub(1, Ordering::AcqRel);
+
             // Remove from user connections
             if let Some(mut user_conns) = self.user_connections.get_mut(&conn_info.user_id) {
                 user_conns.retain(|id| id != connection_id);

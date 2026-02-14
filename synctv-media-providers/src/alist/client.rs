@@ -12,11 +12,15 @@ use super::error::{AlistError, check_response};
 use super::types::{AlistResp, LoginData, HttpFsGetResp, HttpFsListResp, HttpFsOtherResp, HttpMeResp, HttpFsSearchResp};
 
 /// Shared HTTP client for all Alist requests (connection pooling)
+/// Redirects are disabled to prevent SSRF via redirect to private IPs.
+/// The gRPC validation layer checks the initial URL, but redirect targets
+/// would bypass that check without this policy.
 static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(10)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("Failed to build Alist shared HTTP client")
 });

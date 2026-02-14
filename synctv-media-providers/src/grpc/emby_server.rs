@@ -9,7 +9,32 @@ use super::emby::{
 };
 use super::validation::validate_host;
 use crate::emby::{EmbyInterface, EmbyService as EmbyServiceImpl};
+use crate::emby::error::EmbyError;
 use tonic::{Request, Response, Status};
+
+/// Map Emby errors to appropriate gRPC status codes instead of leaking internals.
+fn map_emby_error(context: &str, e: EmbyError) -> Status {
+    match e {
+        EmbyError::Auth(_) => Status::unauthenticated(format!("{context}: authentication failed")),
+        EmbyError::Http { status, .. } => {
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                Status::permission_denied(format!("{context}: access denied"))
+            } else if status.as_u16() == 404 {
+                Status::not_found(format!("{context}: resource not found"))
+            } else if status.is_server_error() {
+                Status::unavailable(format!("{context}: upstream server error"))
+            } else {
+                Status::internal(format!("{context}: request failed"))
+            }
+        }
+        EmbyError::Network(_) => Status::unavailable(format!("{context}: network error")),
+        EmbyError::Parse(_) => Status::internal(format!("{context}: failed to parse response")),
+        EmbyError::Api { .. } => Status::internal(format!("{context}: API error")),
+        EmbyError::InvalidConfig(_) => Status::invalid_argument(format!("{context}: invalid configuration")),
+        EmbyError::InvalidHeader(_) => Status::internal(format!("{context}: invalid header")),
+        EmbyError::NotImplemented(_) => Status::unimplemented(format!("{context}: not implemented")),
+    }
+}
 
 /// Emby gRPC server
 ///
@@ -39,7 +64,7 @@ impl Emby for EmbyService {
         let req = request.into_inner();
         validate_host(&req.host)?;
         let resp = self.service.login(req).await
-            .map_err(|e| Status::internal(format!("login failed: {e}")))?;
+            .map_err(|e| map_emby_error("login", e))?;
         Ok(Response::new(resp))
     }
 
@@ -47,7 +72,7 @@ impl Emby for EmbyService {
         let req = request.into_inner();
         validate_host(&req.host)?;
         let resp = self.service.me(req).await
-            .map_err(|e| Status::internal(format!("me failed: {e}")))?;
+            .map_err(|e| map_emby_error("me", e))?;
         Ok(Response::new(resp))
     }
 
@@ -58,7 +83,7 @@ impl Emby for EmbyService {
         let req = request.into_inner();
         validate_host(&req.host)?;
         let resp = self.service.get_items(req).await
-            .map_err(|e| Status::internal(format!("get_items failed: {e}")))?;
+            .map_err(|e| map_emby_error("get_items", e))?;
         Ok(Response::new(resp))
     }
 
@@ -66,7 +91,7 @@ impl Emby for EmbyService {
         let req = request.into_inner();
         validate_host(&req.host)?;
         let resp = self.service.get_item(req).await
-            .map_err(|e| Status::internal(format!("get_item failed: {e}")))?;
+            .map_err(|e| map_emby_error("get_item", e))?;
         Ok(Response::new(resp))
     }
 
@@ -77,7 +102,7 @@ impl Emby for EmbyService {
         let req = request.into_inner();
         validate_host(&req.host)?;
         let resp = self.service.get_system_info(req).await
-            .map_err(|e| Status::internal(format!("get_system_info failed: {e}")))?;
+            .map_err(|e| map_emby_error("get_system_info", e))?;
         Ok(Response::new(resp))
     }
 
@@ -85,7 +110,7 @@ impl Emby for EmbyService {
         let req = request.into_inner();
         validate_host(&req.host)?;
         let resp = self.service.fs_list(req).await
-            .map_err(|e| Status::internal(format!("fs_list failed: {e}")))?;
+            .map_err(|e| map_emby_error("fs_list", e))?;
         Ok(Response::new(resp))
     }
 
@@ -93,7 +118,7 @@ impl Emby for EmbyService {
         let req = request.into_inner();
         validate_host(&req.host)?;
         let resp = self.service.logout(req).await
-            .map_err(|e| Status::internal(format!("logout failed: {e}")))?;
+            .map_err(|e| map_emby_error("logout", e))?;
         Ok(Response::new(resp))
     }
 
@@ -104,7 +129,7 @@ impl Emby for EmbyService {
         let req = request.into_inner();
         validate_host(&req.host)?;
         let resp = self.service.playback_info(req).await
-            .map_err(|e| Status::internal(format!("playback_info failed: {e}")))?;
+            .map_err(|e| map_emby_error("playback_info", e))?;
         Ok(Response::new(resp))
     }
 
@@ -115,7 +140,7 @@ impl Emby for EmbyService {
         let req = request.into_inner();
         validate_host(&req.host)?;
         let resp = self.service.delete_active_encodings(req).await
-            .map_err(|e| Status::internal(format!("delete_active_encodings failed: {e}")))?;
+            .map_err(|e| map_emby_error("delete_active_encodings", e))?;
         Ok(Response::new(resp))
     }
 }

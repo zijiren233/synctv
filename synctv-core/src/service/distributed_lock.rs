@@ -4,6 +4,22 @@
 //!
 //! Provides distributed locking mechanism for multi-replica deployments.
 //! Uses Redis SET NX EX for atomic lock acquisition.
+//!
+//! # Known Limitation: No Fencing Token
+//!
+//! This implementation does NOT provide fencing tokens. If a lock holder's
+//! operation outlasts the lock TTL (due to GC pause, network partition, or
+//! slow processing), another client can acquire the lock and both operations
+//! may proceed concurrently. To mitigate this:
+//!
+//! - Set TTL conservatively (at least 2x the expected operation duration)
+//! - Use `extend()` for long-running operations to refresh the TTL
+//! - Rely on optimistic locking (version columns) at the database layer
+//!   as a secondary safety net for critical writes
+//!
+//! For strict mutual exclusion under all failure modes, consider passing a
+//! monotonic fencing token to the protected operation and using it as a CAS
+//! condition in the database write.
 
 use redis::aio::ConnectionManager as RedisConnectionManager;
 use redis::Script;

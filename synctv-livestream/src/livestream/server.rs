@@ -20,6 +20,7 @@ use synctv_xiu::rtmp::auth::AuthCallback;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use synctv_xiu::streamhub::StreamsHub;
 
@@ -185,6 +186,11 @@ impl LivestreamServer {
         let registry_for_cleanup = self.publisher_registry.clone();
         let node_id_for_cleanup = self.config.node_id.clone();
 
+        // Cancellation token for RTMP sessions — cancelled on StreamHub restart
+        // to actively terminate all sessions instead of waiting for broken pipe detection
+        let rtmp_session_token = CancellationToken::new();
+        let rtmp_session_token_for_hub = rtmp_session_token.clone();
+
         // 2. Spawn StreamHub event loop with automatic recovery
         let hub_handle = tokio::spawn(async move {
             const MAX_RESTARTS: u32 = 10;
@@ -202,6 +208,11 @@ impl LivestreamServer {
                     max_restarts = MAX_RESTARTS,
                     "StreamHub event loop exited unexpectedly, cleaning up local state before restart..."
                 );
+
+                // CRITICAL-1: Cancel all active RTMP sessions immediately.
+                // Without this, sessions hang waiting for broken pipe detection.
+                rtmp_session_token_for_hub.cancel();
+                info!("Cancelled all active RTMP sessions due to StreamHub restart");
 
                 // Clean up all local publisher registrations from Redis
                 // This ensures stale state doesn't persist after restart

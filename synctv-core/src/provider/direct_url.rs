@@ -139,7 +139,10 @@ impl MediaProvider for DirectUrlProvider {
 
     fn cache_key(&self, _ctx: &ProviderContext<'_>, source_config: &Value) -> String {
         if let Ok(config) = DirectUrlSourceConfig::try_from(source_config) {
-            format!("direct_url:{:x}", md5::compute(config.url.as_bytes()))
+            {
+                use sha2::{Sha256, Digest};
+                format!("direct_url:{:x}", Sha256::digest(config.url.as_bytes()))
+            }
         } else {
             "direct_url:unknown".to_string()
         }

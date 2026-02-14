@@ -76,10 +76,7 @@ pub async fn get_ice_servers(
     let user_id = auth.user_id;
     let room_id = RoomId::from_string(room_id);
 
-    // Verify user is a member of this room
-    state.room_service.check_membership(&room_id, &user_id).await
-        .map_err(|_| AppError::forbidden("Not a member of this room"))?;
-
+    // Membership check is performed inside client_api.get_ice_servers()
     let response = state
         .client_api
         .get_ice_servers(&room_id, &user_id)
@@ -131,10 +128,7 @@ pub async fn get_network_quality(
     let user_id = auth.user_id;
     let room_id = RoomId::from_string(room_id);
 
-    // Verify user is a member of this room
-    state.room_service.check_membership(&room_id, &user_id).await
-        .map_err(|_| AppError::forbidden("Not a member of this room"))?;
-
+    // Membership check is performed inside client_api.get_network_quality()
     let response = state
         .client_api
         .get_network_quality(&room_id, &user_id)

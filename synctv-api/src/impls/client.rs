@@ -100,6 +100,7 @@ impl ClientApiImpl {
             let _ = tx.try_send(synctv_cluster::sync::PublishRequest {
                 room_id: Some(room_id.clone()),
                 event: synctv_cluster::sync::ClusterEvent::PermissionChanged {
+                    event_id: nanoid::nanoid!(16),
                     room_id: room_id.clone(),
                     target_user_id: target_user_id.clone(),
                     target_username: String::new(), // filled by receiver if needed
@@ -1298,9 +1299,13 @@ impl ClientApiImpl {
             .await
             .map_err(|e| format!("Failed to generate publish key: {e}"))?;
 
-        // Construct RTMP URL and stream key
-        let rtmp_url = "rtmp://localhost:1935/live".to_string();
-        let stream_key = format!("{}/{}", rid.as_str(), media_id.as_str());
+        // Construct RTMP URL and stream key from server config
+        let rtmp_host = &self.config.server.host;
+        let rtmp_port = self.config.livestream.rtmp_port;
+        // If bound to 0.0.0.0, use "localhost" as a safe default hint for clients
+        let display_host = if rtmp_host == "0.0.0.0" { "localhost" } else { rtmp_host.as_str() };
+        let rtmp_url = format!("rtmp://{display_host}:{rtmp_port}/live/{}", rid.as_str());
+        let stream_key = publish_key.token.clone();
 
         tracing::info!(
             room_id = %rid.as_str(),

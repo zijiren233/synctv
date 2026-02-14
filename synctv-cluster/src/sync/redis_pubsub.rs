@@ -297,24 +297,24 @@ impl RedisPubSub {
         // Subscribe to all room channels and admin channel using patterns
         match timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
-            pubsub.psubscribe(&["room:*", "admin:*"]),
+            pubsub.psubscribe(&["synctv:room:*", "synctv:admin:*"]),
         )
         .await
         {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 return SubscriberExit::ConnectFailed(
-                    anyhow::anyhow!(e).context("Failed to subscribe to room:*/admin:* patterns"),
+                    anyhow::anyhow!(e).context("Failed to subscribe to synctv:room:*/synctv:admin:* patterns"),
                 );
             }
             Err(_) => {
                 return SubscriberExit::ConnectFailed(anyhow::anyhow!(
-                    "Timed out subscribing to room:*/admin:* patterns"
+                    "Timed out subscribing to synctv:room:*/synctv:admin:* patterns"
                 ));
             }
         }
 
-        info!("Redis subscriber connected, listening to room:* and admin:* channels");
+        info!("Redis subscriber connected, listening to synctv:room:* and synctv:admin:* channels");
 
         if *last_stream_id == "$" {
             // First connection: snapshot the current stream tip so we can catch
@@ -429,13 +429,13 @@ impl RedisPubSub {
         );
 
         // Handle admin channel events (no room_id)
-        if channel.starts_with("admin:") {
+        if channel.starts_with("synctv:admin:") {
             let _ = self.admin_event_tx.send(event);
             return;
         }
 
-        // Extract room_id from channel name (room:{room_id})
-        if let Some(room_id_str) = channel.strip_prefix("room:") {
+        // Extract room_id from channel name (synctv:room:{room_id})
+        if let Some(room_id_str) = channel.strip_prefix("synctv:room:") {
             let room_id = RoomId::from_string(room_id_str.to_string());
 
             // Forward KickPublisher events to admin channel
@@ -473,6 +473,39 @@ impl RedisPubSub {
                 }
             }
 
+            // Route WebRTC signaling to the specific target connection instead of
+            // broadcasting to all subscribers. The `to` field is formatted as
+            // "user_id:conn_id" -- we parse the conn_id and use targeted delivery.
+            if let ClusterEvent::WebRTCSignaling { ref to, .. } = event {
+                let to_owned = to.clone();
+                // Parse "user_id:conn_id" format
+                if let Some((_target_user, target_conn)) = to_owned.rsplit_once(':') {
+                    let target_conn = target_conn.to_string();
+                    let sent = self.message_hub.broadcast_to_connection(
+                        &room_id,
+                        &target_conn,
+                        event,
+                    );
+                    debug!(
+                        room_id = %room_id.as_str(),
+                        target_connection = %target_conn,
+                        sent = sent,
+                        "Routed WebRTC signaling to specific connection"
+                    );
+                } else {
+                    // Fallback: if `to` doesn't contain ':', broadcast to user
+                    let target_user_id = synctv_core::models::UserId::from_string(to_owned.clone());
+                    let sent = self.message_hub.broadcast_to_user(&room_id, &target_user_id, event);
+                    debug!(
+                        room_id = %room_id.as_str(),
+                        target_user = %to_owned,
+                        sent = sent,
+                        "Routed WebRTC signaling to user (no conn_id)"
+                    );
+                }
+                return;
+            }
+
             // Broadcast to local subscribers
             let sent_count = self.message_hub.broadcast(&room_id, event);
 
@@ -495,11 +528,11 @@ impl RedisPubSub {
         node_id: &str,
         event: ClusterEvent,
     ) -> Result<usize> {
-        // Events with a room_id go to room:{room_id}, admin-only events go to admin:events
+        // Events with a room_id go to synctv:room:{room_id}, admin-only events go to synctv:admin:events
         let channel = if let Some(room_id) = event.room_id() {
-            format!("room:{}", room_id.as_str())
+            format!("synctv:room:{}", room_id.as_str())
         } else {
-            "admin:events".to_string()
+            "synctv:admin:events".to_string()
         };
 
         // Wrap event in envelope with node_id
@@ -687,6 +720,7 @@ mod tests {
     #[test]
     fn test_event_envelope_serialization() {
         let event = ClusterEvent::ChatMessage {
+            event_id: nanoid::nanoid!(16),
             room_id: RoomId::from_string("room123".to_string()),
             user_id: UserId::from_string("user456".to_string()),
             username: "testuser".to_string(),
@@ -745,6 +779,7 @@ mod tests {
 
         // Publish event from node1
         let event = ClusterEvent::ChatMessage {
+            event_id: nanoid::nanoid!(16),
             room_id: room_id.clone(),
             user_id: user_id.clone(),
             username: "testuser".to_string(),

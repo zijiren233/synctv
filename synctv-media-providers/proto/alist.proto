@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package api.alist;
+package synctv.media.alist;
 
 service Alist {
   rpc Login(LoginReq) returns (LoginResp);

@@ -249,6 +249,9 @@ pub fn create_admin_router() -> Router<AppState> {
         .route("/providers/:name/reconnect", post(reconnect_provider))
         .route("/providers/:name/enable", post(enable_provider))
         .route("/providers/:name/disable", post(disable_provider))
+        // Stream management
+        .route("/streams", get(list_streams))
+        .route("/streams/:stream_id/kick", post(kick_stream))
         // Admin management (root only)
         .route("/admins", get(list_admins))
         .route("/admins/:user_id", post(add_admin).delete(remove_admin))
@@ -767,6 +770,53 @@ async fn disable_provider(
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))
+}
+
+// ------------------------------------------------------------------
+// Stream Management
+// ------------------------------------------------------------------
+
+#[derive(serde::Deserialize, Default)]
+struct ListStreamsQuery {
+    room_id: Option<String>,
+}
+
+async fn list_streams(
+    _auth: AuthAdmin,
+    State(state): State<AppState>,
+    Query(q): Query<ListStreamsQuery>,
+) -> AppResult<Json<admin::ListActiveStreamsResponse>> {
+    let api = require_admin_api(&state)?;
+    let room_id = q.room_id.as_deref().filter(|s| !s.is_empty());
+    let streams = api
+        .list_active_streams(room_id)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+    Ok(Json(admin::ListActiveStreamsResponse { streams }))
+}
+
+#[derive(serde::Deserialize)]
+struct KickStreamRequest {
+    room_id: String,
+    media_id: String,
+    #[serde(default)]
+    reason: String,
+}
+
+async fn kick_stream(
+    _auth: AuthAdmin,
+    State(state): State<AppState>,
+    Json(req): Json<KickStreamRequest>,
+) -> AppResult<Json<admin::KickStreamResponse>> {
+    if req.room_id.is_empty() || req.media_id.is_empty() {
+        return Err(AppError::bad_request("room_id and media_id are required"));
+    }
+
+    let api = require_admin_api(&state)?;
+    api.kick_stream(&req.room_id, &req.media_id, &req.reason)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+    Ok(Json(admin::KickStreamResponse {}))
 }
 
 // ------------------------------------------------------------------

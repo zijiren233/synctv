@@ -1,19 +1,19 @@
 //! gRPC Provider Services
 //!
 //! This module contains gRPC server implementations for all providers.
-//! The proto-generated code is included from the build directory.
+//! Generated code is committed under `src/proto/` (same pattern as `synctv-proto`).
 
 // Include generated protobuf code
 pub mod alist {
-    tonic::include_proto!("api.alist");
+    include!("../proto/synctv.media.alist.rs");
 }
 
 pub mod bilibili {
-    tonic::include_proto!("api.bilibili");
+    include!("../proto/synctv.media.bilibili.rs");
 }
 
 pub mod emby {
-    tonic::include_proto!("api.emby");
+    include!("../proto/synctv.media.emby.rs");
 }
 
 // Shared validation

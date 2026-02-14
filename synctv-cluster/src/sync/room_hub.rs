@@ -222,8 +222,55 @@ impl RoomMessageHub {
         sent_count
     }
 
+    /// Broadcast an event to a specific connection in a room.
+    ///
+    /// Used for targeted delivery (e.g., WebRTC signaling to a specific peer).
+    /// Returns 1 if sent, 0 if the connection was not found or the channel was full.
+    pub fn broadcast_to_connection(
+        &self,
+        room_id: &RoomId,
+        connection_id: &str,
+        event: ClusterEvent,
+    ) -> usize {
+        if let Some(subscribers) = self.rooms.get(room_id) {
+            for subscriber in subscribers.iter() {
+                if subscriber.connection_id == connection_id {
+                    let event_type = event.event_type().to_string();
+                    return match subscriber.sender.try_send(event) {
+                        Ok(()) => {
+                            debug!(
+                                room_id = %room_id.as_str(),
+                                connection_id = %connection_id,
+                                event_type = %event_type,
+                                "Event sent to specific connection"
+                            );
+                            1
+                        }
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            warn!(
+                                room_id = %room_id.as_str(),
+                                connection_id = %connection_id,
+                                "Subscriber channel full, dropping targeted event"
+                            );
+                            0
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            warn!(
+                                room_id = %room_id.as_str(),
+                                connection_id = %connection_id,
+                                "Subscriber channel closed for targeted event"
+                            );
+                            0
+                        }
+                    };
+                }
+            }
+        }
+        0
+    }
+
     /// Get the number of subscribers in a room
-    #[must_use] 
+    #[must_use]
     pub fn subscriber_count(&self, room_id: &RoomId) -> usize {
         self.rooms
             .get(room_id)
@@ -282,6 +329,7 @@ mod tests {
 
         // Broadcast event
         let event = ClusterEvent::ChatMessage {
+            event_id: nanoid::nanoid!(16),
             room_id: room_id.clone(),
             user_id: user_id.clone(),
             username: "testuser".to_string(),
@@ -331,6 +379,7 @@ mod tests {
 
         // Broadcast event
         let event = ClusterEvent::ChatMessage {
+            event_id: nanoid::nanoid!(16),
             room_id: room_id.clone(),
             user_id: user1.clone(),
             username: "user1".to_string(),
@@ -364,6 +413,7 @@ mod tests {
 
         // Broadcast to user1 only
         let event = ClusterEvent::SystemNotification {
+            event_id: nanoid::nanoid!(16),
             message: "Private message".to_string(),
             level: crate::sync::NotificationLevel::Info,
             timestamp: Utc::now(),

@@ -10,10 +10,8 @@ use axum::{
     Router,
 };
 use serde::Serialize;
-use tracing::info;
 
 use crate::http::{AppState, AppError, AppResult, middleware::AuthUser};
-use synctv_core::models::{MediaId, RoomId};
 
 /// Publish key response
 #[derive(Debug, Serialize)]
@@ -60,51 +58,33 @@ pub async fn generate_publish_key(
     Path((room_id, media_id)): Path<(String, String)>,
     auth_user: AuthUser,
 ) -> AppResult<Json<PublishKeyResponse>> {
-    let room_id = RoomId::from_string(room_id);
-    let media_id = MediaId::from_string(media_id);
-    let user_id = auth_user.user_id;
+    let user_id_str = auth_user.user_id.to_string();
 
-    // Get PublishKeyService from state
-    let publish_key_service = state.publish_key_service.as_ref()
-        .ok_or_else(|| AppError::internal_server_error("Publish key service not configured"))?;
-
-    // Check permission to start live stream
-    state
-        .room_service
-        .check_permission(&room_id, &user_id, synctv_core::models::PermissionBits::START_LIVE)
+    // Delegate to shared ClientApiImpl (handles permission check, key generation, RTMP URL)
+    let req = crate::proto::client::CreatePublishKeyRequest {
+        id: media_id,
+    };
+    let resp = state
+        .client_api
+        .create_publish_key(&user_id_str, &room_id, req)
         .await
-        .map_err(|e| AppError::forbidden(format!("Permission denied: {e}")))?;
-
-    // Generate publish key for this specific media item
-    let publish_key = publish_key_service
-        .generate_publish_key(room_id.clone(), media_id.clone(), user_id.clone())
-        .await
-        .map_err(|e| AppError::internal_server_error(format!("Failed to generate publish key: {e}")))?;
-
-    // Construct RTMP URL and stream key from configuration
-    // Stream name format: {room_id}/{media_id}
-    let rtmp_host = &state.client_api.config.server.host;
-    let rtmp_port = state.client_api.config.livestream.rtmp_port;
-    // Use the server's configured host; if bound to 0.0.0.0, clients should use
-    // the public hostname, so we fall back to "localhost" as a safe default hint.
-    let display_host = if rtmp_host == "0.0.0.0" { "localhost" } else { rtmp_host };
-    let rtmp_url = format!("rtmp://{display_host}:{rtmp_port}/live/{}", room_id.as_str());
-    let stream_key = publish_key.token.clone();
-
-    info!(
-        room_id = publish_key.room_id,
-        media_id = publish_key.media_id,
-        user_id = publish_key.user_id,
-        "Generated publish key for media stream"
-    );
+        .map_err(|e| {
+            if e.contains("Permission denied") {
+                AppError::forbidden(e)
+            } else if e.contains("not found") {
+                AppError::not_found(e)
+            } else {
+                AppError::internal_server_error(e)
+            }
+        })?;
 
     Ok(Json(PublishKeyResponse {
-        token: publish_key.token,
-        room_id: publish_key.room_id,
-        media_id: publish_key.media_id,
-        user_id: publish_key.user_id,
-        expires_at: publish_key.expires_at,
-        rtmp_url,
-        stream_key,
+        token: resp.publish_key.clone(),
+        room_id,
+        media_id: String::new(), // Media ID is embedded in the stream key
+        user_id: user_id_str,
+        expires_at: resp.expires_at,
+        rtmp_url: resp.rtmp_url,
+        stream_key: resp.stream_key,
     }))
 }

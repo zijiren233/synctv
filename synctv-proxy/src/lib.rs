@@ -315,22 +315,13 @@ fn rewrite_uri_attribute(line: &str, base: Option<&url::Url>, proxy_base: &str) 
     result
 }
 
-/// Minimal percent-encoding for URL query parameter values.
+/// Percent-encode a string for use in URL query parameter values.
+///
+/// Uses the `NON_ALPHANUMERIC` encode set, which encodes everything except
+/// `A-Z a-z 0-9 - _ . ~` (the RFC 3986 "unreserved" characters).
 #[must_use]
 pub fn percent_encode(input: &str) -> String {
-    use std::fmt::Write;
-    let mut result = String::with_capacity(input.len() * 2);
-    for byte in input.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                result.push(byte as char);
-            }
-            _ => {
-                let _ = write!(result, "%{byte:02X}");
-            }
-        }
-    }
-    result
+    percent_encoding::utf8_percent_encode(input, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
 
 // ------------------------------------------------------------------

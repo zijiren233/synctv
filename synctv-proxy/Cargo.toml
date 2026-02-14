@@ -10,7 +10,8 @@ axum.workspace = true
 reqwest = { version = "0.12", features = ["rustls-tls", "stream"], default-features = false }
 futures.workspace = true
 url.workspace = true
+percent-encoding.workspace = true
 anyhow.workspace = true
 tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
-synctv-core = { path = "../synctv-core" }
+synctv-core.workspace = true

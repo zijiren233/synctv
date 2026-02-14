@@ -168,6 +168,20 @@ impl ClientServiceImpl {
         }
     }
 
+    /// Build an EmailApiImpl from the configured services, or return an error message
+    fn email_api(&self) -> Result<crate::impls::EmailApiImpl, String> {
+        let email_service = self.email_service.as_ref()
+            .ok_or_else(|| "Email service is not configured on this server. Please contact the administrator.".to_string())?;
+        let email_token_service = self.email_token_service.as_ref()
+            .ok_or_else(|| "Email verification service is not configured on this server.".to_string())?;
+
+        Ok(crate::impls::EmailApiImpl::new(
+            self.user_service.clone(),
+            email_service.clone(),
+            email_token_service.clone(),
+        ))
+    }
+
     /// Extract `user_id` from `UserContext` (injected by `inject_user` interceptor)
     #[allow(clippy::result_large_err)]
     fn get_user_id(&self, request: &Request<impl std::fmt::Debug>) -> Result<UserId, Status> {
@@ -212,6 +226,7 @@ impl ClientServiceImpl {
                 timestamp,
                 position,
                 color,
+                ..
             } => Some(ServerMessage {
                 message: Some(server_message::Message::Chat(ChatMessageReceive {
                     id: nanoid::nanoid!(12),
@@ -684,6 +699,7 @@ impl RoomService for ClientServiceImpl {
 
             // Notify other users that this user left
             let event = ClusterEvent::UserLeft {
+                event_id: nanoid::nanoid!(16),
                 room_id: room_id_clone.clone(),
                 user_id: user_id_clone.clone(),
                 username: username_clone.clone(),
@@ -1083,45 +1099,24 @@ impl PublicService for ClientServiceImpl {
 }
 
 // ==================== EmailService Implementation ====================
+// Delegates to shared EmailApiImpl to avoid duplicating logic with HTTP handlers.
 #[tonic::async_trait]
 impl EmailService for ClientServiceImpl {
     async fn send_verification_email(
         &self,
         request: Request<SendVerificationEmailRequest>,
     ) -> Result<Response<SendVerificationEmailResponse>, Status> {
-        let email_service = self.email_service.as_ref()
-            .ok_or_else(|| Status::failed_precondition("Email service is not configured on this server. Please contact the administrator or use alternative authentication methods."))?;
-        let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
-
+        let email_api = self.email_api()
+            .map_err(|e| Status::failed_precondition(e))?;
         let req = request.into_inner();
 
-        // Check if user exists with this email
-        let user = self
-            .user_service
-            .get_by_email(&req.email)
+        let result = email_api
+            .send_verification_email(&req.email)
             .await
-            .map_err(|e| internal_err("Database error", e))?;
-
-        let user = match user {
-            Some(u) => u,
-            None => {
-                return Ok(Response::new(SendVerificationEmailResponse {
-                    message: "If an account exists with this email, a verification code will be sent.".to_string(),
-                }));
-            }
-        };
-
-        // Generate and send verification email
-        let _token = email_service
-            .send_verification_email(&req.email, email_token_service, &user.id)
-            .await
-            .map_err(|e| internal_err("Failed to send email", e))?;
-
-        tracing::info!("Sent verification email to {}", req.email);
+            .map_err(|e| internal_err("Email verification", &e))?;
 
         Ok(Response::new(SendVerificationEmailResponse {
-            message: "Verification code sent to your email".to_string(),
+            message: result.message,
         }))
     }
 
@@ -1129,41 +1124,18 @@ impl EmailService for ClientServiceImpl {
         &self,
         request: Request<ConfirmEmailRequest>,
     ) -> Result<Response<ConfirmEmailResponse>, Status> {
-        let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
-
+        let email_api = self.email_api()
+            .map_err(|e| Status::failed_precondition(e))?;
         let req = request.into_inner();
 
-        // Validate token first (constant-time regardless of user existence)
-        let validated_user_id = email_token_service
-            .validate_token(&req.token, synctv_core::service::EmailTokenType::EmailVerification)
+        let result = email_api
+            .confirm_email(&req.email, &req.token)
             .await
-            .map_err(|_| Status::invalid_argument("Invalid or expired verification token"))?;
-
-        // Check if user exists (generic error to prevent enumeration)
-        let user = self
-            .user_service
-            .get_by_email(&req.email)
-            .await
-            .map_err(|e| internal_err("Database error", e))?
-            .ok_or_else(|| Status::invalid_argument("Invalid or expired verification token"))?;
-
-        // Verify token matches user
-        if validated_user_id != user.id {
-            return Err(Status::invalid_argument("Invalid or expired verification token"));
-        }
-
-        // Mark email as verified
-        self.user_service
-            .set_email_verified(&user.id, true)
-            .await
-            .map_err(|e| internal_err("Failed to update email verification", e))?;
-
-        tracing::info!("Email verified for user {}", user.id.as_str());
+            .map_err(|e| Status::invalid_argument(e))?;
 
         Ok(Response::new(ConfirmEmailResponse {
-            message: "Email verified successfully".to_string(),
-            user_id: user.id.to_string(),
+            message: result.message,
+            user_id: result.user_id,
         }))
     }
 
@@ -1171,37 +1143,17 @@ impl EmailService for ClientServiceImpl {
         &self,
         request: Request<RequestPasswordResetRequest>,
     ) -> Result<Response<RequestPasswordResetResponse>, Status> {
-        let email_service = self.email_service.as_ref()
-            .ok_or_else(|| Status::failed_precondition("Email service is not configured on this server. Please contact the administrator to reset your password."))?;
-        let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
-
+        let email_api = self.email_api()
+            .map_err(|e| Status::failed_precondition(e))?;
         let req = request.into_inner();
 
-        // Check if user exists (don't reveal if not found for security)
-        let user = self
-            .user_service
-            .get_by_email(&req.email)
+        let result = email_api
+            .request_password_reset(&req.email)
             .await
-            .map_err(|e| internal_err("Database error", e))?;
-
-        let Some(user) = user else {
-            // Don't reveal whether email exists
-            return Ok(Response::new(RequestPasswordResetResponse {
-                message: "If an account exists with this email, a password reset code will be sent.".to_string(),
-            }));
-        };
-
-        // Generate and send reset email
-        let _token = email_service
-            .send_password_reset_email(&req.email, email_token_service, &user.id)
-            .await
-            .map_err(|e| internal_err("Failed to send email", e))?;
-
-        tracing::info!("Password reset requested for user {}", user.id.as_str());
+            .map_err(|e| internal_err("Password reset", &e))?;
 
         Ok(Response::new(RequestPasswordResetResponse {
-            message: "Password reset code sent to your email".to_string(),
+            message: result.message,
         }))
     }
 
@@ -1209,50 +1161,18 @@ impl EmailService for ClientServiceImpl {
         &self,
         request: Request<ConfirmPasswordResetRequest>,
     ) -> Result<Response<ConfirmPasswordResetResponse>, Status> {
-        let email_token_service = self.email_token_service.as_ref()
-            .ok_or_else(|| Status::failed_precondition("Email verification service is not configured on this server."))?;
-
+        let email_api = self.email_api()
+            .map_err(|e| Status::failed_precondition(e))?;
         let req = request.into_inner();
 
-        // Validate new password length upfront
-        use crate::http::validation::limits::{PASSWORD_MIN, PASSWORD_MAX};
-        if req.new_password.len() < PASSWORD_MIN {
-            return Err(Status::invalid_argument(format!("Password must be at least {PASSWORD_MIN} characters")));
-        }
-        if req.new_password.len() > PASSWORD_MAX {
-            return Err(Status::invalid_argument(format!("Password must be at most {PASSWORD_MAX} characters")));
-        }
-
-        // Validate token first (constant-time regardless of user existence)
-        let validated_user_id = email_token_service
-            .validate_token(&req.token, synctv_core::service::EmailTokenType::PasswordReset)
+        let result = email_api
+            .confirm_password_reset(&req.email, &req.token, &req.new_password)
             .await
-            .map_err(|_| Status::invalid_argument("Invalid or expired reset token"))?;
-
-        // Look up user by email (generic error to prevent enumeration)
-        let user = self
-            .user_service
-            .get_by_email(&req.email)
-            .await
-            .map_err(|e| internal_err("Database error", e))?
-            .ok_or_else(|| Status::invalid_argument("Invalid or expired reset token"))?;
-
-        // Verify token matches user
-        if validated_user_id != user.id {
-            return Err(Status::invalid_argument("Invalid or expired reset token"));
-        }
-
-        // Update password
-        self.user_service
-            .set_password(&user.id, &req.new_password)
-            .await
-            .map_err(|e| internal_err("Failed to update password", e))?;
-
-        tracing::info!("Password reset completed for user {}", user.id.as_str());
+            .map_err(|e| Status::invalid_argument(e))?;
 
         Ok(Response::new(ConfirmPasswordResetResponse {
-            message: "Password reset successfully".to_string(),
-            user_id: user.id.to_string(),
+            message: result.message,
+            user_id: result.user_id,
         }))
     }
 }

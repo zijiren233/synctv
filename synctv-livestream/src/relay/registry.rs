@@ -237,38 +237,96 @@ impl StreamRegistry {
 
     /// Unregister a publisher (non-mut version for `PublisherManager`)
     pub async fn unregister_publisher_immut(&self, room_id: &str, media_id: &str) -> Result<()> {
+        self.unregister_publisher_with_epoch(room_id, media_id, None).await
+    }
+
+    /// Epoch-validated unregister: only deletes if the stored epoch matches the expected epoch.
+    /// If `expected_epoch` is None, deletes unconditionally (backwards compatible).
+    ///
+    /// This prevents a race where publisher A dies, publisher B registers, then
+    /// publisher A's delayed cleanup incorrectly removes publisher B's entry.
+    pub async fn unregister_publisher_with_epoch(
+        &self,
+        room_id: &str,
+        media_id: &str,
+        expected_epoch: Option<u64>,
+    ) -> Result<()> {
         let key = format!("stream:publisher:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
-        // Get publisher info first to clean up reverse index
-        let info_json: Option<String> = redis::cmd("HGET")
-            .arg(&key)
-            .arg("publisher")
-            .query_async(&mut conn)
-            .await
-            .map_err(|e| anyhow!(e.to_string()))?;
+        // Atomic Lua script: check epoch (if provided), delete publisher, clean up user index
+        let lua_script = r#"
+            local hash_key = KEYS[1]
+            local check_epoch = tonumber(ARGV[1])
 
-        if let Some(json) = info_json {
-            if let Ok(info) = serde_json::from_str::<PublisherInfo>(&json) {
-                if !info.user_id.is_empty() {
-                    let user_key = format!("stream:user_publishers:{}", info.user_id);
-                    let member = format!("{room_id}:{media_id}");
-                    let _: () = redis::cmd("SREM")
-                        .arg(&user_key)
-                        .arg(&member)
-                        .query_async(&mut conn)
-                        .await
-                        .map_err(|e| anyhow!(e.to_string()))?;
-                }
-            }
+            -- Get current publisher info
+            local info_json = redis.call('HGET', hash_key, 'publisher')
+            if not info_json then
+                return {0, ''}
+            end
+
+            -- If epoch check is requested, validate before deleting
+            if check_epoch >= 0 then
+                -- Extract epoch from JSON using pattern match
+                local stored_epoch = string.match(info_json, '"epoch":(%d+)')
+                if stored_epoch and tonumber(stored_epoch) ~= check_epoch then
+                    -- Epoch mismatch: a newer publisher registered, do NOT delete
+                    return {-1, ''}
+                end
+            end
+
+            -- Extract user_id for reverse-index cleanup
+            local user_id = string.match(info_json, '"user_id":"([^"]*)"')
+
+            -- Delete the publisher entry
+            redis.call('HDEL', hash_key, 'publisher')
+
+            return {1, user_id or ''}
+        "#;
+
+        // Use -1 to mean "no epoch check" (unconditional delete)
+        let epoch_arg: i64 = match expected_epoch {
+            Some(e) => e as i64,
+            None => -1,
+        };
+
+        let result: Vec<redis::Value> = redis::Script::new(lua_script)
+            .key(&key)
+            .arg(epoch_arg)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| anyhow!("Unregister Lua script failed: {e}"))?;
+
+        // Parse result: [status, user_id]
+        let status = match &result[0] {
+            redis::Value::Int(v) => *v,
+            _ => 0,
+        };
+        let user_id = match &result[1] {
+            redis::Value::BulkString(s) => String::from_utf8_lossy(s).to_string(),
+            redis::Value::SimpleString(s) => s.clone(),
+            _ => String::new(),
+        };
+
+        if status == -1 {
+            info!(
+                "Skipped unregister for room={}, media={}: epoch mismatch (newer publisher exists)",
+                room_id, media_id
+            );
+            return Ok(());
         }
 
-        let _: () = redis::cmd("HDEL")
-            .arg(&key)
-            .arg("publisher")
-            .query_async(&mut conn)
-            .await
-            .map_err(|e| anyhow!(e.to_string()))?;
+        // Clean up user reverse index if user_id was present
+        if status == 1 && !user_id.is_empty() {
+            let user_key = format!("stream:user_publishers:{user_id}");
+            let member = format!("{room_id}:{media_id}");
+            let _: () = redis::cmd("SREM")
+                .arg(&user_key)
+                .arg(&member)
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| anyhow!(e.to_string()))?;
+        }
 
         Ok(())
     }

@@ -111,10 +111,7 @@ impl RoomPlaybackStateRepository {
 
         match row {
             Some(row) => self.row_to_state(row),
-            None => Err(Error::Internal(
-                "Playback state was modified by another request (optimistic lock failure)"
-                    .to_string(),
-            )),
+            None => Err(Error::OptimisticLockConflict),
         }
     }
 

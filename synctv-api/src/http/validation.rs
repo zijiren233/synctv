@@ -104,12 +104,9 @@ pub fn sanitize_string(input: &str) -> Cow<'_, str> {
     let has_control = patterns::CONTROL_CHARS.is_match(trimmed);
 
     if !has_control && trimmed.len() == input.len() {
-        // No changes needed, return original (or trimmed if different)
-        if trimmed.len() == input.len() {
-            Cow::Borrowed(input)
-        } else {
-            Cow::Owned(trimmed.to_string())
-        }
+        Cow::Borrowed(input)
+    } else if !has_control {
+        Cow::Owned(trimmed.to_string())
     } else {
         // Remove control characters
         Cow::Owned(patterns::CONTROL_CHARS.replace_all(trimmed, "").into_owned())

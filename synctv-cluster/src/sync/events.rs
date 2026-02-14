@@ -4,13 +4,19 @@ use synctv_core::models::id::{MediaId, RoomId, UserId};
 use synctv_core::models::permission::PermissionBits;
 use synctv_core::models::playback::RoomPlaybackState;
 
-/// Events that are synchronized across cluster nodes via Redis Pub/Sub
+/// Events that are synchronized across cluster nodes via Redis Pub/Sub.
+///
+/// Each event carries a unique `event_id` (nanoid) used as the primary
+/// deduplication key, avoiding reliance on content hashing which can have
+/// collisions under high throughput.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClusterEvent {
     /// Chat message sent in a room
     /// If position is set, this can be displayed as a danmaku (bullet comment)
     ChatMessage {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         user_id: UserId,
         username: String,
@@ -24,6 +30,8 @@ pub enum ClusterEvent {
 
     /// Room playback state changed (play, pause, seek, etc.)
     PlaybackStateChanged {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         user_id: UserId,
         username: String,
@@ -33,6 +41,8 @@ pub enum ClusterEvent {
 
     /// User joined a room
     UserJoined {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         user_id: UserId,
         username: String,
@@ -42,6 +52,8 @@ pub enum ClusterEvent {
 
     /// User left a room
     UserLeft {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         user_id: UserId,
         username: String,
@@ -50,6 +62,8 @@ pub enum ClusterEvent {
 
     /// Media added to room playlist
     MediaAdded {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         user_id: UserId,
         username: String,
@@ -60,6 +74,8 @@ pub enum ClusterEvent {
 
     /// Media removed from room playlist
     MediaRemoved {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         user_id: UserId,
         username: String,
@@ -69,6 +85,8 @@ pub enum ClusterEvent {
 
     /// User permissions changed in a room
     PermissionChanged {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         target_user_id: UserId,
         target_username: String,
@@ -80,6 +98,8 @@ pub enum ClusterEvent {
 
     /// Room settings updated
     RoomSettingsChanged {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         user_id: UserId,
         username: String,
@@ -88,6 +108,8 @@ pub enum ClusterEvent {
 
     /// WebRTC signaling message (offer, answer, `ice_candidate`)
     WebRTCSignaling {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         message_type: String, // "offer", "answer", "ice_candidate"
         from: String,         // "user_id:conn_id" (server-set, prevents forgery)
@@ -98,6 +120,8 @@ pub enum ClusterEvent {
 
     /// User joined WebRTC call in room
     WebRTCJoin {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         user_id: UserId,
         conn_id: String,
@@ -107,6 +131,8 @@ pub enum ClusterEvent {
 
     /// User left WebRTC call in room
     WebRTCLeave {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         user_id: UserId,
         conn_id: String,
@@ -115,6 +141,8 @@ pub enum ClusterEvent {
 
     /// Notification for all clients (system-wide)
     SystemNotification {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         message: String,
         level: NotificationLevel,
         timestamp: DateTime<Utc>,
@@ -123,6 +151,8 @@ pub enum ClusterEvent {
     /// Kick an active publisher (RTMP stream termination).
     /// Broadcast cluster-wide when admin bans user/room or deletes media/room.
     KickPublisher {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         room_id: RoomId,
         media_id: MediaId,
         reason: String,
@@ -132,10 +162,17 @@ pub enum ClusterEvent {
     /// Kick all active publishers for a user across all replicas.
     /// Broadcast cluster-wide when a user is banned.
     KickUser {
+        #[serde(default = "generate_event_id")]
+        event_id: String,
         user_id: UserId,
         reason: String,
         timestamp: DateTime<Utc>,
     },
+}
+
+/// Generate a unique event ID using nanoid
+fn generate_event_id() -> String {
+    nanoid::nanoid!(16)
 }
 
 /// Notification severity level
@@ -148,6 +185,27 @@ pub enum NotificationLevel {
 }
 
 impl ClusterEvent {
+    /// Get the unique event ID for deduplication
+    #[must_use]
+    pub fn event_id(&self) -> &str {
+        match self {
+            Self::ChatMessage { event_id, .. }
+            | Self::PlaybackStateChanged { event_id, .. }
+            | Self::UserJoined { event_id, .. }
+            | Self::UserLeft { event_id, .. }
+            | Self::MediaAdded { event_id, .. }
+            | Self::MediaRemoved { event_id, .. }
+            | Self::PermissionChanged { event_id, .. }
+            | Self::RoomSettingsChanged { event_id, .. }
+            | Self::WebRTCSignaling { event_id, .. }
+            | Self::WebRTCJoin { event_id, .. }
+            | Self::WebRTCLeave { event_id, .. }
+            | Self::SystemNotification { event_id, .. }
+            | Self::KickPublisher { event_id, .. }
+            | Self::KickUser { event_id, .. } => event_id,
+        }
+    }
+
     /// Get the room ID for events that belong to a specific room
     #[must_use]
     pub const fn room_id(&self) -> Option<&RoomId> {
@@ -209,6 +267,18 @@ impl ClusterEvent {
         }
     }
 
+    /// Whether this is a critical event that must not be silently dropped.
+    /// Critical events affect user access and administrative actions.
+    #[must_use]
+    pub const fn is_critical(&self) -> bool {
+        matches!(
+            self,
+            Self::KickPublisher { .. }
+            | Self::KickUser { .. }
+            | Self::PermissionChanged { .. }
+        )
+    }
+
     /// Extra discriminator for deduplication of events without `room_id/user_id`.
     /// Returns empty string for most events; non-empty for `SystemNotification`.
     #[must_use]
@@ -253,6 +323,7 @@ mod tests {
     #[test]
     fn test_cluster_event_serialization() {
         let event = ClusterEvent::ChatMessage {
+            event_id: generate_event_id(),
             room_id: RoomId::from_string("room123".to_string()),
             user_id: UserId::from_string("user456".to_string()),
             username: "testuser".to_string(),
@@ -275,6 +346,7 @@ mod tests {
     #[test]
     fn test_cluster_event_room_id() {
         let event = ClusterEvent::UserJoined {
+            event_id: generate_event_id(),
             room_id: RoomId::from_string("room123".to_string()),
             user_id: UserId::from_string("user456".to_string()),
             username: "testuser".to_string(),
@@ -289,6 +361,7 @@ mod tests {
     #[test]
     fn test_system_notification_no_room() {
         let event = ClusterEvent::SystemNotification {
+            event_id: generate_event_id(),
             message: "Server maintenance in 1 hour".to_string(),
             level: NotificationLevel::Warning,
             timestamp: Utc::now(),
@@ -302,6 +375,7 @@ mod tests {
     #[test]
     fn test_kick_publisher_serialization() {
         let event = ClusterEvent::KickPublisher {
+            event_id: generate_event_id(),
             room_id: RoomId::from_string("room123".to_string()),
             media_id: MediaId::from_string("media456".to_string()),
             reason: "user_banned".to_string(),
@@ -333,6 +407,7 @@ mod tests {
     #[test]
     fn test_kick_publisher_has_room_id_no_user_id() {
         let event = ClusterEvent::KickPublisher {
+            event_id: generate_event_id(),
             room_id: RoomId::from_string("room789".to_string()),
             media_id: MediaId::from_string("media012".to_string()),
             reason: "room_deleted".to_string(),
@@ -347,6 +422,7 @@ mod tests {
     #[test]
     fn test_kick_user_serialization() {
         let event = ClusterEvent::KickUser {
+            event_id: generate_event_id(),
             user_id: UserId::from_string("user123".to_string()),
             reason: "user_banned".to_string(),
             timestamp: Utc::now(),
@@ -365,6 +441,7 @@ mod tests {
     #[test]
     fn test_kick_user_dedup_extra() {
         let event = ClusterEvent::KickUser {
+            event_id: generate_event_id(),
             user_id: UserId::from_string("user456".to_string()),
             reason: "user_banned".to_string(),
             timestamp: Utc::now(),

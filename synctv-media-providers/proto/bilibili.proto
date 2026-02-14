@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package api.bilibili;
+package synctv.media.bilibili;
 
 
 service Bilibili {

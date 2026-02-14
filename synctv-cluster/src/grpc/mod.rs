@@ -5,7 +5,7 @@ pub mod server;
 // Include generated protobuf code
 pub mod synctv {
     pub mod cluster {
-        include!("proto/synctv_cluster.rs");
+        include!("proto/synctv.cluster.rs");
     }
 }
 

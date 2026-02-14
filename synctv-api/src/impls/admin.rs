@@ -63,6 +63,7 @@ impl AdminApiImpl {
             let _ = tx.try_send(PublishRequest {
                 room_id: Some(RoomId::from_string(room_id.to_string())),
                 event: ClusterEvent::KickPublisher {
+                    event_id: nanoid::nanoid!(16),
                     room_id: RoomId::from_string(room_id.to_string()),
                     media_id: MediaId::from_string(media_id.to_string()),
                     reason: reason.to_string(),
@@ -276,6 +277,14 @@ impl AdminApiImpl {
         &self,
         req: crate::proto::admin::UpdateUserPasswordRequest,
     ) -> Result<crate::proto::admin::UpdateUserPasswordResponse, String> {
+        use crate::http::validation::limits::{PASSWORD_MIN, PASSWORD_MAX};
+        if req.new_password.len() < PASSWORD_MIN {
+            return Err(format!("Password must be at least {PASSWORD_MIN} characters"));
+        }
+        if req.new_password.len() > PASSWORD_MAX {
+            return Err(format!("Password must be at most {PASSWORD_MAX} characters"));
+        }
+
         let uid = UserId::from_string(req.user_id);
 
         self.user_service.set_password(&uid, &req.new_password).await
@@ -567,23 +576,49 @@ impl AdminApiImpl {
             return Err("Username, password, and email are required".to_string());
         }
 
+        // Validate password length using shared constants
+        use crate::http::validation::limits::{PASSWORD_MIN, PASSWORD_MAX};
+        if req.password.len() < PASSWORD_MIN {
+            return Err(format!("Password must be at least {PASSWORD_MIN} characters"));
+        }
+        if req.password.len() > PASSWORD_MAX {
+            return Err(format!("Password must be at most {PASSWORD_MAX} characters"));
+        }
+
+        // Validate role BEFORE registration to fail fast
+        let target_role = if !req.role.is_empty() && req.role != "user" {
+            let new_role = UserRole::from_str(&req.role)?;
+            // Only root can create root users
+            if new_role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
+                return Err("Only root users can create root users".to_string());
+            }
+            Some(new_role)
+        } else {
+            None
+        };
+
         let (user, _access, _refresh) = self.user_service
             .register(req.username.clone(), Some(req.email.clone()), req.password.clone())
             .await
             .map_err(|e| e.to_string())?;
 
-        // Set role if specified
-        let user = if !req.role.is_empty() && req.role != "user" {
-            let new_role = UserRole::from_str(&req.role)?;
-
-            // Only root can create root users
-            if new_role == synctv_core::models::UserRole::Root && caller_role != synctv_core::models::UserRole::Root {
-                return Err("Only root users can create root users".to_string());
-            }
-
+        // Set role immediately after registration (validated above)
+        let user = if let Some(new_role) = target_role {
             let updated = synctv_core::models::User { role: new_role, ..user };
-            self.user_service.update_user(&updated).await.map_err(|e| e.to_string())?;
-            updated
+            match self.user_service.update_user(&updated).await {
+                Ok(u) => u,
+                Err(e) => {
+                    // Role update failed after registration - log but return the user
+                    // with default role rather than leaving a dangling account
+                    tracing::error!(
+                        user_id = %updated.id.as_str(),
+                        target_role = ?new_role,
+                        error = %e,
+                        "Failed to set role after user creation; user exists with default role"
+                    );
+                    return Err(format!("User created but role update failed: {e}"));
+                }
+            }
         } else {
             user
         };
@@ -683,6 +718,7 @@ impl AdminApiImpl {
             let _ = tx.try_send(PublishRequest {
                 room_id: None,
                 event: ClusterEvent::KickUser {
+                    event_id: nanoid::nanoid!(16),
                     user_id: uid.clone(),
                     reason: "user_banned".to_string(),
                     timestamp: chrono::Utc::now(),
@@ -941,9 +977,11 @@ impl AdminApiImpl {
         &self,
         _req: crate::proto::admin::ListAdminsRequest,
     ) -> Result<crate::proto::admin::ListAdminsResponse, String> {
+        // The DB query filters by role="admin" which returns admin and root users.
+        // No additional client-side filtering needed.
         let query = synctv_core::models::UserListQuery {
             page: 1,
-            page_size: 1000,
+            page_size: 100,
             role: Some("admin".to_string()),
             ..Default::default()
         };
@@ -952,7 +990,6 @@ impl AdminApiImpl {
 
         let admins: Vec<_> = users
             .into_iter()
-            .filter(|u| u.role.is_admin_or_above())
             .map(|u| admin_user_to_proto(&u))
             .collect();
 

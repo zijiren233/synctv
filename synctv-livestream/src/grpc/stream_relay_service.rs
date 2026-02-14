@@ -1,11 +1,12 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use synctv_xiu::streamhub::{
     define::{NotifyInfo, StreamHubEvent, StreamHubEventSender, SubscribeType, SubscriberInfo},
     stream::StreamIdentifier,
     utils::Uuid,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
@@ -15,6 +16,9 @@ use crate::relay::StreamRegistry;
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<RtmpPacket, Status>> + Send>>;
 
+/// Metadata key for cluster authentication shared secret
+const AUTH_SECRET_METADATA_KEY: &str = "x-cluster-secret";
+
 /// `StreamRelayService` implementation
 /// Publisher nodes use this to serve RTMP packets to Puller nodes via subscription
 ///
@@ -23,7 +27,9 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<RtmpPacket, Status>> + Se
 pub struct StreamRelayServiceImpl {
     registry: Arc<StreamRegistry>,
     node_id: String,
-    stream_hub_event_sender: Arc<Mutex<StreamHubEventSender>>,
+    stream_hub_event_sender: StreamHubEventSender,
+    /// Shared secret for cluster authentication (constant-time comparison)
+    cluster_secret: Option<Vec<u8>>,
 }
 
 impl StreamRelayServiceImpl {
@@ -36,7 +42,36 @@ impl StreamRelayServiceImpl {
         Self {
             registry,
             node_id,
-            stream_hub_event_sender: Arc::new(Mutex::new(stream_hub_event_sender)),
+            stream_hub_event_sender,
+            cluster_secret: None,
+        }
+    }
+
+    /// Set the cluster authentication secret.
+    /// When set, all incoming requests must include this secret in metadata.
+    #[must_use]
+    pub fn with_cluster_secret(mut self, secret: impl Into<Vec<u8>>) -> Self {
+        self.cluster_secret = Some(secret.into());
+        self
+    }
+
+    /// Authenticate a gRPC request using the cluster shared secret.
+    /// Uses constant-time comparison to prevent timing attacks.
+    fn authenticate<T>(&self, request: &Request<T>) -> Result<(), Status> {
+        let Some(expected) = &self.cluster_secret else {
+            return Ok(()); // No secret configured, skip auth
+        };
+
+        let provided = request
+            .metadata()
+            .get(AUTH_SECRET_METADATA_KEY)
+            .ok_or_else(|| Status::unauthenticated("missing cluster authentication secret"))?
+            .as_bytes();
+
+        if expected.ct_eq(provided).into() {
+            Ok(())
+        } else {
+            Err(Status::unauthenticated("invalid cluster authentication secret"))
         }
     }
 }
@@ -51,6 +86,9 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         &self,
         request: Request<PullRtmpStreamRequest>,
     ) -> Result<Response<Self::PullRtmpStreamStream>, Status> {
+        // HIGH-7: Authenticate the request using cluster shared secret
+        self.authenticate(&request)?;
+
         let req = request.into_inner();
         info!(
             room_id = req.room_id,
@@ -99,12 +137,10 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
             result_sender: event_result_sender,
         };
 
-        // Send subscribe event
-        let event_sender = self.stream_hub_event_sender.lock().await;
-        event_sender
+        // Send subscribe event (mpsc::Sender is Clone + Send + Sync, no Mutex needed)
+        self.stream_hub_event_sender
             .try_send(subscribe_event)
             .map_err(|_| Status::internal("Failed to send subscribe event"))?;
-        drop(event_sender);
 
         // Wait for subscription result
         let subscribe_result = event_result_receiver
@@ -122,7 +158,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
 
         // Spawn task to forward frames
         let stream_name_clone = stream_name.clone();
-        let event_sender_clone = Arc::clone(&self.stream_hub_event_sender);
+        let event_sender_clone = self.stream_hub_event_sender.clone();
         tokio::spawn(async move {
             // Stream live data from StreamHub subscription
             // (GOP frames are automatically sent first by StreamHub's send_prior_data)
@@ -168,7 +204,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
 impl StreamRelayServiceImpl {
     /// Unsubscribe from `StreamHub`
     async fn unsubscribe_from_hub(
-        event_sender: Arc<Mutex<StreamHubEventSender>>,
+        event_sender: StreamHubEventSender,
         subscriber_id: Uuid,
         stream_name: String,
     ) {
@@ -192,8 +228,7 @@ impl StreamRelayServiceImpl {
             info: sub_info,
         };
 
-        let sender = event_sender.lock().await;
-        if let Err(e) = sender.try_send(unsubscribe_event) {
+        if let Err(e) = event_sender.try_send(unsubscribe_event) {
             warn!("Failed to send unsubscribe event: {}", e);
         }
     }

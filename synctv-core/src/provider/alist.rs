@@ -255,7 +255,10 @@ impl MediaProvider for AlistProvider {
     fn cache_key(&self, _ctx: &ProviderContext<'_>, source_config: &Value) -> String {
         // Cache key includes user-specific path (Alist requires per-user credentials)
         if let Ok(config) = AlistSourceConfig::try_from(source_config) {
-            let host_hash = format!("{:x}", md5::compute(config.host.as_bytes()));
+            let host_hash = {
+                use sha2::{Sha256, Digest};
+                format!("{:x}", Sha256::digest(config.host.as_bytes()))
+            };
             format!("alist:{}:{}", host_hash, config.path)
         } else {
             "alist:unknown".to_string()

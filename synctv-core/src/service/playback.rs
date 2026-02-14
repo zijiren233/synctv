@@ -10,6 +10,7 @@ use crate::{
     Error, Result,
 };
 use rand::seq::IteratorRandom;
+use rand::Rng;
 
 /// Playback management service
 ///
@@ -359,12 +360,13 @@ impl PlaybackService {
 
     /// Maximum retry attempts for optimistic lock conflicts
     const MAX_RETRIES: u32 = 3;
+    /// Base delay for exponential backoff (milliseconds)
+    const BACKOFF_BASE_MS: u64 = 5;
 
     /// Update playback state with generic update function.
     ///
     /// Uses optimistic locking with automatic retry on version conflicts.
-    /// Under high contention (many users controlling playback simultaneously),
-    /// this prevents spurious failures by re-reading state and retrying.
+    /// Retries use exponential backoff with jitter to avoid thundering herd.
     pub async fn update_state<F>(
         &self,
         room_id: RoomId,
@@ -383,20 +385,19 @@ impl PlaybackService {
             // Save with optimistic locking
             match self.playback_repo.update(&state).await {
                 Ok(updated_state) => return Ok(updated_state),
-                Err(e) if attempt + 1 < Self::MAX_RETRIES => {
-                    // Check if this is an optimistic lock conflict
-                    let is_conflict = matches!(&e, Error::Internal(msg) if msg.contains("optimistic lock"));
-                    if is_conflict {
-                        tracing::debug!(
-                            room_id = %room_id.as_str(),
-                            attempt = attempt + 1,
-                            "Playback state version conflict, retrying"
-                        );
-                        // Brief yield to let the conflicting update complete
-                        tokio::task::yield_now().await;
-                        continue;
-                    }
-                    return Err(e);
+                Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
+                    // Exponential backoff with jitter: base * 2^attempt + random(0..base)
+                    let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    let delay = backoff + jitter;
+                    tracing::debug!(
+                        room_id = %room_id.as_str(),
+                        attempt = attempt + 1,
+                        delay_ms = delay,
+                        "Playback state version conflict, retrying with backoff"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                    continue;
                 }
                 Err(e) => return Err(e),
             }
@@ -479,6 +480,13 @@ impl PlaybackService {
             self.permission_service
                 .check_permission(&room_id, &user_id, required_perms)
                 .await?;
+        }
+
+        // Validate speed range if provided
+        if let Some(s) = speed {
+            if !(0.25..=4.0).contains(&s) {
+                return Err(Error::InvalidInput("Speed must be between 0.25 and 4.0".to_string()));
+            }
         }
 
         // If media_id is provided, verify it exists

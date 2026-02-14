@@ -351,21 +351,26 @@ impl UserService {
         let password_hash = hash_password(&random_password).await?;
 
         // Try to create user with the desired username first. If the DB UNIQUE
-        // constraint rejects it, fall back to suffixed variants. This avoids
-        // the TOCTOU race of check-then-insert.
-        let candidates = std::iter::once(username.to_string())
-            .chain((2..=1000).map(|suffix| {
-                // Cap the base to leave room for the suffix within the 50-char limit
-                let max_base_len = 45;
-                let base = if username.len() > max_base_len {
-                    &username[..max_base_len]
-                } else {
-                    username
-                };
-                format!("{base}_{suffix}")
-            }));
+        // constraint rejects it, fall back to random-suffixed variants. Using
+        // random suffixes (instead of sequential) avoids thundering herd under
+        // concurrent OAuth2 signups with the same base username.
+        let max_attempts = 10;
+        let mut candidates = Vec::with_capacity(max_attempts);
+        candidates.push(username.to_string());
+        for _ in 1..max_attempts {
+            // Cap the base to leave room for the suffix within the 50-char limit
+            let max_base_len = 42;
+            let base = if username.len() > max_base_len {
+                &username[..max_base_len]
+            } else {
+                username
+            };
+            // Random 6-char alphanumeric suffix
+            let suffix = nanoid::nanoid!(6);
+            candidates.push(format!("{base}_{suffix}"));
+        }
 
-        for candidate in candidates {
+        for candidate in &candidates {
             let user = User::new(
                 candidate.clone(),
                 user_email.clone(),
@@ -398,7 +403,7 @@ impl UserService {
 
                     return Ok(created_user);
                 }
-                Err(Error::AlreadyExists(ref msg)) if msg.contains("Username") => {
+                Err(Error::AlreadyExists(ref msg)) if msg.contains("username") || msg.contains("Username") => {
                     // Username conflict -- try next candidate
                     continue;
                 }
@@ -407,7 +412,7 @@ impl UserService {
         }
 
         Err(Error::Internal(format!(
-            "Could not generate a unique username for base '{username}' after 1000 attempts"
+            "Could not generate a unique username for base '{username}' after {max_attempts} attempts"
         )))
     }
 

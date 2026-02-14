@@ -8,7 +8,38 @@ use super::alist::{
 };
 use super::validation::validate_host;
 use crate::alist::{AlistInterface, AlistService as AlistServiceImpl};
+use crate::alist::error::AlistError;
 use tonic::{Request, Response, Status};
+
+/// Map Alist errors to appropriate gRPC status codes instead of leaking internals.
+fn map_alist_error(context: &str, e: AlistError) -> Status {
+    match e {
+        AlistError::Auth(_) => Status::unauthenticated(format!("{context}: authentication failed")),
+        AlistError::Http { status, .. } => {
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                Status::permission_denied(format!("{context}: access denied"))
+            } else if status.as_u16() == 404 {
+                Status::not_found(format!("{context}: resource not found"))
+            } else if status.is_server_error() {
+                Status::unavailable(format!("{context}: upstream server error"))
+            } else {
+                Status::internal(format!("{context}: request failed"))
+            }
+        }
+        AlistError::Network(_) => Status::unavailable(format!("{context}: network error")),
+        AlistError::Parse(_) => Status::internal(format!("{context}: failed to parse response")),
+        AlistError::Api { code, .. } => {
+            if code == 401 || code == 403 {
+                Status::permission_denied(format!("{context}: access denied"))
+            } else {
+                Status::internal(format!("{context}: API error (code {code})"))
+            }
+        }
+        AlistError::InvalidConfig(_) => Status::invalid_argument(format!("{context}: invalid configuration")),
+        AlistError::InvalidHeader(_) => Status::internal(format!("{context}: invalid header")),
+        AlistError::NotImplemented(_) => Status::unimplemented(format!("{context}: not implemented")),
+    }
+}
 
 /// Alist gRPC server
 ///
@@ -42,7 +73,7 @@ impl Alist for AlistService {
             .service
             .login(req)
             .await
-            .map_err(|e| Status::internal(format!("Login failed: {e}")))?;
+            .map_err(|e| map_alist_error("login", e))?;
 
         Ok(Response::new(LoginResp { token }))
     }
@@ -55,7 +86,7 @@ impl Alist for AlistService {
             .service
             .me(req)
             .await
-            .map_err(|e| Status::internal(format!("me failed: {e}")))?;
+            .map_err(|e| map_alist_error("me", e))?;
 
         Ok(Response::new(resp))
     }
@@ -68,7 +99,7 @@ impl Alist for AlistService {
             .service
             .fs_get(req)
             .await
-            .map_err(|e| Status::internal(format!("fs_get failed: {e}")))?;
+            .map_err(|e| map_alist_error("fs_get", e))?;
 
         Ok(Response::new(resp))
     }
@@ -81,7 +112,7 @@ impl Alist for AlistService {
             .service
             .fs_list(req)
             .await
-            .map_err(|e| Status::internal(format!("fs_list failed: {e}")))?;
+            .map_err(|e| map_alist_error("fs_list", e))?;
 
         Ok(Response::new(resp))
     }
@@ -97,7 +128,7 @@ impl Alist for AlistService {
             .service
             .fs_other(req)
             .await
-            .map_err(|e| Status::internal(format!("fs_other failed: {e}")))?;
+            .map_err(|e| map_alist_error("fs_other", e))?;
 
         Ok(Response::new(resp))
     }
@@ -113,7 +144,7 @@ impl Alist for AlistService {
             .service
             .fs_search(req)
             .await
-            .map_err(|e| Status::internal(format!("fs_search failed: {e}")))?;
+            .map_err(|e| map_alist_error("fs_search", e))?;
 
         Ok(Response::new(resp))
     }

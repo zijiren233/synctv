@@ -107,9 +107,10 @@ impl UserProviderCredential {
     pub const BILIBILI_SERVER_ID: &'static str = "bilibili";
 
     /// Generate `server_id` for Alist/Emby from host URL
-    #[must_use] 
+    #[must_use]
     pub fn generate_server_id(host: &str) -> String {
-        format!("{:x}", md5::compute(host.as_bytes()))
+        use sha2::{Sha256, Digest};
+        format!("{:x}", Sha256::digest(host.as_bytes()))
     }
 
     /// Check if this credential has expired
@@ -246,7 +247,7 @@ mod tests {
     #[test]
     fn test_user_credential_generate_server_id() {
         let server_id = UserProviderCredential::generate_server_id("https://alist.example.com");
-        assert_eq!(server_id.len(), 32); // MD5 hex string is 32 chars
+        assert_eq!(server_id.len(), 64); // SHA-256 hex string is 64 chars
     }
 
     #[test]

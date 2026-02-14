@@ -367,10 +367,13 @@ impl RoomMemberRepository {
         .bind(user_id.as_str())
         .bind(role)
         .bind(current_version)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
-        self.row_to_member(row)
+        match row {
+            Some(row) => self.row_to_member(row),
+            None => Err(Error::OptimisticLockConflict),
+        }
     }
 
     /// Update member status with optimistic locking
@@ -398,10 +401,13 @@ impl RoomMemberRepository {
         .bind(user_id.as_str())
         .bind(status)
         .bind(current_version)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
-        self.row_to_member(row)
+        match row {
+            Some(row) => self.row_to_member(row),
+            None => Err(Error::OptimisticLockConflict),
+        }
     }
 
     /// Update member Allow/Deny permissions with optimistic locking
@@ -432,10 +438,13 @@ impl RoomMemberRepository {
         .bind(added_permissions as i64)
         .bind(removed_permissions as i64)
         .bind(current_version)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
-        self.row_to_member(row)
+        match row {
+            Some(row) => self.row_to_member(row),
+            None => Err(Error::OptimisticLockConflict),
+        }
     }
 
     /// Atomically grant permission bits (bitwise OR in SQL to avoid read-modify-write TOCTOU)
@@ -522,10 +531,13 @@ impl RoomMemberRepository {
         .bind(room_id.as_str())
         .bind(user_id.as_str())
         .bind(current_version)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
-        self.row_to_member(row)
+        match row {
+            Some(row) => self.row_to_member(row),
+            None => Err(Error::OptimisticLockConflict),
+        }
     }
 
     /// Ban member from room

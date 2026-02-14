@@ -14,7 +14,6 @@ synctv-cluster.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
-async-recursion.workspace = true
 futures.workspace = true
 
 # HTTP Framework
@@ -55,6 +54,9 @@ nanoid.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# Crypto
+subtle = "2.6"
+
 # JWT
 jsonwebtoken = "9"
 
@@ -63,7 +65,7 @@ config.workspace = true
 clap.workspace = true
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-build.workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true

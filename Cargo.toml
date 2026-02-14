@@ -76,10 +76,12 @@ oauth2 = "4.4"
 aes-gcm = "0.10"
 ammonia = "4.0"
 sha2 = "0.10"
+hmac = "0.12"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+indexmap = "2"
 
 # Caching
 moka = { version = "0.12", features = ["future"] }
@@ -90,7 +92,6 @@ nanoid = "0.4"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 rand = "0.8"
 base64 = "0.22"
-md5 = "0.7"
 humantime = "2.1"
 hex = "0.4"
 
@@ -120,10 +121,10 @@ thiserror = "1.0"
 bytes = "1.9"
 parking_lot = "0.12"
 async-trait = "0.1"
-async-recursion = "1.1"
 futures = "0.3"
 hostname = "0.4"
 url = "2.5"
+percent-encoding = "2.3"
 regex = "1.10"
 
 # Monitoring
@@ -136,9 +137,6 @@ utoipa-swagger-ui = { version = "7.1", features = ["axum"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
-# Logging (legacy compatibility)
-log = "0.4"
-env_logger = "0.11"
 
 # Testing
 mockall = "0.13"
@@ -150,6 +148,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 # Internal workspace crates
 synctv-proto = { path = "synctv-proto" }
 synctv-core = { path = "synctv-core" }
+synctv-api = { path = "synctv-api" }
 synctv-cluster = { path = "synctv-cluster" }
 synctv-media-providers = { path = "synctv-media-providers" }
 synctv-proxy = { path = "synctv-proxy" }

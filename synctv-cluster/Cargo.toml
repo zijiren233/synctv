@@ -44,7 +44,7 @@ nanoid.workspace = true
 tracing.workspace = true
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-build.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true

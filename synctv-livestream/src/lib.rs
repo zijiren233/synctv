@@ -16,6 +16,7 @@ pub mod protocols;
 pub mod relay;
 pub mod api;
 pub mod livestream;
+pub mod util;
 
 // Re-exports for convenience
 pub use libraries::storage::HlsStorage;

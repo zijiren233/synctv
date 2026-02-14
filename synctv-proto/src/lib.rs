@@ -16,14 +16,14 @@ pub mod admin {
 // Providers
 pub mod providers {
     pub mod bilibili {
-        include!("providers/synctv_provider_bilibili.rs");
+        include!("providers/synctv.provider.bilibili.rs");
     }
 
     pub mod alist {
-        include!("providers/synctv_provider_alist.rs");
+        include!("providers/synctv.provider.alist.rs");
     }
 
     pub mod emby {
-        include!("providers/synctv_provider_emby.rs");
+        include!("providers/synctv.provider.emby.rs");
     }
 }

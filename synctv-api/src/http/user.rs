@@ -6,7 +6,6 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
-use synctv_core::models::id::RoomId;
 
 use super::{middleware::AuthUser, AppResult, AppState};
 use crate::proto::client::{
@@ -141,18 +140,8 @@ pub async fn delete_my_room(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<DeleteRoomResponse>> {
-    // Verify user is the creator first
-    let room_id_obj = RoomId::from_string(room_id.clone());
-    let room = state
-        .room_service
-        .get_room(&room_id_obj)
-        .await
-        .map_err(|e| super::AppError::not_found(format!("Room not found: {e}")))?;
-
-    if room.created_by != auth.user_id {
-        return Err(super::AppError::forbidden("You can only delete your own rooms"));
-    }
-
+    // Ownership/permission check is performed inside client_api.delete_room()
+    // via room_service.delete_room() -> check_permission(DELETE_ROOM)
     let response = state
         .client_api
         .delete_room(&auth.user_id.to_string(), &room_id)

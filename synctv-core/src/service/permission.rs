@@ -4,7 +4,8 @@
 //! Supports multi-replica cache invalidation via Redis Pub/Sub.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
 use crate::{
@@ -27,6 +28,11 @@ pub struct PermissionService {
     settings_registry: Option<Arc<SettingsRegistry>>,
     /// Optional invalidation service for cross-replica cache sync
     invalidation_service: Option<Arc<CacheInvalidationService>>,
+    /// When true, cache is considered unreliable due to Pub/Sub lag;
+    /// all permission checks fall back to no-cache until next flush.
+    cache_degraded: Arc<AtomicBool>,
+    /// Tracks last `invalidate_all()` time to rate-limit flushes
+    last_flush_time: Arc<parking_lot::Mutex<Instant>>,
 }
 
 impl std::fmt::Debug for PermissionService {
@@ -40,6 +46,9 @@ impl PermissionService {
     pub const DEFAULT_CACHE_SIZE: u64 = 10_000;
     /// Default permission cache TTL in seconds (5 minutes)
     pub const DEFAULT_CACHE_TTL_SECS: u64 = 300;
+
+    /// Minimum interval between `invalidate_all()` calls (seconds)
+    const FLUSH_RATE_LIMIT_SECS: u64 = 10;
 
     /// Create a new permission service with caching
     #[must_use]
@@ -60,6 +69,8 @@ impl PermissionService {
             ),
             settings_registry,
             invalidation_service: None,
+            cache_degraded: Arc::new(AtomicBool::new(false)),
+            last_flush_time: Arc::new(parking_lot::Mutex::new(Instant::now())),
         }
     }
 
@@ -67,6 +78,10 @@ impl PermissionService {
     ///
     /// This enables cross-replica cache invalidation via Redis Pub/Sub.
     /// When one node invalidates a permission cache, all other nodes are notified.
+    ///
+    /// On Pub/Sub lag, `invalidate_all()` is rate-limited to at most once per
+    /// `FLUSH_RATE_LIMIT_SECS` seconds. Between flushes, the service falls back
+    /// to `check_permission_no_cache` for all requests to avoid cache storms.
     pub fn with_invalidation(
         member_repo: RoomMemberRepository,
         room_repo: RoomRepository,
@@ -79,12 +94,18 @@ impl PermissionService {
 
         // Subscribe to invalidation messages
         let cache = service.cache.clone();
+        let cache_degraded = service.cache_degraded.clone();
+        let last_flush_time = service.last_flush_time.clone();
         let mut receiver = invalidation_service.subscribe();
 
         tokio::spawn(async move {
             loop {
                 match receiver.recv().await {
                     Ok(msg) => {
+                        // Any successful message means Pub/Sub is healthy;
+                        // clear degraded flag so cached reads resume.
+                        cache_degraded.store(false, Ordering::Release);
+
                         match msg {
                             InvalidationMessage::UserPermission { room_id, user_id } => {
                                 let cache_key = format!("{}:{}", room_id, user_id);
@@ -117,11 +138,32 @@ impl PermissionService {
                         break;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(
-                            lagged_messages = n,
-                            "Invalidation listener lagged, invalidating all cached permissions to prevent stale data"
-                        );
-                        cache.invalidate_all();
+                        // Rate-limit invalidate_all() to prevent cache storms
+                        let should_flush = {
+                            let mut last = last_flush_time.lock();
+                            if last.elapsed() >= Duration::from_secs(Self::FLUSH_RATE_LIMIT_SECS) {
+                                *last = Instant::now();
+                                true
+                            } else {
+                                false
+                            }
+                        };
+
+                        if should_flush {
+                            tracing::warn!(
+                                lagged_messages = n,
+                                "Invalidation listener lagged, flushing all cached permissions"
+                            );
+                            cache.invalidate_all();
+                        } else {
+                            tracing::warn!(
+                                lagged_messages = n,
+                                "Invalidation listener lagged, cache flush rate-limited; falling back to no-cache"
+                            );
+                        }
+
+                        // Mark cache as degraded so check_permission falls back to no_cache
+                        cache_degraded.store(true, Ordering::Release);
                     }
                 }
             }
@@ -150,6 +192,8 @@ impl PermissionService {
             ),
             settings_registry,
             invalidation_service: None,
+            cache_degraded: Arc::new(AtomicBool::new(false)),
+            last_flush_time: Arc::new(parking_lot::Mutex::new(Instant::now())),
         }
     }
 
@@ -217,12 +261,20 @@ impl PermissionService {
     }
 
     /// Check if a user has a specific permission in a room
+    ///
+    /// Falls back to `check_permission_no_cache` when the cache is degraded
+    /// (e.g., due to Pub/Sub lag), ensuring correct permission data is always used.
     pub async fn check_permission(
         &self,
         room_id: &RoomId,
         user_id: &UserId,
         permission: u64,
     ) -> Result<()> {
+        // Fall back to no-cache when degraded (Pub/Sub lag)
+        if self.cache_degraded.load(Ordering::Acquire) {
+            return self.check_permission_no_cache(room_id, user_id, permission).await;
+        }
+
         let permissions = self.get_user_permissions(room_id, user_id).await?;
 
         if !permissions.has_all(permission) {
@@ -483,6 +535,43 @@ impl PermissionService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{
+        RoomMember, MemberStatus,
+        room_settings::*,
+    };
+    use crate::models::permission::Role as RoomRole;
+
+    // Helper to create a PermissionService using tokio runtime for PgPool
+    fn make_service() -> PermissionService {
+        // PgPool::connect_lazy requires a tokio runtime, so use Runtime::new
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let pool = rt.block_on(async {
+            sqlx::PgPool::connect_lazy("postgres://unused:5432/unused").unwrap()
+        });
+        PermissionService {
+            member_repo: RoomMemberRepository::new(pool),
+            room_settings_repo: None,
+            cache: Arc::new(
+                moka::future::CacheBuilder::new(10)
+                    .time_to_live(Duration::from_secs(60))
+                    .build(),
+            ),
+            settings_registry: None,
+            invalidation_service: None,
+            cache_degraded: Arc::new(AtomicBool::new(false)),
+            last_flush_time: Arc::new(parking_lot::Mutex::new(Instant::now())),
+        }
+    }
+
+    fn make_member(role: RoomRole) -> RoomMember {
+        RoomMember::new(
+            RoomId("room1".to_string()),
+            UserId("user1".to_string()),
+            role,
+        )
+    }
+
+    // ========== Cache Key Tests ==========
 
     #[test]
     fn test_cache_key_generation() {
@@ -490,5 +579,293 @@ mod tests {
         let user_id = UserId("user456".to_string());
         let key = PermissionService::cache_key(&room_id, &user_id);
         assert_eq!(key, "room123:user456");
+    }
+
+    #[test]
+    fn test_cache_key_different_for_different_users() {
+        let room = RoomId("r1".to_string());
+        let u1 = UserId("u1".to_string());
+        let u2 = UserId("u2".to_string());
+        assert_ne!(
+            PermissionService::cache_key(&room, &u1),
+            PermissionService::cache_key(&room, &u2),
+        );
+    }
+
+    #[test]
+    fn test_cache_key_different_for_different_rooms() {
+        let r1 = RoomId("r1".to_string());
+        let r2 = RoomId("r2".to_string());
+        let user = UserId("u1".to_string());
+        assert_ne!(
+            PermissionService::cache_key(&r1, &user),
+            PermissionService::cache_key(&r2, &user),
+        );
+    }
+
+    // ========== Role Default Permission Tests ==========
+
+    #[test]
+    fn test_creator_always_gets_all_permissions() {
+        let service = make_service();
+        let settings = RoomSettings::default();
+        let perms = service.calculate_role_default_permissions(&RoomRole::Creator, &settings);
+        assert_eq!(perms.0, PermissionBits::ALL);
+    }
+
+    #[test]
+    fn test_admin_gets_default_admin_permissions() {
+        let service = make_service();
+        let settings = RoomSettings::default();
+        let perms = service.calculate_role_default_permissions(&RoomRole::Admin, &settings);
+        assert!(perms.has(PermissionBits::BAN_MEMBER));
+        assert!(perms.has(PermissionBits::KICK_USER));
+        assert!(perms.has(PermissionBits::SET_ROOM_SETTINGS));
+        assert!(perms.has(PermissionBits::SEND_CHAT));
+    }
+
+    #[test]
+    fn test_member_gets_default_member_permissions() {
+        let service = make_service();
+        let settings = RoomSettings::default();
+        let perms = service.calculate_role_default_permissions(&RoomRole::Member, &settings);
+        assert!(perms.has(PermissionBits::SEND_CHAT));
+        assert!(perms.has(PermissionBits::ADD_MOVIE));
+        assert!(perms.has(PermissionBits::VIEW_PLAYLIST));
+        assert!(!perms.has(PermissionBits::BAN_MEMBER));
+        assert!(!perms.has(PermissionBits::DELETE_ROOM));
+    }
+
+    #[test]
+    fn test_guest_gets_default_guest_permissions() {
+        let service = make_service();
+        let settings = RoomSettings::default();
+        let perms = service.calculate_role_default_permissions(&RoomRole::Guest, &settings);
+        assert!(perms.has(PermissionBits::VIEW_PLAYLIST));
+        assert!(!perms.has(PermissionBits::SEND_CHAT));
+        assert!(!perms.has(PermissionBits::ADD_MOVIE));
+    }
+
+    // ========== Room-Level Override Tests ==========
+
+    #[test]
+    fn test_room_level_add_permissions_for_member() {
+        let service = make_service();
+        let mut settings = RoomSettings::default();
+        settings.member_added_permissions = MemberAddedPermissions(PermissionBits::PLAY_CONTROL);
+        let perms = service.calculate_role_default_permissions(&RoomRole::Member, &settings);
+        assert!(perms.has(PermissionBits::PLAY_CONTROL));
+        assert!(perms.has(PermissionBits::SEND_CHAT));
+    }
+
+    #[test]
+    fn test_room_level_remove_permissions_for_member() {
+        let service = make_service();
+        let mut settings = RoomSettings::default();
+        settings.member_removed_permissions = MemberRemovedPermissions(PermissionBits::SEND_CHAT);
+        let perms = service.calculate_role_default_permissions(&RoomRole::Member, &settings);
+        assert!(!perms.has(PermissionBits::SEND_CHAT));
+        assert!(perms.has(PermissionBits::ADD_MOVIE));
+    }
+
+    #[test]
+    fn test_room_level_add_and_remove_for_admin() {
+        let service = make_service();
+        let mut settings = RoomSettings::default();
+        settings.admin_added_permissions = AdminAddedPermissions(PermissionBits::DELETE_ROOM);
+        settings.admin_removed_permissions = AdminRemovedPermissions(PermissionBits::BAN_MEMBER);
+        let perms = service.calculate_role_default_permissions(&RoomRole::Admin, &settings);
+        assert!(perms.has(PermissionBits::DELETE_ROOM));
+        assert!(!perms.has(PermissionBits::BAN_MEMBER));
+    }
+
+    #[test]
+    fn test_room_overrides_do_not_affect_creator() {
+        let service = make_service();
+        let mut settings = RoomSettings::default();
+        settings.admin_removed_permissions = AdminRemovedPermissions(PermissionBits::ALL);
+        let perms = service.calculate_role_default_permissions(&RoomRole::Creator, &settings);
+        assert_eq!(perms.0, PermissionBits::ALL);
+    }
+
+    // ========== Member-Level Override Tests (effective_permissions) ==========
+
+    #[test]
+    fn test_member_allow_pattern() {
+        let mut member = make_member(RoomRole::Member);
+        member.added_permissions = PermissionBits::BAN_MEMBER;
+        let role_default = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+        let effective = member.effective_permissions(role_default);
+        assert!(effective.has(PermissionBits::BAN_MEMBER));
+        assert!(effective.has(PermissionBits::SEND_CHAT));
+    }
+
+    #[test]
+    fn test_member_deny_pattern() {
+        let mut member = make_member(RoomRole::Member);
+        member.removed_permissions = PermissionBits::SEND_CHAT;
+        let role_default = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+        let effective = member.effective_permissions(role_default);
+        assert!(!effective.has(PermissionBits::SEND_CHAT));
+        assert!(effective.has(PermissionBits::ADD_MOVIE));
+    }
+
+    #[test]
+    fn test_admin_uses_admin_overrides() {
+        let mut member = make_member(RoomRole::Admin);
+        member.admin_added_permissions = PermissionBits::DELETE_ROOM;
+        member.admin_removed_permissions = PermissionBits::BAN_MEMBER;
+        member.added_permissions = PermissionBits::EXPORT_DATA;
+
+        let role_default = PermissionBits(PermissionBits::DEFAULT_ADMIN);
+        let effective = member.effective_permissions(role_default);
+        assert!(effective.has(PermissionBits::DELETE_ROOM));
+        assert!(!effective.has(PermissionBits::BAN_MEMBER));
+        assert!(!effective.has(PermissionBits::EXPORT_DATA));
+    }
+
+    #[test]
+    fn test_creator_ignores_all_overrides() {
+        let mut member = make_member(RoomRole::Creator);
+        member.removed_permissions = PermissionBits::ALL;
+        member.admin_removed_permissions = PermissionBits::ALL;
+        let role_default = PermissionBits::empty();
+        let effective = member.effective_permissions(role_default);
+        assert_eq!(effective.0, PermissionBits::ALL);
+    }
+
+    #[test]
+    fn test_guest_allow_deny_pattern() {
+        let mut member = make_member(RoomRole::Guest);
+        member.added_permissions = PermissionBits::SEND_CHAT;
+        let role_default = PermissionBits(PermissionBits::DEFAULT_GUEST);
+        let effective = member.effective_permissions(role_default);
+        assert!(effective.has(PermissionBits::SEND_CHAT));
+        assert!(effective.has(PermissionBits::VIEW_PLAYLIST));
+    }
+
+    // ========== Three-Layer Override Chain Tests ==========
+
+    #[test]
+    fn test_three_layer_permission_chain() {
+        let service = make_service();
+
+        // Layer 2: Room adds PLAY_CONTROL, removes SEND_CHAT
+        let mut settings = RoomSettings::default();
+        settings.member_added_permissions = MemberAddedPermissions(PermissionBits::PLAY_CONTROL);
+        settings.member_removed_permissions = MemberRemovedPermissions(PermissionBits::SEND_CHAT);
+        let role_default = service.calculate_role_default_permissions(&RoomRole::Member, &settings);
+        assert!(role_default.has(PermissionBits::PLAY_CONTROL));
+        assert!(!role_default.has(PermissionBits::SEND_CHAT));
+
+        // Layer 3: Member re-adds SEND_CHAT, removes ADD_MOVIE
+        let mut member = make_member(RoomRole::Member);
+        member.added_permissions = PermissionBits::SEND_CHAT;
+        member.removed_permissions = PermissionBits::ADD_MOVIE;
+
+        let effective = member.effective_permissions(role_default);
+        assert!(effective.has(PermissionBits::SEND_CHAT));
+        assert!(!effective.has(PermissionBits::ADD_MOVIE));
+        assert!(effective.has(PermissionBits::PLAY_CONTROL));
+        assert!(effective.has(PermissionBits::VIEW_PLAYLIST));
+    }
+
+    // ========== Banned/Pending Member Tests ==========
+
+    #[test]
+    fn test_banned_member_has_no_permissions() {
+        let mut member = make_member(RoomRole::Admin);
+        member.status = MemberStatus::Banned;
+        let role_default = PermissionBits(PermissionBits::DEFAULT_ADMIN);
+        assert!(!member.has_permission(PermissionBits::SEND_CHAT, role_default));
+        assert!(!member.has_permission(PermissionBits::DELETE_ROOM, role_default));
+    }
+
+    #[test]
+    fn test_pending_member_has_no_permissions() {
+        let mut member = make_member(RoomRole::Member);
+        member.status = MemberStatus::Pending;
+        let role_default = PermissionBits(PermissionBits::DEFAULT_MEMBER);
+        assert!(!member.has_permission(PermissionBits::SEND_CHAT, role_default));
+    }
+
+    // ========== Cache Degradation Tests ==========
+
+    #[test]
+    fn test_cache_degraded_flag_default_false() {
+        let degraded = AtomicBool::new(false);
+        assert!(!degraded.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn test_cache_degraded_flag_toggling() {
+        let degraded = AtomicBool::new(false);
+        degraded.store(true, Ordering::Release);
+        assert!(degraded.load(Ordering::Acquire));
+        degraded.store(false, Ordering::Release);
+        assert!(!degraded.load(Ordering::Acquire));
+    }
+
+    // ========== Flush Rate Limit Tests ==========
+
+    #[test]
+    fn test_flush_rate_limit_allows_after_interval() {
+        let last_flush = parking_lot::Mutex::new(Instant::now() - Duration::from_secs(20));
+        let elapsed = last_flush.lock().elapsed();
+        assert!(elapsed >= Duration::from_secs(PermissionService::FLUSH_RATE_LIMIT_SECS));
+    }
+
+    #[test]
+    fn test_flush_rate_limit_blocks_within_interval() {
+        let last_flush = parking_lot::Mutex::new(Instant::now());
+        let elapsed = last_flush.lock().elapsed();
+        assert!(elapsed < Duration::from_secs(PermissionService::FLUSH_RATE_LIMIT_SECS));
+    }
+
+    // ========== has_all / has_any Tests ==========
+
+    #[test]
+    fn test_has_all_requires_all_bits() {
+        let perms = PermissionBits(PermissionBits::SEND_CHAT | PermissionBits::ADD_MOVIE);
+        assert!(perms.has_all(PermissionBits::SEND_CHAT | PermissionBits::ADD_MOVIE));
+        assert!(!perms.has_all(PermissionBits::SEND_CHAT | PermissionBits::BAN_MEMBER));
+    }
+
+    #[test]
+    fn test_has_any_requires_any_bit() {
+        let perms = PermissionBits(PermissionBits::SEND_CHAT);
+        assert!(perms.has_any(PermissionBits::SEND_CHAT | PermissionBits::BAN_MEMBER));
+        assert!(!perms.has_any(PermissionBits::BAN_MEMBER | PermissionBits::DELETE_ROOM));
+    }
+
+    // ========== Room-Level Guest Override Tests ==========
+
+    #[test]
+    fn test_room_adds_send_chat_for_guest() {
+        let service = make_service();
+        let mut settings = RoomSettings::default();
+        settings.guest_added_permissions = GuestAddedPermissions(PermissionBits::SEND_CHAT);
+        let perms = service.calculate_role_default_permissions(&RoomRole::Guest, &settings);
+        assert!(perms.has(PermissionBits::SEND_CHAT));
+        assert!(perms.has(PermissionBits::VIEW_PLAYLIST));
+    }
+
+    #[test]
+    fn test_room_removes_view_playlist_for_guest() {
+        let service = make_service();
+        let mut settings = RoomSettings::default();
+        settings.guest_removed_permissions = GuestRemovedPermissions(PermissionBits::VIEW_PLAYLIST);
+        let perms = service.calculate_role_default_permissions(&RoomRole::Guest, &settings);
+        assert!(!perms.has(PermissionBits::VIEW_PLAYLIST));
+    }
+
+    // ========== Edge Case: Empty Permissions ==========
+
+    #[test]
+    fn test_empty_permissions_has_nothing() {
+        let perms = PermissionBits::empty();
+        assert!(!perms.has(PermissionBits::SEND_CHAT));
+        assert!(!perms.has_any(PermissionBits::ALL));
+        assert!(perms.has_all(0)); // vacuously true
     }
 }

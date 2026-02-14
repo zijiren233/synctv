@@ -9,6 +9,9 @@
 // - synctv-core/provider: MediaProvider trait implementations (adapters calling these clients)
 // - synctv-core/service: ProvidersManager for managing provider instances
 
+// Shared error types
+pub mod error;
+
 // HTTP clients (no MediaProvider dependency)
 pub mod alist;
 pub mod bilibili;
@@ -18,6 +21,10 @@ pub mod emby;
 pub mod grpc;
 
 // Re-export client types for convenience
-pub use alist::{AlistClient, AlistError};
-pub use bilibili::{BilibiliClient, BilibiliError};
-pub use emby::{EmbyClient, EmbyError};
+pub use alist::AlistClient;
+pub use alist::error::AlistError;
+pub use bilibili::BilibiliClient;
+pub use bilibili::error::BilibiliError;
+pub use emby::EmbyClient;
+pub use emby::error::EmbyError;
+pub use error::ProviderClientError;

@@ -153,6 +153,9 @@ impl From<synctv_core::Error> for AppError {
                 tracing::error!("Internal error: {}", msg);
                 Self::internal_server_error("Internal server error")
             }
+            Error::OptimisticLockConflict => {
+                Self::new(StatusCode::CONFLICT, "Resource was modified concurrently, please retry")
+            }
         }
     }
 }

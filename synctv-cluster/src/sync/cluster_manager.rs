@@ -10,12 +10,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::dedup::{DedupKey, MessageDeduplicator};
 use super::events::ClusterEvent;
 use super::redis_pubsub::{PublishRequest, RedisPubSub};
 use super::room_hub::{ConnectionId, RoomMessageHub};
+use crate::discovery::{HeartbeatResult, NodeRegistry};
 use synctv_core::models::id::{RoomId, UserId};
 use synctv_core::service::PermissionService;
 
@@ -51,19 +53,34 @@ impl Default for ClusterConfig {
 /// - Cross-node synchronization via Redis Pub/Sub
 /// - Message deduplication
 /// - Connection lifecycle
+/// Capacity for the high-priority publish channel for critical events.
+const CRITICAL_CHANNEL_CAPACITY: usize = 1000;
+
 pub struct ClusterManager {
     /// Message hub for local broadcasting
     message_hub: Arc<RoomMessageHub>,
     /// Deduplicator for preventing duplicate events
     deduplicator: Arc<MessageDeduplicator>,
-    /// Sender for publishing events to Redis
+    /// Sender for publishing events to Redis (normal priority)
     redis_publish_tx: Option<mpsc::Sender<PublishRequest>>,
+    /// Sender for publishing critical events to Redis (high priority, never dropped)
+    redis_critical_tx: Option<mpsc::Sender<PublishRequest>>,
     /// This node's unique identifier
     node_id: String,
     /// Broadcast channel for admin events (kick, etc.) received from cluster
     admin_event_tx: broadcast::Sender<ClusterEvent>,
     /// Redis Pub/Sub service (stored for graceful shutdown)
     redis_pubsub: Option<Arc<RedisPubSub>>,
+    /// Cancellation token for background heartbeat task
+    cancel_token: CancellationToken,
+    /// Node registry + heartbeat handle (behind Mutex for async shutdown from &self)
+    heartbeat_state: tokio::sync::Mutex<HeartbeatState>,
+}
+
+/// State for the background heartbeat loop, guarded by Mutex for async shutdown
+struct HeartbeatState {
+    node_registry: Option<Arc<NodeRegistry>>,
+    handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl ClusterManager {
@@ -87,9 +104,9 @@ impl ClusterManager {
         let (admin_event_tx, _) = broadcast::channel(256);
 
         // Start Redis pub/sub if Redis URL is provided
-        let (redis_publish_tx, redis_pubsub) = if config.redis_url.is_empty() {
+        let (redis_publish_tx, redis_critical_tx, redis_pubsub) = if config.redis_url.is_empty() {
             warn!("Redis URL not provided, running in single-node mode");
-            (None, None)
+            (None, None, None)
         } else {
             let redis_pubsub = Arc::new(
                 RedisPubSub::new(
@@ -103,16 +120,53 @@ impl ClusterManager {
             );
 
             let tx = redis_pubsub.clone().start().await?;
-            (Some(tx), Some(redis_pubsub))
+            // Critical events share the same Redis publisher but use a separate
+            // bounded channel so they are never dropped when the normal channel is full.
+            let (critical_tx, mut critical_rx) = mpsc::channel::<PublishRequest>(CRITICAL_CHANNEL_CAPACITY);
+            // Forward critical events into the normal publish channel using `.send().await`
+            // (blocks until space available, never drops).
+            let normal_tx = tx.clone();
+            let cancel_critical = redis_pubsub.cancel_token();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel_critical.cancelled() => {
+                            // Drain remaining critical events before exiting
+                            while let Ok(req) = critical_rx.try_recv() {
+                                let _ = normal_tx.send(req).await;
+                            }
+                            return;
+                        }
+                        req = critical_rx.recv() => {
+                            if let Some(req) = req {
+                                if let Err(e) = normal_tx.send(req).await {
+                                    error!("Critical event publish channel closed: {e}");
+                                    return;
+                                }
+                            } else {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+
+            (Some(tx), Some(critical_tx), Some(redis_pubsub))
         };
 
         Ok(Self {
             message_hub,
             deduplicator,
             redis_publish_tx,
+            redis_critical_tx,
             node_id: config.node_id,
             admin_event_tx,
             redis_pubsub,
+            cancel_token: CancellationToken::new(),
+            heartbeat_state: tokio::sync::Mutex::new(HeartbeatState {
+                node_registry: None,
+                handle: None,
+            }),
         })
     }
 
@@ -151,13 +205,122 @@ impl ClusterManager {
         &self.admin_event_tx
     }
 
-    /// Gracefully shut down the cluster manager and all background tasks
-    pub fn shutdown(&self) {
+    /// Start a background heartbeat loop that keeps this node alive in Redis.
+    ///
+    /// Calls `NodeRegistry::heartbeat()` every `heartbeat_timeout / 2` seconds.
+    /// If the heartbeat indicates re-registration is needed (key expired or
+    /// epoch mismatch), the node automatically re-registers.
+    ///
+    /// Must be called after `register()` on the `NodeRegistry`.
+    /// Start a background heartbeat loop that keeps this node alive in Redis.
+    ///
+    /// Calls `NodeRegistry::heartbeat()` every `heartbeat_timeout / 2` seconds.
+    /// If the heartbeat indicates re-registration is needed (key expired or
+    /// epoch mismatch), the node automatically re-registers.
+    ///
+    /// Must be called after `register()` on the `NodeRegistry`.
+    pub async fn start_heartbeat_loop(
+        &self,
+        node_registry: Arc<NodeRegistry>,
+        grpc_address: String,
+        http_address: String,
+    ) {
+        let cancel_token = self.cancel_token.clone();
+        let interval_secs = (node_registry.heartbeat_timeout_secs / 2).max(1) as u64;
+
+        let registry_for_task = node_registry.clone();
+        let handle = tokio::spawn(async move {
+            let node_registry = registry_for_task;
+            let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+            // Skip the first immediate tick (node was just registered)
+            ticker.tick().await;
+
+            loop {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => {
+                        info!("Heartbeat loop cancelled");
+                        return;
+                    }
+                    _ = ticker.tick() => {
+                        match node_registry.heartbeat().await {
+                            Ok(HeartbeatResult::Ok) => {
+                                debug!("Heartbeat sent successfully");
+                            }
+                            Ok(HeartbeatResult::NeedReregistration) => {
+                                warn!("Node key expired in Redis, re-registering");
+                                if let Err(e) = node_registry
+                                    .register(grpc_address.clone(), http_address.clone())
+                                    .await
+                                {
+                                    error!(error = %e, "Failed to re-register node after key expiry");
+                                }
+                            }
+                            Ok(HeartbeatResult::EpochMismatch(remote_epoch)) => {
+                                warn!(
+                                    remote_epoch = remote_epoch,
+                                    "Epoch mismatch during heartbeat, re-registering"
+                                );
+                                if let Err(e) = node_registry
+                                    .register(grpc_address.clone(), http_address.clone())
+                                    .await
+                                {
+                                    error!(error = %e, "Failed to re-register node after epoch mismatch");
+                                }
+                            }
+                            Err(e) => {
+                                error!(error = %e, "Heartbeat failed (Redis error), will retry");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Store the node_registry and handle
+        let mut state = self.heartbeat_state.lock().await;
+        state.node_registry = Some(node_registry);
+        state.handle = Some(handle);
+        info!(
+            interval_secs = interval_secs,
+            "Heartbeat loop started"
+        );
+    }
+
+    /// Gracefully shut down the cluster manager and all background tasks.
+    ///
+    /// This method:
+    /// 1. Cancels the heartbeat loop
+    /// 2. Shuts down Redis Pub/Sub (which drains pending publishes)
+    /// 3. Unregisters this node from Redis
+    /// 4. Shuts down the deduplicator cleanup task
+    /// 5. Awaits background task completion
+    pub async fn shutdown(&self) {
         info!("Shutting down ClusterManager");
+
+        // Cancel heartbeat loop
+        self.cancel_token.cancel();
+
         // Cancel Redis Pub/Sub tasks
         if let Some(ref pubsub) = self.redis_pubsub {
             pubsub.shutdown();
         }
+
+        // Wait for the heartbeat task to finish and unregister
+        {
+            let mut state = self.heartbeat_state.lock().await;
+            if let Some(handle) = state.handle.take() {
+                let _ = handle.await;
+            }
+            // Unregister this node from Redis so peers see it go immediately
+            if let Some(ref registry) = state.node_registry {
+                if let Err(e) = registry.unregister().await {
+                    warn!(error = %e, "Failed to unregister node during shutdown");
+                } else {
+                    info!("Node unregistered from Redis during shutdown");
+                }
+            }
+        }
+
         // Shut down deduplicator cleanup task
         self.deduplicator.shutdown();
     }
@@ -197,8 +360,39 @@ impl ClusterManager {
             local_sent = self.message_hub.broadcast(room_id, event.clone());
         }
 
-        // Publish to Redis for cross-node sync (non-blocking try_send)
-        if let Some(tx) = &self.redis_publish_tx {
+        // Publish to Redis for cross-node sync.
+        // Critical events (KickPublisher, KickUser, PermissionChanged) use a
+        // separate high-priority channel that never drops events.
+        let is_critical = event.is_critical();
+        if is_critical {
+            if let Some(tx) = &self.redis_critical_tx {
+                match tx.try_send(PublishRequest {
+                    room_id: event.room_id().cloned(),
+                    event,
+                }) {
+                    Ok(()) => {
+                        redis_sent = 1;
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        // Critical channel is full -- this is very unusual.
+                        // Log at error level since these events should never be dropped.
+                        error!(
+                            "Critical event publish channel full (capacity {}), event may be delayed",
+                            CRITICAL_CHANNEL_CAPACITY
+                        );
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        error!("Critical event publish channel closed");
+                    }
+                }
+            } else if let Some(tx) = &self.redis_publish_tx {
+                // Fallback to normal channel if critical channel not available
+                let _ = tx.try_send(PublishRequest {
+                    room_id: event.room_id().cloned(),
+                    event,
+                });
+            }
+        } else if let Some(tx) = &self.redis_publish_tx {
             match tx.try_send(PublishRequest {
                 room_id: event.room_id().cloned(),
                 event,
@@ -320,6 +514,7 @@ mod tests {
 
         // Broadcast event
         let event = ClusterEvent::ChatMessage {
+            event_id: nanoid::nanoid!(16),
             room_id: room_id.clone(),
             user_id: user_id.clone(),
             username: "user1".to_string(),
@@ -366,6 +561,7 @@ mod tests {
 
         // Send a KickPublisher event through the admin channel
         let event = ClusterEvent::KickPublisher {
+            event_id: nanoid::nanoid!(16),
             room_id: RoomId::from_string("room1".to_string()),
             media_id: synctv_core::models::MediaId::from_string("media1".to_string()),
             reason: "user_banned".to_string(),
@@ -404,6 +600,7 @@ mod tests {
 
         // Send event
         let event = ClusterEvent::KickPublisher {
+            event_id: nanoid::nanoid!(16),
             room_id: RoomId::from_string("room1".to_string()),
             media_id: synctv_core::models::MediaId::from_string("media1".to_string()),
             reason: "room_deleted".to_string(),

@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use bytes::{Buf, BytesMut};
+use synctv_core::validation::SSRFValidator;
 use synctv_xiu::rtmp::session::client_session::{ClientSession, ClientSessionType};
 use synctv_xiu::rtmp::session::common::RtmpStreamHandler;
 use synctv_xiu::rtmp::utils::RtmpUrlParser;
@@ -93,6 +94,36 @@ impl ExternalStreamPuller {
             .ok_or_else(|| anyhow::anyhow!(
                 "Unsupported source URL format: {source_url}. Expected rtmp:// or *.flv"
             ))?;
+
+        // SSRF validation: block private IPs, loopback, link-local, metadata endpoints
+        SSRFValidator::new().validate_url(&source_url)
+            .map_err(|e| anyhow::anyhow!("SSRF protection blocked URL: {e}"))?;
+
+        Ok(Self {
+            room_id,
+            media_id,
+            source_url,
+            source_type,
+            stream_hub_event_sender,
+        })
+    }
+
+    /// Create with async DNS-resolved SSRF validation (preferred for production use).
+    /// Resolves the hostname and validates all resolved IPs against blocklists.
+    pub async fn new_async(
+        room_id: String,
+        media_id: String,
+        source_url: String,
+        stream_hub_event_sender: StreamHubEventSender,
+    ) -> Result<Self> {
+        let source_type = ExternalSourceType::from_url(&source_url)
+            .ok_or_else(|| anyhow::anyhow!(
+                "Unsupported source URL format: {source_url}. Expected rtmp:// or *.flv"
+            ))?;
+
+        // Async SSRF validation: resolves hostname and checks all IPs
+        SSRFValidator::new().validate_url_async(&source_url).await
+            .map_err(|e| anyhow::anyhow!("SSRF protection blocked URL: {e}"))?;
 
         Ok(Self {
             room_id,
@@ -458,21 +489,9 @@ impl ExternalStreamPuller {
         Ok(())
     }
 
-    /// Exponential backoff with jitter (matching `GrpcStreamPuller` pattern).
+    /// Exponential backoff with jitter (delegated to shared utility).
     async fn backoff(attempt: u32) {
-        let base = INITIAL_BACKOFF_MS.saturating_mul(
-            1u64 << attempt.min(16).saturating_sub(1),
-        );
-        let capped = base.min(MAX_BACKOFF_MS);
-        // Add jitter: ±25%
-        let jitter = capped / 4;
-        let random_offset = u64::from(std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos())
-            % (jitter * 2 + 1);
-        let delay = (capped.saturating_sub(jitter) + random_offset).min(MAX_BACKOFF_MS);
-        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        crate::util::backoff(attempt, INITIAL_BACKOFF_MS, MAX_BACKOFF_MS).await;
     }
 
     /// Publish to local `StreamHub` under `live/{room_id}/{media_id}`.
@@ -547,12 +566,18 @@ impl ExternalStreamPuller {
     }
 }
 
-/// Validate that a URL is a supported external source format
+/// Validate that a URL is a supported external source format and is SSRF-safe
 pub fn validate_source_url(url: &str) -> Result<ExternalSourceType, String> {
-    ExternalSourceType::from_url(url)
+    let source_type = ExternalSourceType::from_url(url)
         .ok_or_else(|| format!(
             "Unsupported source URL: {url}. Expected rtmp:// or *.flv"
-        ))
+        ))?;
+
+    // SSRF validation: block private IPs, loopback, link-local, metadata endpoints
+    SSRFValidator::new().validate_url(url)
+        .map_err(|e| format!("SSRF protection blocked URL: {e}"))?;
+
+    Ok(source_type)
 }
 
 #[cfg(test)]
@@ -586,6 +611,17 @@ mod tests {
         assert!(validate_source_url("https://live.example.com/app/stream/index.m3u8").is_err());
         assert!(validate_source_url("http://example.com/video.mp4").is_err());
         assert!(validate_source_url("not-a-url").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_blocked_urls() {
+        // Private IPs should be blocked
+        assert!(validate_source_url("rtmp://10.0.0.1/app/stream").is_err());
+        assert!(validate_source_url("rtmp://192.168.1.1/app/stream").is_err());
+        assert!(validate_source_url("rtmp://172.16.0.1/app/stream").is_err());
+        assert!(validate_source_url("http://127.0.0.1/stream.flv").is_err());
+        assert!(validate_source_url("http://169.254.169.254/stream.flv").is_err());
+        assert!(validate_source_url("rtmp://localhost/app/stream").is_err());
     }
 
     #[tokio::test]

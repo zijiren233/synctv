@@ -26,30 +26,45 @@ pub struct DedupKey {
 }
 
 impl DedupKey {
-    /// Create a deduplication key from a cluster event
+    /// Create a deduplication key from a cluster event.
+    ///
+    /// Uses the event's unique `event_id` (nanoid) as the primary dedup key
+    /// when available, falling back to content hashing for legacy events
+    /// without an `event_id`.
     #[must_use]
     pub fn from_event(event: &crate::sync::events::ClusterEvent) -> Self {
-        use std::hash::{Hash, Hasher};
-        // Hash the serialized event content to distinguish same-millisecond events
-        let content_hash = {
+        let eid = event.event_id();
+        // If event_id is present and non-empty, use it as the sole differentiator
+        // to avoid hash collisions entirely.
+        let content_hash = if eid.is_empty() {
+            use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             if let Ok(json) = serde_json::to_string(event) {
                 json.hash(&mut hasher);
             }
             hasher.finish()
+        } else {
+            0
         };
         Self {
             event_type: event.event_type().to_string(),
-            // Use "global" for events without room_id to avoid false positive deduplication
-            // across different system events
             room_id: event.room_id()
                 .map(|id| id.as_str().to_string())
                 .unwrap_or_else(|| "global".to_string()),
-            // Use "system" for events without user_id (e.g., system notifications)
-            user_id: event.user_id()
-                .map(|id| id.as_str().to_string())
-                .unwrap_or_else(|| "system".to_string()),
-            extra: event.dedup_extra(),
+            user_id: if eid.is_empty() {
+                event.user_id()
+                    .map(|id| id.as_str().to_string())
+                    .unwrap_or_else(|| "system".to_string())
+            } else {
+                // When event_id is present, embed it in the user_id field
+                // so each event gets a distinct key
+                String::new()
+            },
+            extra: if eid.is_empty() {
+                event.dedup_extra()
+            } else {
+                eid.to_string()
+            },
             timestamp_ms: event.timestamp().timestamp_millis(),
             content_hash,
         }
@@ -242,6 +257,7 @@ mod tests {
         let dedup = MessageDeduplicator::with_defaults();
 
         let event = crate::sync::events::ClusterEvent::ChatMessage {
+            event_id: nanoid::nanoid!(16),
             room_id: RoomId::from_string("room1".to_string()),
             user_id: UserId::from_string("user1".to_string()),
             username: "test".to_string(),

@@ -250,16 +250,19 @@ impl AlistClientExt for Arc<dyn AlistInterface> {
     }
 }
 
-// Error conversion
-impl From<AlistError> for ProviderError {
-    fn from(error: AlistError) -> Self {
+// Error conversion (all provider errors are ProviderClientError aliases)
+impl From<synctv_media_providers::ProviderClientError> for ProviderError {
+    fn from(error: synctv_media_providers::ProviderClientError) -> Self {
+        use synctv_media_providers::ProviderClientError;
         match error {
-            AlistError::Network(msg) => Self::NetworkError(msg),
-            AlistError::Api { message, .. } => Self::ApiError(message),
-            AlistError::Parse(msg) => Self::ParseError(msg),
-            AlistError::Auth(msg) => Self::ApiError(msg),
-            AlistError::InvalidConfig(msg) => Self::InvalidConfig(msg),
-            _ => Self::ApiError(error.to_string()),
+            ProviderClientError::Network(msg) => Self::NetworkError(msg),
+            ProviderClientError::Api { message, .. } => Self::ApiError(message),
+            ProviderClientError::Parse(msg) => Self::ParseError(msg),
+            ProviderClientError::Auth(msg) => Self::ApiError(msg),
+            ProviderClientError::InvalidConfig(msg) => Self::InvalidConfig(msg),
+            ProviderClientError::InvalidHeader(msg) => Self::ParseError(msg),
+            ProviderClientError::NotImplemented(msg) => Self::ApiError(format!("Not implemented: {msg}")),
+            ProviderClientError::Http { status, url } => Self::ApiError(format!("HTTP {status} for {url}")),
         }
     }
 }
@@ -474,19 +477,6 @@ impl BilibiliInterface for GrpcBilibiliClient {
     }
 }
 
-impl From<BilibiliError> for ProviderError {
-    fn from(error: BilibiliError) -> Self {
-        match error {
-            BilibiliError::Network(msg) => Self::NetworkError(msg),
-            BilibiliError::Api(msg) => Self::ApiError(msg),
-            BilibiliError::Parse(msg) => Self::ParseError(msg),
-            BilibiliError::InvalidId(msg) => Self::ParseError(msg),
-            BilibiliError::InvalidConfig(msg) => Self::InvalidConfig(msg),
-            BilibiliError::NotImplemented(msg) => Self::ApiError(format!("Not implemented: {msg}")),
-            BilibiliError::Http { status, url } => Self::ApiError(format!("HTTP {status} for {url}")),
-        }
-    }
-}
 
 // ============================================================================
 // Emby Client
@@ -618,17 +608,3 @@ impl EmbyInterface for GrpcEmbyClient {
     }
 }
 
-impl From<EmbyError> for ProviderError {
-    fn from(error: EmbyError) -> Self {
-        match error {
-            EmbyError::Network(msg) => Self::NetworkError(msg),
-            EmbyError::Api(msg) => Self::ApiError(msg),
-            EmbyError::Parse(msg) => Self::ParseError(msg),
-            EmbyError::Auth(msg) => Self::ApiError(msg),
-            EmbyError::InvalidConfig(msg) => Self::InvalidConfig(msg),
-            EmbyError::InvalidHeader(msg) => Self::ParseError(msg),
-            EmbyError::NotImplemented(msg) => Self::ApiError(format!("Not implemented: {msg}")),
-            EmbyError::Http { status, url } => Self::ApiError(format!("HTTP {status} for {url}")),
-        }
-    }
-}

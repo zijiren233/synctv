@@ -13,6 +13,14 @@ use crate::sync::connection_manager::ConnectionManager;
 /// Cluster gRPC service
 ///
 /// Handles node registration, heartbeats, and state synchronization.
+///
+/// **Architecture note**: Redis is the sole discovery mechanism. Nodes register
+/// themselves in Redis via `NodeRegistry::register()` on startup and send
+/// periodic heartbeats via `NodeRegistry::heartbeat()`. The `RegisterNode` and
+/// `Heartbeat` gRPC RPCs below exist for receiving registrations/heartbeats
+/// from peer nodes, but no client code currently calls them -- discovery is
+/// entirely Redis-based. The useful gRPC endpoints are `GetNodes`,
+/// `GetUserOnlineStatus`, and `GetRoomConnections` (fan-out queries).
 #[derive(Clone)]
 pub struct ClusterServer {
     node_registry: Arc<NodeRegistry>,
@@ -104,7 +112,12 @@ impl ClusterServer {
 
 #[tonic::async_trait]
 impl ClusterService for ClusterServer {
-    /// Register a new node in the cluster
+    /// Register a new node in the cluster.
+    ///
+    /// NOTE: This is currently unused -- no client code calls this RPC.
+    /// Redis is the sole discovery mechanism (nodes self-register via
+    /// `NodeRegistry::register()`). This handler exists for potential future
+    /// node-to-node gRPC discovery.
     async fn register_node(
         &self,
         request: Request<RegisterNodeRequest>,
@@ -160,7 +173,10 @@ impl ClusterService for ClusterServer {
         }))
     }
 
-    /// Handle heartbeat from a node
+    /// Handle heartbeat from a node.
+    ///
+    /// NOTE: This is currently unused -- no client code calls this RPC.
+    /// Heartbeats are sent directly to Redis via `NodeRegistry::heartbeat()`.
     async fn heartbeat(
         &self,
         request: Request<HeartbeatRequest>,

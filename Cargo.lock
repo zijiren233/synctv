@@ -325,17 +325,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-recursion"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b43422f69d8ff38f95f1b2bb76517c91589a924d1559a0e935d7c8ce0274c11"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5027,8 +5016,6 @@ dependencies = [
  "ipnet",
  "jsonwebtoken",
  "lettre",
- "log",
- "md5",
  "mockall",
  "moka",
  "nanoid",
@@ -5045,6 +5032,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha1",
+ "sha2",
  "sqlx",
  "stun_codec",
  "synctv-media-providers",
@@ -5068,7 +5056,6 @@ name = "synctv-livestream"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion",
  "async-trait",
  "axum",
  "bytes",
@@ -5089,6 +5076,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "subtle",
  "synctv-cluster",
  "synctv-core",
  "synctv-xiu",
@@ -5111,7 +5099,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "md5",
  "prost",
  "prost-types",
  "regex",
@@ -5146,6 +5133,7 @@ dependencies = [
  "anyhow",
  "axum",
  "futures",
+ "percent-encoding",
  "reqwest 0.12.28",
  "synctv-core",
  "tokio",

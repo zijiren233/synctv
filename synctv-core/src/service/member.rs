@@ -9,6 +9,7 @@ use crate::{
     service::permission::PermissionService,
     Error, Result,
 };
+use rand::Rng;
 
 /// Role hierarchy level for authorization checks (higher = more authority)
 /// Creator > Admin > Member > Guest
@@ -221,9 +222,9 @@ impl MemberService {
         kicker_id: UserId,
         target_user_id: UserId,
     ) -> Result<()> {
-        // Check if kicker has permission to kick
+        // Check if kicker has permission to kick (no cache - security-critical)
         self.permission_service
-            .check_permission(&room_id, &kicker_id, PermissionBits::KICK_USER)
+            .check_permission_no_cache(&room_id, &kicker_id, PermissionBits::KICK_USER)
             .await?;
 
         // Can't kick yourself
@@ -254,11 +255,18 @@ impl MemberService {
         Ok(())
     }
 
+    /// Maximum retry attempts for optimistic lock conflicts
+    const MAX_RETRIES: u32 = 3;
+    /// Base delay for exponential backoff (milliseconds)
+    const BACKOFF_BASE_MS: u64 = 5;
+
     /// Set member Allow/Deny permissions
     ///
     /// This implements the Allow/Deny pattern:
     /// - `added_permissions`: Extra permissions to add to role default
     /// - `removed_permissions`: Permissions to remove from role default
+    ///
+    /// Retries automatically on optimistic lock conflicts.
     pub async fn set_member_permissions(
         &self,
         room_id: RoomId,
@@ -273,25 +281,37 @@ impl MemberService {
             .check_permission_no_cache(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
             .await?;
 
-        // Get current member to get version
-        let member = self
-            .member_repo
-            .get(&room_id, &target_user_id)
-            .await?
-            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
+        for attempt in 0..Self::MAX_RETRIES {
+            // Get current member to get version
+            let member = self
+                .member_repo
+                .get(&room_id, &target_user_id)
+                .await?
+                .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
 
-        // Update permissions with optimistic locking
-        let updated_member = self
-            .member_repo
-            .update_permissions(&room_id, &target_user_id, added_permissions, removed_permissions, member.version)
-            .await?;
+            // Update permissions with optimistic locking
+            match self.member_repo
+                .update_permissions(&room_id, &target_user_id, added_permissions, removed_permissions, member.version)
+                .await
+            {
+                Ok(updated_member) => {
+                    // Invalidate permission cache for target user
+                    self.permission_service
+                        .invalidate_cache(&room_id, &target_user_id)
+                        .await;
+                    return Ok(updated_member);
+                }
+                Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
+                    let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
 
-        // Invalidate permission cache for target user
-        self.permission_service
-            .invalidate_cache(&room_id, &target_user_id)
-            .await;
-
-        Ok(updated_member)
+        Err(Error::Internal("Permission update failed after maximum retry attempts".to_string()))
     }
 
     /// Grant a specific permission to a member (Allow pattern)
@@ -304,9 +324,10 @@ impl MemberService {
         target_user_id: UserId,
         permission: u64,
     ) -> Result<RoomMember> {
-        // Check if granter has permission to modify permissions
+        // Check if granter has permission to modify permissions without cache
+        // Critical operation requires fresh permissions
         self.permission_service
-            .check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
+            .check_permission_no_cache(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
             .await?;
 
         // Atomic grant in SQL (added_permissions |= permission)
@@ -333,9 +354,10 @@ impl MemberService {
         target_user_id: UserId,
         permission: u64,
     ) -> Result<RoomMember> {
-        // Check if granter has permission to modify permissions
+        // Check if granter has permission to modify permissions without cache
+        // Critical operation requires fresh permissions
         self.permission_service
-            .check_permission(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
+            .check_permission_no_cache(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
             .await?;
 
         // Atomic revoke in SQL (removed_permissions |= permission)
@@ -353,6 +375,8 @@ impl MemberService {
     }
 
     /// Reset member permissions to role default (clear Allow/Deny)
+    ///
+    /// Retries automatically on optimistic lock conflicts.
     pub async fn reset_member_permissions(
         &self,
         room_id: RoomId,
@@ -365,25 +389,37 @@ impl MemberService {
             .check_permission_no_cache(&room_id, &granter_id, PermissionBits::GRANT_PERMISSION)
             .await?;
 
-        // Get current member to get version
-        let member = self
-            .member_repo
-            .get(&room_id, &target_user_id)
-            .await?
-            .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
+        for attempt in 0..Self::MAX_RETRIES {
+            // Get current member to get version
+            let member = self
+                .member_repo
+                .get(&room_id, &target_user_id)
+                .await?
+                .ok_or_else(|| Error::NotFound("User is not a member of this room".to_string()))?;
 
-        // Reset to role default (clear both added and removed)
-        let updated_member = self
-            .member_repo
-            .reset_permissions(&room_id, &target_user_id, member.version)
-            .await?;
+            // Reset to role default (clear both added and removed)
+            match self.member_repo
+                .reset_permissions(&room_id, &target_user_id, member.version)
+                .await
+            {
+                Ok(updated_member) => {
+                    // Invalidate permission cache for target user
+                    self.permission_service
+                        .invalidate_cache(&room_id, &target_user_id)
+                        .await;
+                    return Ok(updated_member);
+                }
+                Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
+                    let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
 
-        // Invalidate permission cache for target user
-        self.permission_service
-            .invalidate_cache(&room_id, &target_user_id)
-            .await;
-
-        Ok(updated_member)
+        Err(Error::Internal("Permission reset failed after maximum retry attempts".to_string()))
     }
 
     /// Get all members of a room with user info
@@ -479,9 +515,9 @@ impl MemberService {
         admin_id: UserId,
         target_user_id: UserId,
     ) -> Result<()> {
-        // Check admin permission (BAN_MEMBER, not KICK_USER)
+        // Check admin permission without cache - security-critical
         self.permission_service
-            .check_permission(&room_id.clone(), &admin_id, PermissionBits::BAN_MEMBER)
+            .check_permission_no_cache(&room_id.clone(), &admin_id, PermissionBits::BAN_MEMBER)
             .await?;
 
         // Unban member
@@ -547,9 +583,9 @@ impl MemberService {
         target_user_id: UserId,
         status: MemberStatus,
     ) -> Result<RoomMember> {
-        // Check admin permission (use BAN_MEMBER for status changes)
+        // Check admin permission without cache - security-critical status change
         self.permission_service
-            .check_permission(&room_id.clone(), &admin_id, PermissionBits::BAN_MEMBER)
+            .check_permission_no_cache(&room_id.clone(), &admin_id, PermissionBits::BAN_MEMBER)
             .await?;
 
         // Get current member

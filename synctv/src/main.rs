@@ -76,8 +76,8 @@ async fn main() -> Result<()> {
     // 4.3. Bootstrap root user (if enabled and no root user exists)
     info!("Checking root user bootstrap...");
     if let Err(e) = bootstrap_root_user(&pool, &config.bootstrap, config.server.development_mode).await {
-        error!("Failed to bootstrap root user: {}", e);
-        error!("You may need to manually create a root user");
+        warn!("Failed to bootstrap root user: {}", e);
+        warn!("You may need to manually create a root user");
         // Non-fatal: continue startup even if bootstrap fails
     }
 
@@ -276,8 +276,8 @@ async fn main() -> Result<()> {
                 Some(server)
             }
             Err(e) => {
-                error!("Failed to start STUN server: {}", e);
-                error!("WebRTC P2P connectivity may be limited without STUN");
+                warn!("Failed to start STUN server: {}", e);
+                warn!("WebRTC P2P connectivity may be limited without STUN");
                 None
             }
         }
@@ -301,7 +301,7 @@ async fn main() -> Result<()> {
                     static_secret: config.webrtc.external_turn_static_secret
                         .clone()
                         .unwrap_or_else(|| {
-                            error!("No TURN static_secret configured! Please set webrtc.external_turn_static_secret in config. Using ephemeral random secret (will change on restart).");
+                            warn!("No TURN static_secret configured! Please set webrtc.external_turn_static_secret in config. Using ephemeral random secret (will change on restart).");
                             nanoid::nanoid!(48)
                         }),
                     realm: config.webrtc.turn_realm
@@ -318,8 +318,8 @@ async fn main() -> Result<()> {
                         Some(server)
                     }
                     Err(e) => {
-                        error!("Failed to start TURN server: {}", e);
-                        error!("WebRTC connectivity may fail in restrictive networks without TURN");
+                        warn!("Failed to start TURN server: {}", e);
+                        warn!("WebRTC connectivity may fail in restrictive networks without TURN");
                         None
                     }
                 }
@@ -343,8 +343,8 @@ async fn main() -> Result<()> {
                 };
                 let turn_service = synctv_core::service::TurnCredentialService::new(turn_config);
                 if let Err(e) = turn_service.validate_config() {
-                    error!("External TURN configuration is invalid: {}", e);
-                    error!("Please check webrtc.external_turn_server_url and webrtc.external_turn_static_secret");
+                    warn!("External TURN configuration is invalid: {}", e);
+                    warn!("Please check webrtc.external_turn_server_url and webrtc.external_turn_static_secret");
                 } else {
                     info!("External TURN server configured: {}", url);
                     info!("TURN credential TTL: {} seconds", config.webrtc.turn_credential_ttl);

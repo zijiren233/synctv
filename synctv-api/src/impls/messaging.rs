@@ -304,6 +304,7 @@ impl StreamMessageHandler {
 
         // Notify cluster that user left
         let event = ClusterEvent::UserLeft {
+            event_id: nanoid::nanoid!(16),
             room_id: self.room_id.clone(),
             user_id: self.user_id.clone(),
             username: self.username.clone(),
@@ -473,6 +474,7 @@ impl StreamMessageHandler {
             .map_err(|e| e.to_string())?;
 
         let event = ClusterEvent::ChatMessage {
+            event_id: nanoid::nanoid!(16),
             room_id: self.room_id.clone(),
             user_id: self.user_id.clone(),
             username: self.username.clone(),
@@ -490,6 +492,7 @@ impl StreamMessageHandler {
 
     async fn handle_danmaku(&self, content: &str, position: f64, color: Option<String>) -> Result<(), String> {
         let event = ClusterEvent::ChatMessage {
+            event_id: nanoid::nanoid!(16),
             room_id: self.room_id.clone(),
             user_id: self.user_id.clone(),
             username: self.username.clone(),
@@ -521,6 +524,7 @@ impl StreamMessageHandler {
 
         // Create event with server-set 'from' field (防止伪造)
         let event = ClusterEvent::WebRTCSignaling {
+            event_id: nanoid::nanoid!(16),
             room_id: self.room_id.clone(),
             message_type: "offer".to_string(),
             from: format!("{}:{}", self.user_id.as_str(), conn_id),
@@ -549,6 +553,7 @@ impl StreamMessageHandler {
 
         // Create event with server-set 'from' field
         let event = ClusterEvent::WebRTCSignaling {
+            event_id: nanoid::nanoid!(16),
             room_id: self.room_id.clone(),
             message_type: "answer".to_string(),
             from: format!("{}:{}", self.user_id.as_str(), conn_id),
@@ -577,6 +582,7 @@ impl StreamMessageHandler {
 
         // Create event with server-set 'from' field
         let event = ClusterEvent::WebRTCSignaling {
+            event_id: nanoid::nanoid!(16),
             room_id: self.room_id.clone(),
             message_type: "ice_candidate".to_string(),
             from: format!("{}:{}", self.user_id.as_str(), conn_id),
@@ -609,6 +615,7 @@ impl StreamMessageHandler {
 
         // Broadcast Join event to all RTC-joined users in the room
         let event = ClusterEvent::WebRTCJoin {
+            event_id: nanoid::nanoid!(16),
             room_id: self.room_id.clone(),
             user_id: self.user_id.clone(),
             conn_id,
@@ -634,6 +641,7 @@ impl StreamMessageHandler {
 
         // Broadcast Leave event to all RTC-joined users in the room
         let event = ClusterEvent::WebRTCLeave {
+            event_id: nanoid::nanoid!(16),
             room_id: self.room_id.clone(),
             user_id: self.user_id.clone(),
             conn_id,

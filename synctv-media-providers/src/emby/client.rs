@@ -15,11 +15,13 @@ fn url_encode(s: &str) -> String {
 }
 
 /// Shared HTTP client for all Emby requests (connection pooling)
+/// Redirects are disabled to prevent SSRF via redirect to private IPs.
 static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(10)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("Failed to build Emby shared HTTP client")
 });
@@ -153,7 +155,7 @@ impl EmbyClient {
             .ok_or_else(|| EmbyError::Parse("Missing Items array".to_string()))?;
 
         if items.is_empty() {
-            return Err(EmbyError::Api("Item not found".to_string()));
+            return Err(EmbyError::Api { code: 0, message: "Item not found".to_string() });
         }
 
         let item: Item = serde_json::from_value(items[0].clone())?;

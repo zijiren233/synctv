@@ -13,11 +13,13 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.ct_eq(b).into()
 }
 
-/// User context - contains `user_id` extracted from JWT
+/// User context - contains `user_id` and `iat` extracted from JWT
 /// Used by `UserService` and `AdminService` methods
 #[derive(Debug, Clone)]
 pub struct UserContext {
     pub user_id: String,
+    /// Token issued-at timestamp (Unix seconds), used for password-change invalidation
+    pub iat: i64,
 }
 
 /// Room context - contains `UserContext` and `room_id`
@@ -45,7 +47,7 @@ impl AuthInterceptor {
         }
     }
 
-    /// Inject `UserContext` - validates JWT and extracts `user_id`
+    /// Inject `UserContext` - validates JWT and extracts `user_id` + `iat`
     /// Used for `UserService` and `AdminService`
     #[allow(clippy::result_large_err)]
     pub fn inject_user<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
@@ -54,9 +56,10 @@ impl AuthInterceptor {
             .jwt_validator
             .validate_grpc_as_status(request.metadata())?;
 
-        // Inject UserContext with user_id
+        // Inject UserContext with user_id and iat
         let user_context = UserContext {
             user_id: claims.sub,
+            iat: claims.iat,
         };
         request.extensions_mut().insert(user_context);
 
@@ -84,6 +87,7 @@ impl AuthInterceptor {
         // Inject UserContext (for nested structure)
         let user_context = UserContext {
             user_id: claims.sub.clone(),
+            iat: claims.iat,
         };
         request.extensions_mut().insert(user_context);
 
@@ -91,6 +95,7 @@ impl AuthInterceptor {
         let room_context = RoomContext {
             user_ctx: UserContext {
                 user_id: claims.sub,
+                iat: claims.iat,
             },
             room_id,
         };
