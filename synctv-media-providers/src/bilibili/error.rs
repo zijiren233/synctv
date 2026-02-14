@@ -7,6 +7,9 @@ pub enum BilibiliError {
     #[error("Network error: {0}")]
     Network(String),
 
+    #[error("HTTP error {status} for {url}")]
+    Http { status: reqwest::StatusCode, url: String },
+
     #[error("API error: {0}")]
     Api(String),
 
@@ -21,6 +24,18 @@ pub enum BilibiliError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+}
+
+/// Check HTTP response status before processing body.
+pub fn check_response(resp: reqwest::Response) -> Result<reqwest::Response, BilibiliError> {
+    let status = resp.status();
+    if status.is_client_error() || status.is_server_error() {
+        return Err(BilibiliError::Http {
+            status,
+            url: resp.url().to_string(),
+        });
+    }
+    Ok(resp)
 }
 
 impl From<reqwest::Error> for BilibiliError {

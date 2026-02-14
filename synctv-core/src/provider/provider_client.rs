@@ -483,6 +483,7 @@ impl From<BilibiliError> for ProviderError {
             BilibiliError::InvalidId(msg) => Self::ParseError(msg),
             BilibiliError::InvalidConfig(msg) => Self::InvalidConfig(msg),
             BilibiliError::NotImplemented(msg) => Self::ApiError(format!("Not implemented: {msg}")),
+            BilibiliError::Http { status, url } => Self::ApiError(format!("HTTP {status} for {url}")),
         }
     }
 }
@@ -627,6 +628,7 @@ impl From<EmbyError> for ProviderError {
             EmbyError::InvalidConfig(msg) => Self::InvalidConfig(msg),
             EmbyError::InvalidHeader(msg) => Self::ParseError(msg),
             EmbyError::NotImplemented(msg) => Self::ApiError(format!("Not implemented: {msg}")),
+            EmbyError::Http { status, url } => Self::ApiError(format!("HTTP {status} for {url}")),
         }
     }
 }

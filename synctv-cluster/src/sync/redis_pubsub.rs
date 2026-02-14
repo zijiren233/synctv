@@ -81,11 +81,15 @@ impl RedisPubSub {
         self.cancel_token.cancel();
     }
 
+    /// Capacity for the publish channel. Events are dropped with a warning when full
+    /// (e.g., during a prolonged Redis outage).
+    pub const PUBLISH_CHANNEL_CAPACITY: usize = 10_000;
+
     /// Start the Pub/Sub service
     /// This spawns a background task that subscribes to all room channels
-    pub async fn start(self: Arc<Self>) -> Result<mpsc::UnboundedSender<PublishRequest>> {
-        // Create channel for publishing events
-        let (publish_tx, mut publish_rx) = mpsc::unbounded_channel::<PublishRequest>();
+    pub async fn start(self: Arc<Self>) -> Result<mpsc::Sender<PublishRequest>> {
+        // Create bounded channel for publishing events to prevent OOM under Redis outage
+        let (publish_tx, mut publish_rx) = mpsc::channel::<PublishRequest>(Self::PUBLISH_CHANNEL_CAPACITY);
 
         // Clone for the publish task
         let publish_client = self.redis_client.clone();
@@ -560,7 +564,15 @@ impl RedisPubSub {
         Ok(reply.ids.into_iter().next().map(|entry| entry.id))
     }
 
+    /// Maximum number of catch-up iterations to prevent infinite loops
+    const MAX_CATCHUP_ITERATIONS: usize = 10;
+    /// Number of events to read per XREAD call during catch-up
+    const CATCHUP_BATCH_SIZE: usize = 1000;
+
     /// Read missed events from Redis Stream after reconnection.
+    ///
+    /// Loops XREAD until no more events are returned (or up to `MAX_CATCHUP_ITERATIONS`
+    /// iterations) to ensure complete catch-up even when > 1000 events were missed.
     ///
     /// Returns a list of `(stream_id, channel, event)` tuples for events that
     /// occurred after `last_id`. The caller should update its tracked stream ID
@@ -574,43 +586,65 @@ impl RedisPubSub {
             .await
             .context("Failed to get Redis connection for catch-up")?;
 
-        // XREAD returns StreamReadReply { keys: Vec<StreamKey> }
-        // Each StreamKey has `key` (the stream name) and `ids: Vec<StreamId>`.
-        // Each StreamId has `id` (e.g. "1234567890-0") and `map: HashMap<String, Value>`.
-        let reply: StreamReadReply = timeout(
-            Duration::from_secs(REDIS_TIMEOUT_SECS),
-            conn.xread_options(
-                &[EVENT_STREAM_KEY],
-                &[last_id],
-                &redis::streams::StreamReadOptions::default().count(1000),
-            ),
-        )
-        .await
-        .context("Timed out reading from Redis Stream")?
-        .context("Failed to read from Redis Stream")?;
-
         let mut events = Vec::new();
-        for stream_key in reply.keys {
-            for entry in stream_key.ids {
-                // Extract "channel" and "payload" fields from the stream entry
-                let channel = entry.map.get("channel")
-                    .and_then(|v| redis::from_redis_value::<String>(v).ok());
-                let payload = entry.map.get("payload")
-                    .and_then(|v| redis::from_redis_value::<String>(v).ok());
+        let mut cursor = last_id.to_string();
 
-                if let (Some(chan), Some(payload_str)) = (channel, payload) {
-                    match serde_json::from_str::<EventEnvelope>(&payload_str) {
-                        Ok(envelope) => {
-                            // Skip events from this node
-                            if envelope.node_id != self.node_id {
-                                events.push((entry.id, chan, envelope.event));
+        for iteration in 0..Self::MAX_CATCHUP_ITERATIONS {
+            // XREAD returns StreamReadReply { keys: Vec<StreamKey> }
+            // Each StreamKey has `key` (the stream name) and `ids: Vec<StreamId>`.
+            // Each StreamId has `id` (e.g. "1234567890-0") and `map: HashMap<String, Value>`.
+            let reply: StreamReadReply = timeout(
+                Duration::from_secs(REDIS_TIMEOUT_SECS),
+                conn.xread_options(
+                    &[EVENT_STREAM_KEY],
+                    &[&cursor],
+                    &redis::streams::StreamReadOptions::default().count(Self::CATCHUP_BATCH_SIZE),
+                ),
+            )
+            .await
+            .context("Timed out reading from Redis Stream")?
+            .context("Failed to read from Redis Stream")?;
+
+            let mut batch_count = 0;
+            for stream_key in reply.keys {
+                for entry in stream_key.ids {
+                    batch_count += 1;
+                    // Update cursor to the latest processed ID
+                    cursor = entry.id.clone();
+
+                    // Extract "channel" and "payload" fields from the stream entry
+                    let channel = entry.map.get("channel")
+                        .and_then(|v| redis::from_redis_value::<String>(v).ok());
+                    let payload = entry.map.get("payload")
+                        .and_then(|v| redis::from_redis_value::<String>(v).ok());
+
+                    if let (Some(chan), Some(payload_str)) = (channel, payload) {
+                        match serde_json::from_str::<EventEnvelope>(&payload_str) {
+                            Ok(envelope) => {
+                                // Skip events from this node
+                                if envelope.node_id != self.node_id {
+                                    events.push((entry.id, chan, envelope.event));
+                                }
                             }
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "Failed to parse event envelope from stream");
+                            Err(e) => {
+                                warn!(error = %e, "Failed to parse event envelope from stream");
+                            }
                         }
                     }
                 }
+            }
+
+            if batch_count < Self::CATCHUP_BATCH_SIZE {
+                // No more events to read
+                break;
+            }
+
+            if iteration == Self::MAX_CATCHUP_ITERATIONS - 1 {
+                warn!(
+                    total_events = events.len(),
+                    "Catch-up reached max iterations ({}), some events may be missed",
+                    Self::MAX_CATCHUP_ITERATIONS
+                );
             }
         }
 
@@ -725,6 +759,7 @@ mod tests {
                 room_id: Some(room_id.clone()),
                 event,
             })
+            .await
             .unwrap();
 
         // Wait for event propagation

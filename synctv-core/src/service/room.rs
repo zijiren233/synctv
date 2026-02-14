@@ -805,7 +805,7 @@ impl RoomService {
         if self.member_service.is_member(room_id, user_id).await? {
             Ok(())
         } else {
-            Err(Error::PermissionDenied("Not a member of this room".to_string()))
+            Err(Error::Authorization("Not a member of this room".to_string()))
         }
     }
 

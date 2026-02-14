@@ -10,7 +10,7 @@ use serde::Deserialize;
 pub struct AlistResp<T> {
     pub code: u64,
     pub message: String,
-    pub data: T,
+    pub data: Option<T>,
 }
 
 /// Login response data (for HTTP API)
@@ -102,7 +102,8 @@ pub struct HttpFsListContent {
 pub struct HttpMeResp {
     pub id: u64,
     pub username: String,
-    pub password: String,
+    #[serde(default, skip)]
+    _password: String, // never expose password hash
     #[serde(rename = "base_path")]
     pub base_path: String,
     pub role: u64,
@@ -323,7 +324,6 @@ impl From<HttpMeResp> for crate::grpc::alist::MeResp {
         Self {
             id: resp.id,
             username: resp.username,
-            password: String::new(), // Redacted: never expose password hash over gRPC
             base_path: resp.base_path,
             role: resp.role,
             disabled: resp.disabled,

@@ -14,7 +14,6 @@ use std::io::Result;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tokio::fs;
-use tracing as log;
 
 /// Hash storage key to prevent path traversal attacks
 ///
@@ -53,7 +52,7 @@ impl HlsStorage for FileStorage {
         let size = data.len();
         fs::write(&file_path, data).await?;
 
-        log::trace!("Wrote: {:?} ({} bytes) for key: {}", file_path, size, key);
+        tracing::trace!("Wrote: {:?} ({} bytes) for key: {}", file_path, size, key);
 
         Ok(())
     }
@@ -62,7 +61,7 @@ impl HlsStorage for FileStorage {
         let file_path = self.get_path(key);
         let data = fs::read(&file_path).await?;
 
-        log::trace!("Read: {:?} ({} bytes) for key: {}", file_path, data.len(), key);
+        tracing::trace!("Read: {:?} ({} bytes) for key: {}", file_path, data.len(), key);
 
         Ok(Bytes::from(data))
     }
@@ -73,7 +72,7 @@ impl HlsStorage for FileStorage {
         // Use tokio async exists check
         if fs::try_exists(&file_path).await.unwrap_or(false) {
             fs::remove_file(&file_path).await?;
-            log::trace!("Deleted: {:?} for key: {}", file_path, key);
+            tracing::trace!("Deleted: {:?} for key: {}", file_path, key);
         }
 
         Ok(())
@@ -87,7 +86,7 @@ impl HlsStorage for FileStorage {
     async fn cleanup(&self, older_than: Duration) -> Result<usize> {
         // Use tokio async exists check
         if !fs::try_exists(&self.base_path).await.unwrap_or(false) {
-            log::debug!("Cleanup base path does not exist: {:?}", self.base_path);
+            tracing::debug!("Cleanup base path does not exist: {:?}", self.base_path);
             return Ok(0);
         }
 
@@ -115,14 +114,14 @@ impl HlsStorage for FileStorage {
                         // File is older than cutoff, delete it
                         if fs::remove_file(&path).await.is_ok() {
                             deleted += 1;
-                            log::trace!("Deleted expired file: {:?}", path);
+                            tracing::trace!("Deleted expired file: {:?}", path);
                         }
                     }
                 }
             }
         }
 
-        log::info!(
+        tracing::info!(
             "Cleanup completed: scanned {:?}, deleted {} files older than {:?}",
             self.base_path,
             deleted,

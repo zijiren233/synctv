@@ -273,7 +273,7 @@ impl ClientServiceImpl {
                             speed: state.speed,
                             is_playing: state.is_playing,
                             updated_at: state.updated_at.timestamp(),
-                            version: state.version,
+                            version: state.version as i32,
                             playing_playlist_id: state
                                 .playing_playlist_id
                                 .map(|id| id.as_str().to_string())
@@ -1134,23 +1134,23 @@ impl EmailService for ClientServiceImpl {
 
         let req = request.into_inner();
 
-        // Check if user exists
+        // Validate token first (constant-time regardless of user existence)
+        let validated_user_id = email_token_service
+            .validate_token(&req.token, synctv_core::service::EmailTokenType::EmailVerification)
+            .await
+            .map_err(|_| Status::invalid_argument("Invalid or expired verification token"))?;
+
+        // Check if user exists (generic error to prevent enumeration)
         let user = self
             .user_service
             .get_by_email(&req.email)
             .await
             .map_err(|e| internal_err("Database error", e))?
-            .ok_or_else(|| Status::not_found("User not found"))?;
-
-        // Validate token
-        let validated_user_id = email_token_service
-            .validate_token(&req.token, synctv_core::service::EmailTokenType::EmailVerification)
-            .await
-            .map_err(|e| Status::invalid_argument(format!("Invalid token: {e}")))?;
+            .ok_or_else(|| Status::invalid_argument("Invalid or expired verification token"))?;
 
         // Verify token matches user
         if validated_user_id != user.id {
-            return Err(Status::invalid_argument("Token does not match email"));
+            return Err(Status::invalid_argument("Invalid or expired verification token"));
         }
 
         // Mark email as verified
@@ -1214,31 +1214,32 @@ impl EmailService for ClientServiceImpl {
 
         let req = request.into_inner();
 
-        // Check if user exists
+        // Validate new password length upfront
+        use crate::http::validation::limits::{PASSWORD_MIN, PASSWORD_MAX};
+        if req.new_password.len() < PASSWORD_MIN {
+            return Err(Status::invalid_argument(format!("Password must be at least {PASSWORD_MIN} characters")));
+        }
+        if req.new_password.len() > PASSWORD_MAX {
+            return Err(Status::invalid_argument(format!("Password must be at most {PASSWORD_MAX} characters")));
+        }
+
+        // Validate token first (constant-time regardless of user existence)
+        let validated_user_id = email_token_service
+            .validate_token(&req.token, synctv_core::service::EmailTokenType::PasswordReset)
+            .await
+            .map_err(|_| Status::invalid_argument("Invalid or expired reset token"))?;
+
+        // Look up user by email (generic error to prevent enumeration)
         let user = self
             .user_service
             .get_by_email(&req.email)
             .await
             .map_err(|e| internal_err("Database error", e))?
-            .ok_or_else(|| Status::not_found("User not found"))?;
-
-        // Validate token
-        let validated_user_id = email_token_service
-            .validate_token(&req.token, synctv_core::service::EmailTokenType::PasswordReset)
-            .await
-            .map_err(|e| Status::invalid_argument(format!("Invalid token: {e}")))?;
+            .ok_or_else(|| Status::invalid_argument("Invalid or expired reset token"))?;
 
         // Verify token matches user
         if validated_user_id != user.id {
-            return Err(Status::invalid_argument("Token does not match email"));
-        }
-
-        // Validate new password
-        if req.new_password.len() < 8 {
-            return Err(Status::invalid_argument("Password must be at least 8 characters"));
-        }
-        if req.new_password.len() > 128 {
-            return Err(Status::invalid_argument("Password must be at most 128 characters"));
+            return Err(Status::invalid_argument("Invalid or expired reset token"));
         }
 
         // Update password

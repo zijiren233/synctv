@@ -10,16 +10,9 @@ use super::bilibili::{
     MatchResp, NewCaptchaResp, NewQrCodeResp, NewSmsReq, NewSmsResp, ParseLivePageReq,
     ParsePgcPageReq, ParseVideoPageReq, UserInfoReq, UserInfoResp, VideoPageInfo, VideoUrl,
 };
+use super::validation::validate_required;
 use crate::bilibili::{BilibiliInterface, BilibiliService as BilibiliServiceImpl};
 use tonic::{Request, Response, Status};
-
-/// Validate that a required string field is non-empty.
-fn validate_required(field_name: &str, value: &str) -> Result<(), Status> {
-    if value.is_empty() {
-        return Err(Status::invalid_argument(format!("{field_name} must not be empty")));
-    }
-    Ok(())
-}
 
 /// Bilibili gRPC server
 ///

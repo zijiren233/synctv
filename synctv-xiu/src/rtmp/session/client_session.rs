@@ -100,7 +100,7 @@ impl ClientSession {
         gop_num: usize,
     ) -> Self {
         let remote_addr = if let Ok(addr) = stream.peer_addr() {
-            log::info!("server session: {addr}");
+            tracing::info!("server session: {addr}");
             Some(addr)
         } else {
             None
@@ -147,7 +147,7 @@ impl ClientSession {
 
         // Clean up StreamHub registrations on disconnect (regardless of error or normal exit)
         if let Err(e) = self.cleanup().await {
-            log::warn!("ClientSession cleanup error: {e}");
+            tracing::warn!("ClientSession cleanup error: {e}");
         }
 
         result
@@ -156,7 +156,7 @@ impl ClientSession {
     /// Clean up StreamHub subscriptions/publications on disconnect
     async fn cleanup(&mut self) -> Result<(), SessionError> {
         if self.is_publishing {
-            log::info!(
+            tracing::info!(
                 "ClientSession cleanup: unpublishing app={} stream={}",
                 self.app_name, self.stream_name
             );
@@ -173,7 +173,7 @@ impl ClientSession {
             } else {
                 (self.app_name.clone(), self.stream_name.clone())
             };
-            log::info!(
+            tracing::info!(
                 "ClientSession cleanup: unsubscribing app={} stream={}",
                 app, stream
             );
@@ -189,36 +189,36 @@ impl ClientSession {
         loop {
             match self.state {
                 ClientSessionState::Handshake => {
-                    log::info!("[C -> S] handshake...");
+                    tracing::info!("[C -> S] handshake...");
                     self.handshake().await?;
                     continue;
                 }
                 ClientSessionState::Connect => {
-                    log::info!("[C -> S] connect...");
+                    tracing::info!("[C -> S] connect...");
                     self.send_connect(&f64::from(define::TRANSACTION_ID_CONNECT))
                         .await?;
                     self.state = ClientSessionState::WaitStateChange;
                 }
                 ClientSessionState::CreateStream => {
-                    log::info!("[C -> S] CreateStream...");
+                    tracing::info!("[C -> S] CreateStream...");
                     self.send_create_stream(&f64::from(define::TRANSACTION_ID_CREATE_STREAM))
                         .await?;
                     self.state = ClientSessionState::WaitStateChange;
                 }
                 ClientSessionState::Play => {
-                    log::info!("[C -> S] Play...");
+                    tracing::info!("[C -> S] Play...");
                     self.send_play(&0.0, &self.raw_stream_name.clone(), &0.0, &0.0, &false)
                         .await?;
                     self.state = ClientSessionState::WaitStateChange;
                 }
                 ClientSessionState::PublishingContent => {
-                    log::info!("[C -> S] PublishingContent...");
+                    tracing::info!("[C -> S] PublishingContent...");
                     self.send_publish(&3.0, &self.raw_stream_name.clone(), &"live".to_string())
                         .await?;
                     self.state = ClientSessionState::WaitStateChange;
                 }
                 ClientSessionState::StartPublish => {
-                    log::info!("[C -> S] StartPublish...");
+                    tracing::info!("[C -> S] StartPublish...");
                     self.common.send_channel_data().await?;
                 }
                 ClientSessionState::WaitStateChange => {}
@@ -245,7 +245,7 @@ impl ClientSession {
                         }
                     }
                     Err(err) => {
-                        log::trace!("read trunks error: {err}");
+                        tracing::trace!("read trunks error: {err}");
                         break;
                     }
                 }
@@ -257,7 +257,7 @@ impl ClientSession {
         loop {
             self.handshaker.handshake().await?;
             if self.handshaker.state == ClientHandshakeState::Finish {
-                log::info!("handshake finish");
+                tracing::info!("handshake finish");
                 break;
             }
 
@@ -286,27 +286,27 @@ impl ClientSession {
                 command_object,
                 others,
             } => {
-                log::info!("[C <- S] on_amf0_command_message...");
+                tracing::info!("[C <- S] on_amf0_command_message...");
                 self.on_amf0_command_message(command_name, transaction_id, command_object, others)
                     .await?;
             }
             RtmpMessageData::SetPeerBandwidth { .. } => {
-                log::info!("[C <- S] on_set_peer_bandwidth...");
+                tracing::info!("[C <- S] on_set_peer_bandwidth...");
                 self.on_set_peer_bandwidth().await?;
             }
             RtmpMessageData::WindowAcknowledgementSize { .. } => {
-                log::info!("[C <- S] on_windows_acknowledgement_size...");
+                tracing::info!("[C <- S] on_windows_acknowledgement_size...");
             }
             RtmpMessageData::SetChunkSize { chunk_size } => {
-                log::info!("[C <- S] on_set_chunk_size...");
+                tracing::info!("[C <- S] on_set_chunk_size...");
                 self.on_set_chunk_size(chunk_size)?;
             }
             RtmpMessageData::StreamBegin { stream_id } => {
-                log::info!("[C <- S] on_stream_begin...");
+                tracing::info!("[C <- S] on_stream_begin...");
                 self.on_stream_begin(stream_id)?;
             }
             RtmpMessageData::StreamIsRecorded { stream_id } => {
-                log::info!("[C <- S] on_stream_is_recorded...");
+                tracing::info!("[C <- S] on_stream_is_recorded...");
                 self.on_stream_is_recorded(stream_id)?;
             }
             RtmpMessageData::AudioData { data } => {
@@ -331,7 +331,7 @@ impl ClientSession {
         command_object: &Amf0ValueType,
         others: &mut Vec<Amf0ValueType>,
     ) -> Result<(), SessionError> {
-        log::info!("[C <- S] on_amf0_command_message...");
+        tracing::info!("[C <- S] on_amf0_command_message...");
         let empty_cmd_name = &String::new();
         let cmd_name = match command_name {
             Amf0ValueType::UTF8String(str) => str,
@@ -353,11 +353,11 @@ impl ClientSession {
         match cmd_name.as_str() {
             "_result" => match transaction_id {
                 define::TRANSACTION_ID_CONNECT => {
-                    log::info!("[C <- S] on_result_connect...");
+                    tracing::info!("[C <- S] on_result_connect...");
                     self.on_result_connect().await?;
                 }
                 define::TRANSACTION_ID_CREATE_STREAM => {
-                    log::info!("[C <- S] on_result_create_stream...");
+                    tracing::info!("[C <- S] on_result_create_stream...");
                     self.on_result_create_stream()?;
                 }
                 _ => {}
@@ -544,12 +544,12 @@ impl ClientSession {
     }
 
     pub fn on_stream_is_recorded(&mut self, stream_id: &mut u32) -> Result<(), SessionError> {
-        log::trace!("stream is recorded stream_id is {stream_id}");
+        tracing::trace!("stream is recorded stream_id is {stream_id}");
         Ok(())
     }
 
     pub fn on_stream_begin(&mut self, stream_id: &mut u32) -> Result<(), SessionError> {
-        log::trace!("stream is begin stream_id is {stream_id}");
+        tracing::trace!("stream is begin stream_id is {stream_id}");
         Ok(())
     }
 
@@ -603,7 +603,7 @@ impl ClientSession {
                 _ => {}
             }
         }
-        log::trace!("{}", obj.len());
+        tracing::trace!("{}", obj.len());
         Ok(())
     }
 

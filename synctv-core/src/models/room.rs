@@ -188,7 +188,7 @@ pub struct UpdateRoomRequest {
 #[derive(Debug, Clone)]
 pub struct RoomWithSettings {
     pub room: Room,
-    pub settings: RoomSettings,
+    pub settings: RoomSettingsJson,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,9 +210,11 @@ impl Default for RoomListQuery {
     }
 }
 
-/// Room settings structure (stored as JSON in database)
+/// Room settings for JSON serialization/deserialization (stored as JSON in database)
+///
+/// Note: For typed, registry-backed room settings, use `room_settings::RoomSettings` instead.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct RoomSettings {
+pub struct RoomSettingsJson {
     pub require_password: bool,
     /// Auto-play settings (deprecated, use `auto_play`)
     #[serde(default)]
@@ -270,7 +272,7 @@ pub struct RoomSettings {
     pub allow_auto_join: bool,
 }
 
-impl RoomSettings {
+impl RoomSettingsJson {
     /// Calculate effective permissions for a role based on global defaults and room overrides
     ///
     /// Formula: (`global_default` | added) & ~removed
@@ -394,7 +396,7 @@ impl std::str::FromStr for AutoPlaySettings {
     }
 }
 
-impl Display for RoomSettings {
+impl Display for RoomSettingsJson {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Use JSON representation for the entire settings struct
         let json = serde_json::to_string(self)
@@ -403,11 +405,11 @@ impl Display for RoomSettings {
     }
 }
 
-impl std::str::FromStr for RoomSettings {
+impl std::str::FromStr for RoomSettingsJson {
     type Err = crate::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         serde_json::from_str(s)
-            .map_err(|e| Error::InvalidInput(format!("Invalid RoomSettings: {e}")))
+            .map_err(|e| Error::InvalidInput(format!("Invalid RoomSettingsJson: {e}")))
     }
 }

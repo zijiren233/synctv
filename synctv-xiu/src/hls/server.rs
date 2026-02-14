@@ -14,7 +14,6 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use tracing as log;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::streamhub::StreamsHub;
@@ -49,7 +48,7 @@ impl HlsServer {
     }
 
     pub async fn start(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        log::info!("HLS server starting on http://0.0.0.0:{}", self.port);
+        tracing::info!("HLS server starting on http://0.0.0.0:{}", self.port);
 
         // Start custom HLS HTTP server (serves from our storage)
         let port = self.port;
@@ -57,7 +56,7 @@ impl HlsServer {
         let stream_registry_clone = self.stream_registry.clone();
         tokio::spawn(async move {
             if let Err(e) = start_http_server(port, segment_manager_clone, stream_registry_clone).await {
-                log::error!("HLS HTTP server error: {}", e);
+                tracing::error!("HLS HTTP server error: {}", e);
             }
         });
 
@@ -79,11 +78,11 @@ impl HlsServer {
             );
 
             if let Err(e) = remuxer.run().await {
-                log::error!("HLS remuxer error: {}", e);
+                tracing::error!("HLS remuxer error: {}", e);
             }
         });
 
-        log::info!("HLS server started successfully");
+        tracing::info!("HLS server started successfully");
 
         Ok(())
     }
@@ -115,7 +114,7 @@ async fn start_http_server(
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
-    log::info!("HLS HTTP server listening on {}", addr);
+    tracing::info!("HLS HTTP server listening on {}", addr);
 
     axum::serve(listener, app).await?;
 
@@ -151,7 +150,7 @@ async fn serve_m3u8(
         )
             .into_response()
     } else {
-        log::warn!("Stream not found: {}", registry_key);
+        tracing::warn!("Stream not found: {}", registry_key);
         (StatusCode::NOT_FOUND, "Stream not found or ended").into_response()
     }
 }
@@ -182,7 +181,7 @@ async fn serve_segment(
                 .into_response()
         }
         Err(e) => {
-            log::warn!("Segment not found: {} - {}", storage_key, e);
+            tracing::warn!("Segment not found: {} - {}", storage_key, e);
             (StatusCode::NOT_FOUND, "Segment not found").into_response()
         }
     }

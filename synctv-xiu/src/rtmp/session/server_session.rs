@@ -44,6 +44,10 @@ enum ServerSessionState {
     Play,
 }
 
+/// Overall session idle timeout: if no complete RTMP message is received
+/// within this duration, the session is terminated (prevents slow-rate DoS).
+const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub struct ServerSession {
     pub app_name: String,
     pub stream_name: String,
@@ -61,6 +65,8 @@ pub struct ServerSession {
     auth: Option<Arc<dyn AuthCallback>>,
     /// Whether this session has successfully published (vs playing)
     is_publishing: bool,
+    /// Tracks when the last complete RTMP message was received (for idle timeout).
+    last_message_time: tokio::time::Instant,
 }
 
 impl ServerSession {
@@ -71,7 +77,7 @@ impl ServerSession {
         auth: Option<Arc<dyn AuthCallback>>,
     ) -> Self {
         let remote_addr = if let Ok(addr) = stream.peer_addr() {
-            log::info!("server session: {addr}");
+            tracing::info!("server session: {addr}");
             Some(addr)
         } else {
             None
@@ -101,6 +107,7 @@ impl ServerSession {
             gop_num,
             auth,
             is_publishing: false,
+            last_message_time: tokio::time::Instant::now(),
         }
     }
 
@@ -154,7 +161,7 @@ impl ServerSession {
                 self.unpacketizer.extend_data(&left_bytes[..])?;
                 self.has_remaing_data = true;
             }
-            log::info!("[ S->C ] [send_set_chunk_size] ");
+            tracing::info!("[ S->C ] [send_set_chunk_size] ");
             self.send_set_chunk_size().await?;
             return Ok(());
         }
@@ -163,6 +170,19 @@ impl ServerSession {
     }
 
     async fn read_parse_chunks(&mut self) -> Result<(), SessionError> {
+        // M-2: Check overall session idle timeout (prevents slow-rate DoS)
+        if self.last_message_time.elapsed() > SESSION_IDLE_TIMEOUT {
+            tracing::warn!(
+                "RTMP session idle timeout ({}s) for app={}, stream={}",
+                SESSION_IDLE_TIMEOUT.as_secs(),
+                self.app_name,
+                self.stream_name,
+            );
+            return Err(SessionError {
+                value: SessionErrorValue::Timeout,
+            });
+        }
+
         if !self.has_remaing_data {
             match self
                 .io
@@ -217,6 +237,9 @@ impl ServerSession {
                 Ok(rv) => {
                     if let UnpackResult::Chunks(chunks) = rv {
                         for chunk_info in chunks {
+                            // Reset idle timeout on each complete message
+                            self.last_message_time = tokio::time::Instant::now();
+
                             let timestamp = chunk_info.message_header.timestamp;
                             let msg_stream_id = chunk_info.message_header.msg_streamd_id;
 
@@ -360,11 +383,11 @@ impl ServerSession {
 
         match cmd_name.as_str() {
             "connect" => {
-                log::info!("[ S<-C ] [connect] ");
+                tracing::info!("[ S<-C ] [connect] ");
                 self.on_connect(transaction_id, obj).await?;
             }
             "createStream" => {
-                log::info!("[ S<-C ] [create stream] ");
+                tracing::info!("[ S<-C ] [create stream] ");
                 self.on_create_stream(transaction_id).await?;
             }
             "deleteStream" => {
@@ -374,7 +397,7 @@ impl ServerSession {
                         _ => 0.0,
                     };
 
-                    log::info!(
+                    tracing::info!(
                         "[ S<-C ] [delete stream] app_name: {}, stream_name: {}",
                         self.app_name,
                         self.stream_name
@@ -385,7 +408,7 @@ impl ServerSession {
                 }
             }
             "play" => {
-                log::info!(
+                tracing::info!(
                     "[ S<-C ] [play]  app_name: {}, stream_name: {}",
                     self.app_name,
                     self.stream_name
@@ -404,7 +427,7 @@ impl ServerSession {
     }
 
     fn on_set_chunk_size(&mut self, chunk_size: usize) -> Result<(), SessionError> {
-        log::info!(
+        tracing::info!(
             "[ S<-C ] [set chunk size]  app_name: {}, stream_name: {}, chunk size: {}",
             self.app_name,
             self.stream_name,
@@ -468,7 +491,7 @@ impl ServerSession {
                     }
                 }
                 _ => {
-                    log::warn!("unknown connect properties: {property}:{value:?}");
+                    tracing::warn!("unknown connect properties: {property}:{value:?}");
                 }
             }
         }
@@ -480,15 +503,15 @@ impl ServerSession {
         command_obj: &IndexMap<String, Amf0ValueType>,
     ) -> Result<(), SessionError> {
         self.parse_connect_properties(command_obj);
-        log::info!("connect properties: {:?}", self.connect_properties);
+        tracing::info!("connect properties: {:?}", self.connect_properties);
         let mut control_message =
             ProtocolControlMessagesWriter::new(AsyncBytesWriter::new(self.io.clone()));
-        log::info!("[ S->C ] [set window_acknowledgement_size]");
+        tracing::info!("[ S->C ] [set window_acknowledgement_size]");
         control_message
             .write_window_acknowledgement_size(define::WINDOW_ACKNOWLEDGEMENT_SIZE)
             .await?;
 
-        log::info!("[ S->C ] [set set_peer_bandwidth]",);
+        tracing::info!("[ S->C ] [set set_peer_bandwidth]",);
         control_message
             .write_set_peer_bandwidth(
                 define::PEER_BANDWIDTH,
@@ -522,7 +545,7 @@ impl ServerSession {
         };
 
         let mut netconnection = NetConnection::new(Arc::clone(&self.io));
-        log::info!("[ S->C ] [set connect_response]",);
+        tracing::info!("[ S->C ] [set connect_response]",);
         netconnection
             .write_connect_response(
                 transaction_id,
@@ -544,7 +567,7 @@ impl ServerSession {
             .write_create_stream_response(transaction_id, &define::STREAM_ID)
             .await?;
 
-        log::info!(
+        tracing::info!(
             "[ S->C ] [create_stream_response]  app_name: {}",
             self.app_name,
         );
@@ -596,12 +619,12 @@ impl ServerSession {
             .await?;
 
         //self.unsubscribe_from_channels().await?;
-        log::info!(
+        tracing::info!(
             "[ S->C ] [delete stream success]  app_name: {}, stream_name: {}",
             self.app_name,
             self.stream_name
         );
-        log::trace!("{stream_id}");
+        tracing::trace!("{stream_id}");
 
         Ok(())
     }
@@ -670,12 +693,12 @@ impl ServerSession {
 
         let mut event_messages = EventMessagesWriter::new(AsyncBytesWriter::new(self.io.clone()));
         event_messages.write_stream_begin(*stream_id).await?;
-        log::info!(
+        tracing::info!(
             "[ S->C ] [stream begin]  app_name: {}, stream_name: {}",
             self.app_name,
             self.stream_name
         );
-        log::trace!(
+        tracing::trace!(
             "{} {} {}",
             start.is_some(),
             duration.is_some(),
@@ -746,7 +769,7 @@ impl ServerSession {
             String::from("none")
         };
 
-        log::info!(
+        tracing::info!(
             "[ S->C ] [stream is record]  app_name: {}, stream_name: {}, query: {}",
             self.app_name,
             self.stream_name,
@@ -795,7 +818,7 @@ impl ServerSession {
         };
 
         if stream_name_with_query.is_empty() {
-            log::warn!("stream_name_with_query is empty, extracing info from swf_url instead...");
+            tracing::warn!("stream_name_with_query is empty, extracing info from swf_url instead...");
             let mut url = RtmpUrlParser::new(
                 self.connect_properties
                     .swf_url
@@ -809,7 +832,7 @@ impl ServerSession {
                     self.query = url.query;
                 }
                 Err(e) => {
-                    log::warn!("Failed to parse swf_url: {e}");
+                    tracing::warn!("Failed to parse swf_url: {e}");
                 }
             }
         } else {
@@ -846,14 +869,14 @@ impl ServerSession {
             String::from("none")
         };
 
-        log::info!(
+        tracing::info!(
             "[ S<-C ] [publish]  app_name: {}, stream_name: {}, query: {}",
             self.app_name,
             self.stream_name,
             query
         );
 
-        log::info!(
+        tracing::info!(
             "[ S->C ] [stream begin]  app_name: {}, stream_name: {}, query: {}",
             self.app_name,
             self.stream_name,
@@ -867,7 +890,7 @@ impl ServerSession {
         netstream
             .write_on_status(transaction_id, "status", "NetStream.Publish.Start", "")
             .await?;
-        log::info!(
+        tracing::info!(
             "[ S->C ] [NetStream.Publish.Start]  app_name: {}, stream_name: {}",
             self.app_name,
             self.stream_name

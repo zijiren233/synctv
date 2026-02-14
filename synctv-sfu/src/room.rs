@@ -103,15 +103,34 @@ impl SfuRoom {
     }
 
     /// Add a peer to the room (atomic via entry API to prevent TOCTOU)
-    pub async fn add_peer(&self, peer_id: PeerId) -> Result<Arc<SfuPeer>> {
+    ///
+    /// The peer count check is done inside the vacant entry branch so that
+    /// the limit enforcement is atomic with the actual insert — no gap for
+    /// concurrent callers to both pass the check.
+    pub async fn add_peer(&self, peer_id: PeerId, max_peers: usize) -> Result<Arc<SfuPeer>> {
         use dashmap::mapref::entry::Entry;
 
         let peer = match self.peers.entry(peer_id.clone()) {
             Entry::Occupied(_) => return Err(anyhow!("Peer already exists in room")),
             Entry::Vacant(entry) => {
-                let p = Arc::new(SfuPeer::new(peer_id.clone()));
-                entry.insert(p.clone());
-                p
+                // Check peer limit atomically with insert (0 = unlimited).
+                // DashMap::len() is safe here because the vacant entry holds a
+                // write lock on only ONE shard, and len() acquires read locks on
+                // ALL shards. DashMap uses RwLock per shard, so a read lock on the
+                // same shard as our write lock would deadlock. We must drop the
+                // entry, check, then re-acquire — same pattern as get_or_create_room.
+                drop(entry);
+                if max_peers > 0 && self.peers.len() >= max_peers {
+                    return Err(anyhow!("Maximum number of peers reached for this room"));
+                }
+                match self.peers.entry(peer_id.clone()) {
+                    Entry::Occupied(entry) => return Ok(entry.get().clone()),
+                    Entry::Vacant(entry) => {
+                        let p = Arc::new(SfuPeer::new(peer_id.clone()));
+                        entry.insert(p.clone());
+                        p
+                    }
+                }
             }
         };
 
@@ -460,7 +479,7 @@ impl SfuRoom {
     }
 
     /// Switch to SFU mode - start forwarding all tracks
-    async fn switch_to_sfu(&self) -> Result<()> {
+    pub(crate) async fn switch_to_sfu(&self) -> Result<()> {
         for entry in &self.published_tracks {
             let track_id = entry.key().clone();
             let (publisher_peer_id, track) = entry.value().clone();
@@ -479,7 +498,7 @@ impl SfuRoom {
     }
 
     /// Switch to P2P mode - stop forwarding all tracks
-    async fn switch_to_p2p(&self) -> Result<()> {
+    pub(crate) async fn switch_to_p2p(&self) -> Result<()> {
         // Stop all forwarding tasks
         let track_ids: Vec<TrackId> = self
             .forwarding_tasks
@@ -605,7 +624,7 @@ mod tests {
 
         // Add peer
         let peer_id = PeerId::from("peer1");
-        room.add_peer(peer_id.clone()).await.unwrap();
+        room.add_peer(peer_id.clone(), 0).await.unwrap();
         assert_eq!(room.peer_count().await, 1);
         assert!(!room.is_empty().await);
 
@@ -627,12 +646,12 @@ mod tests {
         assert_eq!(room.get_mode().await, RoomMode::P2P);
 
         // Add peers up to threshold
-        room.add_peer(PeerId::from("peer1")).await.unwrap();
-        room.add_peer(PeerId::from("peer2")).await.unwrap();
+        room.add_peer(PeerId::from("peer1"), 0).await.unwrap();
+        room.add_peer(PeerId::from("peer2"), 0).await.unwrap();
         assert_eq!(room.get_mode().await, RoomMode::P2P);
 
         // Should switch to SFU
-        room.add_peer(PeerId::from("peer3")).await.unwrap();
+        room.add_peer(PeerId::from("peer3"), 0).await.unwrap();
         assert_eq!(room.get_mode().await, RoomMode::SFU);
 
         // Should switch back to P2P

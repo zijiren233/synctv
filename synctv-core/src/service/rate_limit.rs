@@ -28,6 +28,11 @@ impl RateLimiter {
     ///
     /// If `redis_conn` is None, rate limiting is disabled (allows all requests)
     pub fn new(redis_conn: Option<redis::aio::ConnectionManager>, key_prefix: String) -> Self {
+        if redis_conn.is_none() {
+            tracing::warn!(
+                "Rate limiting is disabled: Redis not configured. All requests will be allowed. This is NOT safe for production."
+            );
+        }
         Self {
             redis_conn,
             key_prefix,
@@ -85,31 +90,31 @@ impl RateLimiter {
         let redis_key = format!("{}{}", self.key_prefix, key);
         let now = Self::current_timestamp_millis();
         let window_start = now.saturating_sub(window_seconds * 1000);
+        let expire_seconds = (window_seconds + 1) as i64;
 
-        // Use Redis pipeline for atomic operations
-        let mut pipe = redis::pipe();
-        pipe.atomic()
-            // Remove entries older than the window
-            .zrembyscore(&redis_key, 0, window_start as i64)
-            .ignore()
-            // Count current entries in window
-            .zcard(&redis_key)
-            // Add current request timestamp
-            .zadd(&redis_key, now, now)
-            .ignore()
-            // Set expiration (window size + 1 second for cleanup)
-            .expire(&redis_key, (window_seconds + 1) as i64)
-            .ignore();
+        // Use Lua script for true atomic rate limiting (prevents TOCTOU race)
+        // The script: removes expired entries, adds the new request, counts, and sets expiry
+        // Returns the count AFTER adding the current request
+        let script = redis::Script::new(
+            r"
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1])
+            redis.call('ZADD', KEYS[1], ARGV[2], ARGV[2])
+            local count = redis.call('ZCARD', KEYS[1])
+            redis.call('EXPIRE', KEYS[1], ARGV[3])
+            return count
+            "
+        );
 
-        let results: Vec<u32> = pipe
-            .query_async(&mut conn)
+        let current_count: u32 = script
+            .key(&redis_key)
+            .arg(window_start as i64)
+            .arg(now)
+            .arg(expire_seconds)
+            .invoke_async(&mut conn)
             .await
             .map_err(RateLimitError::RedisError)?;
 
-        // results[0] is the count of entries before adding the current request
-        let current_count = results.first().copied().unwrap_or(0);
-
-        if current_count >= max_requests {
+        if current_count > max_requests {
             // Rate limit exceeded
             // Calculate retry_after by finding oldest entry in window
             let oldest: Option<u64> = conn

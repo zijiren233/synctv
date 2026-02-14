@@ -7,18 +7,9 @@ use super::emby::{
     GetItemsReq, GetItemsResp, Item, LoginReq, LoginResp, LogoutReq, MeReq, MeResp,
     PlaybackInfoReq, PlaybackInfoResp, SystemInfoReq, SystemInfoResp,
 };
+use super::validation::validate_host;
 use crate::emby::{EmbyInterface, EmbyService as EmbyServiceImpl};
 use tonic::{Request, Response, Status};
-
-/// Validate that a host string is a non-empty, valid URL.
-fn validate_host(host: &str) -> Result<(), Status> {
-    if host.is_empty() {
-        return Err(Status::invalid_argument("host must not be empty"));
-    }
-    url::Url::parse(host)
-        .map_err(|e| Status::invalid_argument(format!("invalid host URL: {e}")))?;
-    Ok(())
-}
 
 /// Emby gRPC server
 ///

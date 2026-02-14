@@ -398,7 +398,7 @@ fn test_error_types() {
         Error::Authorization("not authorized".to_string()),
         Error::NotFound("resource missing".to_string()),
         Error::InvalidInput("bad input".to_string()),
-        Error::PermissionDenied("access denied".to_string()),
+        Error::Authorization("access denied".to_string()),
         Error::Internal("internal error".to_string()),
     ];
 
@@ -411,7 +411,7 @@ fn test_error_types() {
     assert!(matches!(errors[1], Error::Authorization(_)));
     assert!(matches!(errors[2], Error::NotFound(_)));
     assert!(matches!(errors[3], Error::InvalidInput(_)));
-    assert!(matches!(errors[4], Error::PermissionDenied(_)));
+    assert!(matches!(errors[4], Error::Authorization(_)));
     assert!(matches!(errors[5], Error::Internal(_)));
 }
 
@@ -712,7 +712,7 @@ async fn test_e2e_error_propagation() {
         Error::Authorization("Permission denied".to_string()),
         Error::NotFound("Room not found".to_string()),
         Error::InvalidInput("Invalid room name".to_string()),
-        Error::PermissionDenied("Cannot kick admin".to_string()),
+        Error::Authorization("Cannot kick admin".to_string()),
         Error::Internal("Database error".to_string()),
     ];
 
@@ -722,10 +722,10 @@ async fn test_e2e_error_propagation() {
 
         match error {
             Error::Authentication(_) => assert!(msg.contains("Invalid credentials")),
-            Error::Authorization(_) => assert!(msg.contains("Permission denied")),
+            Error::Authorization(ref m) if m.contains("Cannot kick admin") => assert!(msg.contains("Cannot kick admin")),
+            Error::Authorization(_) => assert!(msg.contains("Permission denied") || msg.contains("Cannot kick admin")),
             Error::NotFound(_) => assert!(msg.contains("Room not found")),
             Error::InvalidInput(_) => assert!(msg.contains("Invalid room name")),
-            Error::PermissionDenied(_) => assert!(msg.contains("Cannot kick admin")),
             Error::Internal(_) => assert!(msg.contains("Database error")),
             _ => panic!("Unexpected error type"),
         }

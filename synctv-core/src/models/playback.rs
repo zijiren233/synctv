@@ -13,7 +13,7 @@ pub struct RoomPlaybackState {
     pub speed: f64,        // 0.5, 1.0, 1.5, 2.0, etc.
     pub is_playing: bool,
     pub updated_at: DateTime<Utc>,
-    pub version: i32, // For optimistic locking
+    pub version: i64, // For optimistic locking
 }
 
 impl RoomPlaybackState {

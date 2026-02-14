@@ -24,6 +24,8 @@ use crate::{
 const OAUTH2_STATE_KEY_PREFIX: &str = "oauth2:state:";
 /// Default TTL for OAuth2 states (5 minutes)
 const OAUTH2_STATE_TTL_SECONDS: u64 = 300;
+/// Maximum number of in-memory OAuth2 states (prevents unbounded memory growth)
+const MAX_LOCAL_STATES: usize = 10_000;
 
 /// `OAuth2` state (for CSRF protection during authorization flow)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +124,11 @@ impl OAuth2Service {
             debug!("Stored OAuth2 state in Redis for token {}", &state_token[..8]);
         } else {
             let mut states = self.local_states.write().await;
+            if states.len() >= MAX_LOCAL_STATES {
+                return Err(Error::Internal(
+                    "Too many pending OAuth2 authorization requests. Please try again later.".to_string(),
+                ));
+            }
             states.insert(state_token.to_string(), state.clone());
             debug!("Stored OAuth2 state in memory for token {}", &state_token[..8]);
         }

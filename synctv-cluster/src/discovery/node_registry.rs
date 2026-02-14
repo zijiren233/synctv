@@ -84,12 +84,25 @@ impl FencingToken {
     }
 }
 
+/// Result of a heartbeat operation, indicating whether re-registration is needed
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeartbeatResult {
+    /// Heartbeat succeeded normally
+    Ok,
+    /// Key not found in Redis -- node needs to re-register
+    NeedReregistration,
+    /// Epoch mismatch detected -- the remote epoch is returned
+    EpochMismatch(u64),
+}
+
 /// Redis-based node registry
 ///
 /// Tracks active nodes in the cluster using Redis key expiration.
 /// Uses epoch-based fencing tokens to prevent split-brain scenarios.
 pub struct NodeRegistry {
     redis_client: Option<redis::Client>,
+    /// Cached multiplexed connection, reused across operations
+    cached_conn: tokio::sync::Mutex<Option<redis::aio::MultiplexedConnection>>,
     node_id: String,
     pub heartbeat_timeout_secs: i64,
     local_nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
@@ -113,11 +126,32 @@ impl NodeRegistry {
 
         Ok(Self {
             redis_client,
+            cached_conn: tokio::sync::Mutex::new(None),
             node_id,
             heartbeat_timeout_secs,
             local_nodes: Arc::new(RwLock::new(HashMap::new())),
             current_epoch: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         })
+    }
+
+    /// Get or create a cached multiplexed Redis connection.
+    ///
+    /// MultiplexedConnection handles concurrent requests internally and
+    /// reconnects automatically, so we reuse a single instance.
+    async fn get_conn(&self, client: &redis::Client) -> Result<redis::aio::MultiplexedConnection> {
+        let mut guard = self.cached_conn.lock().await;
+        if let Some(ref conn) = *guard {
+            return Ok(conn.clone());
+        }
+        let conn = timeout(
+            Duration::from_secs(REDIS_TIMEOUT_SECS),
+            client.get_multiplexed_async_connection(),
+        )
+        .await
+        .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
+        .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+        *guard = Some(conn.clone());
+        Ok(conn)
     }
 
     /// Get the current fencing token for this node
@@ -139,13 +173,7 @@ impl NodeRegistry {
     /// This prevents race conditions when multiple instances register concurrently.
     pub async fn register(&self, grpc_address: String, http_address: String) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                client.get_multiplexed_async_connection(),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = self.get_conn(client).await?;
 
             let key = Self::node_key(&self.node_id);
             let local_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
@@ -241,15 +269,11 @@ impl NodeRegistry {
     ///
     /// Uses an atomic Lua script to check epoch == expected_epoch before writing,
     /// preventing stale heartbeats from overwriting newer registrations.
-    pub async fn heartbeat(&self) -> Result<()> {
+    ///
+    /// Returns `HeartbeatResult` indicating whether re-registration is needed.
+    pub async fn heartbeat(&self) -> Result<HeartbeatResult> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                client.get_multiplexed_async_connection(),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = self.get_conn(client).await?;
 
             let key = Self::node_key(&self.node_id);
             let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
@@ -324,6 +348,7 @@ impl NodeRegistry {
                     node_id = %self.node_id,
                     "Heartbeat failed: key not found, node needs re-registration"
                 );
+                return Ok(HeartbeatResult::NeedReregistration);
             } else if result < 0 {
                 let remote_epoch = (-result) as u64;
                 tracing::warn!(
@@ -337,6 +362,7 @@ impl NodeRegistry {
                     remote_epoch.max(current_epoch),
                     std::sync::atomic::Ordering::SeqCst,
                 );
+                return Ok(HeartbeatResult::EpochMismatch(remote_epoch));
             }
         }
 
@@ -346,7 +372,7 @@ impl NodeRegistry {
             node.last_heartbeat = Utc::now();
         }
 
-        Ok(())
+        Ok(HeartbeatResult::Ok)
     }
 
     /// Unregister this node with fencing token validation
@@ -355,13 +381,7 @@ impl NodeRegistry {
     /// Prevents stale nodes from unregistering newer registrations.
     pub async fn unregister(&self) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                client.get_multiplexed_async_connection(),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = self.get_conn(client).await?;
 
             let key = Self::node_key(&self.node_id);
             let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
@@ -424,13 +444,7 @@ impl NodeRegistry {
     /// epoch >= existing epoch, preventing stale registrations from overwriting newer ones.
     pub async fn register_remote(&self, node_info: NodeInfo) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                client.get_multiplexed_async_connection(),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = self.get_conn(client).await?;
 
             let key = Self::node_key(&node_info.node_id);
             let value = serde_json::to_string(&node_info)
@@ -492,13 +506,7 @@ impl NodeRegistry {
     /// Update heartbeat for a remote node (atomic via Lua script)
     pub async fn heartbeat_remote(&self, node_id: &str) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                client.get_multiplexed_async_connection(),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = self.get_conn(client).await?;
 
             let key = Self::node_key(node_id);
             let now = Utc::now().to_rfc3339();
@@ -543,28 +551,73 @@ impl NodeRegistry {
         Ok(())
     }
 
-    /// Unregister a remote node
-    pub async fn unregister_remote(&self, node_id: &str) -> Result<()> {
+    /// Unregister a remote node with epoch validation
+    ///
+    /// Uses the same atomic Lua script pattern as `unregister()` to validate
+    /// that the existing epoch is not newer than what we expect, preventing
+    /// stale deregister requests from removing re-registered nodes.
+    pub async fn unregister_remote(&self, node_id: &str, expected_epoch: Option<u64>) -> Result<()> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                client.get_multiplexed_async_connection(),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = self.get_conn(client).await?;
 
             let key = Self::node_key(node_id);
 
-            timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("DEL")
-                    .arg(&key)
-                    .query_async::<()>(&mut conn),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis DEL timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis DEL failed: {e}")))?;
+            // Use epoch validation if provided, otherwise just delete
+            if let Some(epoch) = expected_epoch {
+                // Atomic Lua script: only delete if existing epoch <= expected epoch
+                let script = redis::Script::new(
+                    r#"
+                    local key = KEYS[1]
+                    local expected_epoch = tonumber(ARGV[1])
+
+                    local existing = redis.call('GET', key)
+                    if not existing then
+                        return -1
+                    end
+
+                    local existing_info = cjson.decode(existing)
+                    local remote_epoch = existing_info.epoch or 0
+
+                    if remote_epoch > expected_epoch then
+                        return 0
+                    end
+
+                    redis.call('DEL', key)
+                    return 1
+                    "#,
+                );
+
+                let result: i64 = timeout(
+                    Duration::from_secs(REDIS_TIMEOUT_SECS),
+                    script
+                        .key(&key)
+                        .arg(epoch)
+                        .invoke_async(&mut conn),
+                )
+                .await
+                .map_err(|_| Error::Timeout("Redis unregister_remote script timed out".to_string()))?
+                .map_err(|e| Error::Database(format!("Redis unregister_remote script failed: {e}")))?;
+
+                if result == 0 {
+                    tracing::warn!(
+                        node_id = %node_id,
+                        expected_epoch = epoch,
+                        "Skipping remote unregister: newer registration exists in Redis"
+                    );
+                    return Ok(());
+                }
+            } else {
+                // No epoch provided: best-effort delete (backwards compat)
+                timeout(
+                    Duration::from_secs(REDIS_TIMEOUT_SECS),
+                    redis::cmd("DEL")
+                        .arg(&key)
+                        .query_async::<()>(&mut conn),
+                )
+                .await
+                .map_err(|_| Error::Timeout("Redis DEL timed out".to_string()))?
+                .map_err(|e| Error::Database(format!("Redis DEL failed: {e}")))?;
+            }
         }
 
         let mut nodes = self.local_nodes.write().await;
@@ -576,13 +629,7 @@ impl NodeRegistry {
     /// Get all active nodes
     pub async fn get_all_nodes(&self) -> Result<Vec<NodeInfo>> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                client.get_multiplexed_async_connection(),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = self.get_conn(client).await?;
 
             // Use SCAN instead of KEYS for better performance on large datasets
             // SCAN is non-blocking and returns results incrementally
@@ -656,13 +703,7 @@ impl NodeRegistry {
     /// Get a specific node by ID
     pub async fn get_node(&self, node_id: &str) -> Result<Option<NodeInfo>> {
         if let Some(ref client) = self.redis_client {
-            let mut conn = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                client.get_multiplexed_async_connection(),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
+            let mut conn = self.get_conn(client).await?;
 
             let key = Self::node_key(node_id);
             let value: Option<String> = timeout(

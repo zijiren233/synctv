@@ -130,10 +130,8 @@ impl From<synctv_core::Error> for AppError {
         match err {
             Error::NotFound(msg) => Self::not_found(msg),
             Error::AlreadyExists(msg) => Self::conflict(msg),
-            Error::Unauthorized(msg) => Self::unauthorized(msg),
             Error::Authentication(msg) => Self::unauthorized(msg),
             Error::Authorization(msg) => Self::forbidden(msg),
-            Error::PermissionDenied(msg) => Self::forbidden(msg),
             Error::InvalidInput(msg) => Self::bad_request(msg),
             Error::Database(e) => {
                 tracing::error!("Database error: {}", e);

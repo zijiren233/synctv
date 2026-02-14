@@ -169,24 +169,14 @@ impl SfuManager {
     pub async fn add_peer_to_room(&self, room_id: RoomId, peer_id: PeerId) -> Result<()> {
         let room = self.get_or_create_room(room_id.clone()).await?;
 
-        // Check peer limit (0 = unlimited)
-        let peer_count = room.peer_count().await;
-        if self.config.max_peers_per_room > 0 && peer_count >= self.config.max_peers_per_room {
-            warn!(
-                room_id = %room_id,
-                current_peers = peer_count,
-                max_peers = self.config.max_peers_per_room,
-                "Peer limit reached for room"
-            );
-            return Err(anyhow!("Maximum number of peers reached for this room"));
-        }
-
-        room.add_peer(peer_id.clone()).await?;
+        // Peer limit is enforced atomically inside add_peer to prevent TOCTOU races
+        room.add_peer(peer_id.clone(), self.config.max_peers_per_room)
+            .await?;
 
         info!(
             room_id = %room_id,
             peer_id = %peer_id,
-            peer_count = peer_count + 1,
+            peer_count = room.peer_count().await,
             "Added peer to room"
         );
 
@@ -312,25 +302,30 @@ impl SfuManager {
     }
 
     /// Cleanup empty rooms
+    ///
+    /// Uses `DashMap::remove_if` for atomic check-and-remove to avoid a TOCTOU
+    /// race where a peer joins between the emptiness check and the removal.
     pub async fn cleanup_empty_rooms(&self) {
         let mut removed_count = 0;
-        let mut room_ids_to_remove = Vec::new();
 
-        // Collect empty room IDs
-        for entry in &self.rooms {
-            let room_id = entry.key();
-            let room = entry.value();
+        // Collect candidate room IDs first (can't call remove_if while iterating)
+        let candidate_ids: Vec<RoomId> = self
+            .rooms
+            .iter()
+            .filter(|entry| entry.value().peers.is_empty())
+            .map(|entry| entry.key().clone())
+            .collect();
 
-            if room.is_empty().await {
-                room_ids_to_remove.push(room_id.clone());
+        // Atomically remove only if still empty
+        for room_id in candidate_ids {
+            if self
+                .rooms
+                .remove_if(&room_id, |_, room| room.peers.is_empty())
+                .is_some()
+            {
+                removed_count += 1;
+                debug!(room_id = %room_id, "Removed empty room");
             }
-        }
-
-        // Remove empty rooms
-        for room_id in room_ids_to_remove {
-            self.rooms.remove(&room_id);
-            removed_count += 1;
-            debug!(room_id = %room_id, "Removed empty room");
         }
 
         if removed_count > 0 {
@@ -426,12 +421,17 @@ impl SfuManager {
     }
 
     /// Gracefully shut down the SFU manager, closing all rooms and peers.
-    #[allow(clippy::unused_async)]
     pub async fn shutdown(&self) {
         info!("SFU Manager shutting down, closing {} rooms", self.rooms.len());
 
         // Cancel background tasks (cleanup + stats collection)
         self.cancel_token.cancel();
+
+        // Drain and await background task handles so they finish before we return
+        let handles: Vec<JoinHandle<()>> = self.background_tasks.lock().drain(..).collect();
+        for handle in handles {
+            let _ = handle.await;
+        }
 
         // Collect room IDs and clear the rooms map
         let room_ids: Vec<RoomId> = self.rooms.iter().map(|entry| entry.key().clone()).collect();
@@ -450,15 +450,24 @@ impl SfuManager {
             let mut current_mode = room.mode.write().await;
 
             if *current_mode != mode {
+                let old_mode = *current_mode;
                 info!(
                     room_id = %room_id,
-                    old_mode = ?*current_mode,
+                    old_mode = ?old_mode,
                     new_mode = ?mode,
                     "Forcing room mode change"
                 );
                 *current_mode = mode;
+                drop(current_mode);
+
+                // Start or stop track forwarding to match the new mode
+                match mode {
+                    RoomMode::SFU => room.switch_to_sfu().await?,
+                    RoomMode::P2P => room.switch_to_p2p().await?,
+                }
+            } else {
+                drop(current_mode);
             }
-            drop(current_mode);
 
             Ok(())
         } else {

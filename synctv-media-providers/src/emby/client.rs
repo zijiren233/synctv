@@ -6,7 +6,7 @@ use std::time::Duration;
 use reqwest::{Client, header::{HeaderMap, HeaderValue, CONTENT_TYPE}};
 use serde_json::{json, Value};
 
-use super::error::EmbyError;
+use super::error::{EmbyError, check_response};
 use super::types::{AuthResponse, Item, UserInfo, ItemsResponse, SystemInfo, FsListResponse, PathInfo, PlaybackInfoResponse, default_device_profile};
 
 /// URL-encode a string for safe use in query parameters
@@ -147,6 +147,7 @@ impl EmbyClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let json: Value = response.json().await?;
         let items = json["Items"].as_array()
             .ok_or_else(|| EmbyError::Parse("Missing Items array".to_string()))?;
@@ -167,7 +168,7 @@ impl EmbyClient {
             .ok_or_else(|| EmbyError::InvalidConfig("Missing user_id".to_string()))?;
 
         let prefix = self.get_api_prefix();
-        let url = format!("{}{}/Users/{}", self.host, prefix, user_id);
+        let url = format!("{}{}/Users/{}", self.host, prefix, url_encode(user_id));
 
         let response = self
             .client
@@ -176,6 +177,7 @@ impl EmbyClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let user: UserInfo = response.json().await?;
         Ok(user)
     }
@@ -193,7 +195,7 @@ impl EmbyClient {
 
         let prefix = self.get_api_prefix();
         let mut url = format!("{}{}/Users/{}/Items?SortBy=SortName&SortOrder=Ascending",
-            self.host, prefix, user_id);
+            self.host, prefix, url_encode(user_id));
 
         if let Some(pid) = parent_id {
             url.push_str(&format!("&ParentId={}", url_encode(pid)));
@@ -212,6 +214,7 @@ impl EmbyClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let items: ItemsResponse = response.json().await?;
         Ok(items)
     }
@@ -228,6 +231,7 @@ impl EmbyClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let info: SystemInfo = response.json().await?;
         Ok(info)
     }
@@ -249,7 +253,7 @@ impl EmbyClient {
 
         // Get user views (libraries) if no path specified
         if path.is_none() && search_term.is_none() {
-            let url = format!("{}{}/Users/{}/Views", self.host, prefix, user_id);
+            let url = format!("{}{}/Users/{}/Views", self.host, prefix, url_encode(user_id));
             let response = self
                 .client
                 .get(&url)
@@ -257,6 +261,7 @@ impl EmbyClient {
                 .send()
                 .await?;
 
+            let response = check_response(response)?;
             let views: ItemsResponse = response.json().await?;
             return Ok(FsListResponse {
                 items: views.items,
@@ -271,7 +276,7 @@ impl EmbyClient {
         // Query items with filters
         let mut url = format!(
             "{}{}/Users/{}/Items?StartIndex={}&Limit={}",
-            self.host, prefix, user_id, start_index, limit
+            self.host, prefix, url_encode(user_id), start_index, limit
         );
 
         if let Some(p) = path {
@@ -289,6 +294,7 @@ impl EmbyClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let items: ItemsResponse = response.json().await?;
 
         let mut paths = vec![PathInfo {
@@ -342,7 +348,7 @@ impl EmbyClient {
             .ok_or_else(|| EmbyError::InvalidConfig("Missing user_id".to_string()))?;
 
         let prefix = self.get_api_prefix();
-        let url = format!("{}{}/Items/{}/PlaybackInfo", self.host, prefix, item_id);
+        let url = format!("{}{}/Items/{}/PlaybackInfo", self.host, prefix, url_encode(item_id));
 
         let mut body = json!({
             "UserId": user_id,
@@ -370,6 +376,7 @@ impl EmbyClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let playback_info: PlaybackInfoResponse = response.json().await?;
         Ok(playback_info)
     }
@@ -379,7 +386,7 @@ impl EmbyClient {
         let prefix = self.get_api_prefix();
         let url = format!(
             "{}{}/Videos/ActiveEncodings?PlaySessionId={}",
-            self.host, prefix, play_session_id
+            self.host, prefix, url_encode(play_session_id)
         );
 
         self.client

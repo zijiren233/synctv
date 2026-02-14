@@ -119,9 +119,9 @@ impl PermissionService {
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(
                             lagged_messages = n,
-                            "Invalidation listener lagged, some messages may have been dropped"
+                            "Invalidation listener lagged, invalidating all cached permissions to prevent stale data"
                         );
-                        // Continue listening
+                        cache.invalidate_all();
                     }
                 }
             }
@@ -174,37 +174,12 @@ impl PermissionService {
                 crate::models::RoomRole::Creator => PermissionBits(crate::models::PermissionBits::ALL),
             }
         } else {
-            // Fallback to hardcoded defaults if SettingsRegistry not available
+            // Fallback to PermissionBits::DEFAULT_* constants if SettingsRegistry not available
             match role {
-                crate::models::RoomRole::Admin => {
-                    let mut perms = PermissionBits::empty();
-                    perms.grant(PermissionBits::DELETE_ROOM);
-                    perms.grant(PermissionBits::UPDATE_ROOM_SETTINGS);
-                    perms.grant(PermissionBits::INVITE_USER);
-                    perms.grant(PermissionBits::KICK_USER);
-                    perms.grant(PermissionBits::ADD_MEDIA);
-                    perms.grant(PermissionBits::REMOVE_MEDIA);
-                    perms.grant(PermissionBits::REORDER_PLAYLIST);
-                    perms.grant(PermissionBits::SWITCH_MEDIA);
-                    perms.grant(PermissionBits::PLAY_PAUSE);
-                    perms.grant(PermissionBits::SEEK);
-                    perms.grant(PermissionBits::CHANGE_SPEED);
-                    perms.grant(PermissionBits::SEND_CHAT);
-                    perms.grant(PermissionBits::DELETE_MESSAGE);
-                    perms.grant(PermissionBits::GRANT_PERMISSION);
-                    perms.grant(PermissionBits::REVOKE_PERMISSION);
-                    perms
-                }
-                crate::models::RoomRole::Member => {
-                    let mut perms = PermissionBits::empty();
-                    perms.grant(PermissionBits::ADD_MEDIA);
-                    perms.grant(PermissionBits::PLAY_PAUSE);
-                    perms.grant(PermissionBits::SEEK);
-                    perms.grant(PermissionBits::SEND_CHAT);
-                    perms
-                }
-                crate::models::RoomRole::Guest => PermissionBits(crate::models::PermissionBits::VIEW_PLAYLIST),
-                crate::models::RoomRole::Creator => PermissionBits(crate::models::PermissionBits::ALL),
+                crate::models::RoomRole::Admin => PermissionBits(PermissionBits::DEFAULT_ADMIN),
+                crate::models::RoomRole::Member => PermissionBits(PermissionBits::DEFAULT_MEMBER),
+                crate::models::RoomRole::Guest => PermissionBits(PermissionBits::DEFAULT_GUEST),
+                crate::models::RoomRole::Creator => PermissionBits(PermissionBits::ALL),
             }
         }
     }

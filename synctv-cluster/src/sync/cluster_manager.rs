@@ -57,7 +57,7 @@ pub struct ClusterManager {
     /// Deduplicator for preventing duplicate events
     deduplicator: Arc<MessageDeduplicator>,
     /// Sender for publishing events to Redis
-    redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
+    redis_publish_tx: Option<mpsc::Sender<PublishRequest>>,
     /// This node's unique identifier
     node_id: String,
     /// Broadcast channel for admin events (kick, etc.) received from cluster
@@ -135,7 +135,7 @@ impl ClusterManager {
 
     /// Get the Redis publish sender
     #[must_use] 
-    pub const fn redis_publish_tx(&self) -> Option<&mpsc::UnboundedSender<PublishRequest>> {
+    pub const fn redis_publish_tx(&self) -> Option<&mpsc::Sender<PublishRequest>> {
         self.redis_publish_tx.as_ref()
     }
 
@@ -197,18 +197,24 @@ impl ClusterManager {
             local_sent = self.message_hub.broadcast(room_id, event.clone());
         }
 
-        // Publish to Redis for cross-node sync
+        // Publish to Redis for cross-node sync (non-blocking try_send)
         if let Some(tx) = &self.redis_publish_tx {
-            if let Err(e) = tx.send(PublishRequest {
+            match tx.try_send(PublishRequest {
                 room_id: event.room_id().cloned(),
                 event,
             }) {
-                error!(
-                    error = %e,
-                    "Failed to queue event for Redis publishing"
-                );
-            } else {
-                redis_sent = 1;
+                Ok(()) => {
+                    redis_sent = 1;
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    warn!(
+                        "Redis publish channel full (capacity {}), dropping event",
+                        RedisPubSub::PUBLISH_CHANNEL_CAPACITY
+                    );
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    error!("Redis publish channel closed, cannot queue event");
+                }
             }
         }
 
@@ -232,7 +238,7 @@ impl ClusterManager {
         &self,
         room_id: RoomId,
         user_id: UserId,
-    ) -> (tokio::sync::mpsc::UnboundedReceiver<ClusterEvent>, ConnectionId) {
+    ) -> (tokio::sync::mpsc::Receiver<ClusterEvent>, ConnectionId) {
         let room_id_str = room_id.as_str().to_string();
         let user_id_str = user_id.as_str().to_string();
         let connection_id = format!("{}_{}", user_id_str, nanoid::nanoid!(8));

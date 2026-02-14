@@ -19,7 +19,6 @@ use crate::storage::HlsStorage;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
-use tracing as log;
 
 /// Segment cleanup configuration
 #[derive(Debug, Clone)]
@@ -66,7 +65,7 @@ impl SegmentManager {
     async fn run_cleanup_loop(&self) {
         let mut interval = time::interval(self.config.interval);
 
-        log::info!(
+        tracing::info!(
             "Segment cleanup task started: interval={:?}, retention={:?}",
             self.config.interval,
             self.config.retention
@@ -78,17 +77,17 @@ impl SegmentManager {
             match self.storage.cleanup(self.config.retention).await {
                 Ok(deleted) => {
                     if deleted > 0 {
-                        log::info!(
+                        tracing::info!(
                             "Cleaned up {} expired segments (older than {:?})",
                             deleted,
                             self.config.retention
                         );
                     } else {
-                        log::trace!("No expired segments to clean up");
+                        tracing::trace!("No expired segments to clean up");
                     }
                 }
                 Err(e) => {
-                    log::error!("Segment cleanup failed: {}", e);
+                    tracing::error!("Segment cleanup failed: {}", e);
                 }
             }
         }
@@ -130,7 +129,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(storage.key_count(), 2);
+        assert_eq!(storage.key_count().await, 2);
 
         // Sleep
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -149,7 +148,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(deleted, 2);
-        assert_eq!(storage.key_count(), 0);
+        assert_eq!(storage.key_count().await, 0);
     }
 
     #[tokio::test]

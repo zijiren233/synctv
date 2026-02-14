@@ -47,7 +47,7 @@ impl ChunkPacketizer {
             let pre_msg_header = &mut pre_header.message_header;
 
             if cur_msg_header.timestamp < pre_msg_header.timestamp {
-                log::warn!(
+                tracing::warn!(
                     "Chunk stream id: {}, the current timestamp:{}  is smaller than pre chunk timestamp: {}",
                     chunk_info.basic_header.chunk_stream_id,
                     cur_msg_header.timestamp,
@@ -116,7 +116,7 @@ impl ChunkPacketizer {
                 if message_header.timestamp_delta >= 0xFFFFFF {
                     //if use the format1,2's extended timestamp, there may be a problem for
                     //av timestamp.
-                    log::warn!(
+                    tracing::warn!(
                         "Now use extended timestamp for format {}, the value is: {}",
                         basic_header.format,
                         message_header.timestamp_delta
@@ -169,7 +169,7 @@ impl ChunkPacketizer {
     pub async fn write_chunk(&mut self, chunk_info: &mut ChunkInfo) -> Result<(), PackError> {
         self.zip_chunk_header(chunk_info)?;
 
-        log::trace!(
+        tracing::trace!(
             "write_chunk  current timestamp: {}",
             chunk_info.message_header.timestamp,
         );

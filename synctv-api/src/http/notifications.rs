@@ -185,16 +185,25 @@ pub async fn delete_all_read(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Create the notification router
-pub fn create_notification_router() -> axum::Router<AppState> {
+/// Create the notification read router (GET endpoints — under read rate limit)
+pub fn create_notification_read_router() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/api/notifications", axum::routing::get(list_notifications))
         .route(
             "/api/notifications/:id",
-            axum::routing::get(get_notification).delete(delete_notification),
+            axum::routing::get(get_notification),
+        )
+}
+
+/// Create the notification write router (POST/DELETE endpoints — under write rate limit)
+pub fn create_notification_write_router() -> axum::Router<AppState> {
+    axum::Router::new()
+        .route(
+            "/api/notifications/:id",
+            axum::routing::delete(delete_notification),
         )
         .route(
-            "/api/notifications/read",
+            "/api/notifications/actions/mark-read",
             axum::routing::post(mark_as_read).delete(delete_all_read),
         )
         .route(

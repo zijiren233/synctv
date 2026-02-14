@@ -38,19 +38,19 @@ impl UdpIO {
         } else {
             format!("{remote_domain}:{remote_port}")
         };
-        log::info!("remote address: {remote_address}");
+        tracing::info!("remote address: {remote_address}");
         let local_address = format!("0.0.0.0:{local_port}");
         if let Ok(local_socket) = UdpSocket::bind(local_address).await {
             if let Ok(remote_socket_addr) = remote_address.parse::<SocketAddr>() {
                 if let Err(err) = local_socket.connect(remote_socket_addr).await {
-                    log::info!("connect to remote udp socket error: {err}");
+                    tracing::info!("connect to remote udp socket error: {err}");
                 }
 
                 return Some(Self {
                     socket: local_socket,
                 });
             }
-            log::error!("remote_address parse error: {remote_address:?}");
+            tracing::error!("remote_address parse error: {remote_address:?}");
         }
 
         None
@@ -69,7 +69,7 @@ impl UdpIO {
 
     pub fn get_local_port(&self) -> Option<u16> {
         if let Ok(local_addr) = self.socket.local_addr() {
-            log::info!("local address: {local_addr}");
+            tracing::info!("local address: {local_addr}");
             return Some(local_addr.port());
         }
 
@@ -86,7 +86,7 @@ pub async fn new_udpio_pair() -> Option<(UdpIO, UdpIO)> {
         if let Some(local_port_0) = udpio_0.get_local_port() {
             first_local_port = local_port_0;
         } else {
-            log::error!("cannot get local port");
+            tracing::error!("cannot get local port");
             return None;
         }
 
@@ -104,7 +104,7 @@ pub async fn new_udpio_pair() -> Option<(UdpIO, UdpIO)> {
     }
 
     loop {
-        log::trace!("next local port: {next_local_port} and first port: {first_local_port}");
+        tracing::trace!("next local port: {next_local_port} and first port: {first_local_port}");
 
         if next_local_port == 65535 {
             next_local_port = 1;

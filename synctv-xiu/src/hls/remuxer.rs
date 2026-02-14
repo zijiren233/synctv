@@ -21,7 +21,6 @@ use crate::streamhub::{
     utils::Uuid,
 };
 use tokio::sync::mpsc;
-use tracing as log;
 use crate::flv::{
     define::{frame_type, FlvData},
     demuxer::{FlvAudioTagDemuxer, FlvVideoTagDemuxer},
@@ -144,10 +143,23 @@ impl CustomHlsRemuxer {
     }
 
     pub async fn run(&mut self) -> Result<(), HlsRemuxerError> {
-        log::info!("Custom HLS remuxer started");
+        tracing::info!("Custom HLS remuxer started");
 
         loop {
-            let val = self.client_event_consumer.recv().await?;
+            let val = match self.client_event_consumer.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(
+                        "HLS remuxer lagged behind by {n} broadcast events; some publish/unpublish events may have been missed"
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    return Err(HlsRemuxerError::ReceiveError(
+                        tokio::sync::broadcast::error::RecvError::Closed,
+                    ));
+                }
+            };
             match val {
                 BroadcastEvent::Publish { identifier } => {
                     if let StreamIdentifier::Rtmp {
@@ -155,7 +167,7 @@ impl CustomHlsRemuxer {
                         stream_name,
                     } = identifier
                     {
-                        log::info!("HLS remuxer: new stream {}/{}", app_name, stream_name);
+                        tracing::info!("HLS remuxer: new stream {}/{}", app_name, stream_name);
 
                         let stream_handler = StreamHandler::new(
                             app_name,
@@ -167,13 +179,13 @@ impl CustomHlsRemuxer {
 
                         tokio::spawn(async move {
                             if let Err(e) = stream_handler.run().await {
-                                log::error!("HLS stream handler error: {}", e);
+                                tracing::error!("HLS stream handler error: {}", e);
                             }
                         });
                     }
                 }
                 BroadcastEvent::UnPublish { .. } => {
-                    log::trace!("HLS remuxer: stream unpublished");
+                    tracing::trace!("HLS remuxer: stream unpublished");
                 }
             }
         }
@@ -286,7 +298,7 @@ impl StreamHandler {
 
         self.data_consumer = receiver;
 
-        log::info!(
+        tracing::info!(
             "Subscribed to stream: {}/{}",
             self.app_name,
             self.stream_name
@@ -317,10 +329,10 @@ impl StreamHandler {
         };
 
         if let Err(e) = self.event_producer.try_send(unsubscribe_event) {
-            log::error!("Unsubscribe error: {}", e);
+            tracing::error!("Unsubscribe error: {}", e);
         }
 
-        log::info!(
+        tracing::info!(
             "Unsubscribed from stream: {}/{}",
             self.app_name,
             self.stream_name
@@ -416,13 +428,13 @@ impl StreamProcessor {
                 }
                 Ok(None) => {
                     // Channel closed - stream truly ended
-                    log::info!("Stream channel closed: {}/{}", self.app_name, self.stream_name);
+                    tracing::info!("Stream channel closed: {}/{}", self.app_name, self.stream_name);
                     self.flush_remaining_segment().await?;
                     break;
                 }
                 Err(_timeout) => {
                     // Timeout - no data for 5 seconds, consider stream ended
-                    log::info!("Stream timeout (no data for {}s): {}/{}",
+                    tracing::info!("Stream timeout (no data for {}s): {}/{}",
                         RECV_TIMEOUT_MS / 1000, self.app_name, self.stream_name);
                     self.flush_remaining_segment().await?;
                     break;
@@ -517,7 +529,7 @@ impl StreamProcessor {
             .await
             .map_err(|e| HlsRemuxerError::StorageError(e.to_string()))?;
 
-        log::debug!(
+        tracing::debug!(
             "Wrote segment: {} ({}ms, {} bytes)",
             storage_key,
             duration_ms,
@@ -547,7 +559,7 @@ impl StreamProcessor {
             // Mark stream as ended if this is the last segment
             if is_eof {
                 state.is_ended = true;
-                log::info!("Stream ended: {}/{}", self.app_name, self.stream_name);
+                tracing::info!("Stream ended: {}/{}", self.app_name, self.stream_name);
             }
         }
 

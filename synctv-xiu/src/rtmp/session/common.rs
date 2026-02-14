@@ -24,7 +24,7 @@ use {
         define::{
             FrameData, FrameDataReceiver, FrameDataSender, NotifyInfo,
             PublishType, PublisherInfo, StreamHubEvent, StreamHubEventSender, SubscribeType,
-            SubscriberInfo, TStreamHandler, FRAME_DATA_CHANNEL_CAPACITY,
+            SubscriberInfo, TStreamHandler,
         },
         errors::{StreamHubError, StreamHubErrorValue},
         stream::StreamIdentifier,
@@ -41,8 +41,10 @@ pub struct Common {
     //only Server Subscriber or Client Publisher needs to send out trunck data.
     packetizer: Option<ChunkPacketizer>,
 
-    data_receiver: FrameDataReceiver,
-    data_sender: FrameDataSender,
+    // L-6: Use Option to avoid allocating unused channels at construction.
+    // Set when the session actually subscribes (receiver) or publishes (sender).
+    data_receiver: Option<FrameDataReceiver>,
+    data_sender: Option<FrameDataSender>,
 
     event_producer: StreamHubEventSender,
     pub session_type: SessionType,
@@ -57,22 +59,19 @@ pub struct Common {
 }
 
 impl Common {
-    #[must_use] 
+    #[must_use]
     pub fn new(
         packetizer: Option<ChunkPacketizer>,
         event_producer: StreamHubEventSender,
         session_type: SessionType,
         remote_addr: Option<SocketAddr>,
     ) -> Self {
-        //only used for init,since I don't found a better way to deal with this.
-        let (init_producer, init_consumer) = mpsc::channel(FRAME_DATA_CHANNEL_CAPACITY);
-
         Self {
             session_id: Uuid::new(),
             packetizer,
 
-            data_sender: init_producer,
-            data_receiver: init_consumer,
+            data_sender: None,
+            data_receiver: None,
 
             event_producer,
             session_type,
@@ -83,8 +82,11 @@ impl Common {
         }
     }
     pub async fn send_channel_data(&mut self) -> Result<(), SessionError> {
+        let mut receiver = self.data_receiver.take().ok_or(SessionError {
+            value: SessionErrorValue::NoneFrameDataReceiver,
+        })?;
         loop {
-            if let Some(data) = self.data_receiver.recv().await {
+            if let Some(data) = receiver.recv().await {
                 match data {
                     FrameData::Audio { timestamp, data } => {
                         let data_size = data.len();
@@ -98,7 +100,7 @@ impl Common {
                                 duration: 0,
                             };
                             if let Err(err) = sender.try_send(statistic_audio_data) {
-                                log::error!("send statistic_data err: {err}");
+                                tracing::error!("send statistic_data err: {err}");
                             }
                         }
                     }
@@ -115,7 +117,7 @@ impl Common {
                                 duration: 0,
                             };
                             if let Err(err) = sender.try_send(statistic_video_data) {
-                                log::error!("send statistic_data err: {err}");
+                                tracing::error!("send statistic_data err: {err}");
                             }
                         }
                     }
@@ -201,18 +203,22 @@ impl Common {
             data: data.clone(),
         };
 
-        match self.data_sender.try_send(channel_data) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                // Packet dropped due to backpressure - subscriber is slow
-                log::warn!("Video frame dropped due to channel full");
+        if let Some(sender) = &self.data_sender {
+            match sender.try_send(channel_data) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!("Video frame dropped due to channel full");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(SessionError {
+                        value: SessionErrorValue::SendFrameDataErr,
+                    });
+                }
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                // Channel closed - downstream disconnected
-                return Err(SessionError {
-                    value: SessionErrorValue::SendFrameDataErr,
-                });
-            }
+        } else {
+            return Err(SessionError {
+                value: SessionErrorValue::NoneFrameDataSender,
+            });
         }
 
         self.stream_handler
@@ -232,18 +238,22 @@ impl Common {
             data: data.clone(),
         };
 
-        match self.data_sender.try_send(channel_data) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                // Packet dropped due to backpressure - subscriber is slow
-                log::warn!("Audio frame dropped due to channel full");
+        if let Some(sender) = &self.data_sender {
+            match sender.try_send(channel_data) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!("Audio frame dropped due to channel full");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(SessionError {
+                        value: SessionErrorValue::SendFrameDataErr,
+                    });
+                }
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                // Channel closed - downstream disconnected
-                return Err(SessionError {
-                    value: SessionErrorValue::SendFrameDataErr,
-                });
-            }
+        } else {
+            return Err(SessionError {
+                value: SessionErrorValue::NoneFrameDataSender,
+            });
         }
 
         self.stream_handler
@@ -263,18 +273,22 @@ impl Common {
             data: data.clone(),
         };
 
-        match self.data_sender.try_send(channel_data) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                // Packet dropped due to backpressure - subscriber is slow
-                log::warn!("Metadata frame dropped due to channel full");
+        if let Some(sender) = &self.data_sender {
+            match sender.try_send(channel_data) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!("Metadata frame dropped due to channel full");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(SessionError {
+                        value: SessionErrorValue::SendFrameDataErr,
+                    });
+                }
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                // Channel closed - downstream disconnected
-                return Err(SessionError {
-                    value: SessionErrorValue::SendFrameDataErr,
-                });
-            }
+        } else {
+            return Err(SessionError {
+                value: SessionErrorValue::NoneFrameDataSender,
+            });
         }
 
         self.stream_handler.save_metadata(data, *timestamp).await;
@@ -336,7 +350,7 @@ impl Common {
         app_name: String,
         stream_name: String,
     ) -> Result<(), SessionError> {
-        log::info!(
+        tracing::info!(
             "subscribe_from_stream_hub, app_name: {} stream_name: {} subscribe_id: {}",
             app_name,
             stream_name,
@@ -364,9 +378,9 @@ impl Common {
         }
 
         let result = event_result_receiver.await??;
-        self.data_receiver = result.0.frame_receiver.ok_or(SessionError {
+        self.data_receiver = Some(result.0.frame_receiver.ok_or(SessionError {
             value: SessionErrorValue::StreamHubEventSendErr,
-        })?;
+        })?);
 
         let statistic_data_sender: Option<StatisticDataSender> = result.1;
 
@@ -378,7 +392,7 @@ impl Common {
                 sub_type: SubscribeType::RtmpPull,
             };
             if let Err(err) = sender.try_send(statistic_subscriber) {
-                log::error!("send statistic_subscriber err: {err}");
+                tracing::error!("send statistic_subscriber err: {err}");
             }
         }
 
@@ -402,7 +416,7 @@ impl Common {
             info: self.get_subscriber_info(),
         };
         if let Err(err) = self.event_producer.try_send(subscribe_event) {
-            log::error!("unsubscribe_from_stream_hub err {err}");
+            tracing::error!("unsubscribe_from_stream_hub err {err}");
         }
 
         Ok(())
@@ -436,9 +450,9 @@ impl Common {
         }
 
         let result = event_result_receiver.await??;
-        self.data_sender = result.0.ok_or(SessionError {
+        self.data_sender = Some(result.0.ok_or(SessionError {
             value: SessionErrorValue::StreamHubEventSendErr,
-        })?;
+        })?);
 
         let statistic_data_sender: Option<StatisticDataSender> = result.2;
 
@@ -449,7 +463,7 @@ impl Common {
                 start_time: chrono::Local::now(),
             };
             if let Err(err) = sender.try_send(statistic_publisher) {
-                log::error!("send statistic_publisher err: {err}");
+                tracing::error!("send statistic_publisher err: {err}");
             }
         }
 
@@ -464,7 +478,7 @@ impl Common {
         app_name: String,
         stream_name: String,
     ) -> Result<(), SessionError> {
-        log::info!(
+        tracing::info!(
             "unpublish_to_stream_hub, app_name:{app_name}, stream_name:{stream_name}"
         );
         let unpublish_event = StreamHubEvent::UnPublish {
@@ -476,7 +490,7 @@ impl Common {
 
         match self.event_producer.try_send(unpublish_event) {
             Err(_) => {
-                log::error!(
+                tracing::error!(
                     "unpublish_to_stream_hub error.app_name: {app_name}, stream_name: {stream_name}"
                 );
                 return Err(SessionError {
@@ -484,7 +498,7 @@ impl Common {
                 });
             }
             _ => {
-                log::info!(
+                tracing::info!(
                     "unpublish_to_stream_hub successfully.app_name: {app_name}, stream_name: {stream_name}"
                 );
             }
@@ -565,7 +579,7 @@ impl TStreamHandler for RtmpStreamHandler {
             match sender.try_send(data) {
                 Ok(()) => Ok(()),
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    log::warn!("send_prior_data: {} dropped due to channel full", name);
+                    tracing::warn!("send_prior_data: {} dropped due to channel full", name);
                     Ok(())
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
@@ -578,15 +592,15 @@ impl TStreamHandler for RtmpStreamHandler {
 
         if let Some(cache) = &mut *self.cache.lock().await {
             if let Some(meta_body_data) = cache.get_metadata() {
-                log::info!("send_prior_data: meta_body_data: ");
+                tracing::info!("send_prior_data: meta_body_data: ");
                 try_send_prior(&sender, meta_body_data, "metadata")?;
             }
             if let Some(audio_seq_data) = cache.get_audio_seq() {
-                log::info!("send_prior_data: audio_seq_data: ",);
+                tracing::info!("send_prior_data: audio_seq_data: ",);
                 try_send_prior(&sender, audio_seq_data, "audio seq")?;
             }
             if let Some(video_seq_data) = cache.get_video_seq() {
-                log::info!("send_prior_data: video_seq_data:");
+                tracing::info!("send_prior_data: video_seq_data:");
                 try_send_prior(&sender, video_seq_data, "video seq")?;
             }
             match sub_type {

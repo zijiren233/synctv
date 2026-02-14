@@ -100,7 +100,7 @@ impl PullStream {
         }
 
         self.lifecycle.set_running();
-        self.lifecycle.update_last_active_time().await;
+        self.lifecycle.update_last_active_time();
 
         let room_id = self.room_id.clone();
         let media_id = self.media_id.clone();
@@ -172,12 +172,12 @@ impl PullStream {
         self.lifecycle.is_healthy().await
     }
 
-    pub async fn last_active_time(&self) -> std::time::Instant {
-        self.lifecycle.last_active_time().await
+    pub fn last_active_elapsed_secs(&self) -> u64 {
+        self.lifecycle.last_active_elapsed_secs()
     }
 
-    pub async fn update_last_active_time(&self) {
-        self.lifecycle.update_last_active_time().await;
+    pub fn update_last_active_time(&self) {
+        self.lifecycle.update_last_active_time();
     }
 
     pub fn mark_stopping(&self) {

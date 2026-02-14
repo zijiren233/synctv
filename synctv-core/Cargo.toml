@@ -58,7 +58,6 @@ anyhow.workspace = true
 thiserror.workspace = true
 bytes.workspace = true
 parking_lot.workspace = true
-once_cell.workspace = true
 ctor = "0.2"
 paste = "1.0"
 url.workspace = true
@@ -70,8 +69,8 @@ reqwest.workspace = true
 http = "1.0"
 
 # Resilience
-tower = "0.5"
-tower-http = { version = "0.5", features = ["timeout", "trace"] }
+tower.workspace = true
+tower-http.workspace = true
 futures-util = "0.3"
 
 # Time
@@ -85,7 +84,7 @@ log.workspace = true
 
 # Configuration
 config.workspace = true
-prometheus = "0.14.0"
+prometheus.workspace = true
 
 # Email
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "hostname", "tokio1"] }

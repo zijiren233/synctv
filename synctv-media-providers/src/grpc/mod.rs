@@ -16,6 +16,9 @@ pub mod emby {
     tonic::include_proto!("api.emby");
 }
 
+// Shared validation
+pub mod validation;
+
 // Server implementations
 pub mod alist_server;
 pub mod bilibili_server;

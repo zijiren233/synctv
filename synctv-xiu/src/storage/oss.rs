@@ -19,7 +19,6 @@ mod inner {
     use std::io::{Result, Error, ErrorKind};
     use std::sync::Arc;
     use std::time::Duration;
-    use tracing as log;
 
     /// Hash storage key to prevent path traversal attacks
     ///
@@ -62,7 +61,7 @@ mod inner {
     impl OssStorage {
         /// Create new OSS storage with configuration
         pub fn new(config: OssConfig) -> std::result::Result<Self, Box<dyn std::error::Error>> {
-            log::info!(
+            tracing::info!(
                 "Initializing OSS storage: bucket={}, endpoint={}",
                 config.bucket,
                 config.endpoint
@@ -111,7 +110,7 @@ mod inner {
                 .await
                 .map_err(|e| Error::other(format!("OSS write failed: {e}")))?;
 
-            log::trace!("Wrote to OSS: {} ({} bytes) for key: {}", object_key, size, key);
+            tracing::trace!("Wrote to OSS: {} ({} bytes) for key: {}", object_key, size, key);
 
             Ok(())
         }
@@ -128,7 +127,7 @@ mod inner {
             // Convert OpenDAL Buffer to Bytes
             let data = Bytes::from(buffer.to_vec());
 
-            log::trace!("Read from OSS: {} ({} bytes) for key: {}", object_key, data.len(), key);
+            tracing::trace!("Read from OSS: {} ({} bytes) for key: {}", object_key, data.len(), key);
 
             Ok(data)
         }
@@ -142,7 +141,7 @@ mod inner {
                 .await
                 .map_err(|e| Error::other(format!("OSS delete failed: {e}")))?;
 
-            log::trace!("Deleted from OSS: {} for key: {}", object_key, key);
+            tracing::trace!("Deleted from OSS: {} for key: {}", object_key, key);
 
             Ok(())
         }
@@ -154,7 +153,7 @@ mod inner {
             match self.operator.is_exist(&object_key).await {
                 Ok(exists) => Ok(exists),
                 Err(e) => {
-                    log::warn!("OSS exists check failed for {}: {}", object_key, e);
+                    tracing::warn!("OSS exists check failed for {}: {}", object_key, e);
                     Ok(false)
                 }
             }
@@ -195,18 +194,18 @@ mod inner {
                                 // Object is older than cutoff, delete it
                                 if self.operator.delete(path).await.is_ok() {
                                     deleted += 1;
-                                    log::trace!("Deleted expired OSS object: {}", path);
+                                    tracing::trace!("Deleted expired OSS object: {}", path);
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        log::warn!("Failed to stat OSS object {}: {}", path, e);
+                        tracing::warn!("Failed to stat OSS object {}: {}", path, e);
                     }
                 }
             }
 
-            log::info!(
+            tracing::info!(
                 "OSS cleanup completed: bucket={}, deleted {} objects older than {:?}",
                 self.config.bucket,
                 deleted,
@@ -223,7 +222,7 @@ mod inner {
             // If CDN is configured, return CDN URL with hashed key
             if !self.config.public_url_prefix.is_empty() {
                 let cdn_url = format!("{}{}", self.config.public_url_prefix, object_key);
-                log::trace!("Generated CDN URL for key '{}': {}", key, cdn_url);
+                tracing::trace!("Generated CDN URL for key '{}': {}", key, cdn_url);
                 return Ok(Some(cdn_url));
             }
 
@@ -240,7 +239,7 @@ mod inner {
             // Get the presigned URL
             let url = presigned_req.uri().to_string();
 
-            log::trace!(
+            tracing::trace!(
                 "Generated presigned URL for key '{}': expires in {}s",
                 key,
                 self.config.presign_expires_in

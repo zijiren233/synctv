@@ -1,8 +1,17 @@
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use synctv_core::service::auth::{JwtService, JwtValidator};
 use tonic::{Request, Status};
 use tracing::warn;
 use std::fmt::Debug;
+
+/// Constant-time byte comparison to prevent timing attacks.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.ct_eq(b).into()
+}
 
 /// User context - contains `user_id` extracted from JWT
 /// Used by `UserService` and `AdminService` methods
@@ -252,7 +261,7 @@ impl ClusterAuthInterceptor {
             .to_str()
             .map_err(|_| Status::unauthenticated("Invalid x-cluster-secret header"))?;
 
-        if token != self.secret.as_str() {
+        if !constant_time_eq(token.as_bytes(), self.secret.as_bytes()) {
             warn!("Cluster gRPC auth failed: invalid secret");
             return Err(Status::unauthenticated("Invalid cluster secret"));
         }

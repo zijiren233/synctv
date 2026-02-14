@@ -153,7 +153,7 @@ impl Amf0Reader {
         }
 
         if len != properties.len() as u32 {
-            log::warn!("the ecma array length is not correct!");
+            tracing::warn!("the ecma array length is not correct!");
         }
 
         Ok(Amf0ValueType::Object(properties))

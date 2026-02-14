@@ -34,7 +34,7 @@ pub struct Services {
     pub jwt_service: synctv_core::service::JwtService,
     pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
     pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
-    pub redis_publish_tx: Option<tokio::sync::mpsc::UnboundedSender<synctv_cluster::sync::PublishRequest>>,
+    pub redis_publish_tx: Option<tokio::sync::mpsc::Sender<synctv_cluster::sync::PublishRequest>>,
     pub rate_limiter: synctv_core::service::RateLimiter,
     pub rate_limit_config: synctv_core::service::RateLimitConfig,
     pub content_filter: synctv_core::service::ContentFilter,

@@ -8,7 +8,7 @@ use regex::Regex;
 use reqwest::Client;
 use serde::Deserialize;
 
-use super::error::BilibiliError;
+use super::error::{BilibiliError, check_response};
 use super::types::{self as types, VideoInfo, Quality, PlayUrlInfo, DurlItem, AnimeInfo};
 
 // Pre-compiled regexes using std::sync::LazyLock (no external crate needed).
@@ -89,7 +89,7 @@ impl BilibiliClient {
             .get(url)
             .header("Referer", "https://passport.bilibili.com/login");
 
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: QrCodeResp = resp.json().await?;
 
         if json.code != 0 {
@@ -122,15 +122,19 @@ impl BilibiliClient {
             .header("Referer", "https://passport.bilibili.com/login");
 
         let resp = req.send().await?;
+        let status = resp.status();
+        if status.is_client_error() || status.is_server_error() {
+            return Err(BilibiliError::Http { status, url: resp.url().to_string() });
+        }
 
-        // Extract cookies
-        let cookies = resp.cookies()
-            .find(|c| c.name() == "SESSDATA")
-            .map(|c| {
-                let mut map = HashMap::new();
-                map.insert(c.name().to_string(), c.value().to_string());
-                map
-            });
+        // Extract ALL relevant cookies (SESSDATA, bili_jct, DedeUserID, DedeUserID__ckMd5)
+        let cookies = {
+            let relevant: HashMap<String, String> = resp.cookies()
+                .filter(|c| matches!(c.name(), "SESSDATA" | "bili_jct" | "DedeUserID" | "DedeUserID__ckMd5"))
+                .map(|c| (c.name().to_string(), c.value().to_string()))
+                .collect();
+            if relevant.is_empty() { None } else { Some(relevant) }
+        };
 
         let json: LoginResp = resp.json().await?;
 
@@ -174,7 +178,7 @@ impl BilibiliClient {
             .get(url)
             .header("Referer", "https://passport.bilibili.com/login");
 
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: CaptchaResp = resp.json().await?;
 
         if json.code != 0 {
@@ -208,7 +212,7 @@ impl BilibiliClient {
             .header("User-Agent", USER_AGENT)
             .header("Referer", "https://www.bilibili.com");
 
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: SpiResp = resp.json().await?;
 
         if json.code != 0 {
@@ -263,12 +267,17 @@ impl BilibiliClient {
             .header("Content-Type", "application/x-www-form-urlencoded")
             .form(&params);
 
-        // Add BUVID cookies
-        for (name, value) in buvid_cookies {
-            req = req.header("Cookie", format!("{name}={value}"));
+        // Add BUVID cookies as single Cookie header
+        let cookie_str: String = buvid_cookies
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        if !cookie_str.is_empty() {
+            req = req.header("Cookie", cookie_str);
         }
 
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: SmsResp = resp.json().await?;
 
         if json.code != 0 {
@@ -318,16 +327,15 @@ impl BilibiliClient {
             .form(&params);
 
         let resp = req.send().await?;
+        let status = resp.status();
+        if status.is_client_error() || status.is_server_error() {
+            return Err(BilibiliError::Http { status, url: resp.url().to_string() });
+        }
 
-        // Extract cookies first (before consuming response body)
+        // Extract ALL relevant cookies (SESSDATA, bili_jct, DedeUserID, DedeUserID__ckMd5)
         let cookies: HashMap<String, String> = resp.cookies()
-            .filter_map(|c| {
-                if c.name() == "SESSDATA" {
-                    Some((c.name().to_string(), c.value().to_string()))
-                } else {
-                    None
-                }
-            })
+            .filter(|c| matches!(c.name(), "SESSDATA" | "bili_jct" | "DedeUserID" | "DedeUserID__ckMd5"))
+            .map(|c| (c.name().to_string(), c.value().to_string()))
             .collect();
 
         let json: LoginSmsResp = resp.json().await?;
@@ -337,7 +345,7 @@ impl BilibiliClient {
         }
 
         if cookies.is_empty() {
-            return Err(BilibiliError::Parse("No SESSDATA cookie found".to_string()));
+            return Err(BilibiliError::Parse("No auth cookies found in response".to_string()));
         }
 
         Ok(cookies)
@@ -364,14 +372,14 @@ impl BilibiliClient {
 
     /// Resolve short link to full URL
     pub async fn resolve_short_link(&self, url: &str) -> Result<String, BilibiliError> {
-        let response = self.client.get(url).send().await?;
+        let response = check_response(self.client.get(url).send().await?)?;
         Ok(response.url().to_string())
     }
 
     /// Get video information by BVID
     pub async fn get_video_info(&self, bvid: &str) -> Result<VideoInfo, BilibiliError> {
         let url = format!("https://api.bilibili.com/x/web-interface/view?bvid={bvid}");
-        let response = self.client.get(&url).send().await?;
+        let response = check_response(self.client.get(&url).send().await?)?;
 
         let json: serde_json::Value = response.json().await?;
 
@@ -405,7 +413,7 @@ impl BilibiliClient {
             bvid, cid, quality.to_qn()
         );
 
-        let response = self.client.get(&url).send().await?;
+        let response = check_response(self.client.get(&url).send().await?)?;
         let json: serde_json::Value = response.json().await?;
 
         if json["code"].as_i64() != Some(0) {
@@ -431,7 +439,7 @@ impl BilibiliClient {
     /// Get anime information by EPID
     pub async fn get_anime_info(&self, epid: &str) -> Result<AnimeInfo, BilibiliError> {
         let url = format!("https://api.bilibili.com/pgc/view/web/season?ep_id={epid}");
-        let response = self.client.get(&url).send().await?;
+        let response = check_response(self.client.get(&url).send().await?)?;
         let json: serde_json::Value = response.json().await?;
 
         if json["code"].as_i64() != Some(0) {
@@ -463,7 +471,7 @@ impl BilibiliClient {
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::VideoPageInfoResp = resp.json().await?;
 
         if json.code != 0 {
@@ -503,7 +511,7 @@ impl BilibiliClient {
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::VideoUrlResp = resp.json().await?;
 
         if json.code != 0 {
@@ -535,7 +543,7 @@ impl BilibiliClient {
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::DashVideoResp = resp.json().await?;
 
         if json.code != 0 {
@@ -558,7 +566,7 @@ impl BilibiliClient {
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::PlayerV2InfoResp = resp.json().await?;
 
         if json.code != 0 {
@@ -585,7 +593,7 @@ impl BilibiliClient {
     pub async fn user_info(&self) -> Result<UserInfo, BilibiliError> {
         let url = "https://api.bilibili.com/x/web-interface/nav";
         let req = self.add_cookies(self.client.get(url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::NavResp = resp.json().await?;
 
         if json.code != 0 {
@@ -610,7 +618,7 @@ impl BilibiliClient {
         };
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::SeasonInfoResp = resp.json().await?;
 
         if json.code != 0 {
@@ -653,7 +661,7 @@ impl BilibiliClient {
         );
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::PgcUrlResp = resp.json().await?;
 
         if json.code != 0 {
@@ -683,7 +691,7 @@ impl BilibiliClient {
         );
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::DashPgcResp = resp.json().await?;
 
         if json.code != 0 {
@@ -735,7 +743,7 @@ impl BilibiliClient {
         let url = format!("https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}");
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::ParseLivePageResp = resp.json().await?;
 
         if json.code != 0 {
@@ -772,7 +780,7 @@ impl BilibiliClient {
         );
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: serde_json::Value = resp.json().await?;
 
         if json["code"].as_i64() != Some(0) {
@@ -828,7 +836,7 @@ impl BilibiliClient {
         let url = format!("https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id={room_id}");
 
         let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
-        let resp = req.send().await?;
+        let resp = check_response(req.send().await?)?;
         let json: types::GetLiveDanmuInfoResp = resp.json().await?;
 
         if json.code != 0 {

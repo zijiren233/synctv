@@ -20,12 +20,6 @@ pub enum Error {
     #[error("Authorization error: {0}")]
     Authorization(String),
 
-    #[error("Unauthorized: {0}")]
-    Unauthorized(String),
-
-    #[error("Permission denied: {0}")]
-    PermissionDenied(String),
-
     #[error("Not found: {0}")]
     NotFound(String),
 

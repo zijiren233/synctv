@@ -10,7 +10,7 @@
 //!
 //! # async fn example() {
 //! let sf = SingleFlight::<String, String, String>::new();
-//! let result = sf.do_work("user:123", async {
+//! let result = sf.do_work("user:123".to_string(), async {
 //!     Ok("user_data".to_string())
 //! }).await;
 //! # }

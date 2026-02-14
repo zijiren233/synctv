@@ -60,6 +60,32 @@ pub enum AuditAction {
     SettingsUpdated,
 }
 
+impl AuditAction {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::UserCreated => "user_created",
+            Self::UserDeleted => "user_deleted",
+            Self::UserBanned => "user_banned",
+            Self::UserUnbanned => "user_unbanned",
+            Self::UserPasswordUpdated => "user_password_updated",
+            Self::UserUsernameUpdated => "user_username_updated",
+            Self::UserRoleUpdated => "user_role_updated",
+            Self::RoomCreated => "room_created",
+            Self::RoomDeleted => "room_deleted",
+            Self::RoomBanned => "room_banned",
+            Self::RoomUnbanned => "room_unbanned",
+            Self::RoomPasswordUpdated => "room_password_updated",
+            Self::PermissionGranted => "permission_granted",
+            Self::PermissionRevoked => "permission_revoked",
+            Self::ProviderInstanceCreated => "provider_instance_created",
+            Self::ProviderInstanceUpdated => "provider_instance_updated",
+            Self::ProviderInstanceDeleted => "provider_instance_deleted",
+            Self::SettingsUpdated => "settings_updated",
+        }
+    }
+}
+
 /// Target types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +95,19 @@ pub enum AuditTargetType {
     ProviderInstance,
     Settings,
     System,
+}
+
+impl AuditTargetType {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Room => "room",
+            Self::ProviderInstance => "provider_instance",
+            Self::Settings => "settings",
+            Self::System => "system",
+        }
+    }
 }
 
 /// Audit logging service
@@ -121,8 +160,8 @@ impl AuditService {
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ";
 
-        let action_str = serde_json::to_string(&audit_log.action)?;
-        let target_str = serde_json::to_string(&audit_log.target_type)?;
+        let action_str = audit_log.action.as_str();
+        let target_str = audit_log.target_type.as_str();
         let details_str = serde_json::to_string(&audit_log.details)?;
 
         sqlx::query(query)

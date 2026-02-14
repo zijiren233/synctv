@@ -219,7 +219,7 @@ impl ExternalPublishStream {
     /// Start the external puller task.
     pub async fn start(&self) -> StreamResult<()> {
         self.lifecycle.set_running();
-        self.lifecycle.update_last_active_time().await;
+        self.lifecycle.update_last_active_time();
 
         let room_id = self.room_id.clone();
         let media_id = self.media_id.clone();
@@ -297,12 +297,12 @@ impl ExternalPublishStream {
         self.lifecycle.decrement_subscriber_count();
     }
 
-    pub async fn last_active_time(&self) -> std::time::Instant {
-        self.lifecycle.last_active_time().await
+    pub fn last_active_elapsed_secs(&self) -> u64 {
+        self.lifecycle.last_active_elapsed_secs()
     }
 
-    pub async fn update_last_active_time(&self) {
-        self.lifecycle.update_last_active_time().await;
+    pub fn update_last_active_time(&self) {
+        self.lifecycle.update_last_active_time();
     }
 }
 

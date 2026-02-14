@@ -73,8 +73,8 @@ impl ContentFilter {
             return Err(ContentFilterError::EmptyMessage);
         }
 
-        // Check length
-        if trimmed.len() > self.max_chat_length {
+        // Check length (character count, not byte length, for Unicode support)
+        if trimmed.chars().count() > self.max_chat_length {
             return Err(ContentFilterError::MessageTooLong {
                 max_length: self.max_chat_length,
             });
@@ -114,8 +114,8 @@ impl ContentFilter {
             return Err(ContentFilterError::EmptyMessage);
         }
 
-        // Check length (danmaku is shorter)
-        if trimmed.len() > self.max_danmaku_length {
+        // Check length (character count for Unicode support, danmaku is shorter)
+        if trimmed.chars().count() > self.max_danmaku_length {
             return Err(ContentFilterError::MessageTooLong {
                 max_length: self.max_danmaku_length,
             });

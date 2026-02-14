@@ -22,10 +22,23 @@ use {
     errors::{StreamHubError, StreamHubErrorValue},
     std::collections::HashMap,
     std::sync::Arc,
+    std::sync::atomic::{AtomicU64, Ordering},
     stream::StreamIdentifier,
     tokio::sync::{broadcast, mpsc, Mutex},
     utils::Uuid,
 };
+
+/// Tracks per-subscriber frame drop counts for diagnostics.
+struct SubscriberDropCounter {
+    sender: FrameDataSender,
+    drop_count: AtomicU64,
+}
+
+/// Tracks per-subscriber packet drop counts for diagnostics.
+struct PacketSubscriberDropCounter {
+    sender: PacketDataSender,
+    drop_count: AtomicU64,
+}
 
 use statistics::StatisticsStream;
 
@@ -36,10 +49,10 @@ pub struct StreamDataTransceiver {
     data_receiver: DataReceiver,
     //used for receiving event
     event_receiver: TransceiverEventReceiver,
-    //used for sending audio/video frame data to players/subscribers
-    id_to_frame_sender: Arc<Mutex<HashMap<Uuid, FrameDataSender>>>,
-    //used for sending audio/video packet data to players/subscribers
-    id_to_packet_sender: Arc<Mutex<HashMap<Uuid, PacketDataSender>>>,
+    //used for sending audio/video frame data to players/subscribers (with drop counters)
+    id_to_frame_sender: Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
+    //used for sending audio/video packet data to players/subscribers (with drop counters)
+    id_to_packet_sender: Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
     //publisher and subscribers use this sender to submit statistical data
     statistic_data_sender: StatisticDataSender,
     //used for receiving statistical data from publishers and subscribers
@@ -49,6 +62,9 @@ pub struct StreamDataTransceiver {
     //a hander implement by protocols, such as rtmp, webrtc, http-flv, hls
     stream_handler: Arc<dyn TStreamHandler>,
 }
+
+/// How often to log per-subscriber drop warnings (every N drops).
+const DROP_LOG_INTERVAL: u64 = 100;
 
 impl StreamDataTransceiver {
     fn new(
@@ -70,104 +86,101 @@ impl StreamDataTransceiver {
         }
     }
 
-    async fn receive_frame_data(
-        data: Option<FrameData>,
-        frame_senders: &Arc<Mutex<HashMap<Uuid, FrameDataSender>>>,
-    ) {
-        if let Some(val) = data {
-            // Collect closed subscriber IDs to remove after sending
-            let mut closed_ids = Vec::new();
-
-            match val {
-                FrameData::MetaData { timestamp, data } => {
-                    let data = FrameData::MetaData {
-                        timestamp,
-                        data: data.clone(),
-                    };
-
-                    let senders_guard = frame_senders.lock().await;
-                    for (id, sender) in senders_guard.iter() {
-                        match sender.try_send(data.clone()) {
-                            Ok(()) => {}
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                // Packet dropped due to backpressure - subscriber is slow
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                // Subscriber disconnected, mark for removal
-                                closed_ids.push(*id);
-                            }
+    /// Snapshot the frame senders map and fan out to all subscribers without holding the lock.
+    /// Collects closed/failed subscriber IDs and removes them in a separate lock acquisition.
+    fn fan_out_frame(
+        snapshot: &[(Uuid, FrameDataSender)],
+        drop_counters: &HashMap<Uuid, SubscriberDropCounter>,
+        data: FrameData,
+    ) -> Vec<Uuid> {
+        let mut closed_ids = Vec::new();
+        for (id, sender) in snapshot {
+            match sender.try_send(data.clone()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // Increment per-subscriber drop counter and periodically log
+                    if let Some(counter) = drop_counters.get(id) {
+                        let prev = counter.drop_count.fetch_add(1, Ordering::Relaxed);
+                        if (prev + 1) % DROP_LOG_INTERVAL == 0 {
+                            tracing::warn!(
+                                "Subscriber {} dropped {} frames due to backpressure",
+                                id, prev + 1
+                            );
                         }
                     }
                 }
-                FrameData::Audio { timestamp, data } => {
-                    let data = FrameData::Audio {
-                        timestamp,
-                        data: data.clone(),
-                    };
-
-                    let senders_guard = frame_senders.lock().await;
-                    for (id, sender) in senders_guard.iter() {
-                        match sender.try_send(data.clone()) {
-                            Ok(()) => {}
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                // Packet dropped due to backpressure - subscriber is slow
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                // Subscriber disconnected, mark for removal
-                                closed_ids.push(*id);
-                            }
-                        }
-                    }
-                }
-                FrameData::Video { timestamp, data } => {
-                    let data = FrameData::Video {
-                        timestamp,
-                        data: data.clone(),
-                    };
-
-                    let senders_guard = frame_senders.lock().await;
-                    for (id, sender) in senders_guard.iter() {
-                        match sender.try_send(data.clone()) {
-                            Ok(()) => {}
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                // Packet dropped due to backpressure - subscriber is slow
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                // Subscriber disconnected, mark for removal
-                                closed_ids.push(*id);
-                            }
-                        }
-                    }
-                }
-                FrameData::MediaInfo {
-                    media_info: info_value,
-                } => {
-                    let data = FrameData::MediaInfo {
-                        media_info: info_value,
-                    };
-
-                    let senders_guard = frame_senders.lock().await;
-                    for (id, sender) in senders_guard.iter() {
-                        match sender.try_send(data.clone()) {
-                            Ok(()) => {}
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                // Packet dropped due to backpressure - subscriber is slow
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                // Subscriber disconnected, mark for removal
-                                closed_ids.push(*id);
-                            }
-                        }
-                    }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    closed_ids.push(*id);
                 }
             }
+        }
+        closed_ids
+    }
+
+    /// Snapshot the packet senders map and fan out to all subscribers without holding the lock.
+    fn fan_out_packet(
+        snapshot: &[(Uuid, PacketDataSender)],
+        drop_counters: &HashMap<Uuid, PacketSubscriberDropCounter>,
+        data: PacketData,
+    ) -> Vec<Uuid> {
+        let mut closed_ids = Vec::new();
+        for (id, sender) in snapshot {
+            match sender.try_send(data.clone()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    if let Some(counter) = drop_counters.get(id) {
+                        let prev = counter.drop_count.fetch_add(1, Ordering::Relaxed);
+                        if (prev + 1) % DROP_LOG_INTERVAL == 0 {
+                            tracing::warn!(
+                                "Packet subscriber {} dropped {} packets due to backpressure",
+                                id, prev + 1
+                            );
+                        }
+                    }
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    closed_ids.push(*id);
+                }
+            }
+        }
+        closed_ids
+    }
+
+    /// H-1 fix: Snapshot senders, fan out without holding the lock, then clean up.
+    /// H-2 fix: Per-subscriber drop counters with periodic logging.
+    async fn receive_frame_data(
+        data: Option<FrameData>,
+        frame_senders: &Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
+    ) {
+        if let Some(val) = data {
+            // Snapshot the senders under lock, then release immediately
+            let (snapshot, senders_ref): (Vec<_>, _) = {
+                let guard = frame_senders.lock().await;
+                let snap: Vec<(Uuid, FrameDataSender)> = guard
+                    .iter()
+                    .map(|(id, sc)| (*id, sc.sender.clone()))
+                    .collect();
+                drop(guard);
+                (snap, frame_senders)
+            };
+
+            if snapshot.is_empty() {
+                return;
+            }
+
+            // Fan out to all subscribers without holding the lock
+            // We need drop_counters for logging, so briefly re-lock for the reference
+            let closed_ids = {
+                let guard = senders_ref.lock().await;
+                Self::fan_out_frame(&snapshot, &guard, val)
+            };
 
             // Remove closed subscribers
             if !closed_ids.is_empty() {
-                let mut senders_guard = frame_senders.lock().await;
+                let mut guard = senders_ref.lock().await;
                 for id in closed_ids {
-                    senders_guard.remove(&id);
-                    log::debug!("Removed closed frame subscriber: {}", id);
+                    guard.remove(&id);
+                    tracing::debug!("Removed closed frame subscriber: {}", id);
                 }
             }
         }
@@ -176,7 +189,7 @@ impl StreamDataTransceiver {
     async fn receive_frame_data_loop(
         mut exit: broadcast::Receiver<()>,
         mut receiver: FrameDataReceiver,
-        frame_senders: Arc<Mutex<HashMap<Uuid, FrameDataSender>>>,
+        frame_senders: Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
     ) {
         tokio::spawn(async move {
             loop {
@@ -192,63 +205,36 @@ impl StreamDataTransceiver {
         });
     }
 
+    /// Snapshot-based packet fan-out (same pattern as frame fan-out).
     async fn receive_packet_data(
         data: Option<PacketData>,
-        packet_senders: &Arc<Mutex<HashMap<Uuid, PacketDataSender>>>,
+        packet_senders: &Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
     ) {
         if let Some(val) = data {
-            // Collect closed subscriber IDs to remove after sending
-            let mut closed_ids = Vec::new();
+            let (snapshot, senders_ref): (Vec<_>, _) = {
+                let guard = packet_senders.lock().await;
+                let snap: Vec<(Uuid, PacketDataSender)> = guard
+                    .iter()
+                    .map(|(id, sc)| (*id, sc.sender.clone()))
+                    .collect();
+                drop(guard);
+                (snap, packet_senders)
+            };
 
-            match val {
-                PacketData::Audio { timestamp, data } => {
-                    let data = PacketData::Audio {
-                        timestamp,
-                        data: data.clone(),
-                    };
-
-                    let senders_guard = packet_senders.lock().await;
-                    for (id, sender) in senders_guard.iter() {
-                        match sender.try_send(data.clone()) {
-                            Ok(()) => {}
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                // Packet dropped due to backpressure - subscriber is slow
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                // Subscriber disconnected, mark for removal
-                                closed_ids.push(*id);
-                            }
-                        }
-                    }
-                }
-                PacketData::Video { timestamp, data } => {
-                    let data = PacketData::Video {
-                        timestamp,
-                        data: data.clone(),
-                    };
-
-                    let senders_guard = packet_senders.lock().await;
-                    for (id, sender) in senders_guard.iter() {
-                        match sender.try_send(data.clone()) {
-                            Ok(()) => {}
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                // Packet dropped due to backpressure - subscriber is slow
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                // Subscriber disconnected, mark for removal
-                                closed_ids.push(*id);
-                            }
-                        }
-                    }
-                }
+            if snapshot.is_empty() {
+                return;
             }
 
-            // Remove closed subscribers
+            let closed_ids = {
+                let guard = senders_ref.lock().await;
+                Self::fan_out_packet(&snapshot, &guard, val)
+            };
+
             if !closed_ids.is_empty() {
-                let mut senders_guard = packet_senders.lock().await;
+                let mut guard = senders_ref.lock().await;
                 for id in closed_ids {
-                    senders_guard.remove(&id);
-                    log::debug!("Removed closed packet subscriber: {}", id);
+                    guard.remove(&id);
+                    tracing::debug!("Removed closed packet subscriber: {}", id);
                 }
             }
         }
@@ -257,7 +243,7 @@ impl StreamDataTransceiver {
     async fn receive_packet_data_loop(
         mut exit: broadcast::Receiver<()>,
         mut receiver: PacketDataReceiver,
-        packet_senders: Arc<Mutex<HashMap<Uuid, PacketDataSender>>>,
+        packet_senders: Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
     ) {
         tokio::spawn(async move {
             loop {
@@ -420,8 +406,8 @@ impl StreamDataTransceiver {
         stream_handler: Arc<dyn TStreamHandler>,
         exit: broadcast::Sender<()>,
         mut receiver: TransceiverEventReceiver,
-        packet_senders: Arc<Mutex<HashMap<Uuid, PacketDataSender>>>,
-        frame_senders: Arc<Mutex<HashMap<Uuid, FrameDataSender>>>,
+        packet_senders: Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
+        frame_senders: Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
         statistic_sender: StatisticDataSender,
         statistics_data: Arc<Mutex<StatisticsStream>>,
     ) {
@@ -438,24 +424,30 @@ impl StreamDataTransceiver {
                                 .send_prior_data(sender.clone(), info.sub_type)
                                 .await
                             {
-                                log::error!("receive_event_loop send_prior_data err: {err}");
+                                tracing::error!("receive_event_loop send_prior_data err: {err}");
                                 break;
                             }
                             match sender {
                                 DataSender::Frame {
                                     sender: frame_sender,
                                 } => {
-                                    frame_senders.lock().await.insert(info.id, frame_sender);
+                                    frame_senders.lock().await.insert(info.id, SubscriberDropCounter {
+                                        sender: frame_sender,
+                                        drop_count: AtomicU64::new(0),
+                                    });
                                 }
                                 DataSender::Packet {
                                     sender: packet_sender,
                                 } => {
-                                    packet_senders.lock().await.insert(info.id, packet_sender);
+                                    packet_senders.lock().await.insert(info.id, PacketSubscriberDropCounter {
+                                        sender: packet_sender,
+                                        drop_count: AtomicU64::new(0),
+                                    });
                                 }
                             }
 
                             if let Err(err) = result_sender.send(statistic_sender.clone()) {
-                                log::error!(
+                                tracing::error!(
                                     "receive_event_loop:send statistic send err :{err:?} "
                                 );
                             }
@@ -473,7 +465,7 @@ impl StreamDataTransceiver {
                         }
                         TransceiverEvent::UnPublish {} => {
                             if let Err(err) = exit.send(()) {
-                                log::error!("TransmitterEvent::UnPublish send error: {err}");
+                                tracing::error!("TransmitterEvent::UnPublish send error: {err}");
                             }
                             break;
                         }
@@ -560,6 +552,11 @@ impl StreamsHub {
     }
     pub async fn run(&mut self) {
         self.event_loop().await;
+        // H-3: If we reach here, all event senders were dropped — the hub is broken.
+        tracing::error!(
+            "StreamHub event_loop exited: all event senders dropped. \
+             The streaming infrastructure is no longer functional."
+        );
     }
 
     pub fn get_hub_event_sender(&mut self) -> StreamHubEventSender {
@@ -627,13 +624,13 @@ impl StreamsHub {
                             Ok((frame_sender, packet_sender, Some(statistic_data_sender)))
                         }
                         Err(err) => {
-                            log::error!("event_loop Publish err: {err}");
+                            tracing::error!("event_loop Publish err: {err}");
                             Err(err)
                         }
                     };
 
                     if result_sender.send(result).is_err() {
-                        log::error!("event_loop Subscribe error: The receiver dropped.");
+                        tracing::error!("event_loop Subscribe error: The receiver dropped.");
                     }
                 }
 
@@ -641,7 +638,7 @@ impl StreamsHub {
                     identifier,
                 } => {
                     if let Err(err) = self.unpublish(&identifier) {
-                        log::error!(
+                        tracing::error!(
                             "event_loop Unpublish err: {err} with identifier: {identifier}"
                         );
                     }
@@ -686,13 +683,13 @@ impl StreamsHub {
                             Ok((receiver, Some(statistic_data_sender)))
                         }
                         Err(err) => {
-                            log::error!("event_loop Subscribe error: {err}");
+                            tracing::error!("event_loop Subscribe error: {err}");
                             Err(err)
                         }
                     };
 
                     if result_sender.send(rv).is_err() {
-                        log::error!("event_loop Subscribe error: The receiver dropped.");
+                        tracing::error!("event_loop Subscribe error: The receiver dropped.");
                     }
                 }
                 StreamHubEvent::UnSubscribe { identifier, info } => {
@@ -716,7 +713,7 @@ impl StreamsHub {
                 info: sub_info,
                 result_sender,
             };
-            log::info!("subscribe:  stream identifier: {identifer}");
+            tracing::info!("subscribe:  stream identifier: {identifer}");
             event_sender.send(event).await.map_err(|_| StreamHubError {
                 value: StreamHubErrorValue::SendError,
             })?;
@@ -735,13 +732,13 @@ impl StreamsHub {
         sub_info: SubscriberInfo,
     ) -> Result<(), StreamHubError> {
         if let Some(producer) = self.streams.get_mut(identifer) {
-            log::info!("unsubscribe....:{identifer}");
+            tracing::info!("unsubscribe....:{identifer}");
             let event = TransceiverEvent::UnSubscribe { info: sub_info };
             producer.try_send(event).map_err(|_| StreamHubError {
                 value: StreamHubErrorValue::SendError,
             })?;
         } else {
-            log::info!("unsubscribe None....:{identifer}");
+            tracing::info!("unsubscribe None....:{identifer}");
             return Err(StreamHubError {
                 value: StreamHubErrorValue::NoAppName,
             });
@@ -771,11 +768,11 @@ impl StreamsHub {
         let identifier_clone = identifier.clone();
 
         if let Err(err) = transceiver.run().await {
-            log::error!(
+            tracing::error!(
                 "transceiver run error, idetifier: {identifier_clone}, error: {err}",
             );
         } else {
-            log::info!("transceiver run success, idetifier: {identifier_clone}");
+            tracing::info!("transceiver run success, idetifier: {identifier_clone}");
         }
 
         self.streams.insert(identifier.clone(), event_sender);
@@ -783,7 +780,7 @@ impl StreamsHub {
         // Always broadcast publish event to listeners (HLS remuxer, publisher manager, etc.)
         let client_event = BroadcastEvent::Publish { identifier };
         if let Err(err) = self.client_event_sender.send(client_event) {
-            log::debug!("broadcast Publish event: no receivers ({err})");
+            tracing::debug!("broadcast Publish event: no receivers ({err})");
         }
 
         Ok(statistic_data_sender)
@@ -797,14 +794,14 @@ impl StreamsHub {
                     value: StreamHubErrorValue::SendError,
                 })?;
                 self.streams.remove(identifier);
-                log::info!("unpublish remove stream, stream identifier: {identifier}");
+                tracing::info!("unpublish remove stream, stream identifier: {identifier}");
 
                 // Broadcast unpublish event to listeners
                 let client_event = BroadcastEvent::UnPublish {
                     identifier: identifier.clone(),
                 };
                 if let Err(err) = self.client_event_sender.send(client_event) {
-                    log::debug!("broadcast UnPublish event: no receivers ({err})");
+                    tracing::debug!("broadcast UnPublish event: no receivers ({err})");
                 }
             }
             None => {

@@ -47,7 +47,7 @@ impl MetaData {
             return false;
         }
 
-        log::info!("metadata: {values:?}");
+        tracing::info!("metadata: {values:?}");
 
         let mut is_metadata = false;
 

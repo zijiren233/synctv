@@ -180,10 +180,11 @@ impl ClusterEvent {
             | Self::MediaRemoved { user_id, .. }
             | Self::RoomSettingsChanged { user_id, .. }
             | Self::WebRTCJoin { user_id, .. }
-            | Self::WebRTCLeave { user_id, .. } => Some(user_id),
+            | Self::WebRTCLeave { user_id, .. }
+            | Self::KickUser { user_id, .. } => Some(user_id),
             Self::PermissionChanged { changed_by, .. } => Some(changed_by),
             Self::WebRTCSignaling { .. } | Self::SystemNotification { .. }
-            | Self::KickPublisher { .. } | Self::KickUser { .. } => None,
+            | Self::KickPublisher { .. } => None,
         }
     }
 
@@ -358,7 +359,7 @@ mod tests {
         let deserialized: ClusterEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.event_type(), "kick_user");
         assert!(deserialized.room_id().is_none());
-        assert!(deserialized.user_id().is_none()); // KickUser doesn't expose user_id via user_id()
+        assert_eq!(deserialized.user_id().unwrap().as_str(), "user123");
     }
 
     #[test]

@@ -23,6 +23,12 @@ impl Gop {
 
     fn save_frame_data(&mut self, data: FrameData) {
         if self.datas.len() >= MAX_FRAMES_PER_GOP {
+            // Log once when the limit is first hit
+            if self.datas.len() == MAX_FRAMES_PER_GOP {
+                tracing::warn!(
+                    "GOP reached MAX_FRAMES_PER_GOP ({MAX_FRAMES_PER_GOP}), dropping subsequent frames until next keyframe"
+                );
+            }
             return;
         }
         self.datas.push(data);
@@ -81,7 +87,7 @@ impl Gops {
         if let Some(gop) = self.gops.back_mut() {
             gop.save_frame_data(data);
         } else {
-            log::error!("should not be here!");
+            tracing::error!("should not be here!");
         }
     }
 

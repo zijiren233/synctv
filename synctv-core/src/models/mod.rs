@@ -34,7 +34,7 @@ pub use playback::{
 pub use playlist::{Playlist, PlaylistWithCount, CreatePlaylistRequest, UpdatePlaylistRequest};
 pub use provider_instance::{ProviderCredential, ProviderInstance, UserProviderCredential};
 pub use room::{
-    CreateRoomRequest, Room, RoomListQuery, RoomStatus, RoomWithCount,
+    CreateRoomRequest, Room, RoomListQuery, RoomSettingsJson, RoomStatus, RoomWithCount,
     UpdateRoomRequest, PlayMode, AutoPlaySettings,
 };
 pub use room_settings::RoomSettings;

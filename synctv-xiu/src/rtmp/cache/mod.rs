@@ -102,7 +102,7 @@ impl Cache {
                     channels: aac.mpeg4_aac.channels,
                 };
                 if let Err(err) = statistic_data_sender.try_send(statistic_audio_codec) {
-                    log::error!("send statistic_data err: {err}");
+                    tracing::error!("send statistic_data err: {err}");
                 }
             }
         }
@@ -115,7 +115,7 @@ impl Cache {
                 duration: 0,
             };
             if let Err(err) = statistic_data_sender.try_send(statistic_audio_data) {
-                log::error!("send statistic_data err: {err}");
+                tracing::error!("send statistic_data err: {err}");
             }
         }
 
@@ -176,7 +176,7 @@ impl Cache {
                     height: avc_processor.mpeg4_avc.height,
                 };
                 if let Err(err) = statistic_data_sender.try_send(statistic_video_codec) {
-                    log::error!("send statistic_data err: {err}");
+                    tracing::error!("send statistic_data err: {err}");
                 }
             }
         }
@@ -191,7 +191,7 @@ impl Cache {
             };
 
             if let Err(err) = statistic_data_sender.try_send(statistic_video_data) {
-                log::error!("send statistic_data err: {err}");
+                tracing::error!("send statistic_data err: {err}");
             }
         }
         Ok(())

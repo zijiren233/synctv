@@ -172,7 +172,7 @@ impl StatisticsCalculate {
                 self.calculate().await;
                },
                _ = self.exit.recv() => {
-                    log::info!("avstatistics shutting down");
+                    tracing::info!("avstatistics shutting down");
                     return
                },
             }

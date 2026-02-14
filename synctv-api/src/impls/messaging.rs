@@ -712,7 +712,7 @@ fn cluster_event_to_server_message(
                         speed: state.speed,
                         is_playing: state.is_playing,
                         updated_at: state.updated_at.timestamp(),
-                        version: state.version,
+                        version: state.version as i32,
                         playing_playlist_id: state
                             .playing_playlist_id
                             .as_ref()

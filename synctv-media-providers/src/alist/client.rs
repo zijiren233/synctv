@@ -8,7 +8,7 @@ use std::time::Duration;
 use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT}};
 use serde_json::json;
 
-use super::error::AlistError;
+use super::error::{AlistError, check_response};
 use super::types::{AlistResp, LoginData, HttpFsGetResp, HttpFsListResp, HttpFsOtherResp, HttpMeResp, HttpFsSearchResp};
 
 /// Shared HTTP client for all Alist requests (connection pooling)
@@ -101,6 +101,7 @@ impl AlistClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let resp: AlistResp<LoginData> = response.json().await?;
 
         if resp.code != 200 {
@@ -110,7 +111,9 @@ impl AlistClient {
             });
         }
 
-        let token = resp.data.token;
+        let token = resp.data
+            .ok_or_else(|| AlistError::Parse("Missing login data in response".to_string()))?
+            .token;
         self.set_token(token.clone());
         Ok(token)
     }
@@ -135,6 +138,7 @@ impl AlistClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let resp: AlistResp<HttpFsGetResp> = response.json().await?;
 
         if resp.code != 200 {
@@ -144,7 +148,7 @@ impl AlistClient {
             });
         }
 
-        Ok(resp.data)
+        resp.data.ok_or_else(|| AlistError::Parse("Missing data in fs_get response".to_string()))
     }
 
     /// List directory contents
@@ -178,6 +182,7 @@ impl AlistClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let resp: AlistResp<HttpFsListResp> = response.json().await?;
 
         if resp.code != 200 {
@@ -187,7 +192,7 @@ impl AlistClient {
             });
         }
 
-        Ok(resp.data)
+        resp.data.ok_or_else(|| AlistError::Parse("Missing data in fs_list response".to_string()))
     }
 
     /// Get video preview information (for instances supporting transcoding)
@@ -217,6 +222,7 @@ impl AlistClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let resp: AlistResp<HttpFsOtherResp> = response.json().await?;
 
         if resp.code != 200 {
@@ -226,7 +232,7 @@ impl AlistClient {
             });
         }
 
-        Ok(resp.data)
+        resp.data.ok_or_else(|| AlistError::Parse("Missing data in fs_other response".to_string()))
     }
 
     /// Get current user information
@@ -242,6 +248,7 @@ impl AlistClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let resp: AlistResp<HttpMeResp> = response.json().await?;
 
         if resp.code != 200 {
@@ -251,7 +258,7 @@ impl AlistClient {
             });
         }
 
-        Ok(resp.data)
+        resp.data.ok_or_else(|| AlistError::Parse("Missing data in me response".to_string()))
     }
 
     /// Search files and directories
@@ -290,6 +297,7 @@ impl AlistClient {
             .send()
             .await?;
 
+        let response = check_response(response)?;
         let resp: AlistResp<HttpFsSearchResp> = response.json().await?;
 
         if resp.code != 200 {
@@ -299,7 +307,7 @@ impl AlistClient {
             });
         }
 
-        Ok(resp.data)
+        resp.data.ok_or_else(|| AlistError::Parse("Missing data in fs_search response".to_string()))
     }
 }
 

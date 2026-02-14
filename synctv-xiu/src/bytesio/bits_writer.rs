@@ -57,7 +57,7 @@ impl BitsWriter {
             self.cur_bit_num = 0;
             self.cur_byte = 0;
         } else {
-            log::trace!("cannot flush: {}", self.cur_bit_num);
+            tracing::trace!("cannot flush: {}", self.cur_bit_num);
         }
 
         Ok(())

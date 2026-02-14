@@ -223,14 +223,14 @@ impl CacheInvalidationService {
         self.local_sender.subscribe()
     }
 
-    /// Broadcast a cache invalidation message to all OTHER nodes
+    /// Broadcast a cache invalidation message to all OTHER nodes (remote only)
     ///
     /// This sends the message via Redis Pub/Sub (if configured).
     /// Note: This does NOT broadcast locally, as the caller is expected to
     /// invalidate its own local cache after calling this method.
     ///
     /// For local-only invalidation (when Redis is not configured), this is a no-op.
-    pub async fn broadcast(&self, message: InvalidationMessage) -> Result<()> {
+    pub async fn broadcast_remote(&self, message: InvalidationMessage) -> Result<()> {
         // Broadcast via Redis if available
         if let Some(ref client) = self.redis_client {
             let json = serde_json::to_string(&message).map_err(|e| {
@@ -273,7 +273,7 @@ impl CacheInvalidationService {
         }
 
         // Then broadcast via Redis
-        self.broadcast(message).await
+        self.broadcast_remote(message).await
     }
 
     /// Invalidate permission cache for a specific user in a room
@@ -282,7 +282,7 @@ impl CacheInvalidationService {
         room_id: &RoomId,
         user_id: &crate::models::UserId,
     ) -> Result<()> {
-        self.broadcast(InvalidationMessage::UserPermission {
+        self.broadcast_remote(InvalidationMessage::UserPermission {
             room_id: room_id.as_str().to_string(),
             user_id: user_id.as_str().to_string(),
         }).await
@@ -290,28 +290,28 @@ impl CacheInvalidationService {
 
     /// Invalidate permission cache for all users in a room
     pub async fn invalidate_room_permission(&self, room_id: &RoomId) -> Result<()> {
-        self.broadcast(InvalidationMessage::RoomPermission {
+        self.broadcast_remote(InvalidationMessage::RoomPermission {
             room_id: room_id.as_str().to_string(),
         }).await
     }
 
     /// Invalidate user cache
     pub async fn invalidate_user(&self, user_id: &crate::models::UserId) -> Result<()> {
-        self.broadcast(InvalidationMessage::User {
+        self.broadcast_remote(InvalidationMessage::User {
             user_id: user_id.as_str().to_string(),
         }).await
     }
 
     /// Invalidate room cache
     pub async fn invalidate_room(&self, room_id: &RoomId) -> Result<()> {
-        self.broadcast(InvalidationMessage::Room {
+        self.broadcast_remote(InvalidationMessage::Room {
             room_id: room_id.as_str().to_string(),
         }).await
     }
 
     /// Invalidate all caches
     pub async fn invalidate_all(&self) -> Result<()> {
-        self.broadcast(InvalidationMessage::All).await
+        self.broadcast_remote(InvalidationMessage::All).await
     }
 }
 
@@ -373,8 +373,8 @@ mod tests {
     async fn test_broadcast_without_redis_is_noop() {
         let service = CacheInvalidationService::new(None, "test-node".to_string());
 
-        // broadcast() without Redis should be a no-op (no local broadcast)
+        // broadcast_remote() without Redis should be a no-op (no local broadcast)
         let msg = InvalidationMessage::All;
-        service.broadcast(msg).await.unwrap();
+        service.broadcast_remote(msg).await.unwrap();
     }
 }

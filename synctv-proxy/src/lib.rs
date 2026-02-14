@@ -101,11 +101,16 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
 
     let mut request = PROXY_CLIENT.get(cfg.url);
 
-    // Forward relevant client headers
+    // Forward only allowlisted client headers to avoid leaking auth tokens / cookies
     for (name, value) in cfg.client_headers {
-        if matches!(
+        if !matches!(
             name.as_str(),
-            "host" | "connection" | "accept-encoding" | "content-length" | "transfer-encoding"
+            "range"
+                | "if-none-match"
+                | "if-modified-since"
+                | "accept"
+                | "accept-language"
+                | "user-agent"
         ) {
             continue;
         }
@@ -150,11 +155,31 @@ pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, a
     builder = builder.header("Cache-Control", "no-cache");
     builder = builder.header("Pragma", "no-cache");
 
-    // Stream the body directly instead of buffering entirely in memory
-    use futures::TryStreamExt;
-    let body_stream = proxy_response
-        .bytes_stream()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    // Stream the body with cumulative size enforcement to prevent upstream servers
+    // from sending unlimited data (e.g. with chunked transfer encoding or lying Content-Length).
+    use futures::StreamExt;
+    let body_stream = proxy_response.bytes_stream().scan(0usize, |total, chunk| {
+        match chunk {
+            Ok(ref data) => {
+                *total += data.len();
+                if *total > MAX_PROXY_BODY_SIZE {
+                    futures::future::ready(Some(Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!(
+                            "Response body exceeded size limit ({} bytes, max {MAX_PROXY_BODY_SIZE})",
+                            *total
+                        ),
+                    ))))
+                } else {
+                    futures::future::ready(Some(Ok(data.clone())))
+                }
+            }
+            Err(e) => futures::future::ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e,
+            )))),
+        }
+    });
     let body = Body::from_stream(body_stream);
 
     builder
@@ -382,10 +407,15 @@ fn validate_proxy_url_static(raw: &str) -> Result<(), anyhow::Error> {
     let host = parsed.host_str()
         .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
 
-    // Block well-known internal hostnames
+    // Block well-known internal hostnames (defense-in-depth; IP checks cover most cases)
     if matches!(
         host,
-        "localhost" | "metadata.google.internal" | "instance-data"
+        "localhost"
+            | "metadata.google.internal"
+            | "instance-data"
+            | "metadata"
+            | "kubernetes.default"
+            | "kubernetes.default.svc"
     ) {
         return Err(anyhow::anyhow!("Proxy to internal hosts is not allowed"));
     }

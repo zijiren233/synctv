@@ -48,9 +48,6 @@ sqlx.workspace = true
 # Redis
 redis.workspace = true
 
-# Monitoring
-prometheus.workspace = true
-
 # OpenAPI
 utoipa.workspace = true
 utoipa-swagger-ui.workspace = true
@@ -70,6 +67,7 @@ url = "2.5"
 hmac = "0.12"
 sha1 = "0.10"
 sha2.workspace = true
+subtle = "2.6"
 
 # Time
 chrono.workspace = true
@@ -81,7 +79,6 @@ tracing-subscriber.workspace = true
 # Configuration
 config.workspace = true
 clap.workspace = true
-once_cell.workspace = true
 regex.workspace = true
 
 [dev-dependencies]

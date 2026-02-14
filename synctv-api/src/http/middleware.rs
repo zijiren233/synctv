@@ -7,7 +7,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::sync::Arc;
 use synctv_core::{
     models::{id::UserId, UserStatus},
@@ -18,25 +18,25 @@ use synctv_core::{
 use super::{AppError, AppState};
 
 /// Pre-validated security header names (validated once at startup via Lazy)
-static X_FRAME_OPTIONS: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+static X_FRAME_OPTIONS: LazyLock<axum::http::HeaderName> = LazyLock::new(|| {
     axum::http::HeaderName::from_static("x-frame-options")
 });
-static X_CONTENT_TYPE_OPTIONS: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+static X_CONTENT_TYPE_OPTIONS: LazyLock<axum::http::HeaderName> = LazyLock::new(|| {
     axum::http::HeaderName::from_static("x-content-type-options")
 });
-static X_XSS_PROTECTION: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+static X_XSS_PROTECTION: LazyLock<axum::http::HeaderName> = LazyLock::new(|| {
     axum::http::HeaderName::from_static("x-xss-protection")
 });
-static CONTENT_SECURITY_POLICY: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+static CONTENT_SECURITY_POLICY: LazyLock<axum::http::HeaderName> = LazyLock::new(|| {
     axum::http::HeaderName::from_static("content-security-policy")
 });
-static REFERRER_POLICY: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+static REFERRER_POLICY: LazyLock<axum::http::HeaderName> = LazyLock::new(|| {
     axum::http::HeaderName::from_static("referrer-policy")
 });
-static PERMISSIONS_POLICY: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+static PERMISSIONS_POLICY: LazyLock<axum::http::HeaderName> = LazyLock::new(|| {
     axum::http::HeaderName::from_static("permissions-policy")
 });
-static PRAGMA: Lazy<axum::http::HeaderName> = Lazy::new(|| {
+static PRAGMA: LazyLock<axum::http::HeaderName> = LazyLock::new(|| {
     axum::http::HeaderName::from_static("pragma")
 });
 

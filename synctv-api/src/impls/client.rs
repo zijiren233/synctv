@@ -49,7 +49,7 @@ pub struct ClientApiImpl {
     pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     pub providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
-    pub redis_publish_tx: Option<tokio::sync::mpsc::UnboundedSender<synctv_cluster::sync::PublishRequest>>,
+    pub redis_publish_tx: Option<tokio::sync::mpsc::Sender<synctv_cluster::sync::PublishRequest>>,
 }
 
 impl ClientApiImpl {
@@ -84,7 +84,7 @@ impl ClientApiImpl {
 
     /// Set the Redis publish channel for cross-replica cache invalidation
     #[must_use]
-    pub fn with_redis_publish_tx(mut self, tx: Option<tokio::sync::mpsc::UnboundedSender<synctv_cluster::sync::PublishRequest>>) -> Self {
+    pub fn with_redis_publish_tx(mut self, tx: Option<tokio::sync::mpsc::Sender<synctv_cluster::sync::PublishRequest>>) -> Self {
         self.redis_publish_tx = tx;
         self
     }
@@ -97,7 +97,7 @@ impl ClientApiImpl {
         changed_by: &UserId,
     ) {
         if let Some(ref tx) = self.redis_publish_tx {
-            let _ = tx.send(synctv_cluster::sync::PublishRequest {
+            let _ = tx.try_send(synctv_cluster::sync::PublishRequest {
                 room_id: Some(room_id.clone()),
                 event: synctv_cluster::sync::ClusterEvent::PermissionChanged {
                     room_id: room_id.clone(),
@@ -1997,7 +1997,7 @@ fn playback_state_to_proto(state: &synctv_core::models::RoomPlaybackState) -> cr
         speed: state.speed,
         is_playing: state.is_playing,
         updated_at: state.updated_at.timestamp(),
-        version: state.version,
+        version: state.version as i32,
         playing_playlist_id: state.playing_playlist_id.as_ref().map(|id| id.as_str().to_string()).unwrap_or_default(),
         relative_path: state.relative_path.clone(),
     }

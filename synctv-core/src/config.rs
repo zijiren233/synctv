@@ -612,6 +612,21 @@ impl Config {
             errors.push("livestream.cleanup_check_interval_seconds must be greater than 0".to_string());
         }
 
+        // Validate email config (only when SMTP is configured)
+        if !self.email.smtp_host.is_empty() {
+            if self.email.smtp_port == 0 {
+                errors.push("email.smtp_port must be between 1 and 65535 when smtp_host is set".to_string());
+            }
+            if self.email.from_email.is_empty() {
+                errors.push("email.from_email must be set when smtp_host is configured".to_string());
+            } else if !self.email.from_email.contains('@') || self.email.from_email.starts_with('@') || self.email.from_email.ends_with('@') {
+                errors.push(format!(
+                    "email.from_email '{}' is not a valid email address",
+                    self.email.from_email
+                ));
+            }
+        }
+
         if errors.is_empty() {
             Ok(())
         } else {

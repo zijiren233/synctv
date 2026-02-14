@@ -130,18 +130,42 @@ pub mod retry {
     }
 
     /// Check if an error should be retried
-    pub fn should_retry_error(err: &dyn std::error::Error, attempt: u32, max_attempts: u32) -> bool {
+    ///
+    /// Checks the error for known transient I/O error kinds, then falls back to
+    /// string matching for errors that don't expose `std::io::Error` directly.
+    pub fn should_retry_error(err: &(dyn std::error::Error + 'static), attempt: u32, max_attempts: u32) -> bool {
         if attempt >= max_attempts {
             return false;
         }
 
+        // Check top-level error for std::io::Error with transient kinds
+        if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+            return is_transient_io_error(io_err);
+        }
+
+        // Fallback: check the display message for transient indicators.
+        // This covers wrapped error types (e.g. hyper, tonic, anyhow) that
+        // include the underlying I/O error message in their Display output.
         let err_msg = err.to_string().to_lowercase();
-        err_msg.contains("timeout") ||
-        err_msg.contains("connection") ||
-        err_msg.contains("broken pipe") ||
-        err_msg.contains("connection reset") ||
-        err_msg.contains("eof") ||
         err_msg.contains("timed out")
+            || err_msg.contains("timeout")
+            || err_msg.contains("connection reset")
+            || err_msg.contains("connection refused")
+            || err_msg.contains("connection aborted")
+            || err_msg.contains("broken pipe")
+    }
+
+    /// Check if an I/O error is transient and worth retrying
+    fn is_transient_io_error(err: &std::io::Error) -> bool {
+        matches!(
+            err.kind(),
+            std::io::ErrorKind::TimedOut
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::UnexpectedEof
+        )
     }
 
     /// Calculate delay before next retry using exponential backoff
@@ -185,10 +209,14 @@ pub mod circuit_breaker {
     }
 
     /// Simple circuit breaker
+    ///
+    /// Uses `parking_lot::Mutex` instead of `std::sync::Mutex` to avoid
+    /// blocking the async runtime (parking_lot never yields to the OS scheduler
+    /// for short critical sections like this).
     #[derive(Debug, Clone)]
     pub struct CircuitBreaker {
         config: CircuitBreakerConfig,
-        state: Arc<std::sync::Mutex<CircuitBreakerState>>,
+        state: Arc<parking_lot::Mutex<CircuitBreakerState>>,
     }
 
     #[derive(Debug)]
@@ -206,7 +234,7 @@ pub mod circuit_breaker {
         pub fn new(config: CircuitBreakerConfig) -> Self {
             Self {
                 config,
-                state: Arc::new(std::sync::Mutex::new(CircuitBreakerState {
+                state: Arc::new(parking_lot::Mutex::new(CircuitBreakerState {
                     state: CircuitState::Closed,
                     failures: 0,
                     successes: 0,
@@ -219,7 +247,7 @@ pub mod circuit_breaker {
         /// Check if request is allowed
         #[must_use] 
         pub fn allow_request(&self) -> bool {
-            let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = self.state.lock();
 
             match state.state {
                 CircuitState::Closed => true,
@@ -243,7 +271,7 @@ pub mod circuit_breaker {
 
         /// Record successful request
         pub fn record_success(&self) {
-            let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = self.state.lock();
 
             match state.state {
                 CircuitState::HalfOpen => {
@@ -264,7 +292,7 @@ pub mod circuit_breaker {
 
         /// Record failed request
         pub fn record_failure(&self) {
-            let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = self.state.lock();
 
             match state.state {
                 CircuitState::Closed | CircuitState::HalfOpen => {
@@ -286,7 +314,7 @@ pub mod circuit_breaker {
         /// Get current state
         #[must_use] 
         pub fn state(&self) -> CircuitState {
-            let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let state = self.state.lock();
             state.state
         }
     }

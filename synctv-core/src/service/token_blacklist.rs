@@ -11,6 +11,11 @@ impl TokenBlacklistService {
     /// Create a new `TokenBlacklistService`
     /// If `redis_conn` is None, token blacklist will be disabled (logout becomes no-op)
     pub fn new(redis_conn: Option<redis::aio::ConnectionManager>) -> Self {
+        if redis_conn.is_none() {
+            tracing::warn!(
+                "Token blacklist is disabled: Redis not configured. Tokens cannot be revoked. This is NOT safe for production."
+            );
+        }
         Self { redis_conn }
     }
 

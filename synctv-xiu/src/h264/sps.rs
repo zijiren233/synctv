@@ -78,10 +78,10 @@ impl SpsParser {
 
     pub fn parse(&mut self) -> Result<(u32, u32), H264Error> {
         self.sps.profile_idc = self.bits_reader.read_byte()?;
-        log::info!("profile_idc: {}", self.sps.profile_idc);
+        tracing::info!("profile_idc: {}", self.sps.profile_idc);
         self.sps.flag = self.bits_reader.read_byte()?;
         self.sps.level_idc = self.bits_reader.read_byte()?;
-        log::info!("level_idc: {}", self.sps.level_idc);
+        tracing::info!("level_idc: {}", self.sps.level_idc);
         self.sps.seq_parameter_set_id = utils::read_uev(&mut self.bits_reader)?;
 
         match self.sps.profile_idc {
@@ -171,7 +171,7 @@ impl SpsParser {
             - (self.sps.frame_crop_top_offset * 2)
             - (self.sps.frame_crop_bottom_offset * 2);
 
-        log::trace!("parsed sps data: {:?}", self.sps);
+        tracing::trace!("parsed sps data: {:?}", self.sps);
         Ok((width, height))
     }
 }

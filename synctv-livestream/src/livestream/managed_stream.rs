@@ -9,9 +9,9 @@
 
 use anyhow::Result;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, info_span, warn, Instrument};
 
@@ -21,9 +21,18 @@ use tracing::{debug, error, info, info_span, warn, Instrument};
 /// and task handle management. Embed this in your stream struct and delegate.
 pub struct StreamLifecycle {
     subscriber_count: AtomicUsize,
-    last_active: Mutex<Instant>,
+    /// Stores unix timestamp seconds as AtomicU64 (lock-free last-active tracking).
+    last_active_secs: AtomicU64,
     is_running: Arc<AtomicBool>,
     task_handle: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
+}
+
+/// Get current unix timestamp in seconds.
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 impl StreamLifecycle {
@@ -31,24 +40,24 @@ impl StreamLifecycle {
     pub fn new() -> Self {
         Self {
             subscriber_count: AtomicUsize::new(0),
-            last_active: Mutex::new(Instant::now()),
+            last_active_secs: AtomicU64::new(unix_now_secs()),
             is_running: Arc::new(AtomicBool::new(false)),
             task_handle: Mutex::new(None),
         }
     }
 
     pub fn subscriber_count(&self) -> usize {
-        self.subscriber_count.load(Ordering::SeqCst)
+        self.subscriber_count.load(Ordering::Acquire)
     }
 
     pub fn increment_subscriber_count(&self) {
-        self.subscriber_count.fetch_add(1, Ordering::SeqCst);
+        self.subscriber_count.fetch_add(1, Ordering::AcqRel);
     }
 
     pub fn decrement_subscriber_count(&self) {
         let result = self
             .subscriber_count
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
                 if v > 0 { Some(v - 1) } else { None }
             });
         if result.is_err() {
@@ -65,7 +74,7 @@ impl StreamLifecycle {
     /// If no task handle is set, we rely solely on the is_running flag.
     /// This is useful for unit tests or scenarios where task tracking isn't needed.
     pub async fn is_healthy(&self) -> bool {
-        if !self.is_running.load(Ordering::SeqCst) {
+        if !self.is_running.load(Ordering::Acquire) {
             return false;
         }
 
@@ -80,17 +89,17 @@ impl StreamLifecycle {
     }
 
     pub fn set_running(&self) {
-        self.is_running.store(true, Ordering::SeqCst);
+        self.is_running.store(true, Ordering::Release);
     }
 
-    /// Mark as stopping — new `is_healthy()` calls return false.
+    /// Mark as stopping -- new `is_healthy()` calls return false.
     pub fn mark_stopping(&self) {
-        self.is_running.store(false, Ordering::SeqCst);
+        self.is_running.store(false, Ordering::Release);
     }
 
     /// Restore running state (used when cleanup detects a late subscriber).
     pub fn restore_running(&self) {
-        self.is_running.store(true, Ordering::SeqCst);
+        self.is_running.store(true, Ordering::Release);
     }
 
     /// Clone the is_running flag for use in spawned tasks.
@@ -99,12 +108,15 @@ impl StreamLifecycle {
         Arc::clone(&self.is_running)
     }
 
-    pub async fn last_active_time(&self) -> Instant {
-        *self.last_active.lock().await
+    /// Returns elapsed seconds since last activity (lock-free).
+    pub fn last_active_elapsed_secs(&self) -> u64 {
+        let last = self.last_active_secs.load(Ordering::Acquire);
+        unix_now_secs().saturating_sub(last)
     }
 
-    pub async fn update_last_active_time(&self) {
-        *self.last_active.lock().await = Instant::now();
+    /// Update last-active timestamp to now (lock-free).
+    pub fn update_last_active_time(&self) {
+        self.last_active_secs.store(unix_now_secs(), Ordering::Release);
     }
 
     pub async fn set_task_handle(&self, handle: tokio::task::JoinHandle<Result<()>>) {
@@ -199,7 +211,7 @@ impl<S: ManagedStream> StreamPool<S> {
         if let Some(stream) = self.streams.get(stream_key) {
             if stream.lifecycle().is_healthy().await {
                 stream.lifecycle().increment_subscriber_count();
-                stream.lifecycle().update_last_active_time().await;
+                stream.lifecycle().update_last_active_time();
                 return Some(stream.clone());
             }
             drop(stream);
@@ -331,9 +343,9 @@ impl<S: ManagedStream> StreamPool<S> {
             interval.tick().await;
 
             if stream.lifecycle().subscriber_count() == 0 {
-                let idle_time = stream.lifecycle().last_active_time().await.elapsed();
+                let idle_secs = stream.lifecycle().last_active_elapsed_secs();
 
-                if idle_time > idle_timeout {
+                if idle_secs > idle_timeout.as_secs() {
                     // Mark stopping FIRST so concurrent viewers see it as unhealthy
                     stream.lifecycle().mark_stopping();
 
@@ -348,9 +360,9 @@ impl<S: ManagedStream> StreamPool<S> {
                     }
 
                     info!(
-                        "Auto cleanup: Stopping stream {} (idle for {:?})",
+                        "Auto cleanup: Stopping stream {} (idle for {}s)",
                         stream_key,
-                        idle_time
+                        idle_secs
                     );
 
                     // Run extra cleanup (e.g., Redis unregistration)
@@ -364,7 +376,7 @@ impl<S: ManagedStream> StreamPool<S> {
                     break;
                 }
             } else {
-                stream.lifecycle().update_last_active_time().await;
+                stream.lifecycle().update_last_active_time();
             }
         }
         Ok(())

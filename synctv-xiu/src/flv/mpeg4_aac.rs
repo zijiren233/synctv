@@ -123,7 +123,7 @@ impl Mpeg4AacProcessor {
         }
         self.mpeg4_aac.sampling_frequency = AAC_FREQUENCE[freq_index];
 
-        // log::info!("aac info: {:?}", self.mpeg4_aac);
+        // tracing::info!("aac info: {:?}", self.mpeg4_aac);
 
         // if self.bytes_reader.len() > 2 {
         //return self.audio_specific_config_load2();
@@ -235,7 +235,7 @@ impl Mpeg4AacProcessor {
 
         self.bits_reader.bits_aligment_8();
 
-        log::trace!(
+        tracing::trace!(
             "remove warnings: {extension_audio_object_type} {extension_sampling_frequency_index} {extension_channel_configuration}"
         );
 
@@ -399,7 +399,7 @@ impl Mpeg4AacProcessor {
 
         let rv = pce_bits_vec.len().div_ceil(8);
 
-        log::trace!(
+        tracing::trace!(
             "remove warnings: {tag} {element_instance_tag} {object_type} {sampling_frequency_index} {cpe}"
         );
 

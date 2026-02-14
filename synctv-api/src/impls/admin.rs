@@ -22,7 +22,7 @@ pub struct AdminApiImpl {
     pub connection_manager: Arc<ConnectionManager>,
     pub provider_instance_manager: Arc<RemoteProviderManager>,
     pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
-    pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
+    pub redis_publish_tx: Option<mpsc::Sender<PublishRequest>>,
 }
 
 impl AdminApiImpl {
@@ -36,7 +36,7 @@ impl AdminApiImpl {
         connection_manager: Arc<ConnectionManager>,
         provider_instance_manager: Arc<RemoteProviderManager>,
         live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
-        redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
+        redis_publish_tx: Option<mpsc::Sender<PublishRequest>>,
     ) -> Self {
         Self {
             room_service,
@@ -60,7 +60,7 @@ impl AdminApiImpl {
 
         // 2. Cluster-wide via Redis
         if let Some(tx) = &self.redis_publish_tx {
-            let _ = tx.send(PublishRequest {
+            let _ = tx.try_send(PublishRequest {
                 room_id: Some(RoomId::from_string(room_id.to_string())),
                 event: ClusterEvent::KickPublisher {
                     room_id: RoomId::from_string(room_id.to_string()),
@@ -680,7 +680,7 @@ impl AdminApiImpl {
         }
         // 2. Cluster-wide broadcast so other replicas kick their local streams for this user
         if let Some(tx) = &self.redis_publish_tx {
-            let _ = tx.send(PublishRequest {
+            let _ = tx.try_send(PublishRequest {
                 room_id: None,
                 event: ClusterEvent::KickUser {
                     user_id: uid.clone(),

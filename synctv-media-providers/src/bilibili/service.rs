@@ -114,10 +114,21 @@ impl BilibiliInterface for BilibiliService {
 
     async fn login_with_qr_code(&self, request: LoginWithQrCodeReq) -> Result<LoginWithQrCodeResp, BilibiliError> {
         let client = BilibiliClient::new()?;
-        let (status, cookies) = client.login_with_qr_code(&request.key).await?;
+        let (raw_status, cookies) = client.login_with_qr_code(&request.key).await?;
+
+        // Map Bilibili status codes to proto QRCodeStatus enum values:
+        // 0 -> SUCCESS (4), 86038 -> EXPIRED (1), 86101 -> NOTSCANNED (2),
+        // 86090 -> SCANNED (3), other -> UNKNOWN (0)
+        let status = match raw_status {
+            0 => 4,     // SUCCESS
+            86038 => 1, // EXPIRED
+            86101 => 2, // NOTSCANNED
+            86090 => 3, // SCANNED
+            _ => 0,     // UNKNOWN
+        };
 
         Ok(LoginWithQrCodeResp {
-            status: status as i32,
+            status,
             cookies: cookies.unwrap_or_default(),
         })
     }

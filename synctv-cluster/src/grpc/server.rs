@@ -38,6 +38,56 @@ impl ClusterServer {
         self
     }
 
+    /// Maximum length for node_id
+    const MAX_NODE_ID_LEN: usize = 64;
+    /// Maximum number of user_ids in a single request
+    const MAX_USER_IDS: usize = 1000;
+
+    /// Validate a node_id: non-empty, max 64 chars, alphanumeric + underscore/hyphen
+    fn validate_node_id(node_id: &str) -> std::result::Result<(), Status> {
+        if node_id.is_empty() {
+            return Err(Status::invalid_argument("node_id must not be empty"));
+        }
+        if node_id.len() > Self::MAX_NODE_ID_LEN {
+            return Err(Status::invalid_argument(format!(
+                "node_id must be at most {} characters",
+                Self::MAX_NODE_ID_LEN
+            )));
+        }
+        if !node_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(Status::invalid_argument(
+                "node_id must contain only alphanumeric characters, underscores, or hyphens",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate an address: must be parseable as host:port
+    fn validate_address(address: &str) -> std::result::Result<(), Status> {
+        if address.is_empty() {
+            return Err(Status::invalid_argument("address must not be empty"));
+        }
+        // Try parsing as SocketAddr first, then as host:port
+        if address.parse::<std::net::SocketAddr>().is_err() {
+            // Check it at least has a host:port format
+            let parts: Vec<&str> = address.rsplitn(2, ':').collect();
+            if parts.len() != 2 {
+                return Err(Status::invalid_argument(
+                    "address must be in host:port format",
+                ));
+            }
+            if parts[0].parse::<u16>().is_err() {
+                return Err(Status::invalid_argument(
+                    "address port must be a valid number",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Convert discovery `NodeInfo` to proto `NodeInfo`
     fn discovery_to_proto_node(&self, discovery: &DiscoveryNodeInfo) -> NodeInfo {
         NodeInfo {
@@ -60,6 +110,10 @@ impl ClusterService for ClusterServer {
         request: Request<RegisterNodeRequest>,
     ) -> std::result::Result<Response<RegisterNodeResponse>, Status> {
         let req = request.into_inner();
+
+        // Validate inputs
+        Self::validate_node_id(&req.node_id)?;
+        Self::validate_address(&req.address)?;
 
         // Create node info
         let node_info = DiscoveryNodeInfo {
@@ -113,6 +167,8 @@ impl ClusterService for ClusterServer {
     ) -> std::result::Result<Response<HeartbeatResponse>, Status> {
         let req = request.into_inner();
 
+        Self::validate_node_id(&req.node_id)?;
+
         // Update heartbeat in registry (refreshes TTL and last_heartbeat in Redis)
         if let Err(e) = self.node_registry.heartbeat_remote(&req.node_id).await {
             tracing::warn!(
@@ -162,8 +218,10 @@ impl ClusterService for ClusterServer {
     ) -> std::result::Result<Response<DeregisterNodeResponse>, Status> {
         let req = request.into_inner();
 
+        Self::validate_node_id(&req.node_id)?;
+
         // Remove the node from Redis registry
-        if let Err(e) = self.node_registry.unregister_remote(&req.node_id).await {
+        if let Err(e) = self.node_registry.unregister_remote(&req.node_id, None).await {
             tracing::warn!(
                 node_id = %req.node_id,
                 error = %e,
@@ -216,6 +274,13 @@ impl ClusterService for ClusterServer {
         request: Request<GetUserOnlineStatusRequest>,
     ) -> std::result::Result<Response<GetUserOnlineStatusResponse>, Status> {
         let req = request.into_inner();
+
+        if req.user_ids.len() > Self::MAX_USER_IDS {
+            return Err(Status::invalid_argument(format!(
+                "user_ids array must contain at most {} entries",
+                Self::MAX_USER_IDS
+            )));
+        }
 
         let Some(ref cm) = self.connection_manager else {
             return Ok(Response::new(GetUserOnlineStatusResponse {

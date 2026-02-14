@@ -3,30 +3,102 @@
 //! This module provides production-grade metrics collection using prometheus crate.
 //! All metrics are automatically exposed via the /metrics endpoint for Prometheus scraping.
 
-use prometheus::{CounterVec, HistogramVec, Registry, IntGauge, TextEncoder, Encoder, register_counter_vec_with_registry, register_histogram_vec_with_registry, register_int_gauge_with_registry};
+use prometheus::{CounterVec, HistogramVec, Registry, IntGauge, IntCounterVec, IntGaugeVec, TextEncoder, Encoder, register_counter_vec_with_registry, register_histogram_vec_with_registry, register_int_gauge_with_registry};
 
 /// Global metrics registry
 pub static REGISTRY: std::sync::LazyLock<Registry> = std::sync::LazyLock::new(Registry::new);
 
-/// HTTP request duration histogram
-pub static HTTP_REQUEST_DURATION: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
-    register_histogram_vec_with_registry!(
-        "http_request_duration_seconds",
-        "HTTP request duration in seconds",
-        &["endpoint", "method", "status"],
-        REGISTRY.clone()
-    ).expect("Failed to register HTTP_REQUEST_DURATION")
-});
+/// HTTP metrics
+pub mod http {
+    use super::*;
+    use prometheus::{HistogramOpts, Opts, register_int_counter_vec_with_registry, register_int_gauge_with_registry, register_int_gauge_vec_with_registry};
 
-/// HTTP request counter
-pub static HTTP_REQUESTS_TOTAL: std::sync::LazyLock<CounterVec> = std::sync::LazyLock::new(|| {
-    register_counter_vec_with_registry!(
-        "http_requests_total",
-        "Total number of HTTP requests",
-        &["endpoint", "method", "status"],
-        REGISTRY.clone()
-    ).expect("Failed to register HTTP_REQUESTS_TOTAL")
-});
+    /// Total HTTP requests, labeled by method, path, and status code.
+    pub static HTTP_REQUESTS_TOTAL: std::sync::LazyLock<IntCounterVec> = std::sync::LazyLock::new(|| {
+        register_int_counter_vec_with_registry!(
+            Opts::new("http_requests_total", "Total number of HTTP requests"),
+            &["method", "path", "status"],
+            REGISTRY.clone()
+        ).expect("Failed to register HTTP_REQUESTS_TOTAL")
+    });
+
+    /// HTTP request duration in seconds, labeled by method and path.
+    pub static HTTP_REQUEST_DURATION_SECONDS: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
+        HistogramVec::new(
+            HistogramOpts::new(
+                "http_request_duration_seconds",
+                "HTTP request duration in seconds",
+            )
+            .buckets(vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
+            &["method", "path"],
+        )
+        .and_then(|m| { REGISTRY.register(Box::new(m.clone()))?; Ok(m) })
+        .expect("Failed to register HTTP_REQUEST_DURATION_SECONDS")
+    });
+
+    /// Number of in-flight HTTP requests.
+    pub static HTTP_REQUESTS_IN_FLIGHT: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "http_requests_in_flight",
+            "Number of HTTP requests currently being processed",
+            REGISTRY.clone()
+        ).expect("Failed to register HTTP_REQUESTS_IN_FLIGHT")
+    });
+
+    /// Active WebSocket connections, labeled by room_id.
+    pub static WEBSOCKET_CONNECTIONS_ACTIVE: std::sync::LazyLock<IntGaugeVec> = std::sync::LazyLock::new(|| {
+        register_int_gauge_vec_with_registry!(
+            Opts::new("websocket_connections_active", "Number of active WebSocket connections"),
+            &["room_id"],
+            REGISTRY.clone()
+        ).expect("Failed to register WEBSOCKET_CONNECTIONS_ACTIVE")
+    });
+
+    /// Total WebSocket connections opened.
+    pub static WEBSOCKET_CONNECTIONS_TOTAL: std::sync::LazyLock<IntCounterVec> = std::sync::LazyLock::new(|| {
+        register_int_counter_vec_with_registry!(
+            Opts::new("websocket_connections_total", "Total number of WebSocket connections opened"),
+            &["room_id"],
+            REGISTRY.clone()
+        ).expect("Failed to register WEBSOCKET_CONNECTIONS_TOTAL")
+    });
+
+    /// Number of active rooms.
+    pub static ROOMS_ACTIVE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "rooms_active",
+            "Number of currently active rooms",
+            REGISTRY.clone()
+        ).expect("Failed to register ROOMS_ACTIVE")
+    });
+
+    /// Number of online users.
+    pub static USERS_ONLINE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "users_online",
+            "Number of currently online users",
+            REGISTRY.clone()
+        ).expect("Failed to register USERS_ONLINE")
+    });
+
+    /// Number of active live streams.
+    pub static STREAMS_ACTIVE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "streams_active",
+            "Number of active live streams",
+            REGISTRY.clone()
+        ).expect("Failed to register STREAMS_ACTIVE")
+    });
+
+    /// Number of active WebRTC peer connections.
+    pub static WEBRTC_PEERS_ACTIVE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "webrtc_peers_active",
+            "Number of active WebRTC peer connections",
+            REGISTRY.clone()
+        ).expect("Failed to register WEBRTC_PEERS_ACTIVE")
+    });
+}
 
 /// Active connections gauge
 pub static ACTIVE_CONNECTIONS: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
@@ -225,17 +297,16 @@ pub mod stream {
 /// Helper macro to record HTTP request metrics
 #[macro_export]
 macro_rules! record_http_request {
-    ($endpoint:expr, $method:expr, $status:expr, $duration:expr) => {
-        let status_str = $status.as_str().to_lowercase();
-        let endpoint_str = $endpoint.replace('/', "__");
-        let method_str = $method.to_lowercase();
+    ($method:expr, $path:expr, $status:expr, $duration:expr) => {
+        let status_str = $status.to_string();
+        let method_str = $method.to_string();
 
-        $crate::metrics::HTTP_REQUEST_DURATION
-            .with_label_values(&[&endpoint_str, &method_str, &status_str])
+        $crate::metrics::http::HTTP_REQUEST_DURATION_SECONDS
+            .with_label_values(&[&method_str, $path])
             .observe($duration.as_secs_f64());
 
-        $crate::metrics::HTTP_REQUESTS_TOTAL
-            .with_label_values(&[&endpoint_str, &method_str, &status_str])
+        $crate::metrics::http::HTTP_REQUESTS_TOTAL
+            .with_label_values(&[&method_str, $path, &status_str])
             .inc();
     };
 }
@@ -282,13 +353,51 @@ macro_rules! record_db_query {
     };
 }
 
+/// Normalize a request path for metric labels.
+///
+/// Replaces path parameters (UUIDs, numeric IDs, nanoids) with placeholders
+/// to avoid high-cardinality labels.
+#[must_use]
+pub fn normalize_path(path: &str) -> String {
+    let segments: Vec<&str> = path.split('/').collect();
+    let mut result = Vec::with_capacity(segments.len());
+
+    for (i, segment) in segments.iter().enumerate() {
+        if segment.is_empty() {
+            result.push(*segment);
+            continue;
+        }
+
+        // Replace segments that look like IDs (after known resource paths)
+        let prev = if i > 0 { segments.get(i - 1) } else { None };
+        let is_id = matches!(prev, Some(&"rooms" | &"media" | &"chat" | &"playlists"));
+
+        if is_id {
+            result.push(":id");
+        } else {
+            result.push(segment);
+        }
+    }
+
+    result.join("/")
+}
+
 /// Expose metrics in Prometheus format
-pub fn gather_metrics() -> Result<String, prometheus::Error> {
+pub fn gather_metrics() -> String {
     let encoder = TextEncoder::new();
     let metric_families = REGISTRY.gather();
     let mut buffer = Vec::new();
-    encoder.encode(&metric_families, &mut buffer)?;
-    String::from_utf8(buffer).map_err(|_| prometheus::Error::Msg("Invalid UTF-8".to_string()))
+    match encoder.encode(&metric_families, &mut buffer) {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::error!("Failed to encode metrics: {}", e);
+            return String::from("# Failed to encode metrics\n");
+        }
+    }
+    String::from_utf8(buffer).unwrap_or_else(|e| {
+        tracing::error!("Metrics buffer contains invalid UTF-8: {}", e);
+        String::from("# Invalid UTF-8 in metrics\n")
+    })
 }
 
 #[cfg(test)]
@@ -298,8 +407,8 @@ mod tests {
     #[test]
     fn test_metrics_registration() {
         // Verify all metrics are registered
-        HTTP_REQUEST_DURATION.with_label_values(&["test", "get", "200"]).observe(0.1);
-        HTTP_REQUESTS_TOTAL.with_label_values(&["test", "get", "200"]).inc();
+        http::HTTP_REQUEST_DURATION_SECONDS.with_label_values(&["GET", "/test"]).observe(0.1);
+        http::HTTP_REQUESTS_TOTAL.with_label_values(&["GET", "/test", "200"]).inc();
 
         // Should be able to encode metrics
         let encoder = TextEncoder::new();

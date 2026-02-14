@@ -37,7 +37,7 @@ impl MessageParser {
 
                 // match command_name.clone() {
                 //     Amf0ValueType::UTF8String(val) => {
-                //         log::info!("command_name:{}", val);
+                //         tracing::info!("command_name:{}", val);
                 //     }
                 //     _ => {}
                 // }
@@ -60,7 +60,7 @@ impl MessageParser {
             }
 
             msg_type_id::AUDIO => {
-                log::trace!(
+                tracing::trace!(
                     "receive audio msg , msg length is{}\n",
                     self.chunk_info.message_header.msg_length
                 );
@@ -70,7 +70,7 @@ impl MessageParser {
                 }));
             }
             msg_type_id::VIDEO => {
-                log::trace!(
+                tracing::trace!(
                     "receive video msg , msg length is{}\n",
                     self.chunk_info.message_header.msg_length
                 );
@@ -79,7 +79,7 @@ impl MessageParser {
                 }));
             }
             msg_type_id::USER_CONTROL_EVENT => {
-                log::trace!(
+                tracing::trace!(
                     "receive user control event msg , msg length is{}\n",
                     self.chunk_info.message_header.msg_length
                 );
@@ -123,7 +123,7 @@ impl MessageParser {
 
             _ => {}
         }
-        log::warn!(
+        tracing::warn!(
             "the msg_type_id is not processed: {}",
             self.chunk_info.message_header.msg_type_id
         );

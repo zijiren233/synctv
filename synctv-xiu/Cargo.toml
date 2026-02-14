@@ -23,19 +23,18 @@ anyhow = "1.0"
 
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
+tokio-util = { version = "0.7", features = ["codec", "rt"] }
 tokio-stream = "0.1"
 futures = "0.3"
 async-trait = "0.1"
 
 # Logging
-log = "0.4"
 tracing = "0.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc", "raw_value", "std"] }
-indexmap = "1.9.3"
+indexmap = "2"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }

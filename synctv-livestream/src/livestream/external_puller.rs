@@ -125,18 +125,47 @@ impl ExternalStreamPuller {
             let data_sender = match self.publish_to_local_stream_hub().await {
                 Ok(sender) => sender,
                 Err(e) => {
-                    error!(
-                        room_id = %self.room_id,
-                        attempt = attempt,
-                        "Failed to publish to local StreamHub: {e}"
-                    );
-                    if attempt > MAX_RETRIES {
-                        return Err(anyhow::anyhow!(
-                            "Gave up after {MAX_RETRIES} retries (last error: publish to StreamHub: {e})"
-                        ));
+                    let err_msg = format!("{e}");
+                    // M-8: If publish fails with "Exists" (stale entry from failed unpublish),
+                    // force-unpublish first and retry immediately
+                    if err_msg.contains("Exists") || err_msg.contains("exists") {
+                        warn!(
+                            room_id = %self.room_id,
+                            "Stream already published (stale entry), force-unpublishing and retrying"
+                        );
+                        let _ = self.unpublish_from_local_stream_hub().await;
+                        // Retry publish immediately (don't count as a separate attempt)
+                        match self.publish_to_local_stream_hub().await {
+                            Ok(sender) => sender,
+                            Err(e2) => {
+                                error!(
+                                    room_id = %self.room_id,
+                                    attempt = attempt,
+                                    "Failed to publish after force-unpublish: {e2}"
+                                );
+                                if attempt > MAX_RETRIES {
+                                    return Err(anyhow::anyhow!(
+                                        "Gave up after {MAX_RETRIES} retries (last error: {e2})"
+                                    ));
+                                }
+                                Self::backoff(attempt).await;
+                                continue;
+                            }
+                        }
+                    } else {
+                        error!(
+                            room_id = %self.room_id,
+                            attempt = attempt,
+                            "Failed to publish to local StreamHub: {e}"
+                        );
+                        if attempt > MAX_RETRIES {
+                            return Err(anyhow::anyhow!(
+                                "Gave up after {MAX_RETRIES} retries (last error: publish to StreamHub: {e})"
+                            ));
+                        }
+                        Self::backoff(attempt).await;
+                        continue;
                     }
-                    Self::backoff(attempt).await;
-                    continue;
                 }
             };
 
@@ -486,7 +515,11 @@ impl ExternalStreamPuller {
         let result = event_result_receiver
             .await
             .map_err(|_| anyhow::anyhow!("Publish result channel closed"))?
-            .map_err(|e| anyhow::anyhow!("Publish failed: {e}"))?;
+            .map_err(|e| {
+                // M-8: If the stream already exists (e.g., unpublish failed on previous retry),
+                // treat it as a non-fatal error so the caller can handle it
+                anyhow::anyhow!("Publish failed: {e}")
+            })?;
 
         let data_sender = result
             .0

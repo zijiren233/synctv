@@ -78,7 +78,7 @@ impl ChatService {
             return Err(Error::InvalidInput("Message content cannot be empty".to_string()));
         }
 
-        if content.len() > 500 {
+        if content.chars().count() > 500 {
             return Err(Error::InvalidInput(
                 "Message content must be at most 500 characters".to_string(),
             ));
@@ -137,11 +137,17 @@ impl ChatService {
     ///
     /// # Arguments
     /// * `message_id` - Message ID to delete
-    /// * `user_id` - User ID requesting deletion (must be sender or admin)
+    /// * `user_id` - User ID requesting deletion (must be sender or have DELETE_CHAT permission)
+    /// * `has_delete_permission` - Whether the user has DELETE_CHAT permission in this room
     ///
     /// # Returns
     /// Result indicating success or failure
-    pub async fn delete_message(&self, message_id: &str, user_id: &UserId) -> Result<bool> {
+    pub async fn delete_message(
+        &self,
+        message_id: &str,
+        user_id: &UserId,
+        has_delete_permission: bool,
+    ) -> Result<bool> {
         // Get the message to check ownership
         let message = self
             .chat_repository
@@ -149,10 +155,10 @@ impl ChatService {
             .await?
             .ok_or_else(|| Error::NotFound("Message not found".to_string()))?;
 
-        // Check if user is the sender
-        if message.user_id != *user_id {
+        // Check if user is the sender or has DELETE_CHAT permission
+        if message.user_id != *user_id && !has_delete_permission {
             return Err(Error::Authorization(
-                "You can only delete your own messages".to_string(),
+                "You can only delete your own messages or must have DELETE_CHAT permission".to_string(),
             ));
         }
 
@@ -191,7 +197,7 @@ impl ChatService {
             return Err(Error::InvalidInput("Danmaku content cannot be empty".to_string()));
         }
 
-        if request.content.len() > 100 {
+        if request.content.chars().count() > 100 {
             return Err(Error::InvalidInput(
                 "Danmaku content must be at most 100 characters".to_string(),
             ));
@@ -248,7 +254,7 @@ impl ChatService {
         // Cleanup old messages
         let deleted = self
             .chat_repository
-            .cleanup_old_messages(room_id, max_messages as i32)
+            .cleanup_old_messages(room_id, max_messages.try_into().unwrap_or(i32::MAX))
             .await?;
 
         if deleted > 0 {
@@ -287,7 +293,7 @@ impl ChatService {
         // Use optimized batch cleanup (single SQL query for all rooms)
         let deleted = self
             .chat_repository
-            .cleanup_all_rooms(max_messages as i32, activity_window_minutes)
+            .cleanup_all_rooms(max_messages.try_into().unwrap_or(i32::MAX), activity_window_minutes)
             .await?;
 
         if deleted > 0 {

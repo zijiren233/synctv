@@ -3,7 +3,7 @@
 //! This module provides validation functions for common input types to ensure
 //! data integrity and prevent security issues like injection attacks.
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use regex::Regex;
 use std::borrow::Cow;
 
@@ -38,32 +38,32 @@ mod patterns {
     use super::*;
 
     /// Valid username: alphanumeric, underscores, hyphens, and CJK characters
-    pub static USERNAME: Lazy<Regex> = Lazy::new(|| {
+    pub static USERNAME: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^[\p{L}\p{N}_-]+$").expect("Invalid username regex")
     });
 
     /// Valid room ID: alphanumeric, underscores, hyphens
-    pub static ROOM_ID: Lazy<Regex> = Lazy::new(|| {
+    pub static ROOM_ID: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^[a-zA-Z0-9_-]+$").expect("Invalid room_id regex")
     });
 
     /// Valid email format (basic validation)
-    pub static EMAIL: Lazy<Regex> = Lazy::new(|| {
+    pub static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^[^\s@]+@[^\s@]+\.[^\s@]+$").expect("Invalid email regex")
     });
 
     /// URL format (http/https only)
-    pub static URL: Lazy<Regex> = Lazy::new(|| {
+    pub static URL: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^https?://[^\s]+$").expect("Invalid URL regex")
     });
 
     /// HTML/script tag detection for XSS prevention
-    pub static HTML_TAGS: Lazy<Regex> = Lazy::new(|| {
+    pub static HTML_TAGS: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"<[^>]+>").expect("Invalid HTML regex")
     });
 
     /// Control characters that should be stripped
-    pub static CONTROL_CHARS: Lazy<Regex> = Lazy::new(|| {
+    pub static CONTROL_CHARS: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]").expect("Invalid control char regex")
     });
 }
@@ -163,14 +163,13 @@ pub fn validate_password(password: &str) -> ValidationResult<()> {
         });
     }
 
-    // Only warn about extremely weak passwords (exact match to common patterns)
-    // We don't reject these in production as users may have legitimate reasons,
-    // but we could log a warning
+    // Reject extremely weak passwords (exact match to common patterns)
     let lowercase = password.to_lowercase();
     let extremely_weak = ["password", "123456", "qwerty", "admin", "letmein"];
     if extremely_weak.contains(&lowercase.as_str()) {
-        // In production, you might want to log this or require additional verification
-        tracing::debug!("User attempting to use extremely weak password");
+        return Err(ValidationError::InvalidValue(
+            "Password is too common. Please choose a stronger password.",
+        ));
     }
 
     Ok(())
@@ -519,10 +518,14 @@ mod tests {
     #[test]
     fn test_validate_password() {
         assert!(validate_password("MySecure123!").is_ok()); // Good password
-        assert!(validate_password("password123").is_ok()); // Contains "password" but length OK
-        assert!(validate_password("qwerty12345").is_ok()); // Contains "qwerty" but length OK
+        assert!(validate_password("password123").is_ok()); // Contains "password" but length OK (not exact match)
+        assert!(validate_password("qwerty12345").is_ok()); // Contains "qwerty" but length OK (not exact match)
         assert!(validate_password("short").is_err()); // Too short
         assert!(validate_password(&"a".repeat(257)).is_err()); // Too long
+        // Exact matches to common weak passwords should be rejected
+        assert!(validate_password("password").is_err());
+        assert!(validate_password("12345678").is_ok()); // Not in the weak list (123456 is, but it's too short at 6 chars)
+        assert!(validate_password("admin123").is_ok()); // Not exact match to "admin"
     }
 
     #[test]

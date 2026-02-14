@@ -9,8 +9,12 @@ use super::events::ClusterEvent;
 /// Handle for a client connection subscription
 pub type ConnectionId = String;
 
+/// Capacity for per-subscriber message channels.
+/// Messages are dropped with a warning when a subscriber is too slow.
+const SUBSCRIBER_CHANNEL_CAPACITY: usize = 256;
+
 /// Message sender for a client connection
-pub type MessageSender = mpsc::UnboundedSender<ClusterEvent>;
+pub type MessageSender = mpsc::Sender<ClusterEvent>;
 
 /// Subscriber information
 #[derive(Debug, Clone)]
@@ -48,8 +52,8 @@ impl RoomMessageHub {
         room_id: RoomId,
         user_id: UserId,
         connection_id: ConnectionId,
-    ) -> mpsc::UnboundedReceiver<ClusterEvent> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    ) -> mpsc::Receiver<ClusterEvent> {
+        let (tx, rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
 
         let subscriber = Subscriber {
             connection_id: connection_id.clone(),
@@ -113,7 +117,7 @@ impl RoomMessageHub {
 
         if let Some(subscribers) = self.rooms.get(room_id) {
             for subscriber in subscribers.iter() {
-                match subscriber.sender.send(event.clone()) {
+                match subscriber.sender.try_send(event.clone()) {
                     Ok(()) => {
                         sent_count += 1;
                         debug!(
@@ -124,13 +128,21 @@ impl RoomMessageHub {
                             "Event sent to client"
                         );
                     }
-                    Err(err) => {
+                    Err(mpsc::error::TrySendError::Full(_)) => {
                         warn!(
                             room_id = %room_id.as_str(),
                             user_id = %subscriber.user_id.as_str(),
                             connection_id = %subscriber.connection_id,
-                            error = %err,
-                            "Failed to send event to client, marking for cleanup"
+                            event_type = %event.event_type(),
+                            "Subscriber channel full, dropping event for slow consumer"
+                        );
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        warn!(
+                            room_id = %room_id.as_str(),
+                            user_id = %subscriber.user_id.as_str(),
+                            connection_id = %subscriber.connection_id,
+                            "Subscriber channel closed, marking for cleanup"
                         );
                         failed_connections.push(subscriber.connection_id.clone());
                     }
@@ -168,7 +180,7 @@ impl RoomMessageHub {
         if let Some(subscribers) = self.rooms.get(room_id) {
             for subscriber in subscribers.iter() {
                 if subscriber.user_id == *user_id {
-                    match subscriber.sender.send(event.clone()) {
+                    match subscriber.sender.try_send(event.clone()) {
                         Ok(()) => {
                             sent_count += 1;
                             debug!(
@@ -179,13 +191,21 @@ impl RoomMessageHub {
                                 "Event sent to specific user"
                             );
                         }
-                        Err(err) => {
+                        Err(mpsc::error::TrySendError::Full(_)) => {
                             warn!(
                                 room_id = %room_id.as_str(),
                                 user_id = %subscriber.user_id.as_str(),
                                 connection_id = %subscriber.connection_id,
-                                error = %err,
-                                "Failed to send event to user"
+                                event_type = %event.event_type(),
+                                "Subscriber channel full, dropping event for slow consumer"
+                            );
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            warn!(
+                                room_id = %room_id.as_str(),
+                                user_id = %subscriber.user_id.as_str(),
+                                connection_id = %subscriber.connection_id,
+                                "Subscriber channel closed, marking for cleanup"
                             );
                             failed_connections.push(subscriber.connection_id.clone());
                         }

@@ -119,10 +119,12 @@ fn write_segment_base(xml: &mut String, initialization: &str, index_range: &str)
     if initialization.is_empty() && index_range.is_empty() {
         return;
     }
+    let escaped_index_range = xml_escape(index_range);
+    let escaped_initialization = xml_escape(initialization);
     let _ = write!(
         xml,
-        "        <SegmentBase indexRange=\"{index_range}\">\n\
-                   <Initialization range=\"{initialization}\"/>\n\
+        "        <SegmentBase indexRange=\"{escaped_index_range}\">\n\
+                   <Initialization range=\"{escaped_initialization}\"/>\n\
                  </SegmentBase>\n"
     );
 }

@@ -60,8 +60,18 @@ impl PublisherManager {
                         error!("Failed to handle broadcast event: {}", e);
                     }
                 }
-                Err(e) => {
-                    error!("Error receiving broadcast event: {}", e);
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(
+                        "Publisher manager lagged behind by {n} broadcast events; \
+                         some publish/unpublish events may have been missed. \
+                         Active publishers may be stale."
+                    );
+                    // Continue processing -- stale state will be corrected by
+                    // heartbeat failures or next publish/unpublish event.
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    error!("Broadcast channel closed");
                     break;
                 }
             }

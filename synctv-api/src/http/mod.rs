@@ -64,7 +64,7 @@ pub struct RouterConfig {
     pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     pub connection_manager: Arc<synctv_cluster::sync::ConnectionManager>,
     pub jwt_service: synctv_core::service::JwtService,
-    pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
+    pub redis_publish_tx: Option<mpsc::Sender<PublishRequest>>,
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     pub settings_service: Option<Arc<synctv_core::service::SettingsService>>,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
@@ -93,7 +93,7 @@ pub struct AppState {
     pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     pub connection_manager: Arc<synctv_cluster::sync::ConnectionManager>,
     pub jwt_service: synctv_core::service::JwtService,
-    pub redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
+    pub redis_publish_tx: Option<mpsc::Sender<PublishRequest>>,
     pub oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     pub settings_service: Option<Arc<synctv_core::service::SettingsService>>,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
@@ -122,7 +122,7 @@ pub(crate) fn kick_stream_cluster(state: &AppState, room_id: &str, media_id: &st
 
     // 2. Cluster-wide via Redis
     if let Some(tx) = &state.redis_publish_tx {
-        if tx.send(PublishRequest {
+        if tx.try_send(PublishRequest {
             room_id: Some(RoomId::from_string(room_id.to_string())),
             event: ClusterEvent::KickPublisher {
                 room_id: RoomId::from_string(room_id.to_string()),
@@ -131,7 +131,7 @@ pub(crate) fn kick_stream_cluster(state: &AppState, room_id: &str, media_id: &st
                 timestamp: chrono::Utc::now(),
             },
         }).is_err() {
-            tracing::warn!(room_id, media_id, "Failed to send cluster-wide kick event (Redis channel closed)");
+            tracing::warn!(room_id, media_id, "Failed to send cluster-wide kick event (Redis channel closed or full)");
         }
     }
 }
@@ -151,7 +151,7 @@ fn create_router(
     cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     connection_manager: Arc<synctv_cluster::sync::ConnectionManager>,
     jwt_service: synctv_core::service::JwtService,
-    redis_publish_tx: Option<mpsc::UnboundedSender<PublishRequest>>,
+    redis_publish_tx: Option<mpsc::Sender<PublishRequest>>,
     oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
     settings_service: Option<Arc<synctv_core::service::SettingsService>>,
     settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
@@ -368,9 +368,16 @@ fn create_router(
                     middleware::auth_rate_limit,
                 ))
         )
-        // Notification routes — rate limited (write: 30 req/min for mutations, read for GETs)
+        // Notification routes — split rate limits: read for GETs, write for mutations
         .merge(
-            notifications::create_notification_router()
+            notifications::create_notification_read_router()
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::read_rate_limit,
+                ))
+        )
+        .merge(
+            notifications::create_notification_write_router()
                 .route_layer(axum_middleware::from_fn_with_state(
                     state.clone(),
                     middleware::write_rate_limit,
@@ -380,12 +387,19 @@ fn create_router(
         .merge(auth_routes)
         .merge(media_routes)
         .merge(write_routes)
-        // OAuth2 read-only routes (no rate limit)
-        .route(
-            "/api/oauth2/:provider/authorize",
-            get(oauth2::get_authorize_url),
+        // OAuth2 read-only routes — rate limited (100 req/min)
+        .merge(
+            Router::new()
+                .route(
+                    "/api/oauth2/:provider/authorize",
+                    get(oauth2::get_authorize_url),
+                )
+                .route("/api/oauth2/providers", get(oauth2::list_providers))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::read_rate_limit,
+                ))
         )
-        .route("/api/oauth2/providers", get(oauth2::list_providers))
         // Read routes — rate limited (100 req/min)
         .merge(
             Router::new()
@@ -450,14 +464,21 @@ fn create_router(
                     middleware::websocket_rate_limit,
                 ))
         )
-        // WebRTC configuration endpoints
-        .route(
-            "/api/rooms/:room_id/webrtc/ice-servers",
-            get(webrtc::get_ice_servers),
-        )
-        .route(
-            "/api/rooms/:room_id/webrtc/network-quality",
-            get(webrtc::get_network_quality),
+        // WebRTC configuration endpoints — rate limited (100 req/min)
+        .merge(
+            Router::new()
+                .route(
+                    "/api/rooms/:room_id/webrtc/ice-servers",
+                    get(webrtc::get_ice_servers),
+                )
+                .route(
+                    "/api/rooms/:room_id/webrtc/network-quality",
+                    get(webrtc::get_network_quality),
+                )
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::read_rate_limit,
+                ))
         )
         // Admin routes (admin/root role required) — rate limited (30 req/min)
         .merge(
@@ -524,7 +545,7 @@ fn create_router(
         let x_room_id: HeaderName = "x-room-id".parse().unwrap_or_else(|_| HeaderName::from_static("x-room-id"));
         CorsLayer::new()
             .allow_origin(origins)
-            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE, Method::OPTIONS])
             .allow_headers([
                 axum::http::header::AUTHORIZATION,
                 axum::http::header::CONTENT_TYPE,
