@@ -133,6 +133,7 @@ async fn proxy_m3u8(
 
 /// Login to Emby/Jellyfin (validate API key)
 async fn login(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -164,6 +165,7 @@ async fn login(
 
 /// List Emby library items
 async fn list(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -195,6 +197,7 @@ async fn list(
 
 /// Get Emby user info
 async fn me(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,

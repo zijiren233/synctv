@@ -16,6 +16,17 @@ use crate::proto::client::{
     ListCreatedRoomsResponse,
 };
 
+/// Typed request for PATCH /api/user
+#[derive(serde::Deserialize)]
+pub struct UpdateUserRequest {
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub old_password: Option<String>,
+}
+
 /// Logout user
 pub async fn logout(
     _auth: AuthUser,
@@ -50,16 +61,16 @@ pub async fn get_me(
 pub async fn update_user(
     auth: AuthUser,
     State(state): State<AppState>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<UpdateUserRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     // Check if username update is requested
-    if let Some(username) = req.get("username").and_then(|v| v.as_str()) {
+    if let Some(ref username) = req.username {
         if username.is_empty() {
             return Err(super::AppError::bad_request("Username cannot be empty"));
         }
 
         let set_username_req = SetUsernameRequest {
-            new_username: username.to_string(),
+            new_username: username.clone(),
         };
 
         let response = state
@@ -68,8 +79,7 @@ pub async fn update_user(
             .await
             .map_err(super::AppError::internal_server_error)?;
 
-        // Extract username from user object
-        let new_username = response.user.as_ref().map_or_else(|| username.to_string(), |u| u.username.clone());
+        let new_username = response.user.as_ref().map_or_else(|| username.clone(), |u| u.username.clone());
 
         return Ok(Json(serde_json::json!({
             "message": "Username updated successfully",
@@ -78,11 +88,11 @@ pub async fn update_user(
     }
 
     // Check if password update is requested
-    if let Some(password) = req.get("password").and_then(|v| v.as_str()) {
+    if let Some(ref password) = req.password {
         // Old password is required to prevent unauthorized password changes
         // from stolen session tokens.
-        let old_password = req.get("old_password")
-            .and_then(|v| v.as_str())
+        let old_password = req.old_password
+            .as_deref()
             .ok_or_else(|| super::AppError::bad_request(
                 "old_password is required when changing password"
             ))?
@@ -90,7 +100,7 @@ pub async fn update_user(
 
         let set_password_req = SetPasswordRequest {
             old_password,
-            new_password: password.to_string(),
+            new_password: password.clone(),
         };
 
         let _response = state
@@ -107,14 +117,18 @@ pub async fn update_user(
     Err(super::AppError::bad_request("No valid update fields provided (username or password)"))
 }
 
-/// Get user's joined rooms
+/// Get user's joined rooms (paginated)
 pub async fn get_joined_rooms(
     auth: AuthUser,
     State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<ListParticipatedRoomsResponse>> {
+    let page = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1i32).max(1);
+    let page_size = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(20i32).clamp(1, 100);
+
     let response = state
         .client_api
-        .get_joined_rooms(&auth.user_id.to_string())
+        .get_joined_rooms(&auth.user_id.to_string(), page, page_size)
         .await
         .map_err(super::AppError::internal_server_error)?;
 

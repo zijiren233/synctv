@@ -61,8 +61,7 @@ impl BytesReader {
             });
         }
 
-        //here maybe optimised
-        Ok(self.buffer.clone().split_to(bytes_num))
+        Ok(BytesMut::from(&self.buffer[..bytes_num]))
     }
 
     pub fn read_bytes_cursor(
@@ -292,10 +291,6 @@ mod tests {
         pub fn new(reader: Rc<RefCell<BytesReader>>) -> Self {
             Self { reader }
         }
-
-        // pub fn read_u8(&mut self) -> u8 {
-        //     return self.reader.borrow_mut().read_u8().unwrap();
-        // }
 
         pub fn extend_from_slice(&mut self, data: &[u8]) {
             self.reader.borrow_mut().extend_from_slice(data).unwrap();

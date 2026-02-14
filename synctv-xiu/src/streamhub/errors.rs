@@ -80,11 +80,3 @@ impl From<String> for StreamHubError {
         }
     }
 }
-
-// impl From<CacheError> for ChannelError {
-//     fn from(error: CacheError) -> Self {
-//         ChannelError {
-//             value: ChannelErrorValue::CacheError(error),
-//         }
-//     }
-// }

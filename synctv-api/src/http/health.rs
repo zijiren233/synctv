@@ -23,7 +23,22 @@ use crate::http::AppState;
 use crate::observability::metrics;
 
 /// Health check and metrics router
+///
+/// Metrics endpoint is only exposed in development mode to prevent
+/// information disclosure in production. In production, use a separate
+/// metrics collection mechanism (e.g., Prometheus scraping on a private port).
 pub fn create_health_router() -> Router<AppState> {
+    let router = Router::new()
+        .route("/health", get(liveness_check))
+        .route("/health/live", get(liveness_check))
+        .route("/health/ready", get(readiness_check));
+
+    // Metrics are conditionally registered via create_health_router_with_config
+    router
+}
+
+/// Create health router with optional metrics endpoint (development mode only)
+pub fn create_health_router_with_metrics() -> Router<AppState> {
     Router::new()
         .route("/health", get(liveness_check))
         .route("/health/live", get(liveness_check))
@@ -137,17 +152,18 @@ async fn check_database_health(state: &AppState) -> Result<(), String> {
     }
 }
 
-/// Check Redis connectivity
+/// Check Redis connectivity by sending a PING command
 async fn check_redis_health(state: &AppState) -> Result<(), String> {
-    // Check if Redis is configured and accessible
-    if let Some(ref _redis_tx) = state.redis_publish_tx {
-        // If Redis publish channel exists, assume Redis is healthy
-        // A more thorough check would ping Redis directly
-        Ok(())
-    } else {
-        // Redis not configured - this is acceptable in some deployments
-        warn!("Redis is not configured");
-        Ok(())
+    match state.rate_limiter.health_check().await {
+        Ok(()) => Ok(()),
+        Err(e) if e.contains("not configured") => {
+            // Redis not configured - acceptable in some deployments
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Redis health check failed: {}", e);
+            Err(e)
+        }
     }
 }
 

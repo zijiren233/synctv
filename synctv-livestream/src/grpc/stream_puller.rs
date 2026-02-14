@@ -7,7 +7,7 @@ use synctv_xiu::streamhub::{
         StreamHubEventSender,
     },
     stream::StreamIdentifier,
-    utils::{RandomDigitCount, Uuid},
+    utils::Uuid,
 };
 use tokio::sync::{mpsc, oneshot};
 use tonic::Request;
@@ -162,6 +162,9 @@ impl GrpcStreamPuller {
 
         info!("Connected to remote publisher, receiving stream data");
 
+        let mut dropped_frames: u64 = 0;
+        const DROP_LOG_INTERVAL: u64 = 100;
+
         while let Some(packet_result) = stream.message().await? {
             let packet = packet_result;
 
@@ -187,8 +190,15 @@ impl GrpcStreamPuller {
             // Use try_send for non-blocking behavior
             // If channel is full, drop the packet (backpressure)
             if let Err(mpsc::error::TrySendError::Full(_)) = data_sender.try_send(frame_data) {
-                // Packet dropped due to backpressure - continue receiving
-                // Only break on actual errors (channel closed)
+                dropped_frames += 1;
+                if dropped_frames % DROP_LOG_INTERVAL == 1 {
+                    warn!(
+                        room_id = %self.room_id,
+                        media_id = %self.media_id,
+                        total_dropped = dropped_frames,
+                        "Frame dropped due to backpressure"
+                    );
+                }
             }
         }
 
@@ -213,7 +223,7 @@ impl GrpcStreamPuller {
 
     /// Publish to local `StreamHub` (similar to xiu `ClientSession::publish_to_stream_hub`)
     async fn publish_to_local_stream_hub(&mut self) -> anyhow::Result<FrameDataSender> {
-        let publisher_id = Uuid::new(RandomDigitCount::Four);
+        let publisher_id = Uuid::new();
 
         let publisher_info = PublisherInfo {
             id: publisher_id,

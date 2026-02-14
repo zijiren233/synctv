@@ -104,7 +104,7 @@ pub struct ConnectionManager {
     limits: Arc<ConnectionLimits>,
 
     /// Metrics
-    total_connections: Arc<AtomicU64>,
+    total_connections_ever: Arc<AtomicU64>,
     total_messages: Arc<AtomicU64>,
 
     /// Broadcast channel for disconnect signals
@@ -121,7 +121,7 @@ impl ConnectionManager {
             user_connections: Arc::new(DashMap::new()),
             room_connections: Arc::new(DashMap::new()),
             limits: Arc::new(limits),
-            total_connections: Arc::new(AtomicU64::new(0)),
+            total_connections_ever: Arc::new(AtomicU64::new(0)),
             total_messages: Arc::new(AtomicU64::new(0)),
             disconnect_tx: Arc::new(disconnect_tx),
         }
@@ -220,12 +220,12 @@ impl ConnectionManager {
         self.connections.insert(connection_id.clone(), conn_info);
 
         // Update metrics
-        self.total_connections.fetch_add(1, Ordering::Relaxed);
+        self.total_connections_ever.fetch_add(1, Ordering::Relaxed);
 
         info!(
             connection_id = %connection_id,
             user_id = %user_id.as_str(),
-            total_connections = self.connections.len(),
+            total_connections_ever = self.connections.len(),
             "Connection registered"
         );
 
@@ -369,8 +369,8 @@ impl ConnectionManager {
 
     /// Get total connections ever established
     #[must_use] 
-    pub fn total_connections(&self) -> u64 {
-        self.total_connections.load(Ordering::Relaxed)
+    pub fn total_connections_ever(&self) -> u64 {
+        self.total_connections_ever.load(Ordering::Relaxed)
     }
 
     /// Get total messages processed
@@ -422,7 +422,7 @@ impl ConnectionManager {
     pub fn metrics(&self) -> ConnectionMetrics {
         ConnectionMetrics {
             active_connections: self.connection_count(),
-            total_connections: self.total_connections(),
+            total_connections_ever: self.total_connections_ever(),
             total_messages: self.total_messages(),
             active_users: self.user_connections.len(),
             active_rooms: self.room_connections.len(),
@@ -526,7 +526,7 @@ impl Default for ConnectionManager {
 #[derive(Debug, Clone)]
 pub struct ConnectionMetrics {
     pub active_connections: usize,
-    pub total_connections: u64,
+    pub total_connections_ever: u64,
     pub total_messages: u64,
     pub active_users: usize,
     pub active_rooms: usize,
@@ -665,7 +665,7 @@ mod tests {
 
         let metrics = manager.metrics();
         assert_eq!(metrics.active_connections, 2);
-        assert_eq!(metrics.total_connections, 2);
+        assert_eq!(metrics.total_connections_ever, 2);
         assert_eq!(metrics.total_messages, 2);
         assert_eq!(metrics.active_users, 2);
     }

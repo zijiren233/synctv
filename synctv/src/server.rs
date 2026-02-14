@@ -117,7 +117,7 @@ impl SyncTvServer {
 
         // Start background connection cleanup (every 60 seconds)
         let _conn_cleanup = self.services.connection_manager.spawn_cleanup_task(
-            Duration::from_mins(1),
+            Duration::from_secs(60),
         );
 
         // Start gRPC server

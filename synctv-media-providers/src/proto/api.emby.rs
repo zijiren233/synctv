@@ -268,7 +268,7 @@ pub struct PlaybackInfoResp {
     pub media_source_info: ::prost::alloc::vec::Vec<MediaSourceInfo>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DeleteActiveEncodeingsReq {
+pub struct DeleteActiveEncodingsReq {
     #[prost(string, tag = "1")]
     pub host: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -324,9 +324,9 @@ pub mod emby_server {
             tonic::Response<super::PlaybackInfoResp>,
             tonic::Status,
         >;
-        async fn delete_active_encodeings(
+        async fn delete_active_encodings(
             &self,
-            request: tonic::Request<super::DeleteActiveEncodeingsReq>,
+            request: tonic::Request<super::DeleteActiveEncodingsReq>,
         ) -> std::result::Result<tonic::Response<super::Empty>, tonic::Status>;
     }
     #[derive(Debug)]
@@ -749,13 +749,13 @@ pub mod emby_server {
                     };
                     Box::pin(fut)
                 }
-                "/api.emby.Emby/DeleteActiveEncodeings" => {
+                "/api.emby.Emby/DeleteActiveEncodings" => {
                     #[allow(non_camel_case_types)]
-                    struct DeleteActiveEncodeingsSvc<T: Emby>(pub Arc<T>);
+                    struct DeleteActiveEncodingsSvc<T: Emby>(pub Arc<T>);
                     impl<
                         T: Emby,
-                    > tonic::server::UnaryService<super::DeleteActiveEncodeingsReq>
-                    for DeleteActiveEncodeingsSvc<T> {
+                    > tonic::server::UnaryService<super::DeleteActiveEncodingsReq>
+                    for DeleteActiveEncodingsSvc<T> {
                         type Response = super::Empty;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -763,11 +763,11 @@ pub mod emby_server {
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::DeleteActiveEncodeingsReq>,
+                            request: tonic::Request<super::DeleteActiveEncodingsReq>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Emby>::delete_active_encodeings(&inner, request).await
+                                <T as Emby>::delete_active_encodings(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -778,7 +778,7 @@ pub mod emby_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = DeleteActiveEncodeingsSvc(inner);
+                        let method = DeleteActiveEncodingsSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

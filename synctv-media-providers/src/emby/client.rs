@@ -32,6 +32,7 @@ pub struct EmbyClient {
     token: Option<String>,
     user_id: Option<String>,
     client: Client,
+    api_prefix: Option<String>,
 }
 
 impl EmbyClient {
@@ -42,6 +43,7 @@ impl EmbyClient {
             token: None,
             user_id: None,
             client: SHARED_CLIENT.clone(),
+            api_prefix: None,
         })
     }
 
@@ -56,7 +58,14 @@ impl EmbyClient {
             token: Some(token.into()),
             user_id: Some(user_id.into()),
             client: SHARED_CLIENT.clone(),
+            api_prefix: None,
         })
+    }
+
+    /// Set a custom API prefix (e.g., "/emby" or "/jellyfin").
+    /// When set, overrides the auto-detection based on hostname.
+    pub fn set_api_prefix(&mut self, prefix: impl Into<String>) {
+        self.api_prefix = Some(prefix.into());
     }
 
     /// Set authentication token and user ID
@@ -65,9 +74,14 @@ impl EmbyClient {
         self.user_id = Some(user_id.into());
     }
 
-    /// Get API prefix (/emby or /jellyfin)
+    /// Get API prefix (/emby or /jellyfin).
+    /// Uses the explicitly set prefix if available, otherwise auto-detects
+    /// based on whether the host URL contains "jellyfin".
     fn get_api_prefix(&self) -> &str {
-        if self.host.contains("jellyfin") || self.host.contains("/jellyfin") {
+        if let Some(ref prefix) = self.api_prefix {
+            return prefix;
+        }
+        if self.host.contains("jellyfin") {
             "/jellyfin"
         } else {
             "/emby"

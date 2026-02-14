@@ -10,9 +10,9 @@ use crate::{models::{UserId, RoomId}, Error, Result};
 /// JWT token type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
-    Access,  // 1 hour
-    Refresh, // 30 days
-    Guest,   // 4 hours (for guest sessions)
+    Access,  // default: 1 hour (configurable)
+    Refresh, // default: 30 days (configurable)
+    Guest,   // default: 4 hours (configurable)
 }
 
 /// JWT claims structure
@@ -101,6 +101,8 @@ pub struct JwtService {
     algorithm: Algorithm,
     access_token_duration_hours: u64,
     refresh_token_duration_days: u64,
+    guest_token_duration_hours: u64,
+    clock_skew_leeway_secs: u64,
 }
 
 impl std::fmt::Debug for JwtService {
@@ -126,7 +128,7 @@ impl JwtService {
     /// The secret must have sufficient entropy (at least 256 bits / 32 characters).
     /// Weak secrets will be rejected with an error.
     pub fn new(secret: &str) -> Result<Self> {
-        Self::with_durations(secret, 1, 30)
+        Self::with_durations(secret, 1, 30, 4, 60)
     }
 
     /// Create a new JWT service with custom token durations
@@ -134,6 +136,8 @@ impl JwtService {
         secret: &str,
         access_token_duration_hours: u64,
         refresh_token_duration_days: u64,
+        guest_token_duration_hours: u64,
+        clock_skew_leeway_secs: u64,
     ) -> Result<Self> {
         if secret.is_empty() {
             return Err(Error::Internal("JWT secret cannot be empty".to_string()));
@@ -158,6 +162,8 @@ impl JwtService {
             algorithm: Algorithm::HS256,
             access_token_duration_hours,
             refresh_token_duration_days,
+            guest_token_duration_hours,
+            clock_skew_leeway_secs,
         })
     }
 
@@ -221,7 +227,7 @@ impl JwtService {
         let duration = match token_type {
             TokenType::Access => Duration::hours(self.access_token_duration_hours as i64),
             TokenType::Refresh => Duration::days(self.refresh_token_duration_days as i64),
-            TokenType::Guest => Duration::hours(4),
+            TokenType::Guest => Duration::hours(self.guest_token_duration_hours as i64),
         };
 
         let claims = Claims {
@@ -248,7 +254,7 @@ impl JwtService {
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
         validation.validate_nbf = false;
-        validation.leeway = 60; // 60 seconds leeway for clock skew
+        validation.leeway = self.clock_skew_leeway_secs;
 
         let token_data: TokenData<Claims> = decode(token, &self.decoding_key, &validation)
             .map_err(|e| match e.kind() {
@@ -297,7 +303,7 @@ impl JwtService {
     /// * Guest JWT token string
     pub fn sign_guest_token(&self, room_id: &RoomId) -> Result<String> {
         let now = Utc::now();
-        let duration = Duration::hours(4); // Guest tokens expire after 4 hours
+        let duration = Duration::hours(self.guest_token_duration_hours as i64);
         let session_id = nanoid::nanoid!(16); // Generate random session ID
 
         let guest_claims = GuestClaims {
@@ -325,7 +331,7 @@ impl JwtService {
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
         validation.validate_nbf = false;
-        validation.leeway = 60; // 60 seconds leeway for clock skew
+        validation.leeway = self.clock_skew_leeway_secs;
 
         let token_data: TokenData<GuestClaims> = decode(token, &self.decoding_key, &validation)
             .map_err(|e| match e.kind() {
@@ -406,7 +412,7 @@ impl JwtService {
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
         validation.validate_nbf = false;
-        validation.leeway = 60; // 60 seconds leeway for clock skew
+        validation.leeway = self.clock_skew_leeway_secs;
 
         let token_data = decode(token, &self.decoding_key, &validation)
             .map_err(|e| match e.kind() {

@@ -353,6 +353,8 @@ fn load_jwt_service(config: &Config) -> Result<JwtService, anyhow::Error> {
         &config.jwt.secret,
         config.jwt.access_token_duration_hours,
         config.jwt.refresh_token_duration_days,
+        config.jwt.guest_token_duration_hours,
+        config.jwt.clock_skew_leeway_secs,
     )
     .map_err(|e| anyhow::anyhow!("Failed to initialize JWT service: {e}"))
 }

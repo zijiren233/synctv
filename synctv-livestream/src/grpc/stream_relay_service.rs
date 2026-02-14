@@ -3,7 +3,7 @@ use std::sync::Arc;
 use synctv_xiu::streamhub::{
     define::{NotifyInfo, StreamHubEvent, StreamHubEventSender, SubscribeType, SubscriberInfo},
     stream::StreamIdentifier,
-    utils::{RandomDigitCount, Uuid},
+    utils::Uuid,
 };
 use tokio::sync::{mpsc, Mutex};
 use tokio_stream::{wrappers::ReceiverStream, Stream};
@@ -74,7 +74,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         }
 
         // Subscribe to StreamHub for live data (GOP is sent automatically by StreamHub)
-        let subscriber_id = Uuid::new(RandomDigitCount::Four);
+        let subscriber_id = Uuid::new();
         let sub_info = SubscriberInfo {
             id: subscriber_id,
             sub_type: SubscribeType::RtmpPull,

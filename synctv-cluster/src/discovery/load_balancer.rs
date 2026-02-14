@@ -89,11 +89,14 @@ impl LoadBalancer {
                     .clone()
             }
             LoadBalancingStrategy::RoundRobin => {
+                // Sort by node_id for stable ordering across calls
+                let mut sorted = nodes;
+                sorted.sort_by(|a, b| a.node_id.cmp(&b.node_id));
                 let index = self
                     .round_robin_index
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
-                    % nodes.len();
-                nodes[index].node_id.clone()
+                    % sorted.len();
+                sorted[index].node_id.clone()
             }
             LoadBalancingStrategy::LeastConnections => {
                 // Select node with fewest connections based on metadata.

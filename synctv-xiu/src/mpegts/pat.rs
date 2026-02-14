@@ -81,17 +81,6 @@ impl PatMuxer {
         let crc32_value = crc32::gen_crc32(0xffffffff, self.bytes_writer.get_current_bytes());
         self.bytes_writer.write_u32::<LittleEndian>(crc32_value)?;
 
-        // let mut test = BytesWriter::new();
-        // test.write_u32::<LittleEndian>(crc32_value)?;
-        // let a0 = test.get(0).unwrap().clone();
-        // let aa0 = crc32_value & 0xFF;
-        // let b0 = test.get(1).unwrap().clone();
-        // let bb0 = (crc32_value >> 8) & 0xFF;
-        // let c0 = test.get(2).unwrap().clone();
-        // let cc0 = (crc32_value >> 16) & 0xFF;
-        // let d0 = test.get(3).unwrap().clone();
-        // let dd0 = (crc32_value >> 24) & 0xFF;
-
         Ok(self.bytes_writer.extract_current_bytes())
     }
 }

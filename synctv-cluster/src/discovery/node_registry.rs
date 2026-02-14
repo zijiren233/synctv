@@ -187,7 +187,7 @@ impl NodeRegistry {
 
                 -- Update node info with new epoch and current timestamp
                 new_node['epoch'] = new_epoch
-                new_node['last_heartbeat'] = nil  -- Let the Go side set this
+                new_node['last_heartbeat'] = ARGV[5]
 
                 -- Write with TTL
                 local final_json = cjson.encode(new_node)
@@ -197,6 +197,7 @@ impl NodeRegistry {
                 "#,
             );
 
+            let now_rfc3339 = Utc::now().to_rfc3339();
             let new_epoch: u64 = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 script
@@ -205,6 +206,7 @@ impl NodeRegistry {
                     .arg(ttl)
                     .arg(local_epoch)
                     .arg(&self.node_id)
+                    .arg(&now_rfc3339)
                     .invoke_async(&mut conn),
             )
             .await
@@ -237,8 +239,8 @@ impl NodeRegistry {
 
     /// Send heartbeat to keep this node alive with fencing token validation
     ///
-    /// If the node's epoch in Redis doesn't match our local epoch, this indicates
-    /// another registration happened (possibly split-brain). We should re-register.
+    /// Uses an atomic Lua script to check epoch == expected_epoch before writing,
+    /// preventing stale heartbeats from overwriting newer registrations.
     pub async fn heartbeat(&self) -> Result<()> {
         if let Some(ref client) = self.redis_client {
             let mut conn = timeout(
@@ -251,63 +253,91 @@ impl NodeRegistry {
 
             let key = Self::node_key(&self.node_id);
             let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
+            let now = Utc::now();
+            let now_rfc3339 = now.to_rfc3339();
+            let ttl = self.heartbeat_timeout_secs * 2;
 
-            // Read current value to verify epoch
-            let existing: Option<String> = timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("GET")
-                    .arg(&key)
-                    .query_async(&mut conn),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
-
-            if let Some(existing) = existing {
-                if let Ok(existing_info) = serde_json::from_str::<NodeInfo>(&existing) {
-                    // Check for epoch mismatch (indicates split-brain or re-registration)
-                    if existing_info.epoch != current_epoch {
-                        tracing::warn!(
-                            node_id = %self.node_id,
-                            local_epoch = current_epoch,
-                            remote_epoch = existing_info.epoch,
-                            "Epoch mismatch during heartbeat, node may need re-registration"
-                        );
-                        // Update our epoch to match the remote one
-                        self.current_epoch.store(
-                            existing_info.epoch.max(current_epoch),
-                            std::sync::atomic::Ordering::SeqCst
-                        );
-                    }
-                }
-            }
-
-            // Update heartbeat timestamp and epoch in Redis
-            let node_info = {
+            // Build updated node info from local cache
+            let node_json = {
                 let nodes = self.local_nodes.read().await;
                 let mut info = nodes.get(&self.node_id).cloned().unwrap_or_else(|| {
                     NodeInfo::new(self.node_id.clone(), String::new(), String::new())
                 });
-                info.last_heartbeat = Utc::now();
+                info.last_heartbeat = now;
                 info.epoch = current_epoch;
-                info
+                serde_json::to_string(&info)
+                    .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?
             };
 
-            let value = serde_json::to_string(&node_info)
-                .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?;
+            // Atomic Lua script: check epoch matches before writing heartbeat
+            // Returns:
+            //   -1 if key doesn't exist (need re-registration)
+            //   -2 if epoch mismatch (returns remote epoch as second value via error message)
+            //   current_epoch on success
+            let script = redis::Script::new(
+                r#"
+                local key = KEYS[1]
+                local expected_epoch = tonumber(ARGV[1])
+                local new_node_json = ARGV[2]
+                local ttl = tonumber(ARGV[3])
+                local now_str = ARGV[4]
 
-            // Update value with expiration (atomic SETEX)
-            timeout(
+                local existing = redis.call('GET', key)
+                if not existing then
+                    return -1
+                end
+
+                local existing_info = cjson.decode(existing)
+                local remote_epoch = existing_info.epoch or 0
+
+                if remote_epoch ~= expected_epoch then
+                    -- Epoch mismatch: return the remote epoch so caller can update
+                    return -remote_epoch
+                end
+
+                -- Epoch matches: update heartbeat and refresh TTL
+                local node = cjson.decode(new_node_json)
+                node['last_heartbeat'] = now_str
+                node['epoch'] = expected_epoch
+                local final_json = cjson.encode(node)
+                redis.call('SETEX', key, ttl, final_json)
+                return expected_epoch
+                "#,
+            );
+
+            let result: i64 = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("SETEX")
-                    .arg(&key)
-                    .arg(self.heartbeat_timeout_secs * 2)
-                    .arg(&value)
-                    .query_async::<()>(&mut conn),
+                script
+                    .key(&key)
+                    .arg(current_epoch)
+                    .arg(&node_json)
+                    .arg(ttl)
+                    .arg(&now_rfc3339)
+                    .invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis SETEX timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis SETEX failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis heartbeat script timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis heartbeat script failed: {e}")))?;
+
+            if result == -1 {
+                tracing::warn!(
+                    node_id = %self.node_id,
+                    "Heartbeat failed: key not found, node needs re-registration"
+                );
+            } else if result < 0 {
+                let remote_epoch = (-result) as u64;
+                tracing::warn!(
+                    node_id = %self.node_id,
+                    local_epoch = current_epoch,
+                    remote_epoch = remote_epoch,
+                    "Epoch mismatch during heartbeat, node may need re-registration"
+                );
+                // Update our epoch to match the remote one
+                self.current_epoch.store(
+                    remote_epoch.max(current_epoch),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
         }
 
         // Update local heartbeat time
@@ -321,7 +351,7 @@ impl NodeRegistry {
 
     /// Unregister this node with fencing token validation
     ///
-    /// Only allows unregistration if our epoch matches Redis epoch.
+    /// Uses an atomic Lua script to check epoch <= local_epoch before deleting.
     /// Prevents stale nodes from unregistering newer registrations.
     pub async fn unregister(&self) -> Result<()> {
         if let Some(ref client) = self.redis_client {
@@ -336,45 +366,49 @@ impl NodeRegistry {
             let key = Self::node_key(&self.node_id);
             let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
 
-            // Read and verify epoch before deleting
-            let existing: Option<String> = timeout(
+            // Atomic Lua script: only delete if existing epoch <= our epoch
+            // Returns 1 if deleted, 0 if skipped (newer epoch exists), -1 if key not found
+            let script = redis::Script::new(
+                r#"
+                local key = KEYS[1]
+                local local_epoch = tonumber(ARGV[1])
+
+                local existing = redis.call('GET', key)
+                if not existing then
+                    return -1
+                end
+
+                local existing_info = cjson.decode(existing)
+                local remote_epoch = existing_info.epoch or 0
+
+                if remote_epoch > local_epoch then
+                    -- Newer registration exists, don't delete
+                    return 0
+                end
+
+                redis.call('DEL', key)
+                return 1
+                "#,
+            );
+
+            let result: i64 = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("GET")
-                    .arg(&key)
-                    .query_async(&mut conn),
+                script
+                    .key(&key)
+                    .arg(current_epoch)
+                    .invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis unregister script timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis unregister script failed: {e}")))?;
 
-            if let Some(existing) = existing {
-                if let Ok(existing_info) = serde_json::from_str::<NodeInfo>(&existing) {
-                    if existing_info.epoch > current_epoch {
-                        // A newer registration exists, don't delete it
-                        tracing::warn!(
-                            node_id = %self.node_id,
-                            local_epoch = current_epoch,
-                            remote_epoch = existing_info.epoch,
-                            "Skipping unregister: newer registration exists in Redis"
-                        );
-                        // Still remove from local cache
-                        let mut nodes = self.local_nodes.write().await;
-                        nodes.remove(&self.node_id);
-                        return Ok(());
-                    }
-                }
+            if result == 0 {
+                tracing::warn!(
+                    node_id = %self.node_id,
+                    local_epoch = current_epoch,
+                    "Skipping unregister: newer registration exists in Redis"
+                );
             }
-
-            // Safe to delete
-            timeout(
-                Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("DEL")
-                    .arg(&key)
-                    .query_async::<()>(&mut conn),
-            )
-            .await
-            .map_err(|_| Error::Timeout("Redis DEL timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis DEL failed: {e}")))?;
         }
 
         // Remove from local cache
@@ -385,6 +419,9 @@ impl NodeRegistry {
     }
 
     /// Register a remote node (called by gRPC handler when another node joins)
+    ///
+    /// Uses an atomic Lua script that only allows registration if the incoming
+    /// epoch >= existing epoch, preventing stale registrations from overwriting newer ones.
     pub async fn register_remote(&self, node_info: NodeInfo) -> Result<()> {
         if let Some(ref client) = self.redis_client {
             let mut conn = timeout(
@@ -398,18 +435,52 @@ impl NodeRegistry {
             let key = Self::node_key(&node_info.node_id);
             let value = serde_json::to_string(&node_info)
                 .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?;
+            let ttl = self.heartbeat_timeout_secs * 2;
 
-            timeout(
+            // Atomic Lua script: only register if incoming epoch >= existing epoch
+            // Returns 1 if written, 0 if rejected (existing epoch is higher)
+            let script = redis::Script::new(
+                r#"
+                local key = KEYS[1]
+                local new_json = ARGV[1]
+                local ttl = tonumber(ARGV[2])
+                local incoming_epoch = tonumber(ARGV[3])
+
+                local existing = redis.call('GET', key)
+                if existing then
+                    local existing_info = cjson.decode(existing)
+                    local existing_epoch = existing_info.epoch or 0
+                    if existing_epoch > incoming_epoch then
+                        return 0
+                    end
+                end
+
+                redis.call('SETEX', key, ttl, new_json)
+                return 1
+                "#,
+            );
+
+            let result: i64 = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
-                redis::cmd("SETEX")
-                    .arg(&key)
-                    .arg(self.heartbeat_timeout_secs * 2)
+                script
+                    .key(&key)
                     .arg(&value)
-                    .query_async::<()>(&mut conn),
+                    .arg(ttl)
+                    .arg(node_info.epoch)
+                    .invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis SETEX timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis SETEX failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis register_remote script timed out".to_string()))?
+            .map_err(|e| Error::Database(format!("Redis register_remote script failed: {e}")))?;
+
+            if result == 0 {
+                tracing::warn!(
+                    node_id = %node_info.node_id,
+                    incoming_epoch = node_info.epoch,
+                    "Remote registration rejected: existing node has higher epoch"
+                );
+                return Ok(());
+            }
         }
 
         let mut nodes = self.local_nodes.write().await;
@@ -544,18 +615,21 @@ impl NodeRegistry {
             }
 
             let mut nodes = Vec::new();
-            for key in keys {
-                let value: Option<String> = timeout(
+            if !keys.is_empty() {
+                // Use MGET to fetch all values in one round trip instead of N individual GETs
+                let mut cmd = redis::cmd("MGET");
+                for key in &keys {
+                    cmd.arg(key);
+                }
+                let values: Vec<Option<String>> = timeout(
                     Duration::from_secs(REDIS_TIMEOUT_SECS),
-                    redis::cmd("GET")
-                        .arg(&key)
-                        .query_async(&mut conn),
+                    cmd.query_async(&mut conn),
                 )
                 .await
-                .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
-                .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+                .map_err(|_| Error::Timeout("Redis MGET timed out".to_string()))?
+                .map_err(|e| Error::Database(format!("Redis MGET failed: {e}")))?;
 
-                if let Some(value) = value {
+                for value in values.into_iter().flatten() {
                     if let Ok(node_info) = serde_json::from_str::<NodeInfo>(&value) {
                         if !node_info.is_stale(self.heartbeat_timeout_secs) {
                             nodes.push(node_info);

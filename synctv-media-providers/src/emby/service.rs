@@ -5,7 +5,7 @@
 
 use super::{client::EmbyClient, EmbyError};
 use crate::grpc::emby::{
-    DeleteActiveEncodeingsReq, Empty, FsListReq, FsListResp, GetItemReq, GetItemsReq,
+    DeleteActiveEncodingsReq, Empty, FsListReq, FsListResp, GetItemReq, GetItemsReq,
     GetItemsResp, Item, LoginReq, LoginResp, LogoutReq, MeReq, MeResp,
     PlaybackInfoReq, PlaybackInfoResp, SystemInfoReq, SystemInfoResp,
 };
@@ -32,7 +32,7 @@ pub trait EmbyInterface: Send + Sync {
 
     async fn playback_info(&self, request: PlaybackInfoReq) -> Result<PlaybackInfoResp, EmbyError>;
 
-    async fn delete_active_encodeings(&self, request: DeleteActiveEncodeingsReq) -> Result<Empty, EmbyError>;
+    async fn delete_active_encodings(&self, request: DeleteActiveEncodingsReq) -> Result<Empty, EmbyError>;
 }
 
 /// Emby service implementation
@@ -175,7 +175,7 @@ impl EmbyInterface for EmbyService {
         Ok(playback_info.into())
     }
 
-    async fn delete_active_encodeings(&self, request: DeleteActiveEncodeingsReq) -> Result<Empty, EmbyError> {
+    async fn delete_active_encodings(&self, request: DeleteActiveEncodingsReq) -> Result<Empty, EmbyError> {
         let client = EmbyClient::with_credentials(&request.host, &request.token, String::new())?;
         client.delete_active_encodings(&request.play_session_id).await?;
         Ok(Empty {})

@@ -68,7 +68,7 @@ impl Common {
         let (init_producer, init_consumer) = mpsc::channel(FRAME_DATA_CHANNEL_CAPACITY);
 
         Self {
-            session_id: Uuid::new(crate::streamhub::utils::RandomDigitCount::Four),
+            session_id: Uuid::new(),
             packetizer,
 
             data_sender: init_producer,
@@ -80,11 +80,9 @@ impl Common {
             request_url: String::default(),
             stream_handler: Arc::new(RtmpStreamHandler::new()),
             statistic_data_sender: None,
-            //cache: None,
         }
     }
     pub async fn send_channel_data(&mut self) -> Result<(), SessionError> {
-        let mut retry_times = 0;
         loop {
             if let Some(data) = self.data_receiver.recv().await {
                 match data {
@@ -99,7 +97,7 @@ impl Common {
                                 data_size,
                                 duration: 0,
                             };
-                            if let Err(err) = sender.send(statistic_audio_data) {
+                            if let Err(err) = sender.try_send(statistic_audio_data) {
                                 log::error!("send statistic_data err: {err}");
                             }
                         }
@@ -116,7 +114,7 @@ impl Common {
                                 is_key_frame: None,
                                 duration: 0,
                             };
-                            if let Err(err) = sender.send(statistic_video_data) {
+                            if let Err(err) = sender.try_send(statistic_video_data) {
                                 log::error!("send statistic_data err: {err}");
                             }
                         }
@@ -127,16 +125,10 @@ impl Common {
                     _ => {}
                 }
             } else {
-                retry_times += 1;
-                log::debug!(
-                    "send_channel_data: no data receives ,retry {retry_times} times!"
-                );
-
-                if retry_times > 10 {
-                    return Err(SessionError {
-                        value: SessionErrorValue::NoMediaDataReceived,
-                    });
-                }
+                // recv() returning None means all senders are dropped -- channel is permanently closed.
+                return Err(SessionError {
+                    value: SessionErrorValue::NoMediaDataReceived,
+                });
             }
         }
     }
@@ -385,7 +377,7 @@ impl Common {
                 start_time: chrono::Local::now(),
                 sub_type: SubscribeType::RtmpPull,
             };
-            if let Err(err) = sender.send(statistic_subscriber) {
+            if let Err(err) = sender.try_send(statistic_subscriber) {
                 log::error!("send statistic_subscriber err: {err}");
             }
         }
@@ -456,7 +448,7 @@ impl Common {
                 remote_addr,
                 start_time: chrono::Local::now(),
             };
-            if let Err(err) = sender.send(statistic_publisher) {
+            if let Err(err) = sender.try_send(statistic_publisher) {
                 log::error!("send statistic_publisher err: {err}");
             }
         }

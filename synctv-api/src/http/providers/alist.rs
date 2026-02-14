@@ -133,6 +133,7 @@ async fn proxy_m3u8(
 
 /// Login to Alist
 async fn login(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -165,6 +166,7 @@ async fn login(
 
 /// List Alist directory
 async fn list(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -196,6 +198,7 @@ async fn list(
 
 /// Get Alist user info
 async fn me(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,

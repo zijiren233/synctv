@@ -9,6 +9,16 @@ use super::alist::{
 use crate::alist::{AlistInterface, AlistService as AlistServiceImpl};
 use tonic::{Request, Response, Status};
 
+/// Validate that a host string is a non-empty, valid URL.
+fn validate_host(host: &str) -> Result<(), Status> {
+    if host.is_empty() {
+        return Err(Status::invalid_argument("host must not be empty"));
+    }
+    url::Url::parse(host)
+        .map_err(|e| Status::invalid_argument(format!("invalid host URL: {e}")))?;
+    Ok(())
+}
+
 /// Alist gRPC server
 ///
 /// Thin wrapper that delegates to `AlistService` for actual implementation.
@@ -35,8 +45,8 @@ impl Default for AlistService {
 impl Alist for AlistService {
     async fn login(&self, request: Request<LoginReq>) -> Result<Response<LoginResp>, Status> {
         let req = request.into_inner();
+        validate_host(&req.host)?;
 
-        // Delegate to service - pass request directly
         let token = self
             .service
             .login(req)
@@ -48,8 +58,8 @@ impl Alist for AlistService {
 
     async fn me(&self, request: Request<MeReq>) -> Result<Response<MeResp>, Status> {
         let req = request.into_inner();
+        validate_host(&req.host)?;
 
-        // Delegate to service - pass request directly, return response directly
         let resp = self
             .service
             .me(req)
@@ -61,8 +71,8 @@ impl Alist for AlistService {
 
     async fn fs_get(&self, request: Request<FsGetReq>) -> Result<Response<FsGetResp>, Status> {
         let req = request.into_inner();
+        validate_host(&req.host)?;
 
-        // Delegate to service - pass request directly, return response directly
         let resp = self
             .service
             .fs_get(req)
@@ -74,8 +84,8 @@ impl Alist for AlistService {
 
     async fn fs_list(&self, request: Request<FsListReq>) -> Result<Response<FsListResp>, Status> {
         let req = request.into_inner();
+        validate_host(&req.host)?;
 
-        // Delegate to service - pass request directly, return response directly
         let resp = self
             .service
             .fs_list(req)
@@ -90,8 +100,8 @@ impl Alist for AlistService {
         request: Request<FsOtherReq>,
     ) -> Result<Response<FsOtherResp>, Status> {
         let req = request.into_inner();
+        validate_host(&req.host)?;
 
-        // Delegate to service - pass request directly, return response directly
         let resp = self
             .service
             .fs_other(req)
@@ -106,8 +116,8 @@ impl Alist for AlistService {
         request: Request<FsSearchReq>,
     ) -> Result<Response<FsSearchResp>, Status> {
         let req = request.into_inner();
+        validate_host(&req.host)?;
 
-        // Delegate to service - pass request directly, return response directly
         let resp = self
             .service
             .fs_search(req)

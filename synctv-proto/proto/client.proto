@@ -154,7 +154,6 @@ message Room {
 message Media {
     string id = 1;
     string room_id = 2;
-    string url = 3; // Deprecated: Use source_config instead
     string provider = 4; // bilibili, alist, emby, direct (also known as source_provider)
     string title = 5; // Also known as name
     bytes metadata = 6; // JSON metadata
@@ -445,7 +444,6 @@ message SetCurrentMediaResponse {
 
 message AddMediaRequest {
     string playlist_id = 1; // Target playlist ID
-    string url = 2; // Deprecated: Use source_config instead
     string provider = 3; // Optional, provider type name (e.g., "bilibili", "alist")
     string provider_instance_name = 4; // Optional, specific provider instance (e.g., "bilibili_main")
     bytes source_config = 5; // JSON source config (e.g., {"url": "...", "path": "..."})
@@ -595,6 +593,7 @@ message GetPlaybackStateResponse {
 
 // Real-time Messaging
 message ClientMessage {
+    reserved 2;
     oneof message {
         ChatMessageSend chat = 1;
         HeartbeatMessage heartbeat = 3;
@@ -832,6 +831,7 @@ message GetPublicSettingsResponse {
     // User settings
     bool signup_need_review = 9;
     bool enable_password_signup = 10;
+    reserved 16, 17;
     bool enable_guest = 18;
 
     // Proxy settings
@@ -900,6 +900,7 @@ message MediaAdded {
 message MediaRemoved {
     string room_id = 1;
     string media_id = 2;
+    reserved 3;
     string removed_by = 4; // Username
     string removed_by_user_id = 5; // User ID
 }

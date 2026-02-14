@@ -81,6 +81,11 @@ macro_rules! setting {
 }
 
 /// Raw settings storage - shared across all settings
+///
+/// Uses `std::sync::RwLock` (not `tokio::sync::RwLock`) because all lock-guarded
+/// operations are fast, synchronous HashMap lookups/inserts with no `.await` points.
+/// This avoids the overhead of async RwLock and is safe since the lock is never
+/// held across an await point.
 #[derive(Clone)]
 pub struct SettingsStorage {
     inner: Arc<RwLock<HashMap<String, String, BuildHasherDefault<DefaultHasher>>>>,
@@ -170,6 +175,9 @@ impl SettingsStorage {
 /// - `Clone` - for copying values
 /// - `Display` - for formatting to string (via `to_string()`)
 /// - `std::str::FromStr` - for parsing from string
+///
+/// Uses `std::sync::RwLock` for cache fields because `get()` is synchronous
+/// and only performs fast in-memory operations (no `.await` while lock is held).
 pub struct Setting<T>
 where
     T: Clone + Display + std::str::FromStr + Send + Sync + 'static,

@@ -69,12 +69,15 @@ impl NotificationRepository {
         }
     }
 
-    /// List notifications for a user with pagination and filters
-    pub async fn list_by_user(
+    /// List notifications for a user with pagination, filters, and total count.
+    ///
+    /// Uses `COUNT(*) OVER()` window function to return both the list and total count
+    /// in a single query, avoiding a separate count round trip.
+    pub async fn list_by_user_with_count(
         &self,
         user_id: &UserId,
         query: &NotificationListQuery,
-    ) -> Result<Vec<Notification>> {
+    ) -> Result<(Vec<Notification>, i64)> {
         let page = query.page.unwrap_or(1).max(1);
         let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
         let offset = (page - 1) * page_size;
@@ -83,7 +86,8 @@ impl NotificationRepository {
             if let Some(is_read) = query.is_read {
                 sqlx::query(
                     r"
-                    SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
+                    SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at,
+                           COUNT(*) OVER() AS total_count
                     FROM notifications
                     WHERE user_id = $1 AND type = $2 AND is_read = $3
                     ORDER BY created_at DESC
@@ -100,7 +104,8 @@ impl NotificationRepository {
             } else {
                 sqlx::query(
                     r"
-                    SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
+                    SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at,
+                           COUNT(*) OVER() AS total_count
                     FROM notifications
                     WHERE user_id = $1 AND type = $2
                     ORDER BY created_at DESC
@@ -117,7 +122,8 @@ impl NotificationRepository {
         } else if let Some(is_read) = query.is_read {
             sqlx::query(
                 r"
-                SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
+                SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at,
+                       COUNT(*) OVER() AS total_count
                 FROM notifications
                 WHERE user_id = $1 AND is_read = $2
                 ORDER BY created_at DESC
@@ -133,7 +139,8 @@ impl NotificationRepository {
         } else {
             sqlx::query(
                 r"
-                SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
+                SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at,
+                       COUNT(*) OVER() AS total_count
                 FROM notifications
                 WHERE user_id = $1
                 ORDER BY created_at DESC
@@ -147,9 +154,12 @@ impl NotificationRepository {
             .await?
         };
 
-        rows.into_iter()
+        let total = rows.first().map_or(0i64, |row| row.try_get("total_count").unwrap_or(0));
+        let notifications: Result<Vec<Notification>> = rows.into_iter()
             .map(|row| self.row_to_notification(row))
-            .collect()
+            .collect();
+
+        Ok((notifications?, total))
     }
 
     /// Count notifications for a user (for pagination)

@@ -183,34 +183,27 @@ impl ClusterService for ClusterServer {
 
     /// Synchronize room state between nodes
     ///
-    /// NOTE: Room state synchronization is handled via Redis Pub/Sub in the sync module.
-    /// This RPC method is provided for future direct node-to-node state sync but is
-    /// currently not implemented. Use Redis Pub/Sub for real-time state sync.
+    /// Not implemented - room state synchronization is handled via Redis Pub/Sub
+    /// in the sync module.
     async fn sync_room_state(
         &self,
         _request: Request<SyncRoomStateRequest>,
     ) -> std::result::Result<Response<SyncRoomStateResponse>, Status> {
-        // Room state synchronization is handled via Redis Pub/Sub in the sync module
-        // Return empty response - clients should use Redis Pub/Sub for real-time sync
-        tracing::debug!("sync_room_state called - use Redis Pub/Sub for real-time sync");
-        Ok(Response::new(SyncRoomStateResponse { state: None }))
+        Err(Status::unimplemented(
+            "sync_room_state is not implemented; use Redis Pub/Sub for real-time sync",
+        ))
     }
 
     /// Broadcast an event to all nodes
     ///
-    /// NOTE: Events are broadcast via Redis Pub/Sub through ClusterManager.
-    /// This RPC method returns success with 0 nodes reached to indicate
-    /// the caller should use Redis Pub/Sub for actual broadcasting.
+    /// Not implemented - events are broadcast via Redis Pub/Sub through ClusterManager.
     async fn broadcast_event(
         &self,
         _request: Request<BroadcastEventRequest>,
     ) -> std::result::Result<Response<BroadcastEventResponse>, Status> {
-        // Events are broadcast via Redis Pub/Sub through ClusterManager
-        tracing::debug!("broadcast_event called - use ClusterManager for event broadcasting");
-        Ok(Response::new(BroadcastEventResponse {
-            success: true,
-            nodes_reached: 0, // Indicates Redis Pub/Sub should be used
-        }))
+        Err(Status::unimplemented(
+            "broadcast_event is not implemented; use ClusterManager for event broadcasting",
+        ))
     }
 
     /// Get online status of users on this node

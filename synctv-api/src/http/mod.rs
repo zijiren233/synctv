@@ -44,6 +44,7 @@ use synctv_core::repository::UserProviderCredentialRepository;
 use synctv_core::service::{RemoteProviderManager, RoomService, UserService};
 use synctv_livestream::api::LiveStreamingInfrastructure;
 use tokio::sync::mpsc;
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 pub use error::{AppError, AppResult};
@@ -345,9 +346,16 @@ fn create_router(
             middleware::auth_rate_limit,
         ));
 
+    // Use health router with metrics only in development mode
+    let health_router = if config.server.development_mode {
+        health::create_health_router_with_metrics()
+    } else {
+        health::create_health_router()
+    };
+
     let router = Router::new()
-        // Health check endpoints (for monitoring probes)
-        .merge(health::create_health_router())
+        // Health check endpoints (for monitoring probes; metrics only in dev mode)
+        .merge(health_router)
         // Public endpoints (no authentication required)
         .merge(public::create_public_router())
         // Email verification and password reset (rate-limited)
@@ -360,8 +368,14 @@ fn create_router(
                     middleware::auth_rate_limit,
                 ))
         )
-        // Notification routes
-        .merge(notifications::create_notification_router())
+        // Notification routes — rate limited (write: 30 req/min for mutations, read for GETs)
+        .merge(
+            notifications::create_notification_router()
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::write_rate_limit,
+                ))
+        )
         // Rate-limited route groups
         .merge(auth_routes)
         .merge(media_routes)
@@ -372,38 +386,46 @@ fn create_router(
             get(oauth2::get_authorize_url),
         )
         .route("/api/oauth2/providers", get(oauth2::list_providers))
-        // User read routes
-        .route("/api/user", get(user::get_me))
-        .route("/api/user/rooms", get(user::get_joined_rooms))
-        .route("/api/user/rooms/created", get(user::list_created_rooms))
-        // WebSocket ticket route (for secure WebSocket authentication)
-        .route("/api/tickets", post(ticket::create_ticket))
-        // Room discovery routes (public)
-        .route("/api/rooms", get(room::list_or_get_rooms))
-        .route("/api/rooms/hot", get(room::get_hot_rooms))
-        .route("/api/rooms/:room_id/check", get(room::check_room))
-        // Room read routes
-        .route("/api/rooms/:room_id", get(room::get_room))
-        .route("/api/rooms/:room_id/settings", get(room::get_room_settings))
-        .route("/api/rooms/:room_id/members", get(room::get_room_members))
-        // Playlist read routes
-        .route("/api/rooms/:room_id/playlists", get(room::list_playlists))
-        // Chat history
-        .route("/api/rooms/:room_id/chat/history", get(room::get_chat_history))
-        // Media read routes
-        .route("/api/rooms/:room_id/media", get(room::get_playlist))
-        // Movie info endpoint (resolves provider playback)
-        .route(
-            "/api/rooms/:room_id/movie/:media_id",
-            get(room::get_movie_info),
+        // Read routes — rate limited (100 req/min)
+        .merge(
+            Router::new()
+                // User read routes
+                .route("/api/user", get(user::get_me))
+                .route("/api/user/rooms", get(user::get_joined_rooms))
+                .route("/api/user/rooms/created", get(user::list_created_rooms))
+                // WebSocket ticket route (for secure WebSocket authentication)
+                .route("/api/tickets", post(ticket::create_ticket))
+                // Room discovery routes (public)
+                .route("/api/rooms", get(room::list_or_get_rooms))
+                .route("/api/rooms/hot", get(room::get_hot_rooms))
+                .route("/api/rooms/:room_id/check", get(room::check_room))
+                // Room read routes
+                .route("/api/rooms/:room_id", get(room::get_room))
+                .route("/api/rooms/:room_id/settings", get(room::get_room_settings))
+                .route("/api/rooms/:room_id/members", get(room::get_room_members))
+                // Playlist read routes
+                .route("/api/rooms/:room_id/playlists", get(room::list_playlists))
+                // Chat history
+                .route("/api/rooms/:room_id/chat/history", get(room::get_chat_history))
+                // Media read routes
+                .route("/api/rooms/:room_id/media", get(room::get_playlist))
+                // Movie info endpoint (resolves provider playback)
+                .route(
+                    "/api/rooms/:room_id/movie/:media_id",
+                    get(room::get_movie_info),
+                )
+                // Dynamic playlist routes
+                .route(
+                    "/api/rooms/:room_id/playlists/:playlist_id/items",
+                    get(media::list_playlist_items),
+                )
+                // Playback control - read
+                .route("/api/rooms/:room_id/playback", get(room::get_playback_state))
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::read_rate_limit,
+                ))
         )
-        // Dynamic playlist routes
-        .route(
-            "/api/rooms/:room_id/playlists/:playlist_id/items",
-            get(media::list_playlist_items),
-        )
-        // Playback control - read
-        .route("/api/rooms/:room_id/playback", get(room::get_playback_state))
         // Live streaming routes — rate limited (50 req/min)
         .merge(
             Router::new()
@@ -446,30 +468,46 @@ fn create_router(
                     middleware::admin_rate_limit,
                 ))
         )
-        // Common provider routes (user-facing)
-        .nest("/api/provider", provider_common::register_common_routes())
-        // Provider-specific HTTP routes
-        .nest("/api/providers/bilibili", providers::bilibili::bilibili_routes())
-        .nest("/api/providers/alist", providers::alist::alist_routes())
-        .nest("/api/providers/emby", providers::emby::emby_routes())
-        .nest("/api/providers/direct_url", providers::direct_url::direct_url_routes())
-        // OpenAPI/Swagger documentation
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()));
+        // Provider routes — rate limited (read: 100 req/min)
+        .merge(
+            Router::new()
+                .nest("/api/provider", provider_common::register_common_routes())
+                .nest("/api/providers/bilibili", providers::bilibili::bilibili_routes())
+                .nest("/api/providers/alist", providers::alist::alist_routes())
+                .nest("/api/providers/emby", providers::emby::emby_routes())
+                .nest("/api/providers/direct_url", providers::direct_url::direct_url_routes())
+                .route_layer(axum_middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::read_rate_limit,
+                ))
+        )
+        ;
+
+    // Only expose Swagger UI and OpenAPI spec in development mode
+    let router = if config.server.development_mode {
+        router.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()))
+    } else {
+        router
+    };
 
     // Apply layers before state
     // CORS configuration: use allowed origins from config, or permissive in development mode
-    let cors = if config.server.development_mode || config.server.cors_allowed_origins.is_empty() {
-        // Development mode or no configured origins: allow all (with warning)
-        if !config.server.development_mode && config.server.cors_allowed_origins.is_empty() {
-            tracing::warn!(
-                "CORS: No allowed origins configured, allowing all origins. \
-                 Set server.cors_allowed_origins in production for security."
-            );
-        }
+    // NOTE: If no origins configured in production, will allow all origins (with strong warning)
+    let cors = if config.server.development_mode {
+        // Development mode: allow all origins for easier testing
         CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
             .allow_headers(Any)
+    } else if config.server.cors_allowed_origins.is_empty() {
+        // Production with no configured origins: deny all cross-origin requests
+        tracing::warn!(
+            "CORS: No allowed origins configured in production. \
+             All cross-origin requests will be denied. \
+             Set server.cors_allowed_origins in config to allow specific origins. \
+             Example: server.cors_allowed_origins = ['https://example.com']"
+        );
+        CorsLayer::new()
     } else {
         // Production: use configured origins only
         let origins: Vec<HeaderValue> = config
@@ -501,6 +539,8 @@ fn create_router(
         .layer(cors)
         // Limit request body size to prevent DoS attacks (10MB for general endpoints)
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
+        // Request timeout to prevent slow-loris and stuck requests
+        .layer(TimeoutLayer::new(std::time::Duration::from_secs(30)))
         .layer(axum_middleware::from_fn(middleware::security_headers_middleware))
         .layer(axum_middleware::from_fn(
             crate::observability::metrics_middleware::metrics_layer,

@@ -23,7 +23,7 @@ use {
     std::collections::HashMap,
     std::sync::Arc,
     stream::StreamIdentifier,
-    tokio::sync::{broadcast, mpsc, mpsc::UnboundedReceiver, Mutex},
+    tokio::sync::{broadcast, mpsc, Mutex},
     utils::Uuid,
 };
 
@@ -53,11 +53,11 @@ pub struct StreamDataTransceiver {
 impl StreamDataTransceiver {
     fn new(
         data_receiver: DataReceiver,
-        event_receiver: UnboundedReceiver<TransceiverEvent>,
+        event_receiver: TransceiverEventReceiver,
         identifier: StreamIdentifier,
         h: Arc<dyn TStreamHandler>,
     ) -> Self {
-        let (statistic_data_sender, statistic_data_receiver) = mpsc::unbounded_channel();
+        let (statistic_data_sender, statistic_data_receiver) = mpsc::channel(define::STATISTIC_DATA_CHANNEL_CAPACITY);
         Self {
             data_receiver,
             event_receiver,
@@ -79,10 +79,26 @@ impl StreamDataTransceiver {
             let mut closed_ids = Vec::new();
 
             match val {
-                FrameData::MetaData {
-                    timestamp: _,
-                    data: _,
-                } => {}
+                FrameData::MetaData { timestamp, data } => {
+                    let data = FrameData::MetaData {
+                        timestamp,
+                        data: data.clone(),
+                    };
+
+                    let senders_guard = frame_senders.lock().await;
+                    for (id, sender) in senders_guard.iter() {
+                        match sender.try_send(data.clone()) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                // Packet dropped due to backpressure - subscriber is slow
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                // Subscriber disconnected, mark for removal
+                                closed_ids.push(*id);
+                            }
+                        }
+                    }
+                }
                 FrameData::Audio { timestamp, data } => {
                     let data = FrameData::Audio {
                         timestamp,
@@ -269,25 +285,21 @@ impl StreamDataTransceiver {
                     aac_packet_type,
                     duration: _,
                 } => {
+                    let mut guard = statistics_data.lock().await;
                     if let Some(uid) = uuid {
-                        {
-                            let subscriber = &mut statistics_data.lock().await.subscribers;
-                            if let Some(sub) = subscriber.get_mut(&uid) {
-                                sub.send_bytes += data_size;
-                            }
+                        if let Some(sub) = guard.subscribers.get_mut(&uid) {
+                            sub.send_bytes += data_size;
                         }
-
-                        statistics_data.lock().await.total_send_bytes += data_size;
+                        guard.total_send_bytes += data_size;
                     } else {
                         match aac_packet_type {
                             aac_packet_type::AAC_RAW => {
-                                let audio_data = &mut statistics_data.lock().await.publisher.audio;
-                                audio_data.recv_bytes += data_size;
+                                guard.publisher.audio.recv_bytes += data_size;
                             }
                             aac_packet_type::AAC_SEQHDR => {}
                             _ => {}
                         }
-                        statistics_data.lock().await.total_recv_bytes += data_size;
+                        guard.total_recv_bytes += data_size;
                     }
                 }
                 StatisticData::Video {
@@ -297,32 +309,25 @@ impl StreamDataTransceiver {
                     is_key_frame,
                     duration: _,
                 } => {
-                    //if it is a subscriber, we need to update the send_bytes
+                    let mut guard = statistics_data.lock().await;
                     if let Some(uid) = uuid {
-                        {
-                            let subscriber = &mut statistics_data.lock().await.subscribers;
-                            if let Some(sub) = subscriber.get_mut(&uid) {
-                                sub.send_bytes += data_size;
-                                sub.total_send_bytes += data_size;
-                            }
+                        if let Some(sub) = guard.subscribers.get_mut(&uid) {
+                            sub.send_bytes += data_size;
+                            sub.total_send_bytes += data_size;
                         }
-
-                        statistics_data.lock().await.total_send_bytes += data_size;
-                    }
-                    //if it is a publisher, we need to update the recv_bytes
-                    else {
-                        let stat_data = &mut statistics_data.lock().await;
-                        stat_data.total_recv_bytes += data_size;
-                        stat_data.publisher.video.recv_bytes += data_size;
-                        stat_data.publisher.video.recv_frame_count += frame_count;
-                        stat_data.publisher.recv_bytes += data_size;
+                        guard.total_send_bytes += data_size;
+                    } else {
+                        guard.total_recv_bytes += data_size;
+                        guard.publisher.video.recv_bytes += data_size;
+                        guard.publisher.video.recv_frame_count += frame_count;
+                        guard.publisher.recv_bytes += data_size;
                         if let Some(is_key) = is_key_frame {
                             if is_key {
-                                stat_data.publisher.video.gop =
-                                    stat_data.publisher.video.recv_frame_count_for_gop;
-                                stat_data.publisher.video.recv_frame_count_for_gop = 1;
+                                guard.publisher.video.gop =
+                                    guard.publisher.video.recv_frame_count_for_gop;
+                                guard.publisher.video.recv_frame_count_for_gop = 1;
                             } else {
-                                stat_data.publisher.video.recv_frame_count_for_gop += frame_count;
+                                guard.publisher.video.recv_frame_count_for_gop += frame_count;
                             }
                         }
                     }
@@ -393,7 +398,7 @@ impl StreamDataTransceiver {
         statistics_data: Arc<Mutex<StatisticsStream>>,
     ) {
         let mut statistic_calculate =
-            statistics::StatisticsCaculate::new(statistics_data.clone(), exit_caclulate);
+            statistics::StatisticsCalculate::new(statistics_data.clone(), exit_caclulate);
         tokio::spawn(async move { statistic_calculate.start().await });
 
         tokio::spawn(async move {
@@ -464,7 +469,7 @@ impl StreamDataTransceiver {
                             let subscribers = &mut statistics_data.subscribers;
                             subscribers.remove(&info.id);
 
-                            statistics_data.subscriber_count -= 1;
+                            statistics_data.subscriber_count = statistics_data.subscriber_count.saturating_sub(1);
                         }
                         TransceiverEvent::UnPublish {} => {
                             if let Err(err) = exit.send(()) {
@@ -544,7 +549,7 @@ impl StreamsHub {
         event_producer: StreamHubEventSender,
         event_consumer: StreamHubEventReceiver,
         ) -> Self {
-        let (client_producer, _) = broadcast::channel(100);
+        let (client_producer, _) = broadcast::channel(1000);
 
         Self {
             streams: HashMap::new(),
@@ -712,7 +717,7 @@ impl StreamsHub {
                 result_sender,
             };
             log::info!("subscribe:  stream identifier: {identifer}");
-            event_sender.send(event).map_err(|_| StreamHubError {
+            event_sender.send(event).await.map_err(|_| StreamHubError {
                 value: StreamHubErrorValue::SendError,
             })?;
 
@@ -732,7 +737,7 @@ impl StreamsHub {
         if let Some(producer) = self.streams.get_mut(identifer) {
             log::info!("unsubscribe....:{identifer}");
             let event = TransceiverEvent::UnSubscribe { info: sub_info };
-            producer.send(event).map_err(|_| StreamHubError {
+            producer.try_send(event).map_err(|_| StreamHubError {
                 value: StreamHubErrorValue::SendError,
             })?;
         } else {
@@ -758,7 +763,7 @@ impl StreamsHub {
             });
         }
 
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel(define::TRANSCEIVER_EVENT_CHANNEL_CAPACITY);
         let transceiver =
             StreamDataTransceiver::new(receiver, event_receiver, identifier.clone(), handler);
 
@@ -788,7 +793,7 @@ impl StreamsHub {
         match self.streams.get_mut(identifier) {
             Some(producer) => {
                 let event = TransceiverEvent::UnPublish {};
-                producer.send(event).map_err(|_| StreamHubError {
+                producer.try_send(event).map_err(|_| StreamHubError {
                     value: StreamHubErrorValue::SendError,
                 })?;
                 self.streams.remove(identifier);

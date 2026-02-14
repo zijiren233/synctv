@@ -1,9 +1,8 @@
 use anyhow::{Result, anyhow};
 use redis::aio::ConnectionManager as RedisConnectionManager;
-use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use tracing::info;
+use tracing::{debug, info};
 
 /// Heartbeat interval in seconds for publisher liveness.
 /// The publisher manager sends a heartbeat every this many seconds.
@@ -68,63 +67,17 @@ impl StreamRegistry {
 
     /// Register a publisher for a media in a room (atomic operation)
     /// Returns true if registered successfully, false if already exists
+    ///
+    /// Delegates to the atomic Lua-based `try_register_publisher_with_user()`
+    /// to prevent epoch inflation on failed registration attempts.
     pub async fn register_publisher(
         &mut self,
         room_id: &str,
         media_id: &str,
         node_id: &str,
-        app_name: &str,
+        _app_name: &str,
     ) -> anyhow::Result<bool> {
-        self.register_publisher_with_user(room_id, media_id, node_id, app_name, "").await
-    }
-
-    /// Register a publisher with `user_id` for a media in a room (atomic operation)
-    /// Returns true if registered successfully, false if already exists
-    pub async fn register_publisher_with_user(
-        &mut self,
-        room_id: &str,
-        media_id: &str,
-        node_id: &str,
-        app_name: &str,
-        user_id: &str,
-    ) -> anyhow::Result<bool> {
-        let key = format!("stream:publisher:{room_id}:{media_id}");
-        let epoch_key = format!("{EPOCH_KEY_PREFIX}:{room_id}:{media_id}");
-
-        // Increment epoch counter atomically to get fencing token
-        // INCR returns 1 if key doesn't exist (first publisher), or increments existing value
-        let epoch: u64 = self.redis.incr(&epoch_key, 1).await?;
-
-        let info = PublisherInfo {
-            node_id: node_id.to_string(),
-            grpc_address: String::new(), // Will be populated when gRPC address is known
-            app_name: app_name.to_string(),
-            user_id: user_id.to_string(),
-            started_at: Utc::now(),
-            epoch,
-        };
-
-        let info_json = serde_json::to_string(&info)?;
-
-        // Use HSETNX for atomic set-if-not-exists
-        let registered: bool = self.redis
-            .hset_nx(&key, "publisher", info_json)
-            .await?;
-
-        if registered {
-            // Set TTL derived from heartbeat interval (HEARTBEAT_INTERVAL_SECS * TTL_MULTIPLIER)
-            let _: () = self.redis.expire(&key, PUBLISHER_TTL_SECS).await?;
-
-            // Add to user reverse index if user_id is provided
-            if !user_id.is_empty() {
-                let user_key = format!("stream:user_publishers:{user_id}");
-                let member = format!("{room_id}:{media_id}");
-                let _: () = self.redis.sadd(&user_key, &member).await?;
-                let _: () = self.redis.expire(&user_key, PUBLISHER_TTL_SECS).await?;
-            }
-        }
-
-        Ok(registered)
+        self.try_register_publisher_with_user(room_id, media_id, node_id, "").await
     }
 
     /// Try to register as publisher (simplified version for `PublisherManager`)
@@ -140,6 +93,9 @@ impl StreamRegistry {
 
     /// Try to register as publisher with `user_id`
     /// Returns true if registered successfully, false if already exists
+    ///
+    /// FIXED: P0.5 - Uses atomic Lua script to prevent epoch race condition
+    /// The script ensures INCR + HSETNX are atomic - if HSETNX fails, epoch is rolled back
     pub async fn try_register_publisher_with_user(
         &self,
         room_id: &str,
@@ -151,60 +107,90 @@ impl StreamRegistry {
         let epoch_key = format!("{EPOCH_KEY_PREFIX}:{room_id}:{media_id}");
         let mut conn = self.redis.clone();
 
-        // Increment epoch counter atomically to get fencing token
-        let epoch: u64 = redis::cmd("INCR")
-            .arg(&epoch_key)
-            .query_async(&mut conn)
-            .await
-            .map_err(|e| anyhow!(e.to_string()))?;
-
-        // Create PublisherInfo with epoch for registration
+        // Create PublisherInfo template (epoch will be filled by Lua script)
         let info = PublisherInfo {
             node_id: node_id.to_string(),
-            grpc_address: String::new(), // Will be populated when gRPC address is known
+            grpc_address: String::new(),
             app_name: "live".to_string(),
             user_id: user_id.to_string(),
             started_at: Utc::now(),
-            epoch,
+            epoch: 0, // Placeholder, will be replaced by actual epoch in Lua script
         };
         let info_json = serde_json::to_string(&info)?;
 
-        // Use HSETNX for atomic set-if-not-exists with "publisher" field
-        let registered: bool = redis::cmd("HSETNX")
-            .arg(&key)
-            .arg("publisher")
-            .arg(info_json)
-            .query_async(&mut conn)
+        // Atomic Lua script to prevent epoch race condition
+        // Returns: {registered (1 or 0), epoch}
+        // If HSETNX fails, epoch is decremented (rolled back)
+        let lua_script = r#"
+            local epoch_key = KEYS[1]
+            local hash_key = KEYS[2]
+            local info_json_template = ARGV[1]
+            local ttl = tonumber(ARGV[2])
+            local user_key = ARGV[3]
+            local user_member = ARGV[4]
+
+            -- Atomically increment epoch
+            local epoch = redis.call('INCR', epoch_key)
+
+            -- Replace placeholder epoch in JSON (assumes epoch:0 pattern)
+            local info_json = string.gsub(info_json_template, '"epoch":0', '"epoch":' .. epoch)
+
+            -- Try to register (HSETNX returns 1 if set, 0 if exists)
+            local registered = redis.call('HSETNX', hash_key, 'publisher', info_json)
+
+            if registered == 0 then
+                -- Registration failed, rollback epoch
+                redis.call('DECR', epoch_key)
+                return {0, epoch - 1}
+            end
+
+            -- Registration successful, set TTL
+            redis.call('EXPIRE', hash_key, ttl)
+
+            -- Add to user reverse index if provided
+            if user_key ~= '' then
+                redis.call('SADD', user_key, user_member)
+                redis.call('EXPIRE', user_key, ttl)
+            end
+
+            return {1, epoch}
+        "#;
+
+        let user_key = if !user_id.is_empty() {
+            format!("stream:user_publishers:{user_id}")
+        } else {
+            String::new()
+        };
+        let user_member = format!("{room_id}:{media_id}");
+
+        let result: Vec<i64> = redis::Script::new(lua_script)
+            .key(&epoch_key)
+            .key(&key)
+            .arg(&info_json)
+            .arg(PUBLISHER_TTL_SECS)
+            .arg(&user_key)
+            .arg(&user_member)
+            .invoke_async(&mut conn)
             .await
-            .map_err(|e| anyhow!(e.to_string()))?;
+            .map_err(|e| anyhow!("Lua script execution failed: {}", e))?;
+
+        let registered = result[0] == 1;
+        let actual_epoch = result[1] as u64;
 
         if registered {
-            // Set TTL derived from heartbeat interval (HEARTBEAT_INTERVAL_SECS * TTL_MULTIPLIER)
-            let _: () = redis::cmd("EXPIRE")
-                .arg(&key)
-                .arg(PUBLISHER_TTL_SECS)
-                .query_async(&mut conn)
-                .await
-                .map_err(|e| anyhow!(e.to_string()))?;
-
-            // Add to user reverse index if user_id is provided
-            if !user_id.is_empty() {
-                let user_key = format!("stream:user_publishers:{user_id}");
-                let member = format!("{room_id}:{media_id}");
-                let _: () = redis::cmd("SADD")
-                    .arg(&user_key)
-                    .arg(&member)
-                    .query_async(&mut conn)
-                    .await
-                    .map_err(|e| anyhow!(e.to_string()))?;
-                let _: () = redis::cmd("EXPIRE")
-                    .arg(&user_key)
-                    .arg(PUBLISHER_TTL_SECS)
-                    .query_async(&mut conn)
-                    .await
-                    .map_err(|e| anyhow!(e.to_string()))?;
-            }
+            info!(
+                "Publisher registered atomically: room={}, media={}, node={}, epoch={}",
+                room_id, media_id, node_id, actual_epoch
+            );
+        } else {
+            debug!(
+                "Publisher already exists: room={}, media={}, attempted_epoch={}",
+                room_id, media_id, actual_epoch
+            );
         }
+
+        // Note: User reverse index (user_publishers) is already handled atomically
+        // by the Lua script above, no additional Redis calls needed
 
         Ok(registered)
     }
@@ -242,10 +228,11 @@ impl StreamRegistry {
     }
 
     /// Unregister a publisher
+    ///
+    /// Delegates to `unregister_publisher_immut` which correctly cleans up
+    /// both the publisher entry and the user reverse index.
     pub async fn unregister_publisher(&mut self, room_id: &str, media_id: &str) -> Result<()> {
-        let key = format!("stream:publisher:{room_id}:{media_id}");
-        let _: () = self.redis.hdel(&key, "publisher").await?;
-        Ok(())
+        self.unregister_publisher_immut(room_id, media_id).await
     }
 
     /// Unregister a publisher (non-mut version for `PublisherManager`)

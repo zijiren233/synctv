@@ -231,10 +231,10 @@ impl SettingsService {
 
                 info!("PostgreSQL LISTEN started for settings_changed channel");
 
-                // Process notifications
+                // Process notifications using blocking recv (no busy-poll)
                 loop {
-                    match listener.try_recv().await {
-                        Ok(Some(notification)) => {
+                    match listener.recv().await {
+                        Ok(notification) => {
                             let changed_key = notification.payload();
                             info!("Received settings change notification: {}", changed_key);
 
@@ -251,10 +251,6 @@ impl SettingsService {
                                 }
                             }
                         }
-                        Ok(None) => {
-                            // No notification, wait a bit
-                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                        }
                         Err(e) => {
                             error!("Error receiving notification: {}", e);
                             // Connection lost, break inner loop to reconnect
@@ -265,6 +261,11 @@ impl SettingsService {
 
                 warn!("PostgreSQL LISTEN connection lost, reconnecting in 5 seconds...");
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+                // Fix 5: Refresh cache after reconnection to catch missed notifications
+                if let Err(e) = service.initialize().await {
+                    error!("Failed to refresh settings cache after reconnection: {}", e);
+                }
             }
         })
     }

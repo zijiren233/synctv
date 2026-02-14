@@ -274,9 +274,11 @@ impl ClientApiImpl {
     pub async fn get_joined_rooms(
         &self,
         user_id: &str,
+        page: i32,
+        page_size: i32,
     ) -> Result<crate::proto::client::ListParticipatedRoomsResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
-        let (rooms, total) = self.room_service.list_joined_rooms_with_details(&uid, 1, 100).await
+        let (rooms, total) = self.room_service.list_joined_rooms_with_details(&uid, page.into(), page_size.into()).await
             .map_err(|e| e.to_string())?;
 
         let room_list: Vec<_> = rooms.into_iter().map(|(room, role, _status, _member_count)| {
@@ -786,14 +788,21 @@ impl ClientApiImpl {
                 .unwrap_or(ProviderType::DirectUrl)
         };
 
-        // Build source config from URL
-        let source_config = serde_json::json!({
-            "url": req.url
-        });
+        // Parse source config from request bytes
+        let source_config: serde_json::Value = if req.source_config.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_slice(&req.source_config)
+                .map_err(|e| format!("Invalid source_config JSON: {}", e))?
+        };
 
-        // Use provided title, fall back to extracting from URL
+        // Use provided title or default
         let title = if req.title.is_empty() {
-            req.url.split('/').next_back().unwrap_or("Unknown").to_string()
+            source_config.get("url")
+                .and_then(|u| u.as_str())
+                .and_then(|u| u.split('/').next_back())
+                .unwrap_or("Unknown")
+                .to_string()
         } else {
             req.title
         };
@@ -899,16 +908,25 @@ impl ClientApiImpl {
         let rid = RoomId::from_string(room_id.to_string());
 
         // Build batch items for the atomic service call
-        let items: Vec<(String, serde_json::Value, String)> = req.items.iter().map(|item| {
-            let source_config = serde_json::json!({ "url": item.url });
+        let mut items: Vec<(String, serde_json::Value, String)> = Vec::with_capacity(req.items.len());
+        for item in &req.items {
+            let source_config: serde_json::Value = if item.source_config.is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_slice(&item.source_config)
+                    .map_err(|e| format!("Invalid source_config JSON: {}", e))?
+            };
             let title = if item.title.is_empty() {
-                item.url.split('/').next_back().unwrap_or("Unknown").to_string()
+                source_config.get("url")
+                    .and_then(|u| u.as_str())
+                    .and_then(|u| u.split('/').next_back())
+                    .unwrap_or("Unknown")
+                    .to_string()
             } else {
                 item.title.clone()
             };
-            // For direct URL, provider_instance_name is empty
-            (String::new(), source_config, title)
-        }).collect();
+            items.push((String::new(), source_config, title));
+        }
 
         let media_list = self.room_service.add_media_batch(rid, uid, items)
             .await
@@ -1932,11 +1950,6 @@ fn room_to_proto_basic(
 
 #[must_use]
 pub fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::client::Media {
-    // Try to extract URL from source_config
-    let url = media.source_config.get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
     // Get metadata from PlaybackResult if available (for direct URLs)
     let metadata_bytes = if media.is_direct() {
         media
@@ -1950,7 +1963,6 @@ pub fn media_to_proto(media: &synctv_core::models::Media) -> crate::proto::clien
     crate::proto::client::Media {
         id: media.id.as_str().to_string(),
         room_id: media.room_id.as_str().to_string(),
-        url: url.to_string(),
         provider: media.source_provider.clone(),
         title: media.name.clone(),
         metadata: metadata_bytes,

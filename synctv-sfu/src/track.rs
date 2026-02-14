@@ -44,7 +44,7 @@ impl From<&str> for TrackKind {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "audio" => Self::Audio,
-            "video" | _ => Self::Video,
+            _ => Self::Video,
         }
     }
 }

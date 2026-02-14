@@ -101,18 +101,13 @@ impl PlaylistService {
                 return Err(Error::Authorization("Parent playlist does not belong to this room".to_string()));
             }
 
-            // Check nesting depth (walk up to root, cap at 10 levels)
-            let mut depth = 1u32;
-            let mut current_parent = parent.parent_id.clone();
-            while let Some(pid) = current_parent {
-                depth += 1;
-                if depth > 10 {
-                    return Err(Error::InvalidInput(
-                        "Playlist nesting depth cannot exceed 10 levels".to_string(),
-                    ));
-                }
-                let ancestor = self.playlist_repo.get_by_id(&pid).await?;
-                current_parent = ancestor.and_then(|p| p.parent_id);
+            // Check nesting depth using recursive CTE (single query)
+            let path = self.playlist_repo.get_path(parent_id).await?;
+            // path includes the parent itself; adding a child means depth = path.len() + 1
+            if path.len() + 1 > 10 {
+                return Err(Error::InvalidInput(
+                    "Playlist nesting depth cannot exceed 10 levels".to_string(),
+                ));
             }
         }
 
@@ -206,6 +201,13 @@ impl PlaylistService {
 
         // Update fields
         if let Some(name) = request.name {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Err(Error::InvalidInput("Playlist name cannot be empty".to_string()));
+            }
+            if name.len() > 200 {
+                return Err(Error::InvalidInput("Playlist name cannot exceed 200 bytes".to_string()));
+            }
             playlist.name = name;
         }
         if let Some(position) = request.position {

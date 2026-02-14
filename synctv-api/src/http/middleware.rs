@@ -264,7 +264,11 @@ pub async fn rate_limit_middleware(
     };
 
     // Check rate limit
-    let key = format!("{}:{}:{}", category_name, rate_limit_key, request.uri().path());
+    // FIXED: P0.13 - Removed path from key to enforce category-wide limit
+    // Previously: format!("{}:{}:{}", category_name, rate_limit_key, path)
+    // This caused each endpoint to have its own counter, effectively multiplying the limit
+    // Now: All endpoints in same category share the limit (e.g., 30 req/min for ALL write operations)
+    let key = format!("ratelimit:{}:{}", category_name, rate_limit_key);
     match rate_limiter.check_rate_limit(&key, max_requests, window_seconds).await {
         Ok(()) => {
             // Rate limit check passed, proceed with request

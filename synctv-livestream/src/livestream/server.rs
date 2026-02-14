@@ -187,10 +187,21 @@ impl LivestreamServer {
 
         // 2. Spawn StreamHub event loop with automatic recovery
         let hub_handle = tokio::spawn(async move {
+            const MAX_RESTARTS: u32 = 10;
+            const INITIAL_BACKOFF_SECS: u64 = 1;
+            const MAX_BACKOFF_SECS: u64 = 30;
+
+            let mut restart_count: u32 = 0;
+
             loop {
                 info!("Starting StreamHub event loop...");
                 streams_hub.run().await;
-                warn!("StreamHub event loop exited unexpectedly, cleaning up local state before restart...");
+                restart_count += 1;
+                warn!(
+                    restart_count,
+                    max_restarts = MAX_RESTARTS,
+                    "StreamHub event loop exited unexpectedly, cleaning up local state before restart..."
+                );
 
                 // Clean up all local publisher registrations from Redis
                 // This ensures stale state doesn't persist after restart
@@ -198,8 +209,20 @@ impl LivestreamServer {
                     error!("Failed to cleanup publishers on StreamHub restart: {}", e);
                 }
 
-                info!("Waiting 1 second before restarting StreamHub...");
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if restart_count >= MAX_RESTARTS {
+                    error!(
+                        "StreamHub has restarted {} times, giving up to avoid infinite restart loop",
+                        restart_count
+                    );
+                    break;
+                }
+
+                // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
+                let backoff_secs = INITIAL_BACKOFF_SECS
+                    .saturating_mul(1u64 << (restart_count - 1).min(16))
+                    .min(MAX_BACKOFF_SECS);
+                info!("Waiting {} seconds before restarting StreamHub...", backoff_secs);
+                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
             }
         });
 

@@ -11,7 +11,7 @@ use crate::streamhub::{
         SubDataType, SubscribeType, SubscriberInfo, FRAME_DATA_CHANNEL_CAPACITY,
     },
     stream::StreamIdentifier,
-    utils::{RandomDigitCount, Uuid},
+    utils::Uuid,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, warn};
@@ -45,7 +45,7 @@ impl HttpFlvSession {
         response_producer: mpsc::Sender<Result<bytes::Bytes, std::io::Error>>,
     ) -> Self {
         let (_, data_receiver) = mpsc::channel(FRAME_DATA_CHANNEL_CAPACITY);
-        let subscriber_id = Uuid::new(RandomDigitCount::Four);
+        let subscriber_id = Uuid::new();
 
         Self {
             app_name,

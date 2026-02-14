@@ -152,8 +152,8 @@ impl TurnCredentialService {
             return Err(anyhow::anyhow!("TURN static secret is empty"));
         }
 
-        if self.config.static_secret.len() < 16 {
-            return Err(anyhow::anyhow!("TURN static secret should be at least 16 characters"));
+        if self.config.static_secret.len() < 32 {
+            return Err(anyhow::anyhow!("TURN static secret should be at least 32 characters"));
         }
 
         if self.config.credential_ttl.as_secs() < 60 {
@@ -312,7 +312,7 @@ mod tests {
     fn test_generate_credential() {
         let config = TurnConfig {
             server_url: "turn:turn.example.com:3478".to_string(),
-            static_secret: "test_secret_key_12345".to_string(),
+            static_secret: "test_secret_key_1234567890abcdefgh".to_string(),
             credential_ttl: Duration::from_secs(3600),
             use_tls: false,
         };
@@ -335,7 +335,7 @@ mod tests {
     fn test_credential_validation() {
         let config = TurnConfig {
             server_url: "turn:turn.example.com:3478".to_string(),
-            static_secret: "test_secret_key_12345".to_string(),
+            static_secret: "test_secret_key_1234567890abcdefgh".to_string(),
             credential_ttl: Duration::from_secs(3600),
             use_tls: false,
         };
@@ -377,7 +377,7 @@ mod tests {
         // Valid config
         let config = TurnConfig {
             server_url: "turn:turn.example.com:3478".to_string(),
-            static_secret: "test_secret_key_12345".to_string(),
+            static_secret: "test_secret_key_1234567890abcdefgh".to_string(),
             credential_ttl: Duration::from_secs(3600),
             use_tls: false,
         };
@@ -387,7 +387,7 @@ mod tests {
         // Invalid: empty URL
         let config = TurnConfig {
             server_url: String::new(),
-            static_secret: "test_secret".to_string(),
+            static_secret: "test_secret_key_1234567890abcdefgh".to_string(),
             credential_ttl: Duration::from_secs(3600),
             use_tls: false,
         };
@@ -407,7 +407,7 @@ mod tests {
         // Invalid: TTL too short
         let config = TurnConfig {
             server_url: "turn:turn.example.com:3478".to_string(),
-            static_secret: "test_secret_key".to_string(),
+            static_secret: "test_secret_key_1234567890abcdefgh".to_string(),
             credential_ttl: Duration::from_secs(30),
             use_tls: false,
         };
@@ -419,7 +419,7 @@ mod tests {
     fn test_hmac_deterministic() {
         let config = TurnConfig {
             server_url: "turn:turn.example.com:3478".to_string(),
-            static_secret: "test_secret_key".to_string(),
+            static_secret: "test_secret_key_1234567890abcdefgh".to_string(),
             credential_ttl: Duration::from_secs(3600),
             use_tls: false,
         };

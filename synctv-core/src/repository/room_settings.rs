@@ -23,9 +23,15 @@ pub struct RoomSettingsRepository {
 }
 
 impl RoomSettingsRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Get a reference to the database pool
+    #[must_use]
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
     /// Get all settings for a room as `RoomSettings` struct

@@ -487,7 +487,6 @@ impl SSRFValidator {
     /// Validate a URL asynchronously with DNS resolution
     ///
     /// This method resolves the hostname and checks all resolved IPs.
-    #[cfg(feature = "ssrf-dns")]
     pub async fn validate_url_async(&self, url: &str) -> ValidationResult<()> {
         let parsed = url::Url::parse(url).map_err(|e| ValidationError::SSRF(
             format!("Invalid URL: {e}")

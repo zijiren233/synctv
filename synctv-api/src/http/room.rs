@@ -398,8 +398,9 @@ pub async fn check_password(
     Ok(Json(response))
 }
 
-/// Get room public settings
+/// Get room settings (requires authentication)
 pub async fn get_room_settings(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<crate::proto::client::GetRoomSettingsResponse>> {
@@ -694,7 +695,7 @@ pub async fn get_chat_history(
     Path(room_id): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<GetChatHistoryResponse>> {
-    let limit = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(50i32).min(500);
+    let limit = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(50i32).clamp(1, 100);
     let before = params.get("before").and_then(|v| v.parse().ok()).unwrap_or(0i64);
 
     let req = crate::proto::client::GetChatHistoryRequest { limit, before };

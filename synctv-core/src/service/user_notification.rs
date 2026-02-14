@@ -113,20 +113,13 @@ impl UserNotificationService {
             .ok_or_else(|| Error::NotFound("Notification not found".to_string()))
     }
 
-    /// List notifications for a user
+    /// List notifications for a user (single query with COUNT(*) OVER())
     pub async fn list(
         &self,
         user_id: &UserId,
         query: NotificationListQuery,
     ) -> Result<(Vec<Notification>, i64)> {
-        let notifications = self.repository.list_by_user(user_id, &query).await?;
-
-        let total = self
-            .repository
-            .count_by_user(user_id, query.is_read, query.notification_type.as_ref())
-            .await?;
-
-        Ok((notifications, total))
+        self.repository.list_by_user_with_count(user_id, &query).await
     }
 
     /// Get unread count for a user

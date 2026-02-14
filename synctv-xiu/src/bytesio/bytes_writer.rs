@@ -33,7 +33,7 @@ impl BytesWriter {
     }
 
     pub fn or_u8_at(&mut self, position: usize, byte: u8) -> Result<(), BytesWriteError> {
-        if position > self.bytes.len() {
+        if position >= self.bytes.len() {
             return Err(BytesWriteError {
                 value: BytesWriteErrorValue::OutofIndex,
             });
@@ -44,7 +44,7 @@ impl BytesWriter {
     }
 
     pub fn add_u8_at(&mut self, position: usize, byte: u8) -> Result<(), BytesWriteError> {
-        if position > self.bytes.len() {
+        if position >= self.bytes.len() {
             return Err(BytesWriteError {
                 value: BytesWriteErrorValue::OutofIndex,
             });
@@ -55,7 +55,7 @@ impl BytesWriter {
     }
 
     pub fn write_u8_at(&mut self, position: usize, byte: u8) -> Result<(), BytesWriteError> {
-        if position > self.bytes.len() {
+        if position >= self.bytes.len() {
             return Err(BytesWriteError {
                 value: BytesWriteErrorValue::OutofIndex,
             });
@@ -120,11 +120,7 @@ impl BytesWriter {
         Ok(())
     }
     pub fn extract_current_bytes(&mut self) -> BytesMut {
-        let mut rv_data = BytesMut::new();
-        rv_data.extend_from_slice(&self.bytes.clone()[..]);
-        self.bytes.clear();
-
-        rv_data
+        BytesMut::from(std::mem::take(&mut self.bytes).as_slice())
     }
 
     pub fn clear(&mut self) {
@@ -201,29 +197,28 @@ impl AsyncBytesWriter {
     }
 
     pub async fn flush(&mut self) -> Result<(), BytesWriteError> {
+        let data = std::mem::take(&mut self.bytes_writer.bytes);
         self.io
             .lock()
             .await
-            .write(self.bytes_writer.bytes.clone().into())
+            .write(data.into())
             .await?;
-        self.bytes_writer.bytes.clear();
         Ok(())
     }
 
     pub async fn flush_timeout(&mut self, duration: Duration) -> Result<(), BytesWriteError> {
+        let data = std::mem::take(&mut self.bytes_writer.bytes);
         let message = timeout(
             duration,
             self.io
                 .lock()
                 .await
-                .write(self.bytes_writer.bytes.clone().into()),
+                .write(data.into()),
         )
         .await;
 
         match message {
-            Ok(_) => {
-                self.bytes_writer.bytes.clear();
-            }
+            Ok(_) => {}
             Err(_) => {
                 return Err(BytesWriteError {
                     value: BytesWriteErrorValue::Timeout,

@@ -14,12 +14,18 @@ use std::sync::Arc;
 use synctv_core::models::id::UserId;
 use synctv_core::service::auth::JwtValidator;
 
+use synctv_core::models::UserStatus;
+
 use super::{AppError, AppResult, AppState};
 use crate::proto::admin;
 
 // ------------------------------------------------------------------
 // Auth extractors
 // ------------------------------------------------------------------
+
+/// Extension to hold JWT validator in request extensions (cached)
+#[derive(Clone)]
+struct JwtValidatorExt(Arc<JwtValidator>);
 
 /// Authenticated admin user (admin or root role required)
 #[derive(Debug, Clone)]
@@ -38,7 +44,13 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let app_state = AppState::from_ref(state);
-        let validator = Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())));
+
+        // Use cached validator from extensions if available
+        let validator = parts
+            .extensions
+            .get::<JwtValidatorExt>().map_or_else(|| {
+                Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())))
+            }, |v| v.0.clone());
 
         let auth_header = parts
             .headers
@@ -49,16 +61,34 @@ where
             .to_str()
             .map_err(|e| AppError::unauthorized(format!("Invalid Authorization header: {e}")))?;
 
-        let user_id = validator
-            .validate_http_extract_user_id(auth_str)
+        let claims = validator
+            .validate_http(auth_str)
             .map_err(|e| AppError::unauthorized(format!("{e}")))?;
 
-        // Verify admin role
+        let user_id = UserId::from_string(claims.sub);
+
+        // Verify admin role and check banned/deleted status
         let user = app_state
             .user_service
             .get_user(&user_id)
             .await
             .map_err(|_| AppError::unauthorized("Failed to verify user"))?;
+
+        if user.is_deleted() || user.status == UserStatus::Banned {
+            return Err(AppError::unauthorized("Authentication failed"));
+        }
+
+        // Reject tokens issued before last password change
+        if app_state
+            .user_service
+            .is_token_invalidated_by_password_change(&user_id, claims.iat)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(AppError::unauthorized(
+                "Token invalidated due to password change. Please log in again.",
+            ));
+        }
 
         if !user.role.is_admin_or_above() {
             return Err(AppError::forbidden("Admin role required"));
@@ -84,7 +114,13 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let app_state = AppState::from_ref(state);
-        let validator = Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())));
+
+        // Use cached validator from extensions if available
+        let validator = parts
+            .extensions
+            .get::<JwtValidatorExt>().map_or_else(|| {
+                Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())))
+            }, |v| v.0.clone());
 
         let auth_header = parts
             .headers
@@ -95,16 +131,34 @@ where
             .to_str()
             .map_err(|e| AppError::unauthorized(format!("Invalid Authorization header: {e}")))?;
 
-        let user_id = validator
-            .validate_http_extract_user_id(auth_str)
+        let claims = validator
+            .validate_http(auth_str)
             .map_err(|e| AppError::unauthorized(format!("{e}")))?;
 
-        // Verify root role
+        let user_id = UserId::from_string(claims.sub);
+
+        // Check banned/deleted status
         let user = app_state
             .user_service
             .get_user(&user_id)
             .await
             .map_err(|_| AppError::unauthorized("Failed to verify user"))?;
+
+        if user.is_deleted() || user.status == UserStatus::Banned {
+            return Err(AppError::unauthorized("Authentication failed"));
+        }
+
+        // Reject tokens issued before last password change
+        if app_state
+            .user_service
+            .is_token_invalidated_by_password_change(&user_id, claims.iat)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(AppError::unauthorized(
+                "Token invalidated due to password change. Please log in again.",
+            ));
+        }
 
         if !matches!(user.role, synctv_core::models::UserRole::Root) {
             return Err(AppError::forbidden("Root role required"));
@@ -112,6 +166,37 @@ where
 
         Ok(Self { user_id })
     }
+}
+
+// ------------------------------------------------------------------
+// Typed request structs for admin endpoints
+// ------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct SetUserRoleRequest {
+    role: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SetUserPasswordRequest {
+    password: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SetUserUsernameRequest {
+    username: String,
+}
+
+#[derive(serde::Deserialize)]
+struct BanRequest {
+    #[serde(default)]
+    reason: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SetRoomPasswordAdminRequest {
+    #[serde(default)]
+    password: String,
 }
 
 // ------------------------------------------------------------------
@@ -310,17 +395,11 @@ async fn set_user_role(
     auth: AuthAdmin,
     State(state): State<AppState>,
     Path(user_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<SetUserRoleRequest>,
 ) -> AppResult<Json<admin::UpdateUserRoleResponse>> {
-    let role = req
-        .get("role")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::bad_request("Missing role field"))?
-        .to_string();
-
     let api = require_admin_api(&state)?;
     let resp = api
-        .update_user_role(admin::UpdateUserRoleRequest { user_id, role }, auth.role)
+        .update_user_role(admin::UpdateUserRoleRequest { user_id, role: req.role }, auth.role)
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))
@@ -330,19 +409,13 @@ async fn set_user_password(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(user_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<SetUserPasswordRequest>,
 ) -> AppResult<Json<admin::UpdateUserPasswordResponse>> {
-    let new_password = req
-        .get("password")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::bad_request("Missing password field"))?
-        .to_string();
-
     let api = require_admin_api(&state)?;
     let resp = api
         .update_user_password(admin::UpdateUserPasswordRequest {
             user_id,
-            new_password,
+            new_password: req.password,
         })
         .await
         .map_err(AppError::internal)?;
@@ -353,19 +426,13 @@ async fn set_user_username(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(user_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<SetUserUsernameRequest>,
 ) -> AppResult<Json<admin::UpdateUserUsernameResponse>> {
-    let new_username = req
-        .get("username")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::bad_request("Missing username field"))?
-        .to_string();
-
     let api = require_admin_api(&state)?;
     let resp = api
         .update_user_username(admin::UpdateUserUsernameRequest {
             user_id,
-            new_username,
+            new_username: req.username,
         })
         .await
         .map_err(AppError::internal)?;
@@ -376,21 +443,15 @@ async fn ban_user(
     auth: AuthAdmin,
     State(state): State<AppState>,
     Path(user_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<BanRequest>,
 ) -> AppResult<Json<admin::BanUserResponse>> {
-    let reason = req
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    if reason.len() > 500 {
+    if req.reason.len() > 500 {
         return Err(AppError::bad_request("Reason too long (max 500 characters)"));
     }
 
     let api = require_admin_api(&state)?;
     let resp = api
-        .ban_user(admin::BanUserRequest { user_id, reason }, auth.role)
+        .ban_user(admin::BanUserRequest { user_id, reason: req.reason }, auth.role)
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))
@@ -497,19 +558,13 @@ async fn set_room_password(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<SetRoomPasswordAdminRequest>,
 ) -> AppResult<Json<admin::UpdateRoomPasswordResponse>> {
-    let new_password = req
-        .get("password")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
     let api = require_admin_api(&state)?;
     let resp = api
         .update_room_password(admin::UpdateRoomPasswordRequest {
             room_id,
-            new_password,
+            new_password: req.password,
         })
         .await
         .map_err(AppError::internal)?;
@@ -533,21 +588,15 @@ async fn ban_room(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Json(req): Json<serde_json::Value>,
+    Json(req): Json<BanRequest>,
 ) -> AppResult<Json<admin::BanRoomResponse>> {
-    let reason = req
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    if reason.len() > 500 {
+    if req.reason.len() > 500 {
         return Err(AppError::bad_request("Reason too long (max 500 characters)"));
     }
 
     let api = require_admin_api(&state)?;
     let resp = api
-        .ban_room(admin::BanRoomRequest { room_id, reason })
+        .ban_room(admin::BanRoomRequest { room_id, reason: req.reason })
         .await
         .map_err(AppError::internal)?;
     Ok(Json(resp))

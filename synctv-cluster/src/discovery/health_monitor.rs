@@ -39,21 +39,23 @@ impl HealthMonitor {
     }
 
     /// Start health monitoring loop
-    pub async fn start(&self) -> Result<()> {
+    ///
+    /// Returns the `JoinHandle` so the caller can detect panics or task completion.
+    pub async fn start(&self) -> Result<tokio::task::JoinHandle<()>> {
         let registry = self.node_registry.clone();
         let health_status = self.health_status.clone();
         let timeout_secs = registry.heartbeat_timeout_secs;
 
         let mut timer = interval(Duration::from_secs(self.check_interval_secs));
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
                 timer.tick().await;
 
                 match registry.get_all_nodes().await {
                     Ok(nodes) => {
                         let mut status = health_status.write().await;
-                        let node_ids: Vec<String> = nodes.iter().map(|n| n.node_id.clone()).collect();
+                        let node_ids: std::collections::HashSet<String> = nodes.iter().map(|n| n.node_id.clone()).collect();
 
                         for node in nodes {
                             let is_alive = !node.is_stale(timeout_secs);
@@ -104,7 +106,7 @@ impl HealthMonitor {
             }
         });
 
-        Ok(())
+        Ok(handle)
     }
 
     /// Get health status of all nodes

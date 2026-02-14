@@ -13,6 +13,14 @@ use super::bilibili::{
 use crate::bilibili::{BilibiliInterface, BilibiliService as BilibiliServiceImpl};
 use tonic::{Request, Response, Status};
 
+/// Validate that a required string field is non-empty.
+fn validate_required(field_name: &str, value: &str) -> Result<(), Status> {
+    if value.is_empty() {
+        return Err(Status::invalid_argument(format!("{field_name} must not be empty")));
+    }
+    Ok(())
+}
+
 /// Bilibili gRPC server
 ///
 /// Thin wrapper that delegates to `BilibiliService` for actual implementation.
@@ -49,6 +57,7 @@ impl Bilibili for BilibiliService {
         request: Request<LoginWithQrCodeReq>,
     ) -> Result<Response<LoginWithQrCodeResp>, Status> {
         let req = request.into_inner();
+        validate_required("key", &req.key)?;
         let resp = self.service.login_with_qr_code(req).await
             .map_err(|e| Status::internal(format!("login_with_qr_code failed: {e}")))?;
         Ok(Response::new(resp))
@@ -66,6 +75,7 @@ impl Bilibili for BilibiliService {
 
     async fn new_sms(&self, request: Request<NewSmsReq>) -> Result<Response<NewSmsResp>, Status> {
         let req = request.into_inner();
+        validate_required("phone", &req.phone)?;
         let resp = self.service.new_sms(req).await
             .map_err(|e| Status::internal(format!("new_sms failed: {e}")))?;
         Ok(Response::new(resp))
@@ -76,6 +86,8 @@ impl Bilibili for BilibiliService {
         request: Request<LoginWithSmsReq>,
     ) -> Result<Response<LoginWithSmsResp>, Status> {
         let req = request.into_inner();
+        validate_required("phone", &req.phone)?;
+        validate_required("code", &req.code)?;
         let resp = self.service.login_with_sms(req).await
             .map_err(|e| Status::internal(format!("login_with_sms failed: {e}")))?;
         Ok(Response::new(resp))
@@ -163,6 +175,7 @@ impl Bilibili for BilibiliService {
 
     async fn r#match(&self, request: Request<MatchReq>) -> Result<Response<MatchResp>, Status> {
         let req = request.into_inner();
+        validate_required("url", &req.url)?;
         let resp = self.service.r#match(req).await
             .map_err(|e| Status::internal(format!("match failed: {e}")))?;
         Ok(Response::new(resp))

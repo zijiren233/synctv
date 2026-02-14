@@ -54,9 +54,6 @@ pub struct Media {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub room_id: ::prost::alloc::string::String,
-    /// Deprecated: Use source_config instead
-    #[prost(string, tag = "3")]
-    pub url: ::prost::alloc::string::String,
     /// bilibili, alist, emby, direct (also known as source_provider)
     #[prost(string, tag = "4")]
     pub provider: ::prost::alloc::string::String,
@@ -545,9 +542,6 @@ pub struct AddMediaRequest {
     /// Target playlist ID
     #[prost(string, tag = "1")]
     pub playlist_id: ::prost::alloc::string::String,
-    /// Deprecated: Use source_config instead
-    #[prost(string, tag = "2")]
-    pub url: ::prost::alloc::string::String,
     /// Optional, provider type name (e.g., "bilibili", "alist")
     #[prost(string, tag = "3")]
     pub provider: ::prost::alloc::string::String,

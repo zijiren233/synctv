@@ -402,8 +402,10 @@ impl UserService for ClientServiceImpl {
         request: Request<ListParticipatedRoomsRequest>,
     ) -> Result<Response<ListParticipatedRoomsResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
-        let _req = request.into_inner();
-        let response = self.client_api.get_joined_rooms(user_id.as_str()).await.map_err(impls_err_to_status)?;
+        let req = request.into_inner();
+        let page = if req.page > 0 { req.page } else { 1 };
+        let page_size = req.page_size.clamp(1, 100);
+        let response = self.client_api.get_joined_rooms(user_id.as_str(), page, page_size).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
     }
 }

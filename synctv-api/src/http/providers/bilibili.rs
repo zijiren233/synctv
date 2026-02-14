@@ -413,6 +413,7 @@ fn bilibili_proxy_headers() -> HashMap<String, String> {
 
 /// Parse Bilibili URL
 async fn parse(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -444,6 +445,7 @@ async fn parse(
 
 /// Generate Bilibili QR code for login
 async fn login_qr(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -475,6 +477,7 @@ async fn login_qr(
 
 /// Check Bilibili QR code login status
 async fn qr_check(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -506,6 +509,7 @@ async fn qr_check(
 
 /// Get captcha for SMS login
 async fn new_captcha(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -537,6 +541,7 @@ async fn new_captcha(
 
 /// Send SMS verification code
 async fn sms_send(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -568,6 +573,7 @@ async fn sms_send(
 
 /// Login with SMS code
 async fn sms_login(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,
@@ -599,6 +605,7 @@ async fn sms_login(
 
 /// Get Bilibili user info
 async fn user_info(
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
     Json(req): Json<serde_json::Value>,

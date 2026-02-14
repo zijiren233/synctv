@@ -902,7 +902,7 @@ pub async fn path_refresh_token() {}
 
 #[utoipa::path(
     get,
-    path = "/api/user/me",
+    path = "/api/user",
     tag = "user",
     security(("bearer_auth" = [])),
     responses(
@@ -964,7 +964,7 @@ pub async fn path_get_joined_rooms() {}
 
 #[utoipa::path(
     get,
-    path = "/api/room/check/{room_id}",
+    path = "/api/rooms/{room_id}/check",
     tag = "rooms",
     params(("room_id" = String, Path, description = "Room ID")),
     responses(
@@ -975,7 +975,7 @@ pub async fn path_check_room() {}
 
 #[utoipa::path(
     get,
-    path = "/api/room/list",
+    path = "/api/rooms",
     tag = "rooms",
     responses(
         (status = 200, description = "List of rooms", body = ListRoomsResponseSchema),
@@ -985,7 +985,7 @@ pub async fn path_list_rooms() {}
 
 #[utoipa::path(
     get,
-    path = "/api/room/hot",
+    path = "/api/rooms/hot",
     tag = "rooms",
     responses(
         (status = 200, description = "Hot rooms sorted by activity", body = ListRoomsResponseSchema),

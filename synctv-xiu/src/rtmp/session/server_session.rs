@@ -121,8 +121,6 @@ impl ServerSession {
                 }
             }
         }
-
-        //Ok(())
     }
 
     async fn handshake(&mut self) -> Result<(), SessionError> {
@@ -507,6 +505,11 @@ impl ServerSession {
         let app_name = command_obj.get("app");
         self.app_name = match app_name {
             Some(Amf0ValueType::UTF8String(app)) => {
+                if app.len() > 256 {
+                    return Err(SessionError {
+                        value: SessionErrorValue::NoAppName,
+                    });
+                }
                 // the value can weirdly have the query params, lets just remove it
                 // example: live/stream?token=123
                 app.split(&['?', '/']).next().unwrap_or(app).to_string()
@@ -587,7 +590,7 @@ impl ServerSession {
             .write_on_status(
                 transaction_id,
                 "status",
-                "NetStream.DeleteStream.Suceess",
+                "NetStream.DeleteStream.Success",
                 "",
             )
             .await?;
@@ -717,6 +720,12 @@ impl ServerSession {
             value: SessionErrorValue::NoStreamName,
         })?;
 
+        if raw_stream_name.len() > 256 {
+            return Err(SessionError {
+                value: SessionErrorValue::NoStreamName,
+            });
+        }
+
         (self.stream_name, self.query) =
             RtmpUrlParser::parse_stream_name_with_query(&raw_stream_name);
         if let Some(auth) = &self.auth {
@@ -770,7 +779,14 @@ impl ServerSession {
         }
 
         let stream_name_with_query = match other_values.remove(0) {
-            Amf0ValueType::UTF8String(val) => val,
+            Amf0ValueType::UTF8String(val) => {
+                if val.len() > 256 {
+                    return Err(SessionError {
+                        value: SessionErrorValue::Amf0ValueCountNotCorrect,
+                    });
+                }
+                val
+            }
             _ => {
                 return Err(SessionError {
                     value: SessionErrorValue::Amf0ValueCountNotCorrect,

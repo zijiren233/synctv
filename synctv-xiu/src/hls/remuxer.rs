@@ -18,7 +18,7 @@ use crate::streamhub::{
         NotifyInfo, StreamHubEvent, StreamHubEventSender, SubscribeType, SubscriberInfo,
     },
     stream::StreamIdentifier,
-    utils::{RandomDigitCount, Uuid},
+    utils::Uuid,
 };
 use tokio::sync::mpsc;
 use tracing as log;
@@ -200,7 +200,7 @@ impl StreamHandler {
         stream_registry: StreamRegistry,
     ) -> Self {
         let (_, data_consumer) = mpsc::channel(crate::streamhub::define::FRAME_DATA_CHANNEL_CAPACITY);
-        let subscriber_id = Uuid::new(RandomDigitCount::Four);
+        let subscriber_id = Uuid::new();
 
         Self {
             app_name,

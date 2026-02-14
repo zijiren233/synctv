@@ -10,7 +10,6 @@
 // All streams are scoped to room_id:media_id (media-level streaming).
 
 pub mod grpc;
-pub mod xiu_integration;
 pub mod error;
 pub mod libraries;
 pub mod protocols;

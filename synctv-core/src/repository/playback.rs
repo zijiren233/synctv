@@ -18,19 +18,16 @@ impl RoomPlaybackStateRepository {
     }
 
     /// Create or get playback state for room
+    ///
+    /// Uses `ON CONFLICT DO UPDATE` to always return via RETURNING, avoiding
+    /// the TOCTOU race of a separate check-then-insert pattern.
     pub async fn create_or_get(&self, room_id: &RoomId) -> Result<RoomPlaybackState> {
-        // Try to get existing state
-        if let Some(state) = self.get(room_id).await? {
-            return Ok(state);
-        }
-
-        // Create new state
         let state = RoomPlaybackState::new(room_id.clone());
 
         let row = sqlx::query(
             "INSERT INTO room_playback_state (room_id, current_time, speed, is_playing, updated_at, version)
              VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (room_id) DO NOTHING
+             ON CONFLICT (room_id) DO UPDATE SET room_id = EXCLUDED.room_id
              RETURNING room_id, playing_media_id, playing_playlist_id, relative_path, current_time, speed, is_playing, updated_at, version"
         )
         .bind(room_id.as_str())
@@ -39,16 +36,10 @@ impl RoomPlaybackStateRepository {
         .bind(state.is_playing)
         .bind(state.updated_at)
         .bind(state.version)
-        .fetch_optional(&self.pool)
+        .fetch_one(&self.pool)
         .await?;
 
-        match row {
-            Some(row) => self.row_to_state(row),
-            None => self
-                .get(room_id)
-                .await?
-                .ok_or_else(|| Error::Internal("Failed to create playback state".to_string())),
-        }
+        self.row_to_state(row)
     }
 
     /// Create or get playback state using a provided executor (pool or transaction)

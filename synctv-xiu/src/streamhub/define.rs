@@ -1,11 +1,10 @@
 use chrono::{DateTime, Local};
 use crate::flv::define::{AacProfile, AvcCodecId, AvcLevel, AvcProfile, SoundFormat};
 
-use super::utils;
-
 use {
     super::errors::StreamHubError,
     super::stream::StreamIdentifier,
+    super::utils::Uuid,
     async_trait::async_trait,
     bytes::BytesMut,
     serde::ser::SerializeStruct,
@@ -14,7 +13,6 @@ use {
     std::fmt,
     std::sync::Arc,
     tokio::sync::{broadcast, mpsc, oneshot},
-    utils::Uuid,
 };
 
 /* Subscribe streams from stream hub */
@@ -152,11 +150,17 @@ pub const STREAM_HUB_EVENT_CHANNEL_CAPACITY: usize = 4096;
 pub type BroadcastEventSender = broadcast::Sender<BroadcastEvent>;
 pub type BroadcastEventReceiver = broadcast::Receiver<BroadcastEvent>;
 
-pub type TransceiverEventSender = mpsc::UnboundedSender<TransceiverEvent>;
-pub type TransceiverEventReceiver = mpsc::UnboundedReceiver<TransceiverEvent>;
+pub type TransceiverEventSender = mpsc::Sender<TransceiverEvent>;
+pub type TransceiverEventReceiver = mpsc::Receiver<TransceiverEvent>;
 
-pub type StatisticDataSender = mpsc::UnboundedSender<StatisticData>;
-pub type StatisticDataReceiver = mpsc::UnboundedReceiver<StatisticData>;
+/// Capacity for bounded transceiver event channels.
+pub const TRANSCEIVER_EVENT_CHANNEL_CAPACITY: usize = 1024;
+
+pub type StatisticDataSender = mpsc::Sender<StatisticData>;
+pub type StatisticDataReceiver = mpsc::Receiver<StatisticData>;
+
+/// Capacity for bounded statistic data channels.
+pub const STATISTIC_DATA_CHANNEL_CAPACITY: usize = 1024;
 
 pub type SubEventExecuteResultSender =
     oneshot::Sender<Result<(DataReceiver, Option<StatisticDataSender>), StreamHubError>>;

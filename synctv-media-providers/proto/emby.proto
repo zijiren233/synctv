@@ -12,7 +12,7 @@ service Emby {
   rpc FsList(FsListReq) returns (FsListResp);
   rpc Logout(LogoutReq) returns (Empty);
   rpc PlaybackInfo(PlaybackInfoReq) returns (PlaybackInfoResp);
-  rpc DeleteActiveEncodeings(DeleteActiveEncodeingsReq) returns (Empty);
+  rpc DeleteActiveEncodings(DeleteActiveEncodingsReq) returns (Empty);
 }
 
 message LoginReq {
@@ -185,7 +185,7 @@ message PlaybackInfoResp {
   repeated MediaSourceInfo mediaSourceInfo = 2;
 }
 
-message DeleteActiveEncodeingsReq {
+message DeleteActiveEncodingsReq {
   string host = 1;
   string token = 2;
   string playSessionId = 3;

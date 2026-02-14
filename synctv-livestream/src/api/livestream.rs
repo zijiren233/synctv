@@ -280,7 +280,7 @@ impl FlvStreamingApi {
     /// let rx = FlvStreamingApi::create_session(infrastructure, "room123", "media456").await?;
     /// let body = Body::from_stream(ReceiverStream::new(rx));
     /// ```
-    pub async fn create_session(
+    async fn create_session(
         infrastructure: &LiveStreamingInfrastructure,
         room_id: &str,
         media_id: &str,

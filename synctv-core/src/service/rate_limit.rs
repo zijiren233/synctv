@@ -46,6 +46,21 @@ impl RateLimiter {
         }
     }
 
+    /// Check if Redis is connected and responding
+    ///
+    /// Returns Ok(()) if Redis is healthy, or an error if not configured or unreachable.
+    pub async fn health_check(&self) -> Result<(), String> {
+        let Some(ref conn) = self.redis_conn else {
+            return Err("Redis not configured".to_string());
+        };
+        let mut conn = conn.clone();
+        redis::cmd("PING")
+            .query_async::<String>(&mut conn)
+            .await
+            .map_err(|e| format!("Redis ping failed: {e}"))?;
+        Ok(())
+    }
+
     /// Check if a request is allowed under the rate limit
     ///
     /// Returns Ok(()) if allowed, or `RateLimitError` if rate limit exceeded

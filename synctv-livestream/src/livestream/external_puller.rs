@@ -28,7 +28,7 @@ use synctv_xiu::streamhub::{
         StreamHubEventSender,
     },
     stream::StreamIdentifier,
-    utils::{RandomDigitCount, Uuid},
+    utils::Uuid,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
@@ -313,6 +313,8 @@ impl ExternalStreamPuller {
 
         let mut buffer = BytesMut::new();
         let mut header_parsed = false;
+        let mut dropped_frames: u64 = 0;
+        const DROP_LOG_INTERVAL: u64 = 100;
 
         // Read response body in chunks and parse FLV tags
         while let Some(chunk) = response.chunk().await
@@ -410,7 +412,15 @@ impl ExternalStreamPuller {
                 // Use try_send for non-blocking behavior
                 // If channel is full, drop the packet (backpressure)
                 if let Err(mpsc::error::TrySendError::Full(_)) = data_sender.try_send(frame) {
-                    // Packet dropped due to backpressure - continue receiving
+                    dropped_frames += 1;
+                    if dropped_frames % DROP_LOG_INTERVAL == 1 {
+                        warn!(
+                            room_id = %self.room_id,
+                            media_id = %self.media_id,
+                            total_dropped = dropped_frames,
+                            "FLV frame dropped due to backpressure"
+                        );
+                    }
                 }
             }
         }
@@ -441,7 +451,7 @@ impl ExternalStreamPuller {
     /// Sends a `StreamHubEvent::Publish` to register this stream in the local `StreamHub`,
     /// then receives back a `FrameDataSender` that can be used to push frames into the stream.
     async fn publish_to_local_stream_hub(&mut self) -> Result<FrameDataSender> {
-        let publisher_id = Uuid::new(RandomDigitCount::Four);
+        let publisher_id = Uuid::new();
 
         let publisher_info = PublisherInfo {
             id: publisher_id,

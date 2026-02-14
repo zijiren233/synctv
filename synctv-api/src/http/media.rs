@@ -1,7 +1,6 @@
 //! Media/Playlist management HTTP API
 //!
-//! Handles all playlist operations including adding, editing, removing,
-//! reordering, and retrieving media items.
+//! Handles playlist browsing operations.
 //!
 //! Uses gRPC proto types for all requests/responses to maintain consistency.
 
@@ -9,14 +8,11 @@ use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Json},
 };
-use serde::Deserialize;
 
 use crate::http::{AppState, AppResult, middleware::AuthUser};
 use crate::proto::client::{Media, ListPlaylistResponse};
 use crate::impls::client::media_to_proto;
-use synctv_core::{
-    models::{MediaId, RoomId},
-};
+use synctv_core::models::RoomId;
 
 /// Get current media in playlist
 #[axum::debug_handler]
@@ -111,174 +107,6 @@ pub async fn list_playlist_items(
     Ok(Json(response))
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct ListPlaylistItemsQuery {
-    pub relative_path: Option<String>,
-    pub page: Option<i32>,
-    pub page_size: Option<i32>,
-}
-
-/// Add a single media item to playlist
-#[axum::debug_handler]
-pub async fn add_media(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<AddMediaHttpRequest>,
-) -> AppResult<impl IntoResponse> {
-    let room_id = RoomId::from_string(room_id);
-
-    if req.url.len() > 2048 {
-        return Err(super::AppError::bad_request("URL too long (max 2048 characters)"));
-    }
-
-    // Build source_config from URL
-    let source_config = serde_json::json!({
-        "url": req.url
-    });
-
-    // Determine provider instance name (empty for direct URL)
-    let provider_instance_name = if req.provider.is_empty() {
-        String::new()
-    } else {
-        req.provider.clone()
-    };
-
-    // Extract title from URL or use provided title
-    let title = if req.title.is_empty() {
-        req.url.split('/').next_back().unwrap_or("Unknown").to_string()
-    } else {
-        req.title
-    };
-
-    let media = state
-        .room_service
-        .add_media(room_id, auth.user_id, provider_instance_name, source_config, title)
-        .await?;
-
-    Ok(Json(media_to_proto(&media)))
-}
-
-/// Add multiple media items to playlist
-#[axum::debug_handler]
-pub async fn add_media_batch(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<AddMediaBatchHttpRequest>,
-) -> AppResult<impl IntoResponse> {
-    let room_id = RoomId::from_string(room_id);
-
-    let mut media_items = Vec::new();
-    for item in req.items {
-        if item.url.len() > 2048 {
-            return Err(super::AppError::bad_request("URL too long (max 2048 characters)"));
-        }
-
-        // Build source_config from URL
-        let source_config = serde_json::json!({
-            "url": item.url
-        });
-
-        // Determine provider instance name (empty for direct URL)
-        let provider_instance_name = if item.provider.is_empty() {
-            String::new()
-        } else {
-            item.provider.clone()
-        };
-
-        // Extract title from URL or use provided title
-        let title = if item.title.is_empty() {
-            item.url.split('/').next_back().unwrap_or("Unknown").to_string()
-        } else {
-            item.title
-        };
-
-        let media = state
-            .room_service
-            .add_media(room_id.clone(), auth.user_id.clone(), provider_instance_name, source_config, title)
-            .await?;
-
-        media_items.push(media);
-    }
-
-    Ok(Json(media_items.into_iter().map(|m| media_to_proto(&m)).collect::<Vec<_>>()))
-}
-
-/// Edit media item
-#[axum::debug_handler]
-pub async fn edit_media(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path((room_id, media_id)): Path<(String, String)>,
-    Json(req): Json<EditMediaHttpRequest>,
-) -> AppResult<impl IntoResponse> {
-    let room_id = RoomId::from_string(room_id);
-    let media_id = MediaId::from_string(media_id);
-
-    let media = state
-        .room_service
-        .edit_media(room_id, auth.user_id, media_id, req.title)
-        .await?;
-
-    Ok(Json(media_to_proto(&media)))
-}
-
-/// Delete media item
-#[axum::debug_handler]
-pub async fn delete_media(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path((room_id, media_id)): Path<(String, String)>,
-) -> AppResult<impl IntoResponse> {
-    let room_id = RoomId::from_string(room_id);
-    let media_id = MediaId::from_string(media_id);
-
-    state
-        .room_service
-        .remove_media(room_id, auth.user_id, media_id)
-        .await?;
-
-    Ok(Json(serde_json::json!({"success": true})))
-}
-
-/// Swap positions of two media items
-#[axum::debug_handler]
-pub async fn swap_media(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Json(req): Json<SwapMediaRequest>,
-) -> AppResult<impl IntoResponse> {
-    let room_id = RoomId::from_string(room_id);
-    let media_id1 = MediaId::from_string(req.media_id1);
-    let media_id2 = MediaId::from_string(req.media_id2);
-
-    state
-        .room_service
-        .swap_media(room_id, auth.user_id, media_id1, media_id2)
-        .await?;
-
-    Ok(Json(serde_json::json!({"success": true})))
-}
-
-/// Clear entire playlist
-#[axum::debug_handler]
-pub async fn clear_playlist(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-) -> AppResult<impl IntoResponse> {
-    let room_id = RoomId::from_string(room_id);
-
-    let count = state
-        .room_service
-        .clear_playlist(room_id, auth.user_id)
-        .await?;
-
-    Ok(Json(serde_json::json!({"success": true, "count": count})))
-}
-
 /// Set current playing media
 #[axum::debug_handler]
 pub async fn set_playing_media(
@@ -287,7 +115,7 @@ pub async fn set_playing_media(
     Path((room_id, media_id)): Path<(String, String)>,
 ) -> AppResult<impl IntoResponse> {
     let room_id = RoomId::from_string(room_id);
-    let media_id = MediaId::from_string(media_id);
+    let media_id = synctv_core::models::MediaId::from_string(media_id);
 
     let state = state
         .room_service
@@ -314,43 +142,15 @@ pub async fn set_playing_media(
 
 // ============== Request/Response Types ==============
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 pub struct PlaylistQuery {
     pub page: Option<i32>,
     pub page_size: Option<i32>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AddMediaHttpRequest {
-    pub url: String,
-    #[serde(default)]
-    pub provider: String,
-    #[serde(default)]
-    pub title: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AddMediaBatchHttpRequest {
-    pub items: Vec<AddMediaItem>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AddMediaItem {
-    pub url: String,
-    #[serde(default)]
-    pub provider: String,
-    #[serde(default)]
-    pub title: String,
-    pub metadata: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct EditMediaHttpRequest {
-    pub title: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SwapMediaRequest {
-    pub media_id1: String,
-    pub media_id2: String,
+#[derive(Debug, serde::Deserialize)]
+pub struct ListPlaylistItemsQuery {
+    pub relative_path: Option<String>,
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
 }

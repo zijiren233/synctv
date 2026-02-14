@@ -76,39 +76,21 @@ impl EmailTokenService {
         Ok(token)
     }
 
-    /// Validate and consume an email token
+    /// Validate and consume an email token atomically
     ///
-    /// Returns the `user_id` if token is valid
-    /// Marks token as used
+    /// Returns the `user_id` if token is valid.
+    /// Uses a single UPDATE with WHERE conditions to atomically check validity
+    /// and mark as used, preventing concurrent token reuse.
     pub async fn validate_token(
         &self,
         token: &str,
         token_type: EmailTokenType,
     ) -> Result<UserId> {
-        // Get token record
         let token_record = self
             .repository
-            .get(token)
+            .validate_and_consume(token, token_type)
             .await?
             .ok_or_else(|| Error::InvalidInput("Invalid or expired token".to_string()))?;
-
-        // Check token type
-        if token_record.token_type != token_type.as_str() {
-            return Err(Error::InvalidInput("Invalid token type".to_string()));
-        }
-
-        // Check if already used
-        if token_record.used_at.is_some() {
-            return Err(Error::InvalidInput("Token already used".to_string()));
-        }
-
-        // Check expiration
-        if token_record.expires_at < Utc::now() {
-            return Err(Error::InvalidInput("Token expired".to_string()));
-        }
-
-        // Mark as used
-        self.repository.mark_as_used(token).await?;
 
         info!(
             "Validated {} token for user {}",

@@ -20,12 +20,24 @@ pub struct DedupKey {
     /// Extra discriminator for events without `room_id/user_id` (e.g. `SystemNotification` message)
     pub extra: String,
     pub timestamp_ms: i64,
+    /// Content hash to prevent false positives on same-millisecond events
+    /// with different payloads (e.g. two chat messages in the same ms)
+    pub content_hash: u64,
 }
 
 impl DedupKey {
     /// Create a deduplication key from a cluster event
     #[must_use]
     pub fn from_event(event: &crate::sync::events::ClusterEvent) -> Self {
+        use std::hash::{Hash, Hasher};
+        // Hash the serialized event content to distinguish same-millisecond events
+        let content_hash = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            if let Ok(json) = serde_json::to_string(event) {
+                json.hash(&mut hasher);
+            }
+            hasher.finish()
+        };
         Self {
             event_type: event.event_type().to_string(),
             // Use "global" for events without room_id to avoid false positive deduplication
@@ -39,6 +51,7 @@ impl DedupKey {
                 .unwrap_or_else(|| "system".to_string()),
             extra: event.dedup_extra(),
             timestamp_ms: event.timestamp().timestamp_millis(),
+            content_hash,
         }
     }
 }
@@ -208,6 +221,7 @@ mod tests {
             user_id: "user1".to_string(),
             extra: String::new(),
             timestamp_ms: 1000,
+            content_hash: 0,
         };
 
         // First call should return true

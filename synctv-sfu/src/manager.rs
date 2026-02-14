@@ -17,6 +17,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use tokio::time::{interval, Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -55,6 +56,9 @@ pub struct SfuManager {
 
     /// Cancellation token for background tasks
     cancel_token: CancellationToken,
+
+    /// Background task handles for cleanup and stats collection
+    background_tasks: parking_lot::Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl SfuManager {
@@ -67,6 +71,7 @@ impl SfuManager {
             rooms: DashMap::new(),
             stats: Arc::new(RwLock::new(ManagerStats::default())),
             cancel_token,
+            background_tasks: parking_lot::Mutex::new(Vec::new()),
         });
 
         info!(
@@ -77,15 +82,21 @@ impl SfuManager {
         );
 
         // Start background tasks with cancellation support
-        let manager_clone = Arc::clone(&manager);
-        tokio::spawn(async move {
-            manager_clone.cleanup_task().await;
-        });
+        let cleanup_handle = {
+            let manager_clone = Arc::clone(&manager);
+            tokio::spawn(async move {
+                manager_clone.cleanup_task().await;
+            })
+        };
 
-        let manager_clone = Arc::clone(&manager);
-        tokio::spawn(async move {
-            manager_clone.stats_collection_task().await;
-        });
+        let stats_handle = {
+            let manager_clone = Arc::clone(&manager);
+            tokio::spawn(async move {
+                manager_clone.stats_collection_task().await;
+            })
+        };
+
+        manager.background_tasks.lock().extend([cleanup_handle, stats_handle]);
 
         manager
     }

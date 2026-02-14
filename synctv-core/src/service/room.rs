@@ -213,9 +213,9 @@ impl RoomService {
             return Err(Error::InvalidInput("Room name too long".to_string()));
         }
 
-        // Validate description length
-        if description.len() > 500 {
-            tracing::warn!(user_id = %created_by, desc_len = description.len(), "Attempted to create room with description too long");
+        // Validate description length (character count for Unicode safety)
+        if description.chars().count() > 500 {
+            tracing::warn!(user_id = %created_by, desc_len = description.chars().count(), "Attempted to create room with description too long");
             return Err(Error::InvalidInput("Room description too long (max 500 characters)".to_string()));
         }
 
@@ -702,7 +702,7 @@ impl RoomService {
 
     /// Update room description
     pub async fn update_room_description(&self, room_id: &RoomId, description: String) -> Result<Room> {
-        if description.len() > 500 {
+        if description.chars().count() > 500 {
             return Err(Error::InvalidInput("Room description too long (max 500 characters)".to_string()));
         }
         self.room_repo.update_description(room_id, &description).await
@@ -1013,7 +1013,7 @@ impl RoomService {
         }
 
         let message = ChatMessage {
-            id: nanoid::nanoid!(12),
+            id: nanoid::nanoid!(21),
             room_id,
             user_id,
             content,

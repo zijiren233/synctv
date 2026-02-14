@@ -51,6 +51,7 @@ parking_lot = "0.12"
 
 # IDs
 nanoid = "0.4"
+uuid = { version = "1", features = ["v4"] }
 
 # HTTP
 axum = { version = "0.7", features = ["macros"] }

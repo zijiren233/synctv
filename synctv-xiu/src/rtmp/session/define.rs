@@ -24,7 +24,7 @@ pub const TRANSACTION_ID_CREATE_STREAM: u8 = 2;
 //pub mod
 pub const RTMP_LEVEL_WARNING: &str = "warning";
 pub const RTMP_LEVEL_STATUS: &str = "status";
-pub const RTMP_LEVEL_ERROR: &str = "error\n";
+pub const RTMP_LEVEL_ERROR: &str = "error";
 
 pub enum SessionType {
     Client,

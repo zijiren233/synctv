@@ -55,25 +55,6 @@ pub struct InvalidationMessage {
     pub payload: String,
 }
 
-/// Redis-based cache invalidation (optional dependency)
-pub struct RedisCacheInvalidation {
-    // Redis client would go here
-    // For now, this is a placeholder showing the architecture
-}
-
-#[async_trait::async_trait]
-impl CacheInvalidation for RedisCacheInvalidation {
-    async fn publish(&self, _channel: &str, _message: &str) -> Result<()> {
-        // Implement Redis publish
-        Ok(())
-    }
-
-    async fn subscribe(&self, _channel: &str) -> Result<Box<dyn InvalidationStream>> {
-        // Implement Redis subscribe
-        Err(Error::Internal("Redis not configured".to_string()))
-    }
-}
-
 /// Room settings service with caching
 pub struct RoomSettingsService {
     repo: RoomSettingsRepository,
@@ -221,7 +202,10 @@ impl RoomSettingsService {
         Ok(())
     }
 
-    /// Update a single setting field
+    /// Update a single setting field with database-level locking
+    ///
+    /// Uses a transaction with FOR UPDATE to prevent concurrent read-modify-write
+    /// races, rather than reading from cache and writing back.
     pub async fn update_field<F>(
         &self,
         room_id: &RoomId,
@@ -230,14 +214,38 @@ impl RoomSettingsService {
     where
         F: FnOnce(&mut RoomSettings) + Send,
     {
-        // Get current settings
-        let mut settings = self.get(room_id).await?;
+        // Use FOR UPDATE within a transaction to lock the row
+        let pool = self.repo.pool();
+        let mut tx = pool.begin().await?;
+        let mut settings = self.repo.get_for_update(room_id, &mut *tx).await?;
 
         // Apply update
         updater(&mut settings);
 
-        // Save updated settings
-        self.set(room_id, &settings).await?;
+        // Save within the same transaction
+        self.repo.set_settings_with_executor(room_id, &settings, &mut *tx).await?;
+        tx.commit().await?;
+
+        // Update local cache after commit
+        self.cache.insert(room_id.clone(), settings.clone()).await;
+
+        // Notify other replicas via Pub/Sub (if configured)
+        if let Some(ref invalidation) = self.invalidation {
+            let message = SettingsUpdateMessage {
+                room_id: room_id.as_str().to_string(),
+                version: chrono::Utc::now().timestamp(),
+            };
+
+            if let Err(e) = invalidation.publish(
+                Self::PUBSUB_CHANNEL,
+                &serde_json::to_string(&message).unwrap_or_default(),
+            ).await {
+                tracing::error!("Failed to publish settings update: {}", e);
+            }
+        }
+
+        // Notify connected clients
+        self.notify_settings_changed(room_id, &settings).await;
 
         Ok(settings)
     }
@@ -298,17 +306,13 @@ impl RoomSettingsService {
 
     /// Notify connected clients about settings change
     async fn notify_settings_changed(&self, room_id: &RoomId, settings: &RoomSettings) {
-        let settings_json = match serde_json::to_string(settings) {
-            Ok(json) => json,
+        let settings_value = match serde_json::to_value(settings) {
+            Ok(v) => v,
             Err(e) => {
                 tracing::error!("Failed to serialize settings: {}", e);
                 return;
             }
         };
-
-        // Send notification to room members
-        let settings_value: serde_json::Value = serde_json::from_str(&settings_json)
-            .unwrap_or(serde_json::json!(null));
 
         let _ = self.notification_service
             .notify_settings_updated(room_id, settings_value)

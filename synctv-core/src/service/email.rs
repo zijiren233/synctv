@@ -167,6 +167,7 @@ impl EmailService {
     }
 
     /// Get verification code (Redis if available, otherwise local memory)
+    #[allow(dead_code)]
     async fn get_code(&self, email: &str) -> Result<Option<VerificationCode>> {
         if let Some(ref redis) = self.redis {
             let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
@@ -197,6 +198,7 @@ impl EmailService {
     }
 
     /// Update verification code (Redis if available, otherwise local memory)
+    #[allow(dead_code)]
     async fn update_code(&self, email: &str, code: &VerificationCode) -> Result<()> {
         if self.redis.is_some() {
             // For Redis, we just store the updated code (TTL refresh is implicit)
@@ -209,6 +211,7 @@ impl EmailService {
     }
 
     /// Remove verification code (Redis if available, otherwise local memory)
+    #[allow(dead_code)]
     async fn remove_code(&self, email: &str) -> Result<()> {
         if let Some(ref redis) = self.redis {
             let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
@@ -389,37 +392,120 @@ impl EmailService {
     }
 
     /// Verify code for email
+    ///
+    /// Uses atomic check-and-update to prevent concurrent verification attempts
+    /// from bypassing the max_attempts check.
     pub async fn verify_code(&self, email: &str, code: &str) -> Result<()> {
-        // Get current code
-        let mut verification_code = self
-            .get_code(email)
-            .await?
+        if let Some(ref redis) = self.redis {
+            // Redis path: use Lua script for atomic read-check-increment-return
+            self.verify_code_redis(redis, email, code).await
+        } else {
+            // Memory path: hold write lock across the entire read-modify-write
+            self.verify_code_memory(email, code).await
+        }
+    }
+
+    /// Atomic verify for Redis using a Lua script
+    async fn verify_code_redis(
+        &self,
+        redis: &redis::Client,
+        email: &str,
+        code: &str,
+    ) -> Result<()> {
+        let key = format!("{}{}", EMAIL_CODE_KEY_PREFIX, email);
+
+        let mut conn = redis
+            .get_multiplexed_tokio_connection()
+            .await
+            .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
+
+        // Lua script: atomically read, check expiry/attempts, increment, and return result
+        // Returns:
+        //   -1 = key not found
+        //   -2 = expired
+        //   -3 = too many attempts (deleted)
+        //   -4 = wrong code (attempts incremented)
+        //    1 = success (key deleted)
+        let script = redis::Script::new(
+            r#"
+            local data = redis.call('GET', KEYS[1])
+            if not data then return -1 end
+            local obj = cjson.decode(data)
+            local created_ms = tonumber(obj['created_at'])
+            local now_ms = tonumber(ARGV[3])
+            local ttl_ms = tonumber(ARGV[2])
+            if now_ms > created_ms + ttl_ms then
+                redis.call('DEL', KEYS[1])
+                return -2
+            end
+            obj['attempts'] = obj['attempts'] + 1
+            if obj['attempts'] > tonumber(ARGV[4]) then
+                redis.call('DEL', KEYS[1])
+                return -3
+            end
+            if obj['code'] ~= ARGV[1] then
+                redis.call('SET', KEYS[1], cjson.encode(obj), 'KEEPTTL')
+                return -4
+            end
+            redis.call('DEL', KEYS[1])
+            return 1
+            "#,
+        );
+
+        let created_at_millis = Utc::now().timestamp_millis();
+        // We pass TTL in millis for comparison with created_at timestamp
+        let ttl_millis = self.code_ttl_minutes * 60 * 1000;
+
+        let result: i64 = script
+            .key(&key)
+            .arg(code)
+            .arg(ttl_millis)
+            .arg(created_at_millis)
+            .arg(self.max_attempts)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| Error::Internal(format!("Redis script failed: {e}")))?;
+
+        match result {
+            1 => Ok(()),
+            -1 => Err(Error::InvalidInput("No verification code found".to_string())),
+            -2 => Err(Error::InvalidInput("Verification code expired".to_string())),
+            -3 => Err(Error::InvalidInput("Too many failed attempts".to_string())),
+            -4 => Err(Error::InvalidInput("Invalid verification code".to_string())),
+            _ => Err(Error::Internal("Unexpected verification result".to_string())),
+        }
+    }
+
+    /// Atomic verify for in-memory storage: hold write lock across entire operation
+    async fn verify_code_memory(&self, email: &str, code: &str) -> Result<()> {
+        let mut codes = self.local_codes.write().await;
+
+        let verification_code = codes
+            .get_mut(email)
             .ok_or_else(|| Error::InvalidInput("No verification code found".to_string()))?;
 
         // Check if expired
         let expiration = verification_code.created_at + Duration::minutes(self.code_ttl_minutes);
         if Utc::now() > expiration {
-            self.remove_code(email).await?;
+            codes.remove(email);
             return Err(Error::InvalidInput("Verification code expired".to_string()));
         }
 
         // Check attempts
         verification_code.attempts += 1;
         if verification_code.attempts > self.max_attempts {
-            self.remove_code(email).await?;
+            codes.remove(email);
             return Err(Error::InvalidInput("Too many failed attempts".to_string()));
         }
 
         // Verify code
         if verification_code.code != code {
-            // Update attempts count
-            self.update_code(email, &verification_code).await?;
+            // attempts already incremented in place
             return Err(Error::InvalidInput("Invalid verification code".to_string()));
         }
 
         // Remove code after successful verification
-        self.remove_code(email).await?;
-
+        codes.remove(email);
         Ok(())
     }
 

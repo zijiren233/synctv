@@ -23,6 +23,9 @@ pub fn create_public_router() -> Router<AppState> {
 pub async fn get_public_settings(State(state): State<AppState>) -> impl IntoResponse {
     match state.client_api.get_public_settings() {
         Ok(response) => Json(serde_json::to_value(response).unwrap_or_default()),
-        Err(_) => Json(serde_json::to_value(synctv_core::service::PublicSettings::defaults()).unwrap_or_default()),
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to load public settings, returning defaults");
+            Json(serde_json::to_value(synctv_core::service::PublicSettings::defaults()).unwrap_or_default())
+        }
     }
 }

@@ -153,6 +153,8 @@ pub struct JwtConfig {
     pub secret: String,
     pub access_token_duration_hours: u64,
     pub refresh_token_duration_days: u64,
+    pub guest_token_duration_hours: u64,
+    pub clock_skew_leeway_secs: u64,
 }
 
 impl Default for JwtConfig {
@@ -161,6 +163,8 @@ impl Default for JwtConfig {
             secret: "change-me-in-production".to_string(),
             access_token_duration_hours: 1,
             refresh_token_duration_days: 30,
+            guest_token_duration_hours: 4,
+            clock_skew_leeway_secs: 60,
         }
     }
 }

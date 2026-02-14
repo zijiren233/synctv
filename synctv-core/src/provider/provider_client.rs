@@ -606,12 +606,12 @@ impl EmbyInterface for GrpcEmbyClient {
         Ok(response.into_inner())
     }
 
-    async fn delete_active_encodeings(&self, request: synctv_media_providers::grpc::emby::DeleteActiveEncodeingsReq)
+    async fn delete_active_encodings(&self, request: synctv_media_providers::grpc::emby::DeleteActiveEncodingsReq)
         -> Result<synctv_media_providers::grpc::emby::Empty, EmbyError>
     {
         use synctv_media_providers::grpc::emby::emby_client::EmbyClient;
         let mut client = EmbyClient::new(self.channel.clone());
-        let response = client.delete_active_encodeings(tonic::Request::new(request)).await
+        let response = client.delete_active_encodings(tonic::Request::new(request)).await
             .map_err(|e| EmbyError::Network(format!("gRPC error: {e}")))?;
         Ok(response.into_inner())
     }

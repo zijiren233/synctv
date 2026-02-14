@@ -100,6 +100,38 @@ impl EmailTokenRepository {
         self.row_to_token(row)
     }
 
+    /// Atomically validate and consume a token.
+    ///
+    /// In a single UPDATE, checks that the token exists, matches the expected type,
+    /// has not been used, and has not expired. If all conditions are met, marks it
+    /// as used and returns the record. Returns `None` if any condition fails.
+    pub async fn validate_and_consume(
+        &self,
+        token: &str,
+        token_type: EmailTokenType,
+    ) -> Result<Option<EmailToken>> {
+        let row = sqlx::query(
+            r"
+            UPDATE email_tokens
+            SET used_at = CURRENT_TIMESTAMP
+            WHERE token = $1
+              AND token_type = $2
+              AND used_at IS NULL
+              AND expires_at > CURRENT_TIMESTAMP
+            RETURNING id, token, user_id, token_type, expires_at, used_at, created_at
+            ",
+        )
+        .bind(token)
+        .bind(token_type.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(r) => Ok(Some(self.row_to_token(r)?)),
+            None => Ok(None),
+        }
+    }
+
     /// Delete all tokens of a specific type for a user
     pub async fn delete_user_tokens(
         &self,
