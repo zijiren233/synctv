@@ -65,15 +65,100 @@ async fn main() -> Result<()> {
     // 3. Initialize database
     let pool = init_database(&config).await?;
 
-    // 4. Run migrations
+    // 4. Run migrations (with distributed lock if Redis is available)
     info!("Running database migrations...");
-    sqlx::migrate!("../migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| {
-            error!("Failed to run migrations: {}", e);
-            anyhow::anyhow!("Migration failed: {e}")
-        })?;
+    if !config.redis.url.is_empty() {
+        // Multi-replica: use Redis distributed lock to ensure only one node runs migrations
+        let redis_client = redis::Client::open(config.redis.url.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to open Redis for migration lock: {e}"))?;
+        let redis_conn = redis_client
+            .get_connection_manager()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to connect to Redis for migration lock: {e}"))?;
+        let lock = synctv_core::service::DistributedLock::new(redis_conn);
+        // 300s TTL: migrations can be slow on large databases
+        match lock.acquire("synctv:migration", 300).await {
+            Ok(Some(lock_value)) => {
+                info!("Acquired migration lock, running migrations");
+                let migrate_result = sqlx::migrate!("../migrations")
+                    .run(&pool)
+                    .await;
+                // Always release lock, even if migration failed
+                if let Err(e) = lock.release("synctv:migration", &lock_value).await {
+                    warn!("Failed to release migration lock: {}", e);
+                }
+                migrate_result.map_err(|e| {
+                    error!("Failed to run migrations: {}", e);
+                    anyhow::anyhow!("Migration failed: {e}")
+                })?;
+            }
+            Ok(None) => {
+                info!("Another node is running migrations, waiting...");
+                // Poll until the lock is released (migration completed by another node)
+                let mut attempts = 0;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    attempts += 1;
+                    match lock.acquire("synctv:migration", 300).await {
+                        Ok(Some(lock_value)) => {
+                            info!("Migration lock acquired after waiting, running migrations");
+                            let migrate_result = sqlx::migrate!("../migrations")
+                                .run(&pool)
+                                .await;
+                            if let Err(e) = lock.release("synctv:migration", &lock_value).await {
+                                warn!("Failed to release migration lock: {}", e);
+                            }
+                            migrate_result.map_err(|e| {
+                                error!("Failed to run migrations: {}", e);
+                                anyhow::anyhow!("Migration failed: {e}")
+                            })?;
+                            break;
+                        }
+                        Ok(None) if attempts < 150 => {
+                            // Still locked, keep waiting (up to 300s = 150 * 2s)
+                            continue;
+                        }
+                        Ok(None) => {
+                            return Err(anyhow::anyhow!(
+                                "Timed out waiting for migration lock after {}s",
+                                attempts * 2
+                            ));
+                        }
+                        Err(e) => {
+                            warn!("Redis error while waiting for migration lock: {}, running migrations directly", e);
+                            sqlx::migrate!("../migrations")
+                                .run(&pool)
+                                .await
+                                .map_err(|e| {
+                                    error!("Failed to run migrations: {}", e);
+                                    anyhow::anyhow!("Migration failed: {e}")
+                                })?;
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to acquire migration lock (Redis error): {}, running migrations directly", e);
+                sqlx::migrate!("../migrations")
+                    .run(&pool)
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to run migrations: {}", e);
+                        anyhow::anyhow!("Migration failed: {e}")
+                    })?;
+            }
+        }
+    } else {
+        // Single-node: run migrations directly
+        sqlx::migrate!("../migrations")
+            .run(&pool)
+            .await
+            .map_err(|e| {
+                error!("Failed to run migrations: {}", e);
+                anyhow::anyhow!("Migration failed: {e}")
+            })?;
+    }
     info!("Migrations completed");
 
     // 4.3. Bootstrap root user (if enabled and no root user exists)
@@ -131,7 +216,7 @@ async fn main() -> Result<()> {
         let cluster_config = ClusterConfig {
             redis_url: String::new(),
             node_id: node_id.clone(),
-            dedup_window: std::time::Duration::from_secs(5),
+            dedup_window: std::time::Duration::from_secs(10),
             cleanup_interval: std::time::Duration::from_secs(30),
             critical_channel_capacity: config.cluster.critical_channel_capacity,
             publish_channel_capacity: config.cluster.publish_channel_capacity,
@@ -147,7 +232,7 @@ async fn main() -> Result<()> {
         let cluster_config = ClusterConfig {
             redis_url: config.redis.url.clone(),
             node_id: node_id.clone(),
-            dedup_window: std::time::Duration::from_secs(5),
+            dedup_window: std::time::Duration::from_secs(10),
             cleanup_interval: std::time::Duration::from_secs(30),
             critical_channel_capacity: config.cluster.critical_channel_capacity,
             publish_channel_capacity: config.cluster.publish_channel_capacity,
@@ -175,18 +260,23 @@ async fn main() -> Result<()> {
                 Ok(registry) => {
                     let registry = Arc::new(registry);
 
+                    // Use advertise addresses for registration so other nodes
+                    // can connect (bind address 0.0.0.0 is not routable).
+                    let advertise_grpc = config.advertise_grpc_address();
+                    let advertise_http = config.advertise_http_address();
+
                     // Register this node in Redis
                     if let Err(e) = registry.register(
-                        config.grpc_address(),
-                        config.http_address(),
+                        advertise_grpc.clone(),
+                        advertise_http.clone(),
                     ).await {
                         error!("Failed to register node in Redis: {}", e);
                         (None, None, None)
                     } else {
                         info!(
                             node_id = %node_id,
-                            grpc_address = %config.grpc_address(),
-                            http_address = %config.http_address(),
+                            advertise_grpc = %advertise_grpc,
+                            advertise_http = %advertise_http,
                             "Node registered in cluster"
                         );
 
@@ -195,8 +285,8 @@ async fn main() -> Result<()> {
                         let conn_mgr_for_hb = connection_manager.clone();
                         cm.start_heartbeat_loop(
                             registry.clone(),
-                            config.grpc_address(),
-                            config.http_address(),
+                            advertise_grpc,
+                            advertise_http,
                             Some(move || conn_mgr_for_hb.connection_count()),
                         ).await;
 

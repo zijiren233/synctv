@@ -17,9 +17,9 @@ use uuid::Uuid;
 use crate::http::error::AppResult;
 use crate::http::middleware::AuthUser;
 use crate::http::AppState;
+use crate::impls::notification::{notification_to_proto, proto_notification_type_to_core};
 use crate::proto::client::{
-    ListNotificationsResponse, NotificationProto,
-    NotificationType as ProtoNotificationType,
+    ListNotificationsResponse,
     MarkAsReadRequest, MarkAllAsReadRequest,
     GetNotificationResponse,
 };
@@ -40,45 +40,6 @@ fn get_notification_api(state: &AppState) -> Result<&crate::impls::NotificationA
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             "Notification service not available",
         ))
-}
-
-/// Convert a domain Notification to a proto NotificationProto
-fn notification_to_proto(n: synctv_core::models::notification::Notification) -> NotificationProto {
-    use synctv_core::models::notification::NotificationType as CoreNotificationType;
-
-    let notification_type = match n.notification_type {
-        CoreNotificationType::RoomInvitation => ProtoNotificationType::RoomInvitation,
-        CoreNotificationType::SystemAnnouncement => ProtoNotificationType::SystemAnnouncement,
-        CoreNotificationType::RoomEvent => ProtoNotificationType::RoomEvent,
-        CoreNotificationType::PasswordReset => ProtoNotificationType::PasswordReset,
-        CoreNotificationType::EmailVerification => ProtoNotificationType::EmailVerification,
-    };
-
-    NotificationProto {
-        id: n.id.to_string(),
-        user_id: n.user_id.as_str().to_string(),
-        notification_type: notification_type as i32,
-        title: n.title,
-        content: n.content,
-        data: serde_json::to_vec(&n.data).unwrap_or_default(),
-        is_read: n.is_read,
-        created_at: n.created_at.timestamp(),
-        updated_at: n.updated_at.timestamp(),
-    }
-}
-
-/// Convert a proto NotificationType enum value to a domain NotificationType
-fn proto_notification_type_to_core(value: i32) -> Option<synctv_core::models::notification::NotificationType> {
-    use synctv_core::models::notification::NotificationType as CoreNotificationType;
-
-    match ProtoNotificationType::try_from(value) {
-        Ok(ProtoNotificationType::RoomInvitation) => Some(CoreNotificationType::RoomInvitation),
-        Ok(ProtoNotificationType::SystemAnnouncement) => Some(CoreNotificationType::SystemAnnouncement),
-        Ok(ProtoNotificationType::RoomEvent) => Some(CoreNotificationType::RoomEvent),
-        Ok(ProtoNotificationType::PasswordReset) => Some(CoreNotificationType::PasswordReset),
-        Ok(ProtoNotificationType::EmailVerification) => Some(CoreNotificationType::EmailVerification),
-        _ => None,
-    }
 }
 
 /// GET /api/notifications - List user's notifications
@@ -104,7 +65,7 @@ pub async fn list_notifications(
             notification_type,
         )
         .await
-        .map_err(crate::http::AppError::internal)?;
+        .map_err(crate::http::error::impls_err_to_app_error)?;
 
     Ok(Json(ListNotificationsResponse {
         notifications: result.notifications.into_iter().map(notification_to_proto).collect(),
@@ -124,7 +85,7 @@ pub async fn get_notification(
     let notification = api
         .get_notification(&auth.user_id, notification_id)
         .await
-        .map_err(crate::http::AppError::internal)?;
+        .map_err(crate::http::error::impls_err_to_app_error)?;
 
     Ok(Json(GetNotificationResponse {
         notification: Some(notification_to_proto(notification)),
@@ -150,7 +111,7 @@ pub async fn mark_as_read(
 
     api.mark_as_read(&auth.user_id, notification_ids)
         .await
-        .map_err(crate::http::AppError::internal)?;
+        .map_err(crate::http::error::impls_err_to_app_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -173,7 +134,7 @@ pub async fn mark_all_as_read(
 
     api.mark_all_as_read(&auth.user_id, before)
         .await
-        .map_err(crate::http::AppError::internal)?;
+        .map_err(crate::http::error::impls_err_to_app_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -188,7 +149,7 @@ pub async fn delete_notification(
 
     api.delete_notification(&auth.user_id, notification_id)
         .await
-        .map_err(crate::http::AppError::internal)?;
+        .map_err(crate::http::error::impls_err_to_app_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -202,7 +163,7 @@ pub async fn delete_all_read(
 
     api.delete_all_read(&auth.user_id)
         .await
-        .map_err(crate::http::AppError::internal)?;
+        .map_err(crate::http::error::impls_err_to_app_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }

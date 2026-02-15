@@ -14,7 +14,7 @@ pub mod providers;
 
 // Re-export for convenience
 pub use admin::AdminApiImpl;
-pub use client::ClientApiImpl;
+pub use client::{ClientApiImpl, ClientApiConfig};
 pub use email::EmailApiImpl;
 pub use messaging::{StreamMessageHandler, MessageSender, ProtoCodec};
 pub use notification::NotificationApiImpl;
@@ -121,5 +121,62 @@ mod tests {
         assert!(matches!(classify_error("NOT FOUND"), ErrorKind::NotFound));
         assert!(matches!(classify_error("PERMISSION denied"), ErrorKind::PermissionDenied));
         assert!(matches!(classify_error("INVALID token"), ErrorKind::Unauthenticated));
+    }
+
+    // ========== Priority / Ordering Edge Cases ==========
+
+    #[test]
+    fn test_classify_error_not_found_takes_priority_over_invalid() {
+        // "not found" contains "not" but should match NotFound, not InvalidArgument
+        assert!(matches!(classify_error("Resource not found"), ErrorKind::NotFound));
+    }
+
+    #[test]
+    fn test_classify_error_invalid_token_is_unauthenticated_not_invalid_argument() {
+        // "invalid token" should match Unauthenticated (checked before InvalidArgument)
+        assert!(matches!(classify_error("invalid token supplied"), ErrorKind::Unauthenticated));
+    }
+
+    #[test]
+    fn test_classify_error_banned_is_permission_denied() {
+        // "banned" should match PermissionDenied
+        assert!(matches!(classify_error("User has been banned from the room"), ErrorKind::PermissionDenied));
+    }
+
+    #[test]
+    fn test_classify_error_empty_string_is_internal() {
+        assert!(matches!(classify_error(""), ErrorKind::Internal));
+    }
+
+    #[test]
+    fn test_classify_error_whitespace_only_is_internal() {
+        assert!(matches!(classify_error("   "), ErrorKind::Internal));
+    }
+
+    #[test]
+    fn test_classify_error_must_be_is_invalid_argument() {
+        assert!(matches!(classify_error("Username must be alphanumeric"), ErrorKind::InvalidArgument));
+    }
+
+    #[test]
+    fn test_classify_error_not_allowed_is_permission_denied() {
+        assert!(matches!(classify_error("This action is not allowed"), ErrorKind::PermissionDenied));
+    }
+
+    #[test]
+    fn test_classify_error_already_registered_is_already_exists() {
+        assert!(matches!(classify_error("User already registered"), ErrorKind::AlreadyExists));
+    }
+
+    #[test]
+    fn test_classify_error_not_authenticated_is_unauthenticated() {
+        assert!(matches!(classify_error("User is not authenticated"), ErrorKind::Unauthenticated));
+    }
+
+    #[test]
+    fn test_classify_error_mixed_case_keywords() {
+        assert!(matches!(classify_error("Token Expired"), ErrorKind::Unauthenticated));
+        assert!(matches!(classify_error("Already Taken"), ErrorKind::AlreadyExists));
+        assert!(matches!(classify_error("Cannot Be Empty"), ErrorKind::InvalidArgument));
     }
 }

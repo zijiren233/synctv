@@ -44,7 +44,7 @@ pub async fn refresh_token(
         .client_api
         .refresh_token(req)
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }

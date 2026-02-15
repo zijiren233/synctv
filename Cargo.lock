@@ -5195,6 +5195,7 @@ dependencies = [
  "growable-bloom-filter",
  "handlebars",
  "hex",
+ "hostname 0.4.2",
  "http 1.4.0",
  "humantime",
  "ipnet",

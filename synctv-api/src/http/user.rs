@@ -55,7 +55,7 @@ pub async fn get_me(
         .client_api
         .get_profile(&auth.user_id.to_string())
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }
@@ -80,7 +80,7 @@ pub async fn update_user(
             .client_api
             .set_username(&auth.user_id.to_string(), set_username_req)
             .await
-            .map_err(super::AppError::internal_server_error)?;
+            .map_err(super::error::impls_err_to_app_error)?;
 
         let new_username = response.user.as_ref().map_or_else(|| username.clone(), |u| u.username.clone());
 
@@ -110,7 +110,7 @@ pub async fn update_user(
             .client_api
             .set_password(&auth.user_id.to_string(), set_password_req)
             .await
-            .map_err(super::AppError::internal_server_error)?;
+            .map_err(super::error::impls_err_to_app_error)?;
 
         return Ok(Json(serde_json::json!({
             "message": "Password updated successfully"
@@ -133,7 +133,7 @@ pub async fn get_joined_rooms(
         .client_api
         .get_joined_rooms(&auth.user_id.to_string(), page, page_size)
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }
@@ -150,7 +150,7 @@ pub async fn delete_my_room(
         .client_api
         .delete_room(&auth.user_id.to_string(), &room_id)
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }
@@ -170,7 +170,7 @@ pub async fn list_created_rooms(
         .client_api
         .list_created_rooms(&auth.user_id.to_string(), req)
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }

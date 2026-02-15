@@ -32,6 +32,7 @@ spec:
       serviceAccountName: {{ include "synctv.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 60 }}
       containers:
         - name: synctv
           securityContext:
@@ -64,6 +65,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: SYNCTV_SERVER_ADVERTISE_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
             # Secrets injected via env vars (SYNCTV_ prefix matches Config::load)
             - name: SYNCTV_DATABASE_URL
               valueFrom:
@@ -139,9 +148,28 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- if .Values.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "synctv.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      {{- if and .Values.topologySpread .Values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpread.maxSkew | default 1 }}
+          topologyKey: {{ .Values.topologySpread.topologyKey | default "topology.kubernetes.io/zone" }}
+          whenUnsatisfiable: {{ .Values.topologySpread.whenUnsatisfiable | default "DoNotSchedule" }}
+          labelSelector:
+            matchLabels:
+              {{- include "synctv.selectorLabels" . | nindent 14 }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

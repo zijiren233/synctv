@@ -11,11 +11,7 @@ use crate::impls::providers::{extract_instance_name, get_provider_binds};
 use crate::proto::providers::emby::emby_provider_service_server::EmbyProviderService;
 use crate::proto::providers::emby::{LoginRequest, LoginResponse, ListRequest, ListResponse, GetMeRequest, GetMeResponse, LogoutRequest, LogoutResponse, GetBindsRequest, GetBindsResponse, BindInfo};
 
-/// Log an internal error and return a generic gRPC status to avoid leaking details.
-fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
-    tracing::error!("{context}: {err}");
-    Status::internal(context)
-}
+use crate::grpc::internal_err;
 
 /// Emby Provider gRPC Service
 ///

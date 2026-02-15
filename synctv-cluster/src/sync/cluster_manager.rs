@@ -45,7 +45,7 @@ impl Default for ClusterConfig {
         Self {
             redis_url: "redis://127.0.0.1:6379".to_string(),
             node_id: format!("node_{}", nanoid::nanoid!(8)),
-            dedup_window: Duration::from_secs(5),
+            dedup_window: Duration::from_secs(10),
             cleanup_interval: Duration::from_secs(30),
             critical_channel_capacity: 1000,
             publish_channel_capacity: 10_000,

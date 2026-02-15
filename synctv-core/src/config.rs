@@ -64,6 +64,12 @@ pub struct ServerConfig {
     /// When set, all inter-node gRPC requests must include this secret in the
     /// `x-cluster-secret` metadata header. If empty, cluster endpoints are disabled.
     pub cluster_secret: String,
+    /// Advertise host for cluster node registration.
+    /// This is the address other nodes use to reach this instance.
+    /// Reads from SYNCTV_SERVER_ADVERTISE_HOST env var. In Kubernetes, set this
+    /// to the pod IP via the downward API (status.podIP).
+    /// If empty, falls back to POD_IP env var, then to the system hostname.
+    pub advertise_host: String,
 }
 
 impl Default for ServerConfig {
@@ -77,6 +83,7 @@ impl Default for ServerConfig {
             trusted_proxies: Vec::new(),
             cors_allowed_origins: Vec::new(),
             cluster_secret: String::new(),
+            advertise_host: String::new(),
         }
     }
 }
@@ -545,6 +552,43 @@ impl Config {
         format!("{}:{}", self.server.host, self.server.http_port)
     }
 
+    /// Resolve the advertise host for cluster node registration.
+    ///
+    /// Priority: `server.advertise_host` config > `POD_IP` env var > system hostname.
+    /// This address must be routable from other nodes (never `0.0.0.0`).
+    #[must_use]
+    pub fn advertise_host(&self) -> String {
+        // 1. Explicit config value (set via SYNCTV_SERVER_ADVERTISE_HOST)
+        if !self.server.advertise_host.is_empty() {
+            return self.server.advertise_host.clone();
+        }
+
+        // 2. POD_IP env var (set by Kubernetes downward API)
+        if let Ok(pod_ip) = std::env::var("POD_IP") {
+            if !pod_ip.is_empty() {
+                return pod_ip;
+            }
+        }
+
+        // 3. System hostname
+        hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| self.server.host.clone())
+    }
+
+    /// Get the gRPC address advertised to other cluster nodes.
+    #[must_use]
+    pub fn advertise_grpc_address(&self) -> String {
+        format!("{}:{}", self.advertise_host(), self.server.grpc_port)
+    }
+
+    /// Get the HTTP address advertised to other cluster nodes.
+    #[must_use]
+    pub fn advertise_http_address(&self) -> String {
+        format!("{}:{}", self.advertise_host(), self.server.http_port)
+    }
+
     /// Validate configuration at startup (fail fast on misconfigurations)
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
@@ -825,6 +869,7 @@ mod tests {
                 trusted_proxies: Vec::new(),
                 cors_allowed_origins: Vec::new(),
                 cluster_secret: String::new(),
+                advertise_host: String::new(),
             },
             database: DatabaseConfig::default(),
             redis: RedisConfig::default(),
@@ -856,6 +901,7 @@ mod tests {
                 trusted_proxies: Vec::new(),
                 cors_allowed_origins: Vec::new(),
                 cluster_secret: String::new(),
+                advertise_host: String::new(),
             },
             database: DatabaseConfig::default(),
             redis: RedisConfig::default(),

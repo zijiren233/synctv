@@ -1,0 +1,551 @@
+//! Room operations: list, create, get, join, leave, delete, settings, chat, hot rooms, public settings
+
+use synctv_core::models::{RoomId, UserId};
+
+use super::ClientApiImpl;
+use super::convert::{
+    media_to_proto, playback_state_to_proto, room_member_to_proto,
+    room_role_to_proto, room_to_proto_basic,
+};
+use super::{validate_password_for_set, validate_password_for_verify};
+
+impl ClientApiImpl {
+    /// Get the currently playing media for a room.
+    pub async fn get_playing_media(
+        &self,
+        room_id: &str,
+    ) -> Result<Option<crate::proto::client::Media>, String> {
+        let rid = RoomId::from_string(room_id.to_string());
+        let media = self.room_service.get_playing_media(&rid).await
+            .map_err(|e| e.to_string())?;
+        Ok(media.map(|m| media_to_proto(&m)))
+    }
+
+    pub async fn list_rooms(
+        &self,
+        req: crate::proto::client::ListRoomsRequest,
+    ) -> Result<crate::proto::client::ListRoomsResponse, String> {
+        let mut query = synctv_core::models::RoomListQuery {
+            page: req.page,
+            page_size: req.page_size,
+            ..Default::default()
+        };
+        if !req.search.is_empty() {
+            query.search = Some(req.search);
+        }
+        let (rooms, total) = self.room_service.list_rooms(&query).await
+            .map_err(|e| e.to_string())?;
+
+        let room_list: Vec<_> = rooms
+            .into_iter()
+            .map(|r| {
+                let member_count = self
+                    .connection_manager
+                    .room_connection_count(&r.id)
+                    .try_into()
+                    .ok();
+                room_to_proto_basic(&r, None, member_count)
+            })
+            .collect();
+
+        Ok(crate::proto::client::ListRoomsResponse {
+            rooms: room_list,
+            total: total as i32,
+        })
+    }
+
+    pub async fn get_joined_rooms(
+        &self,
+        user_id: &str,
+        page: i32,
+        page_size: i32,
+    ) -> Result<crate::proto::client::ListParticipatedRoomsResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let (rooms, total) = self.room_service.list_joined_rooms_with_details(&uid, page.into(), page_size.into()).await
+            .map_err(|e| e.to_string())?;
+
+        let room_list: Vec<_> = rooms.into_iter().map(|(room, role, _status, _member_count)| {
+            let permissions = role.permissions().0;
+
+            crate::proto::client::RoomWithRole {
+                room: Some(room_to_proto_basic(
+                    &room,
+                    None,
+                    self.connection_manager
+                        .room_connection_count(&room.id)
+                        .try_into()
+                        .ok(),
+                )),
+                permissions,
+                role: room_role_to_proto(role),
+            }
+        }).collect();
+
+        Ok(crate::proto::client::ListParticipatedRoomsResponse {
+            rooms: room_list,
+            total: total as i32,
+        })
+    }
+
+    pub async fn create_room(
+        &self,
+        user_id: &str,
+        req: crate::proto::client::CreateRoomRequest,
+    ) -> Result<crate::proto::client::CreateRoomResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+
+        let settings = if req.settings.is_empty() {
+            None
+        } else {
+            Some(serde_json::from_slice(&req.settings).map_err(|e| e.to_string())?)
+        };
+
+        let password = if req.password.is_empty() { None } else { Some(req.password) };
+
+        let (room, _member) = self.room_service.create_room(req.name, req.description, uid, password, settings).await
+            .map_err(|e| e.to_string())?;
+
+        let member_count = self.connection_manager.room_connection_count(&room.id).try_into().ok();
+
+        Ok(crate::proto::client::CreateRoomResponse {
+            room: Some(room_to_proto_basic(&room, None, member_count)),
+        })
+    }
+
+    pub async fn get_room(
+        &self,
+        user_id: &str,
+        room_id: &str,
+    ) -> Result<crate::proto::client::GetRoomResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        // Check membership
+        self.room_service.check_membership(&rid, &uid).await
+            .map_err(|e| format!("Forbidden: {e}"))?;
+
+        let room = self.room_service.get_room(&rid).await
+            .map_err(|e| e.to_string())?;
+
+        let playback_state = self.room_service.get_playback_state(&rid).await.ok()
+            .map(|s| playback_state_to_proto(&s));
+
+        let member_count = self.connection_manager.room_connection_count(&rid).try_into().ok();
+
+        Ok(crate::proto::client::GetRoomResponse {
+            room: Some(room_to_proto_basic(&room, None, member_count)),
+            playback_state,
+        })
+    }
+
+    pub async fn join_room(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::JoinRoomRequest,
+    ) -> Result<crate::proto::client::JoinRoomResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        let password = if req.password.is_empty() { None } else { Some(req.password) };
+
+        let (_room, _member, members) = self.room_service.join_room(rid.clone(), uid, password).await
+            .map_err(|e| e.to_string())?;
+
+        // Get updated room and playback state
+        let room = self.room_service.get_room(&rid).await
+            .map_err(|e| e.to_string())?;
+        let playback_state = self.room_service.get_playback_state(&rid).await.ok()
+            .map(|s| playback_state_to_proto(&s));
+
+        let proto_members: Vec<_> = members.into_iter()
+            .map(room_member_to_proto)
+            .collect();
+
+        let member_count = self.connection_manager.room_connection_count(&rid).try_into().ok();
+
+        Ok(crate::proto::client::JoinRoomResponse {
+            room: Some(room_to_proto_basic(&room, None, member_count)),
+            members: proto_members,
+            playback_state,
+        })
+    }
+
+    pub async fn leave_room(
+        &self,
+        user_id: &str,
+        room_id: &str,
+    ) -> Result<crate::proto::client::LeaveRoomResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        self.room_service.leave_room(rid.clone(), uid.clone()).await
+            .map_err(|e| e.to_string())?;
+
+        // Force disconnect the user's connections from this room
+        self.connection_manager.disconnect_user_from_room(&uid, &rid);
+
+        Ok(crate::proto::client::LeaveRoomResponse {
+            success: true,
+        })
+    }
+
+    pub async fn delete_room(
+        &self,
+        user_id: &str,
+        room_id: &str,
+    ) -> Result<crate::proto::client::DeleteRoomResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        self.room_service.delete_room(rid.clone(), uid).await
+            .map_err(|e| e.to_string())?;
+
+        // Force disconnect all connections in the deleted room
+        self.connection_manager.disconnect_room(&rid);
+
+        Ok(crate::proto::client::DeleteRoomResponse {
+            success: true,
+        })
+    }
+
+    pub async fn update_room_settings(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::UpdateRoomSettingsRequest,
+    ) -> Result<crate::proto::client::UpdateRoomSettingsResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        let settings = if req.settings.is_empty() {
+            // Get current settings from room_settings table
+            self.room_service.get_room_settings(&rid).await
+                .map_err(|e| e.to_string())?
+        } else {
+            serde_json::from_slice::<synctv_core::models::RoomSettings>(&req.settings)
+                .map_err(|e| e.to_string())?
+        };
+
+        self.room_service.set_settings(rid.clone(), uid, settings).await
+            .map_err(|e| e.to_string())?;
+
+        // Get updated room
+        let room = self.room_service.get_room(&rid).await
+            .map_err(|e| e.to_string())?;
+
+        let member_count = self.connection_manager.room_connection_count(&rid).try_into().ok();
+
+        Ok(crate::proto::client::UpdateRoomSettingsResponse {
+            room: Some(room_to_proto_basic(&room, None, member_count)),
+        })
+    }
+
+    // === Room Password Operations ===
+
+    /// Set or remove room password
+    pub async fn set_room_password(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        req: crate::proto::client::SetRoomPasswordRequest,
+    ) -> Result<crate::proto::client::SetRoomPasswordResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        // Validate password length
+        if !req.password.is_empty() {
+            validate_password_for_set(&req.password)?;
+        }
+
+        // Check permission
+        self.room_service
+            .check_permission(&rid, &uid, synctv_core::models::PermissionBits::UPDATE_ROOM_SETTINGS)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Hash password if provided, or None to remove
+        let password_hash = if req.password.is_empty() {
+            None
+        } else {
+            let hash = synctv_core::service::auth::password::hash_password(&req.password)
+                .await
+                .map_err(|e| format!("Failed to hash password: {e}"))?;
+            Some(hash)
+        };
+
+        self.room_service
+            .update_room_password(&rid, password_hash)
+            .await
+            .map_err(|e| format!("Failed to update password: {e}"))?;
+
+        Ok(crate::proto::client::SetRoomPasswordResponse { success: true })
+    }
+
+    /// Check room password validity
+    pub async fn check_room_password(
+        &self,
+        room_id: &str,
+        req: crate::proto::client::CheckRoomPasswordRequest,
+    ) -> Result<crate::proto::client::CheckRoomPasswordResponse, String> {
+        let rid = RoomId::from_string(room_id.to_string());
+
+        // Validate password length
+        validate_password_for_verify(&req.password)?;
+
+        // Verify room exists
+        self.room_service.get_room(&rid).await
+            .map_err(|e| format!("Room not found: {e}"))?;
+
+        let valid = self.room_service
+            .check_room_password(&rid, &req.password)
+            .await
+            .map_err(|e| format!("Password verification failed: {e}"))?;
+
+        Ok(crate::proto::client::CheckRoomPasswordResponse { valid })
+    }
+
+    // === Room Settings Operations ===
+
+    /// Get room settings
+    pub async fn get_room_settings(
+        &self,
+        room_id: &str,
+    ) -> Result<crate::proto::client::GetRoomSettingsResponse, String> {
+        let rid = RoomId::from_string(room_id.to_string());
+
+        let settings = self.room_service.get_room_settings(&rid).await
+            .map_err(|e| e.to_string())?;
+
+        let settings_bytes = serde_json::to_vec(&settings)
+            .map_err(|e| format!("Failed to serialize settings: {e}"))?;
+
+        Ok(crate::proto::client::GetRoomSettingsResponse {
+            settings: settings_bytes,
+        })
+    }
+
+    /// Reset room settings to defaults
+    pub async fn reset_room_settings(
+        &self,
+        user_id: &str,
+        room_id: &str,
+    ) -> Result<crate::proto::client::ResetRoomSettingsResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+        let rid = RoomId::from_string(room_id.to_string());
+
+        // Check permission
+        self.room_service
+            .check_permission(&rid, &uid, synctv_core::models::PermissionBits::UPDATE_ROOM_SETTINGS)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let settings_json = self.room_service
+            .reset_room_settings(&rid)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(crate::proto::client::ResetRoomSettingsResponse {
+            settings: settings_json.into_bytes(),
+        })
+    }
+
+    /// List rooms created by a user
+    pub async fn list_created_rooms(
+        &self,
+        user_id: &str,
+        req: crate::proto::client::ListCreatedRoomsRequest,
+    ) -> Result<crate::proto::client::ListCreatedRoomsResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
+
+        let page = if req.page == 0 { 1 } else { i64::from(req.page) };
+        let page_size = if req.page_size == 0 || req.page_size > 50 { 10 } else { i64::from(req.page_size) };
+
+        let (rooms_with_count, total) = self.room_service
+            .list_rooms_by_creator_with_count(&uid, page, page_size)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Batch-fetch settings for all rooms
+        let room_ids: Vec<&str> = rooms_with_count.iter().map(|rwc| rwc.room.id.as_str()).collect();
+        let settings_map = self.room_service
+            .get_room_settings_batch(&room_ids)
+            .await
+            .unwrap_or_default();
+
+        let rooms = rooms_with_count.into_iter().map(|rwc| {
+            let settings = settings_map.get(rwc.room.id.as_str()).cloned();
+            room_to_proto_basic(&rwc.room, settings.as_ref(), Some(rwc.member_count))
+        }).collect();
+
+        Ok(crate::proto::client::ListCreatedRoomsResponse {
+            rooms,
+            total: total as i32,
+        })
+    }
+
+    /// Get public settings
+    pub fn get_public_settings(
+        &self,
+    ) -> Result<crate::proto::client::GetPublicSettingsResponse, String> {
+        let reg = self.settings_registry.as_ref()
+            .ok_or_else(|| "Settings registry not configured".to_string())?;
+
+        let s = reg.to_public_settings();
+        Ok(crate::proto::client::GetPublicSettingsResponse {
+            signup_enabled: s.signup_enabled,
+            allow_room_creation: s.allow_room_creation,
+            max_rooms_per_user: s.max_rooms_per_user,
+            max_members_per_room: s.max_members_per_room,
+            disable_create_room: s.disable_create_room,
+            create_room_need_review: s.create_room_need_review,
+            room_ttl: s.room_ttl,
+            room_must_need_pwd: s.room_must_need_pwd,
+            signup_need_review: s.signup_need_review,
+            enable_password_signup: s.enable_password_signup,
+            enable_guest: s.enable_guest,
+            movie_proxy: s.movie_proxy,
+            live_proxy: s.live_proxy,
+            ts_disguised_as_png: s.ts_disguised_as_png,
+            custom_publish_host: s.custom_publish_host,
+            email_whitelist_enabled: s.email_whitelist_enabled,
+        })
+    }
+
+    /// Check if a room exists and whether it requires a password (public endpoint)
+    pub async fn check_room(
+        &self,
+        req: crate::proto::client::CheckRoomRequest,
+    ) -> Result<crate::proto::client::CheckRoomResponse, String> {
+        let rid = RoomId::from_string(req.room_id);
+
+        match self.room_service.get_room(&rid).await {
+            Ok(room) => {
+                let settings = self.room_service.get_room_settings(&rid).await
+                    .unwrap_or_default();
+                Ok(crate::proto::client::CheckRoomResponse {
+                    exists: true,
+                    requires_password: settings.require_password.0,
+                    name: room.name,
+                })
+            }
+            Err(_) => Ok(crate::proto::client::CheckRoomResponse {
+                exists: false,
+                requires_password: false,
+                name: String::new(),
+            }),
+        }
+    }
+
+    pub async fn get_hot_rooms(
+        &self,
+        req: crate::proto::client::GetHotRoomsRequest,
+    ) -> Result<crate::proto::client::GetHotRoomsResponse, String> {
+        let limit = if req.limit == 0 || req.limit > 50 {
+            10
+        } else {
+            i64::from(req.limit)
+        };
+
+        // Query for active, non-banned rooms
+        let query = synctv_core::models::RoomListQuery {
+            page: 1,
+            page_size: 100,
+            search: None,
+            status: Some(synctv_core::models::RoomStatus::Active),
+            is_banned: Some(false),
+            creator_id: None,
+        };
+
+        let (rooms, _total) = self.room_service.list_rooms(&query).await
+            .map_err(|e| format!("Failed to list rooms: {e}"))?;
+
+        // Collect room stats (online count and member count)
+        let mut room_stats: Vec<(synctv_core::models::Room, i32, i32)> = Vec::new();
+        for room in rooms {
+            let online_count = self.connection_manager.room_connection_count(&room.id);
+            let member_count = self.room_service.get_member_count(&room.id).await
+                .unwrap_or(0);
+
+            room_stats.push((room, online_count as i32, member_count));
+        }
+
+        // Sort by online count (descending)
+        room_stats.sort_by_key(|item| std::cmp::Reverse(item.1));
+
+        // Take top N rooms
+        let mut hot_rooms: Vec<crate::proto::client::RoomWithStats> = Vec::new();
+        for (room, online_count, member_count) in room_stats.into_iter().take(limit as usize) {
+            // Load room settings
+            let settings = self.room_service.get_room_settings(&room.id).await
+                .unwrap_or_default();
+
+            let room_proto = room_to_proto_basic(&room, Some(&settings), Some(member_count));
+
+            hot_rooms.push(crate::proto::client::RoomWithStats {
+                room: Some(room_proto),
+                online_count,
+                total_members: member_count,
+            });
+        }
+
+        Ok(crate::proto::client::GetHotRoomsResponse { rooms: hot_rooms })
+    }
+
+    // === Chat Operations ===
+
+    pub async fn get_chat_history(
+        &self,
+        room_id: &str,
+        req: crate::proto::client::GetChatHistoryRequest,
+    ) -> Result<crate::proto::client::GetChatHistoryResponse, String> {
+        let rid = RoomId::from_string(room_id.to_string());
+
+        let messages = self.room_service.get_chat_history(&rid, None, req.limit).await
+            .map_err(|e| e.to_string())?;
+
+        // Collect unique user IDs to batch fetch usernames
+        let user_ids: Vec<synctv_core::models::UserId> = messages
+            .iter()
+            .map(|m| m.user_id.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // Batch fetch usernames (single query instead of N+1)
+        let username_map: std::collections::HashMap<String, String> = self
+            .user_service
+            .get_usernames(&user_ids)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, name)| (id.to_string(), name))
+            .collect();
+
+        // Convert to proto format
+        let proto_messages = messages
+            .into_iter()
+            .map(|m| {
+                let username = username_map
+                    .get(m.user_id.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| format!("user_{}", m.user_id.as_str()));
+
+                crate::proto::client::ChatMessageReceive {
+                    id: m.id.clone(),
+                    room_id: m.room_id.as_str().to_string(),
+                    user_id: m.user_id.as_str().to_string(),
+                    username,
+                    content: m.content,
+                    timestamp: m.created_at.timestamp(),
+                    position: None, // History messages don't show as danmaku
+                    color: None,
+                }
+            })
+            .collect();
+
+        Ok(crate::proto::client::GetChatHistoryResponse {
+            messages: proto_messages,
+        })
+    }
+}

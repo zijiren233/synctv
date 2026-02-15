@@ -9,16 +9,13 @@ use std::borrow::Cow;
 
 /// Maximum lengths for various input types
 pub mod limits {
-    /// Maximum username length
-    pub const USERNAME_MAX: usize = 32;
-    /// Minimum username length
-    pub const USERNAME_MIN: usize = 2;
-    /// Maximum password length (prevent `DoS` via hashing)
-    pub const PASSWORD_MAX: usize = 256;
-    /// Minimum password length
-    pub const PASSWORD_MIN: usize = 8;
-    /// Maximum room name length
-    pub const ROOM_NAME_MAX: usize = 64;
+    // Core limits imported from the single source of truth in synctv-core
+    pub use synctv_core::validation::{
+        USERNAME_MIN, USERNAME_MAX,
+        PASSWORD_MIN, PASSWORD_MAX,
+        ROOM_NAME_MAX,
+    };
+
     /// Maximum room description length
     pub const ROOM_DESCRIPTION_MAX: usize = 500;
     /// Maximum media title length
@@ -474,7 +471,8 @@ mod tests {
         assert!(validate_username("user-name").is_ok());
         assert!(validate_username("用户名").is_ok()); // CJK characters
         assert!(validate_username("a").is_err()); // Too short
-        assert!(validate_username(&"a".repeat(33)).is_err()); // Too long
+        assert!(validate_username("ab").is_err()); // Still too short (min=3)
+        assert!(validate_username(&"a".repeat(limits::USERNAME_MAX + 1)).is_err()); // Too long
         assert!(validate_username("user@name").is_err()); // Invalid character
     }
 
@@ -484,7 +482,7 @@ mod tests {
         assert!(validate_password("password123").is_ok()); // Contains "password" but length OK (not exact match)
         assert!(validate_password("qwerty12345").is_ok()); // Contains "qwerty" but length OK (not exact match)
         assert!(validate_password("short").is_err()); // Too short
-        assert!(validate_password(&"a".repeat(257)).is_err()); // Too long
+        assert!(validate_password(&"a".repeat(limits::PASSWORD_MAX + 1)).is_err()); // Too long
         // Exact matches to common weak passwords should be rejected
         assert!(validate_password("password").is_err());
         assert!(validate_password("12345678").is_ok()); // Not in the weak list (123456 is, but it's too short at 6 chars)
@@ -494,7 +492,7 @@ mod tests {
     #[test]
     fn test_validate_room_name() {
         assert!(validate_room_name("My Room").is_ok());
-        assert!(validate_room_name(&"a".repeat(65)).is_err()); // Too long
+        assert!(validate_room_name(&"a".repeat(limits::ROOM_NAME_MAX + 1)).is_err()); // Too long
         assert!(validate_room_name("<script>alert('xss')</script>").is_err()); // XSS attempt
     }
 

@@ -8,15 +8,14 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use synctv_core::models::id::UserId;
-use synctv_core::models::notification::NotificationType as CoreNotificationType;
 
 use crate::impls::NotificationApiImpl;
+use crate::impls::notification::{notification_to_proto, proto_notification_type_to_core};
 use crate::proto::client::{
     notification_service_server::NotificationService, DeleteAllReadRequest, DeleteAllReadResponse,
     DeleteNotificationRequest, DeleteNotificationResponse, GetNotificationRequest,
     GetNotificationResponse, ListNotificationsRequest, ListNotificationsResponse,
     MarkAllAsReadRequest, MarkAllAsReadResponse, MarkAsReadRequest, MarkAsReadResponse,
-    NotificationProto, NotificationType as ProtoNotificationType,
 };
 
 /// gRPC NotificationService implementation
@@ -39,45 +38,6 @@ impl NotificationServiceImpl {
             .get::<super::interceptors::UserContext>()
             .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
         Ok(UserId::from_string(user_context.user_id.clone()))
-    }
-}
-
-/// Convert a domain Notification to a proto NotificationProto
-fn notification_to_proto(n: synctv_core::models::notification::Notification) -> NotificationProto {
-    let notification_type = match n.notification_type {
-        CoreNotificationType::RoomInvitation => ProtoNotificationType::RoomInvitation,
-        CoreNotificationType::SystemAnnouncement => ProtoNotificationType::SystemAnnouncement,
-        CoreNotificationType::RoomEvent => ProtoNotificationType::RoomEvent,
-        CoreNotificationType::PasswordReset => ProtoNotificationType::PasswordReset,
-        CoreNotificationType::EmailVerification => ProtoNotificationType::EmailVerification,
-    };
-
-    NotificationProto {
-        id: n.id.to_string(),
-        user_id: n.user_id.as_str().to_string(),
-        notification_type: notification_type as i32,
-        title: n.title,
-        content: n.content,
-        data: serde_json::to_vec(&n.data).unwrap_or_default(),
-        is_read: n.is_read,
-        created_at: n.created_at.timestamp(),
-        updated_at: n.updated_at.timestamp(),
-    }
-}
-
-/// Convert a proto NotificationType enum value to a domain NotificationType
-fn proto_notification_type_to_core(value: i32) -> Option<CoreNotificationType> {
-    match ProtoNotificationType::try_from(value) {
-        Ok(ProtoNotificationType::RoomInvitation) => Some(CoreNotificationType::RoomInvitation),
-        Ok(ProtoNotificationType::SystemAnnouncement) => {
-            Some(CoreNotificationType::SystemAnnouncement)
-        }
-        Ok(ProtoNotificationType::RoomEvent) => Some(CoreNotificationType::RoomEvent),
-        Ok(ProtoNotificationType::PasswordReset) => Some(CoreNotificationType::PasswordReset),
-        Ok(ProtoNotificationType::EmailVerification) => {
-            Some(CoreNotificationType::EmailVerification)
-        }
-        _ => None, // Unspecified or unknown
     }
 }
 

@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Json},
 };
 
-use crate::http::{AppState, AppResult, AppError, middleware::AuthUser};
+use crate::http::{AppState, AppResult, middleware::AuthUser};
 
 /// Get current playing media for a room
 ///
@@ -25,7 +25,7 @@ pub async fn get_playing_media(
         .client_api
         .get_playing_media(&room_id)
         .await
-        .map_err(AppError::internal_server_error)?;
+        .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }
@@ -43,7 +43,7 @@ pub async fn get_playlist(
         .client_api
         .get_playlist(auth.user_id.as_str(), &room_id)
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }
@@ -69,7 +69,7 @@ pub async fn list_playlist_items(
         .client_api
         .list_playlist_items(auth.user_id.as_str(), &room_id, req)
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }
@@ -92,7 +92,7 @@ pub async fn set_playing_media(
         .client_api
         .set_current_media(auth.user_id.as_str(), &room_id, req)
         .await
-        .map_err(super::AppError::internal_server_error)?;
+        .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }

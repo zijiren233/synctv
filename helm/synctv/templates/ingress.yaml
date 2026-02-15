@@ -39,3 +39,46 @@ spec:
           {{- end }}
     {{- end }}
 {{- end }}
+{{- if and .Values.ingress.enabled .Values.ingress.grpc .Values.ingress.grpc.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "synctv.fullname" . }}-grpc
+  labels:
+    {{- include "synctv.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    {{- with .Values.ingress.grpc.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- range .Values.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.grpc.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "synctv.fullname" $ }}
+                port:
+                  name: grpc
+          {{- end }}
+    {{- end }}
+{{- end }}

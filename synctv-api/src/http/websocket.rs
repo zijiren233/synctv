@@ -32,7 +32,7 @@ use crate::http::{AppError, AppState};
 use crate::impls::messaging::{MessageSender, ProtoCodec, StreamMessage, StreamMessageHandler};
 use crate::proto::client::{ClientMessage, ServerMessage};
 use synctv_core::models::{RoomId, UserId};
-use synctv_core::service::{auth::JwtValidator, ContentFilter, RateLimitConfig};
+use synctv_core::service::{ContentFilter, RateLimitConfig};
 
 /// Query parameters for WebSocket connection
 #[derive(Debug, Deserialize)]
@@ -70,11 +70,13 @@ async fn extract_user_id(
     headers: &HeaderMap,
     query: &WsQuery,
 ) -> Result<(UserId, AuthMethod), AppError> {
+    // Use the shared JwtValidator from AppState (created once at startup)
+    let validator = &state.jwt_validator;
+
     // First, try Authorization header (most secure)
     if let Some(auth_header) = headers.get("Authorization") {
         if let Ok(auth_str) = auth_header.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                let validator = Arc::new(JwtValidator::new(Arc::new(state.jwt_service.clone())));
                 let user_id = validator
                     .validate_and_extract_user_id(token)
                     .map_err(|e| AppError::unauthorized(format!("Invalid token: {e}")))?;
@@ -99,7 +101,6 @@ async fn extract_user_id(
 
     // Finally, try JWT token query parameter (legacy fallback)
     if let Some(ref token) = query.token {
-        let validator = Arc::new(JwtValidator::new(Arc::new(state.jwt_service.clone())));
         let user_id = validator
             .validate_and_extract_user_id(token)
             .map_err(|e| AppError::unauthorized(format!("Invalid token: {e}")))?;

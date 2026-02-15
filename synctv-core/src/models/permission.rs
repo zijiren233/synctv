@@ -419,4 +419,132 @@ mod tests {
         // Other DEFAULT_MEMBER permissions remain
         assert!(perms.has(PermissionBits::ADD_MOVIE));
     }
+
+    // ========== Bitmask Operation Edge Cases ==========
+
+    #[test]
+    fn test_permission_set_enable_disable() {
+        let mut perms = PermissionBits::empty();
+        perms.set(PermissionBits::SEND_CHAT, true);
+        assert!(perms.has(PermissionBits::SEND_CHAT));
+        perms.set(PermissionBits::SEND_CHAT, false);
+        assert!(!perms.has(PermissionBits::SEND_CHAT));
+    }
+
+    #[test]
+    fn test_permission_toggle() {
+        let mut perms = PermissionBits::empty();
+        perms.toggle(PermissionBits::SEND_CHAT);
+        assert!(perms.has(PermissionBits::SEND_CHAT));
+        perms.toggle(PermissionBits::SEND_CHAT);
+        assert!(!perms.has(PermissionBits::SEND_CHAT));
+    }
+
+    #[test]
+    fn test_permission_add_is_alias_for_grant() {
+        let mut p1 = PermissionBits::empty();
+        let mut p2 = PermissionBits::empty();
+        p1.grant(PermissionBits::BAN_MEMBER);
+        p2.add(PermissionBits::BAN_MEMBER);
+        assert_eq!(p1.0, p2.0);
+    }
+
+    #[test]
+    fn test_permission_remove_is_alias_for_revoke() {
+        let mut p1 = PermissionBits(PermissionBits::ALL);
+        let mut p2 = PermissionBits(PermissionBits::ALL);
+        p1.revoke(PermissionBits::BAN_MEMBER);
+        p2.remove(PermissionBits::BAN_MEMBER);
+        assert_eq!(p1.0, p2.0);
+    }
+
+    #[test]
+    fn test_permission_grant_idempotent() {
+        let mut perms = PermissionBits::empty();
+        perms.grant(PermissionBits::SEND_CHAT);
+        perms.grant(PermissionBits::SEND_CHAT);
+        assert!(perms.has(PermissionBits::SEND_CHAT));
+        assert_eq!(perms.0, PermissionBits::SEND_CHAT);
+    }
+
+    #[test]
+    fn test_permission_revoke_idempotent() {
+        let mut perms = PermissionBits::empty();
+        perms.revoke(PermissionBits::SEND_CHAT); // no-op on empty
+        assert!(!perms.has(PermissionBits::SEND_CHAT));
+        assert_eq!(perms.0, 0);
+    }
+
+    #[test]
+    fn test_has_all_with_zero_is_vacuously_true() {
+        let perms = PermissionBits::empty();
+        assert!(perms.has_all(0)); // vacuously true: 0 & 0 == 0
+    }
+
+    #[test]
+    fn test_has_any_with_zero_is_false() {
+        let perms = PermissionBits(PermissionBits::ALL);
+        assert!(!perms.has_any(0)); // 0 & anything == 0
+    }
+
+    #[test]
+    fn test_all_permissions_bit_coverage() {
+        // ALL should be u64::MAX
+        assert_eq!(PermissionBits::ALL, u64::MAX);
+    }
+
+    #[test]
+    fn test_none_permissions_is_zero() {
+        assert_eq!(PermissionBits::NONE, 0);
+    }
+
+    #[test]
+    fn test_default_is_empty() {
+        let perms = PermissionBits::default();
+        assert_eq!(perms.0, 0);
+    }
+
+    #[test]
+    fn test_admin_defaults_include_all_member_defaults() {
+        // Admin should have a superset of member permissions
+        let admin = PermissionBits::DEFAULT_ADMIN;
+        let member = PermissionBits::DEFAULT_MEMBER;
+        assert_eq!(admin & member, member);
+    }
+
+    // ========== Role FromStr / Display ==========
+
+    #[test]
+    fn test_role_from_str() {
+        assert_eq!(Role::from_str("creator").unwrap(), Role::Creator);
+        assert_eq!(Role::from_str("admin").unwrap(), Role::Admin);
+        assert_eq!(Role::from_str("member").unwrap(), Role::Member);
+        assert_eq!(Role::from_str("guest").unwrap(), Role::Guest);
+        assert_eq!(Role::from_str("CREATOR").unwrap(), Role::Creator);
+        assert_eq!(Role::from_str("Admin").unwrap(), Role::Admin);
+    }
+
+    #[test]
+    fn test_role_from_str_invalid() {
+        assert!(Role::from_str("superadmin").is_err());
+        assert!(Role::from_str("").is_err());
+        assert!(Role::from_str("owner").is_err());
+    }
+
+    #[test]
+    fn test_role_display() {
+        assert_eq!(Role::Creator.to_string(), "creator");
+        assert_eq!(Role::Admin.to_string(), "admin");
+        assert_eq!(Role::Member.to_string(), "member");
+        assert_eq!(Role::Guest.to_string(), "guest");
+    }
+
+    #[test]
+    fn test_role_display_roundtrip() {
+        for role in [Role::Creator, Role::Admin, Role::Member, Role::Guest] {
+            let display = role.to_string();
+            let parsed = Role::from_str(&display).unwrap();
+            assert_eq!(parsed, role);
+        }
+    }
 }

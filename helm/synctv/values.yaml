@@ -22,6 +22,10 @@ image:
   tag: "" # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 
+## Headless Service (for inter-node gRPC discovery)
+headlessService:
+  enabled: true
+
 ## Service Configuration
 service:
   type: ClusterIP
@@ -55,6 +59,15 @@ ingress:
     - secretName: synctv-tls
       hosts:
         - synctv.example.com
+  ## gRPC Ingress (separate Ingress with GRPC backend-protocol annotation)
+  grpc:
+    enabled: false
+    annotations: {}
+    hosts:
+      - host: grpc.synctv.example.com
+        paths:
+          - path: /
+            pathType: Prefix
 
 ## Resource Limits
 resources:
@@ -110,21 +123,30 @@ readinessProbe:
 podAnnotations: {}
 podLabels: {}
 
+## Graceful Shutdown
+terminationGracePeriodSeconds: 60
+
 ## Node Selection
 nodeSelector: {}
 tolerations: []
-affinity:
-  podAntiAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        podAffinityTerm:
-          labelSelector:
-            matchExpressions:
-              - key: app.kubernetes.io/name
-                operator: In
-                values:
-                  - synctv
-          topologyKey: kubernetes.io/hostname
+
+## Affinity rules (overrides podAntiAffinity when set)
+## Uncomment and configure to use custom affinity rules:
+# affinity:
+#   podAntiAffinity:
+#     requiredDuringSchedulingIgnoredDuringExecution:
+#       - topologyKey: kubernetes.io/hostname
+
+## Pod Anti-Affinity (used when custom affinity is not set)
+podAntiAffinity:
+  enabled: true
+
+## Topology Spread Constraints (zone-aware scheduling)
+topologySpread:
+  enabled: true
+  maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: DoNotSchedule
 
 ## ============================================================================
 ## Application Configuration

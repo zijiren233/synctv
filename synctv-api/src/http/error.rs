@@ -183,3 +183,24 @@ impl From<anyhow::Error> for AppError {
         Self::internal_server_error("Internal server error")
     }
 }
+
+/// Map impls-layer error strings to appropriate HTTP status codes.
+///
+/// Uses the shared `classify_error` function from the impls module for
+/// consistent error classification across HTTP and gRPC transports.
+///
+/// This is the client-facing equivalent of `admin_err_to_app_error` in admin.rs.
+pub fn impls_err_to_app_error(err: String) -> AppError {
+    use crate::impls::{classify_error, ErrorKind};
+    match classify_error(&err) {
+        ErrorKind::NotFound => AppError::not_found(err),
+        ErrorKind::Unauthenticated => AppError::unauthorized(err),
+        ErrorKind::PermissionDenied => AppError::forbidden(err),
+        ErrorKind::AlreadyExists => AppError::conflict(err),
+        ErrorKind::InvalidArgument => AppError::bad_request(err),
+        ErrorKind::Internal => {
+            tracing::error!("Internal error: {err}");
+            AppError::internal("Internal error")
+        }
+    }
+}

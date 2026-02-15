@@ -10,6 +10,51 @@ use synctv_cluster::sync::{ConnectionManager, ClusterEvent, PublishRequest};
 use synctv_livestream::api::LiveStreamingInfrastructure;
 use tokio::sync::mpsc;
 
+/// Result of validating an admin user's authentication.
+///
+/// Returned by [`validate_admin_auth`] and consumed by both HTTP and gRPC
+/// admin auth layers.
+pub struct ValidatedAdmin {
+    pub user_id: UserId,
+    pub role: UserRole,
+}
+
+/// Shared admin auth validation: look up the user, check banned/deleted
+/// status, and verify the token has not been invalidated by a password change.
+///
+/// Both transports must resolve `user_id` and `token_iat` from their own
+/// auth mechanism (HTTP Authorization header / gRPC interceptor) before
+/// calling this function.
+pub async fn validate_admin_auth(
+    user_service: &UserService,
+    user_id: UserId,
+    token_iat: i64,
+) -> Result<ValidatedAdmin, String> {
+    let user = user_service
+        .get_user(&user_id)
+        .await
+        .map_err(|_| "Failed to verify user".to_string())?;
+
+    if user.is_deleted() || user.status == UserStatus::Banned {
+        return Err("Authentication failed".to_string());
+    }
+
+    if user_service
+        .is_token_invalidated_by_password_change(&user_id, token_iat)
+        .await
+        .unwrap_or(false)
+    {
+        return Err(
+            "Token invalidated due to password change. Please log in again.".to_string(),
+        );
+    }
+
+    Ok(ValidatedAdmin {
+        user_id,
+        role: user.role,
+    })
+}
+
 /// Admin API implementation
 #[derive(Clone)]
 pub struct AdminApiImpl {

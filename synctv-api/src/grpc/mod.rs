@@ -14,12 +14,20 @@ pub mod notification_service;
 pub mod providers;
 
 pub use admin_service::AdminServiceImpl;
-pub use client_service::ClientServiceImpl;
+pub use client_service::{ClientServiceImpl, ClientServiceConfig};
 pub use notification_service::NotificationServiceImpl;
 pub use interceptors::{
     AuthInterceptor, ClusterAuthInterceptor, LoggingInterceptor,
     ValidationInterceptor,
 };
+
+/// Log an internal error and return a generic gRPC status to avoid leaking details.
+///
+/// Shared across all gRPC service implementations.
+pub(crate) fn internal_err(context: &str, err: impl std::fmt::Display) -> tonic::Status {
+    tracing::error!("{context}: {err}");
+    tonic::Status::internal(context)
+}
 
 // Use synctv_proto for all server traits and message types (single source of truth)
 use crate::proto::admin_service_server::AdminServiceServer;
@@ -154,9 +162,9 @@ pub async fn serve(
         60,  // 60 second window
     );
 
-    let client_service = ClientServiceImpl::new(
-        user_service_clone,
-        room_service_clone,
+    let client_service = ClientServiceImpl::from_config(ClientServiceConfig {
+        user_service: user_service_clone,
+        room_service: room_service_clone,
         cluster_manager,
         rate_limiter,
         rate_limit_config,
@@ -164,12 +172,12 @@ pub async fn serve(
         connection_manager,
         email_service,
         email_token_service,
-        settings_registry.clone(),
-        providers_manager_for_client,
-        Arc::new(config.clone()),
-        sfu_manager.clone(),
-        client_api.clone(),
-    );
+        settings_registry: settings_registry.clone(),
+        providers_manager: providers_manager_for_client,
+        config: Arc::new(config.clone()),
+        sfu_manager: sfu_manager.clone(),
+        client_api: client_api.clone(),
+    });
 
     // Build the shared AdminApiImpl for gRPC handlers (same impls layer used by HTTP)
     // AdminApiImpl requires EmailService; if not configured, create with None config

@@ -556,4 +556,150 @@ mod tests {
         let result = jwt.verify_guest_token(&access_token);
         assert!(result.is_err());
     }
+
+    // ========== Token Type Enforcement ==========
+
+    #[test]
+    fn test_access_token_rejected_as_refresh() {
+        let jwt = create_jwt_service();
+        let user_id = UserId::new();
+        let token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
+        let result = jwt.verify_refresh_token(&token);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_refresh_token_rejected_as_access() {
+        let jwt = create_jwt_service();
+        let user_id = UserId::new();
+        let token = jwt.sign_token(&user_id, TokenType::Refresh).unwrap();
+        let result = jwt.verify_access_token(&token);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_guest_type_token_rejected_as_access() {
+        // A token signed with TokenType::Guest via sign_token has typ="guest"
+        let jwt = create_jwt_service();
+        let user_id = UserId::new();
+        let token = jwt.sign_token(&user_id, TokenType::Guest).unwrap();
+        let result = jwt.verify_access_token(&token);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_guest_type_token_rejected_as_refresh() {
+        let jwt = create_jwt_service();
+        let user_id = UserId::new();
+        let token = jwt.sign_token(&user_id, TokenType::Guest).unwrap();
+        let result = jwt.verify_refresh_token(&token);
+        assert!(result.is_err());
+    }
+
+    // ========== Claims Inspection ==========
+
+    #[test]
+    fn test_claims_user_id_extraction() {
+        let jwt = create_jwt_service();
+        let user_id = UserId::new();
+        let token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
+        let claims = jwt.verify_token(&token).unwrap();
+        assert_eq!(claims.user_id(), user_id);
+    }
+
+    #[test]
+    fn test_claims_type_predicates() {
+        let access = Claims { sub: "u1".into(), typ: "access".into(), iat: 0, exp: 0 };
+        assert!(access.is_access_token());
+        assert!(!access.is_refresh_token());
+        assert!(!access.is_guest_token());
+
+        let refresh = Claims { sub: "u1".into(), typ: "refresh".into(), iat: 0, exp: 0 };
+        assert!(!refresh.is_access_token());
+        assert!(refresh.is_refresh_token());
+        assert!(!refresh.is_guest_token());
+
+        let guest = Claims { sub: "u1".into(), typ: "guest".into(), iat: 0, exp: 0 };
+        assert!(!guest.is_access_token());
+        assert!(!guest.is_refresh_token());
+        assert!(guest.is_guest_token());
+    }
+
+    // ========== Guest Token Edge Cases ==========
+
+    #[test]
+    fn test_guest_claims_room_id_extraction() {
+        let jwt = create_jwt_service();
+        let room_id = RoomId::new();
+        let token = jwt.sign_guest_token(&room_id).unwrap();
+        let claims = jwt.verify_guest_token(&token).unwrap();
+        assert_eq!(claims.room_id(), room_id);
+    }
+
+    #[test]
+    fn test_guest_claims_sub_format() {
+        let jwt = create_jwt_service();
+        let room_id = RoomId::new();
+        let token = jwt.sign_guest_token(&room_id).unwrap();
+        let claims = jwt.verify_guest_token(&token).unwrap();
+        assert!(claims.sub.starts_with("guest:"));
+        assert!(claims.sub.contains(room_id.as_str()));
+    }
+
+    #[test]
+    fn test_guest_claims_is_guest_false_for_non_guest_sub() {
+        let claims = GuestClaims {
+            sub: "user:some_id".into(),
+            room_id: "room1".into(),
+            session_id: "sess1".into(),
+            typ: "guest".into(),
+            iat: 0,
+            exp: 0,
+        };
+        assert!(!claims.is_guest());
+    }
+
+    // ========== Different Secrets ==========
+
+    #[test]
+    fn test_token_from_different_secret_is_rejected() {
+        let jwt1 = JwtService::new("secret-key-one-long-enough-1234567890").unwrap();
+        let jwt2 = JwtService::new("secret-key-two-long-enough-1234567890").unwrap();
+        let user_id = UserId::new();
+
+        let token = jwt1.sign_token(&user_id, TokenType::Access).unwrap();
+        let result = jwt2.verify_token(&token);
+        assert!(result.is_err());
+    }
+
+    // ========== Custom Durations ==========
+
+    #[test]
+    fn test_custom_token_durations() {
+        let jwt = JwtService::with_durations(
+            "custom-secret-key-long-enough-1234567890",
+            2,  // 2 hour access
+            7,  // 7 day refresh
+            1,  // 1 hour guest
+            30, // 30 second leeway
+        ).unwrap();
+
+        let user_id = UserId::new();
+        let token = jwt.sign_token(&user_id, TokenType::Access).unwrap();
+        let claims = jwt.verify_token(&token).unwrap();
+
+        // Verify token has exp roughly 2 hours from iat
+        let duration = claims.exp - claims.iat;
+        assert_eq!(duration, 7200); // 2 hours in seconds
+    }
+
+    #[test]
+    fn test_refresh_token_duration() {
+        let jwt = create_jwt_service();
+        let user_id = UserId::new();
+        let token = jwt.sign_token(&user_id, TokenType::Refresh).unwrap();
+        let claims = jwt.verify_token(&token).unwrap();
+        let duration = claims.exp - claims.iat;
+        assert_eq!(duration, 30 * 86400); // 30 days in seconds
+    }
 }

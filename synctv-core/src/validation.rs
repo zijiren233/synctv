@@ -5,6 +5,30 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::LazyLock;
 
+// ============================================================================
+// Canonical validation limits — single source of truth for the entire codebase
+// ============================================================================
+
+/// Minimum username length
+pub const USERNAME_MIN: usize = 3;
+/// Maximum username length
+pub const USERNAME_MAX: usize = 50;
+
+/// Minimum user-account password length
+pub const PASSWORD_MIN: usize = 8;
+/// Maximum password length (prevent bcrypt DoS; bcrypt input limit is 72 bytes,
+/// but we allow up to 128 for pre-hashing schemes)
+pub const PASSWORD_MAX: usize = 128;
+
+/// Minimum room password length (shorter than user password because room
+/// passwords are shared secrets with lower entropy requirements)
+pub const ROOM_PASSWORD_MIN: usize = 4;
+/// Maximum room password length (same cap as user password)
+pub const ROOM_PASSWORD_MAX: usize = 128;
+
+/// Maximum room name length
+pub const ROOM_NAME_MAX: usize = 100;
+
 /// Validation error
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ValidationError {
@@ -30,8 +54,8 @@ pub struct UsernameValidator {
 impl Default for UsernameValidator {
     fn default() -> Self {
         Self {
-            min_length: 3,
-            max_length: 50,
+            min_length: USERNAME_MIN,
+            max_length: USERNAME_MAX,
         }
     }
 }
@@ -99,7 +123,7 @@ pub struct PasswordValidator {
 impl Default for PasswordValidator {
     fn default() -> Self {
         Self {
-            min_length: 8,
+            min_length: PASSWORD_MIN,
             require_uppercase: true,
             require_lowercase: true,
             require_digit: true,
@@ -127,7 +151,7 @@ impl PasswordValidator {
     }
 
     /// Maximum password length to prevent bcrypt `DoS` (bcrypt input limit is 72 bytes)
-    const MAX_LENGTH: usize = 128;
+    const MAX_LENGTH: usize = PASSWORD_MAX;
 
     pub fn validate(&self, password: &str) -> ValidationResult<()> {
         // Check length
@@ -282,7 +306,7 @@ impl Default for RoomNameValidator {
     fn default() -> Self {
         Self {
             min_length: 1,
-            max_length: 100,
+            max_length: ROOM_NAME_MAX,
         }
     }
 }
@@ -1086,5 +1110,158 @@ mod tests {
     fn test_validate_url_for_ssrf_helper() {
         assert!(validate_url_for_ssrf("http://192.168.0.1/path").is_err());
         assert!(validate_url_for_ssrf("https://example.com/path").is_ok());
+    }
+
+    // ========== SSRF: IPv4-Mapped IPv6 Edge Cases ==========
+
+    #[test]
+    fn test_ssrf_ipv4_mapped_ipv6_private_ranges() {
+        let validator = SSRFValidator::new();
+
+        // IPv4-mapped IPv6 forms of private addresses must be blocked
+        assert!(validator.validate_url("http://[::ffff:10.0.0.1]/path").is_err());
+        assert!(validator.validate_url("http://[::ffff:172.16.0.1]/path").is_err());
+        assert!(validator.validate_url("http://[::ffff:192.168.1.1]/path").is_err());
+        assert!(validator.validate_url("http://[::ffff:127.0.0.1]/path").is_err());
+        assert!(validator.validate_url("http://[::ffff:169.254.169.254]/path").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_ipv4_mapped_ipv6_public_address() {
+        let validator = SSRFValidator::new();
+
+        // IPv4-mapped IPv6 form of public addresses should be allowed
+        assert!(validator.validate_url("http://[::ffff:8.8.8.8]/path").is_ok());
+        assert!(validator.validate_url("http://[::ffff:1.1.1.1]/path").is_ok());
+    }
+
+    // ========== SSRF: CGNAT Range (100.64.0.0/10) ==========
+
+    #[test]
+    fn test_ssrf_cgnat_range_boundaries() {
+        let validator = SSRFValidator::new();
+
+        // CGNAT range: 100.64.0.0 - 100.127.255.255
+        assert!(validator.validate_url("http://100.64.0.0/path").is_err());
+        assert!(validator.validate_url("http://100.64.0.1/path").is_err());
+        assert!(validator.validate_url("http://100.100.100.100/path").is_err());
+        assert!(validator.validate_url("http://100.127.255.255/path").is_err());
+
+        // Just outside CGNAT range
+        assert!(validator.validate_url("http://100.63.255.255/path").is_ok());
+        assert!(validator.validate_url("http://100.128.0.0/path").is_ok());
+    }
+
+    // ========== SSRF: IPv6 Unique Local (fc00::/7) ==========
+
+    #[test]
+    fn test_ssrf_ipv6_unique_local_both_prefixes() {
+        let validator = SSRFValidator::new();
+
+        // fc00::/7 covers both fc00::/8 and fd00::/8
+        assert!(validator.validate_url("http://[fc00::1]/path").is_err());
+        assert!(validator.validate_url("http://[fd00::1]/path").is_err());
+        assert!(validator.validate_url("http://[fdff::1]/path").is_err());
+    }
+
+    // ========== SSRF: Validate IP Directly ==========
+
+    #[test]
+    fn test_ssrf_validate_ip_directly() {
+        let validator = SSRFValidator::new();
+
+        // Test validate_ip directly for edge cases
+        assert!(validator.validate_ip(&"0.0.0.0".parse().unwrap()).is_err());
+        assert!(validator.validate_ip(&"0.0.0.1".parse().unwrap()).is_err());
+        assert!(validator.validate_ip(&"224.0.0.1".parse().unwrap()).is_err());
+        assert!(validator.validate_ip(&"255.255.255.255".parse().unwrap()).is_err());
+        assert!(validator.validate_ip(&"240.0.0.1".parse().unwrap()).is_err());
+        assert!(validator.validate_ip(&"8.8.8.8".parse().unwrap()).is_ok());
+    }
+
+    // ========== SSRF: URL Parsing Edge Cases ==========
+
+    #[test]
+    fn test_ssrf_invalid_url() {
+        let validator = SSRFValidator::new();
+        assert!(validator.validate_url("not-a-url").is_err());
+        assert!(validator.validate_url("").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_url_without_host() {
+        let validator = SSRFValidator::new();
+        // A URL like "file:///etc/passwd" has no host
+        assert!(validator.validate_url("file:///etc/passwd").is_err());
+    }
+
+    // ========== SSRF: Hostname Edge Cases ==========
+
+    #[test]
+    fn test_ssrf_instance_data_hostname() {
+        let validator = SSRFValidator::new();
+        assert!(validator.validate_url("http://instance-data/latest/meta-data").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_metadata_azure_hostname() {
+        let validator = SSRFValidator::new();
+        assert!(validator.validate_url("http://metadata.azure/metadata/instance").is_err());
+    }
+
+    // ========== SSRF: Link-Local Disabled ==========
+
+    #[test]
+    fn test_ssrf_link_local_disabled() {
+        let validator = SSRFValidator::new().block_link_local(false);
+
+        // Link-local should be allowed when disabled
+        assert!(validator.validate_url("http://169.254.0.1/path").is_ok());
+        // But metadata endpoint is still blocked via explicit blocklist
+        assert!(validator.validate_url("http://169.254.169.254/path").is_err());
+    }
+
+    // ========== Validation: Password Max Length ==========
+
+    #[test]
+    fn test_password_exactly_at_max_length() {
+        let validator = PasswordValidator::new();
+        // Exactly 128 chars should be OK
+        let pwd = "A".to_string() + &"a".repeat(63) + &"1".repeat(64);
+        assert_eq!(pwd.len(), 128);
+        assert!(validator.validate(&pwd).is_ok());
+    }
+
+    #[test]
+    fn test_password_one_over_max_length() {
+        let validator = PasswordValidator::new();
+        let pwd = "A".to_string() + &"a".repeat(64) + &"1".repeat(64);
+        assert_eq!(pwd.len(), 129);
+        assert!(validator.validate(&pwd).is_err());
+    }
+
+    // ========== Validation: Batch Validator Single Error ==========
+
+    #[test]
+    fn test_batch_validation_single_error_returns_field_not_multiple() {
+        let mut validator = Validator::new();
+        validator.validate_field("username", UsernameValidator::new().validate("ab"));
+        let result = validator.into_result();
+        assert!(result.is_err());
+        // Single error should be Field variant, not Multiple
+        match result {
+            Err(ValidationError::Field { field, .. }) => assert_eq!(field, "username"),
+            _ => panic!("Expected Field error for single validation failure"),
+        }
+    }
+
+    #[test]
+    fn test_batch_validation_no_errors_is_ok() {
+        let mut validator = Validator::new();
+        validator
+            .validate_field("username", UsernameValidator::new().validate("validuser"))
+            .validate_field("email", EmailValidator::new().validate("user@example.com"));
+        assert!(validator.is_valid());
+        assert!(validator.into_result().is_ok());
     }
 }

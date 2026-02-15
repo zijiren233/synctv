@@ -14,8 +14,6 @@ use std::sync::Arc;
 use synctv_core::models::id::UserId;
 use synctv_core::service::auth::JwtValidator;
 
-use synctv_core::models::UserStatus;
-
 use super::{AppError, AppResult, AppState};
 use crate::proto::admin;
 
@@ -27,15 +25,12 @@ use crate::proto::admin;
 #[derive(Clone)]
 struct JwtValidatorExt(Arc<JwtValidator>);
 
-/// Validated user info returned by the shared auth helper.
-struct ValidatedUser {
-    user_id: UserId,
-    role: synctv_core::models::UserRole,
-}
-
-/// Shared JWT validation, user lookup, and password-change invalidation logic
-/// used by both `AuthAdmin` and `AuthRoot` extractors.
-async fn validate_auth_user(parts: &mut Parts, app_state: &AppState) -> Result<ValidatedUser, AppError> {
+/// Shared JWT validation + admin auth verification.
+///
+/// Extracts JWT claims from the Authorization header, then delegates to
+/// the shared `validate_admin_auth` in the impls layer for user lookup,
+/// banned/deleted check, and password-change invalidation.
+async fn validate_auth_user(parts: &mut Parts, app_state: &AppState) -> Result<crate::impls::admin::ValidatedAdmin, AppError> {
     let validator = parts
         .extensions
         .get::<JwtValidatorExt>().map_or_else(|| {
@@ -57,28 +52,9 @@ async fn validate_auth_user(parts: &mut Parts, app_state: &AppState) -> Result<V
 
     let user_id = UserId::from_string(claims.sub);
 
-    let user = app_state
-        .user_service
-        .get_user(&user_id)
+    crate::impls::admin::validate_admin_auth(&app_state.user_service, user_id, claims.iat)
         .await
-        .map_err(|_| AppError::unauthorized("Failed to verify user"))?;
-
-    if user.is_deleted() || user.status == UserStatus::Banned {
-        return Err(AppError::unauthorized("Authentication failed"));
-    }
-
-    if app_state
-        .user_service
-        .is_token_invalidated_by_password_change(&user_id, claims.iat)
-        .await
-        .unwrap_or(false)
-    {
-        return Err(AppError::unauthorized(
-            "Token invalidated due to password change. Please log in again.",
-        ));
-    }
-
-    Ok(ValidatedUser { user_id, role: user.role })
+        .map_err(|e| AppError::unauthorized(e))
 }
 
 /// Authenticated admin user (admin or root role required)

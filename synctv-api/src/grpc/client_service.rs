@@ -61,11 +61,7 @@ use crate::proto::client::{
     ListRoomStreamsRequest, ListRoomStreamsResponse,
 };
 
-/// Log an internal error and return a generic gRPC status to avoid leaking details.
-fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
-    tracing::error!("{context}: {err}");
-    Status::internal(context)
-}
+use super::internal_err;
 
 /// Map impls layer error strings to appropriate gRPC Status codes.
 ///

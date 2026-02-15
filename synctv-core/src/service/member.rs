@@ -627,6 +627,129 @@ impl MemberService {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    // ========== Role Hierarchy Tests ==========
+
+    #[test]
+    fn test_role_level_ordering() {
+        // Creator > Admin > Member > Guest
+        assert!(role_level(&RoomRole::Creator) > role_level(&RoomRole::Admin));
+        assert!(role_level(&RoomRole::Admin) > role_level(&RoomRole::Member));
+        assert!(role_level(&RoomRole::Member) > role_level(&RoomRole::Guest));
+    }
+
+    #[test]
+    fn test_role_level_exact_values() {
+        assert_eq!(role_level(&RoomRole::Creator), 3);
+        assert_eq!(role_level(&RoomRole::Admin), 2);
+        assert_eq!(role_level(&RoomRole::Member), 1);
+        assert_eq!(role_level(&RoomRole::Guest), 0);
+    }
+
+    #[test]
+    fn test_lower_role_cannot_kick_higher_role() {
+        // Member (1) cannot kick Admin (2): target >= kicker
+        assert!(role_level(&RoomRole::Admin) >= role_level(&RoomRole::Member));
+        // Guest (0) cannot kick Member (1)
+        assert!(role_level(&RoomRole::Member) >= role_level(&RoomRole::Guest));
+        // Admin (2) cannot kick Creator (3)
+        assert!(role_level(&RoomRole::Creator) >= role_level(&RoomRole::Admin));
+    }
+
+    #[test]
+    fn test_equal_roles_cannot_kick_each_other() {
+        // Same role level means target >= kicker, so kick is denied
+        assert!(role_level(&RoomRole::Admin) >= role_level(&RoomRole::Admin));
+        assert!(role_level(&RoomRole::Member) >= role_level(&RoomRole::Member));
+        assert!(role_level(&RoomRole::Guest) >= role_level(&RoomRole::Guest));
+    }
+
+    #[test]
+    fn test_higher_role_can_kick_lower_role() {
+        // Admin (2) can kick Member (1): target < kicker
+        assert!(role_level(&RoomRole::Member) < role_level(&RoomRole::Admin));
+        // Creator (3) can kick Admin (2)
+        assert!(role_level(&RoomRole::Admin) < role_level(&RoomRole::Creator));
+        // Admin (2) can kick Guest (0)
+        assert!(role_level(&RoomRole::Guest) < role_level(&RoomRole::Admin));
+    }
+
+    #[test]
+    fn test_creator_can_kick_all_other_roles() {
+        // Creator (3) can kick all other roles since target < 3
+        assert!(role_level(&RoomRole::Admin) < role_level(&RoomRole::Creator));
+        assert!(role_level(&RoomRole::Member) < role_level(&RoomRole::Creator));
+        assert!(role_level(&RoomRole::Guest) < role_level(&RoomRole::Creator));
+    }
+
+    #[test]
+    fn test_guest_cannot_kick_anyone() {
+        // Guest (0) cannot kick any role since all targets have level >= 0
+        assert!(role_level(&RoomRole::Guest) >= role_level(&RoomRole::Guest));
+        assert!(role_level(&RoomRole::Member) >= role_level(&RoomRole::Guest));
+        assert!(role_level(&RoomRole::Admin) >= role_level(&RoomRole::Guest));
+        assert!(role_level(&RoomRole::Creator) >= role_level(&RoomRole::Guest));
+    }
+
+    #[test]
+    fn test_ban_role_check_mirrors_kick() {
+        // The ban_member method uses the same role_level check:
+        // role_level(&target_member.role) >= role_level(&admin_member.role) => deny
+        // Admin banning Member: 1 >= 2 = false => allowed
+        assert!(!(role_level(&RoomRole::Member) >= role_level(&RoomRole::Admin)));
+        // Member banning Admin: 2 >= 1 = true => denied
+        assert!(role_level(&RoomRole::Admin) >= role_level(&RoomRole::Member));
+        // Admin banning Admin: 2 >= 2 = true => denied (equal role)
+        assert!(role_level(&RoomRole::Admin) >= role_level(&RoomRole::Admin));
+    }
+
+    // ========== AddMemberOptions Tests ==========
+
+    #[test]
+    fn test_add_member_options_defaults() {
+        let opts = AddMemberOptions::new();
+        assert!(opts.check_room_active);
+        assert!(opts.check_duplicate);
+        assert!(!opts.check_max_members);
+        assert_eq!(opts.max_members, 0);
+        assert!(opts.invalidate_cache);
+    }
+
+    #[test]
+    fn test_add_member_options_with_max_members() {
+        let opts = AddMemberOptions::new().with_max_members(100);
+        assert!(opts.check_max_members);
+        assert_eq!(opts.max_members, 100);
+    }
+
+    #[test]
+    fn test_add_member_options_skip_methods() {
+        let opts = AddMemberOptions::new()
+            .skip_max_members_check()
+            .skip_active_check()
+            .skip_duplicate_check()
+            .skip_cache_invalidation();
+        assert!(!opts.check_room_active);
+        assert!(!opts.check_duplicate);
+        assert!(!opts.check_max_members);
+        assert!(!opts.invalidate_cache);
+    }
+
+    #[test]
+    fn test_add_member_options_chaining() {
+        let opts = AddMemberOptions::new()
+            .with_max_members(50)
+            .skip_active_check()
+            .skip_cache_invalidation();
+        assert!(opts.check_max_members);
+        assert_eq!(opts.max_members, 50);
+        assert!(!opts.check_room_active);
+        assert!(opts.check_duplicate);
+        assert!(!opts.invalidate_cache);
+    }
+
+    // ========== Integration test placeholders ==========
 
     #[tokio::test]
     #[ignore = "Requires database"]

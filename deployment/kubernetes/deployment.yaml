@@ -14,6 +14,7 @@ spec:
       labels:
         app: synctv
     spec:
+      terminationGracePeriodSeconds: 60
       containers:
       - name: synctv
         image: synctv:latest
@@ -27,6 +28,22 @@ spec:
 
         # Environment variables (configure via ConfigMap/Secret)
         env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SYNCTV_SERVER_ADVERTISE_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
         - name: SYNCTV_DATABASE_URL
           valueFrom:
             secretKeyRef:
@@ -42,6 +59,11 @@ spec:
             secretKeyRef:
               name: synctv-secrets
               key: jwt-secret
+
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep 5"]
 
         # Liveness probe - determines if pod needs restart
         # Checks if the application process is running
@@ -109,6 +131,24 @@ spec:
     name: grpc
   selector:
     app: synctv
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: synctv-headless
+  labels:
+    app: synctv
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: synctv
+  ports:
+  - port: 50051
+    targetPort: 50051
+    protocol: TCP
+    name: grpc
 
 ---
 apiVersion: v1

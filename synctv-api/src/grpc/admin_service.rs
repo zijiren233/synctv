@@ -78,6 +78,7 @@ impl AdminServiceImpl {
     /// Validate admin authentication: extract user from JWT, check banned/deleted
     /// status, and verify token has not been invalidated by password change.
     ///
+    /// Delegates to the shared `validate_admin_auth` in the impls layer.
     /// Returns the authenticated user's role. Shared by `check_admin` and `check_root`.
     async fn validate_auth(
         &self,
@@ -91,34 +92,15 @@ impl AdminServiceImpl {
         let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
         let token_iat = user_context.iat;
 
-        // Load user from database to get current role and status
-        let user = self
-            .user_service
-            .get_user(&user_id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to get user for auth check: {e}");
-                Status::internal("Failed to verify user")
-            })?;
+        let validated = crate::impls::admin::validate_admin_auth(
+            &self.user_service,
+            user_id,
+            token_iat,
+        )
+        .await
+        .map_err(|e| Status::unauthenticated(e))?;
 
-        // Check banned/deleted status (matching HTTP AuthAdmin/AuthRoot extractors)
-        if user.is_deleted() || user.status == synctv_core::models::UserStatus::Banned {
-            return Err(Status::unauthenticated("Authentication failed"));
-        }
-
-        // Reject tokens issued before last password change
-        if self
-            .user_service
-            .is_token_invalidated_by_password_change(&user_id, token_iat)
-            .await
-            .unwrap_or(false)
-        {
-            return Err(Status::unauthenticated(
-                "Token invalidated due to password change. Please log in again.",
-            ));
-        }
-
-        Ok(user.role)
+        Ok(validated.role)
     }
 
     /// Check if user has admin role and return their role.

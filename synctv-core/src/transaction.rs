@@ -116,6 +116,68 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    // ========== UnitOfWork State Machine Tests ==========
+
+    #[test]
+    fn test_transaction_error_display() {
+        let err = TransactionError("Transaction already consumed");
+        assert_eq!(err.to_string(), "Transaction already consumed");
+    }
+
+    #[test]
+    fn test_transaction_error_is_error() {
+        let err = TransactionError("test error");
+        // Ensure it implements std::error::Error
+        let _: &dyn std::error::Error = &err;
+        assert_eq!(err.0, "test error");
+    }
+
+    #[test]
+    fn test_transaction_error_clone() {
+        let err = TransactionError("clone me");
+        let cloned = err.clone();
+        assert_eq!(cloned.0, "clone me");
+    }
+
+    #[test]
+    fn test_uow_try_transaction_returns_error_when_none() {
+        let mut uow = UnitOfWork { tx: None };
+        let result = uow.try_transaction();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("already consumed"));
+    }
+
+    #[test]
+    fn test_uow_is_active_when_no_transaction() {
+        let uow = UnitOfWork { tx: None };
+        assert!(!uow.is_active());
+    }
+
+    #[test]
+    #[should_panic(expected = "Transaction already consumed")]
+    fn test_uow_transaction_panics_when_consumed() {
+        let mut uow = UnitOfWork { tx: None };
+        let _ = uow.transaction(); // should panic
+    }
+
+    #[test]
+    #[should_panic(expected = "Transaction already consumed")]
+    fn test_uow_deref_panics_when_consumed() {
+        let uow = UnitOfWork { tx: None };
+        let _ = &*uow; // Deref should panic
+    }
+
+    #[test]
+    fn test_uow_drop_when_consumed_is_safe() {
+        // Dropping a consumed UnitOfWork should not panic
+        let uow = UnitOfWork { tx: None };
+        drop(uow); // Should not panic
+    }
+
+    // ========== Integration test placeholders ==========
 
     #[tokio::test]
     #[ignore = "Requires database"]

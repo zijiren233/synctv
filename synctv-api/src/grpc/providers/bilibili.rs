@@ -11,11 +11,7 @@ use crate::impls::providers::extract_instance_name;
 use crate::proto::providers::bilibili::bilibili_provider_service_server::BilibiliProviderService;
 use crate::proto::providers::bilibili::{ParseRequest, ParseResponse, LoginQrRequest, QrCodeResponse, CheckQrRequest, QrStatusResponse, GetCaptchaRequest, CaptchaResponse, SendSmsRequest, SendSmsResponse, LoginSmsRequest, LoginSmsResponse, UserInfoRequest, UserInfoResponse, LogoutRequest, LogoutResponse};
 
-/// Log an internal error and return a generic gRPC status to avoid leaking details.
-fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
-    tracing::error!("{context}: {err}");
-    Status::internal(context)
-}
+use crate::grpc::internal_err;
 
 /// Bilibili Provider gRPC Service
 ///

@@ -13,7 +13,7 @@ use axum::{
     Router,
 };
 
-use crate::http::{AppState, AppError, AppResult, middleware::AuthUser};
+use crate::http::{AppState, AppResult, middleware::AuthUser};
 use crate::proto::client::CreatePublishKeyResponse;
 
 /// Create publish key routes
@@ -52,15 +52,7 @@ pub async fn generate_publish_key(
         .client_api
         .create_publish_key(&user_id_str, &room_id, req)
         .await
-        .map_err(|e| {
-            if e.contains("Permission denied") {
-                AppError::forbidden(e)
-            } else if e.contains("not found") {
-                AppError::not_found(e)
-            } else {
-                AppError::internal_server_error(e)
-            }
-        })?;
+        .map_err(crate::http::error::impls_err_to_app_error)?;
 
     Ok(Json(resp))
 }
