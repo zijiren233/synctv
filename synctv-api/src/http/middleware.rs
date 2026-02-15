@@ -10,7 +10,7 @@ use axum::{
 use std::sync::LazyLock;
 use synctv_core::{
     models::{id::UserId, UserStatus},
-    service::rate_limit::RateLimitError,
+    service::{auth::JwtValidator, rate_limit::RateLimitError},
 };
 
 use super::{AppError, AppState};
@@ -75,6 +75,19 @@ where
         let claims = validator
             .validate_http(auth_str)
             .map_err(|e| AppError::unauthorized(format!("{e}")))?;
+
+        // Check if the token has been revoked (e.g. after logout).
+        // Extract the raw bearer token for blacklist lookup.
+        let raw_token = JwtValidator::extract_bearer_token(auth_str)
+            .map_err(|e| AppError::unauthorized(format!("{e}")))?;
+        if app_state
+            .token_blacklist_service
+            .is_blacklisted(&raw_token)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(AppError::unauthorized("Token has been revoked"));
+        }
 
         let user_id = UserId::from_string(claims.sub);
 

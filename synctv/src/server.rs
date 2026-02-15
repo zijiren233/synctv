@@ -59,6 +59,8 @@ pub struct Services {
     pub node_registry: Option<Arc<synctv_cluster::discovery::NodeRegistry>>,
     pub health_monitor: Option<Arc<synctv_cluster::discovery::HealthMonitor>>,
     pub load_balancer: Option<Arc<synctv_cluster::discovery::LoadBalancer>>,
+    /// Token blacklist service for checking revoked tokens
+    pub token_blacklist: synctv_core::service::TokenBlacklistService,
     /// Shared Redis connection for playback caching
     pub redis_conn: Option<redis::aio::ConnectionManager>,
 }
@@ -324,6 +326,7 @@ impl SyncTvServer {
         let publish_key_service = self.services.publish_key_service.clone();
         let notification_service = self.services.notification_service.clone();
         let node_registry = self.services.node_registry.clone();
+        let token_blacklist = self.services.token_blacklist.clone();
 
         let handle = tokio::spawn(async move {
             info!("Starting gRPC server on {}...", config.grpc_address());
@@ -351,6 +354,7 @@ impl SyncTvServer {
                 Some(publish_key_service),
                 notification_service,
                 node_registry,
+                token_blacklist,
                 Some(shutdown_rx),
             )
             .await
@@ -432,6 +436,7 @@ impl SyncTvServer {
                 live_streaming_infrastructure,
                 sfu_manager,
                 rate_limiter: self.services.rate_limiter.clone(),
+                token_blacklist_service: self.services.token_blacklist.clone(),
                 ws_ticket_service,
                 redis_conn: self.services.redis_conn.clone(),
             },

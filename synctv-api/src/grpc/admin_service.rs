@@ -305,9 +305,9 @@ impl AdminService for AdminServiceImpl {
         &self,
         request: Request<UpdateUserPasswordRequest>,
     ) -> Result<Response<UpdateUserPasswordResponse>, Status> {
-        self.check_admin(&request).await?;
+        let caller_role = self.check_admin_get_role(&request).await?;
         let req = request.into_inner();
-        let resp = self.admin_api.update_user_password(req).await.map_err(api_err)?;
+        let resp = self.admin_api.update_user_password(req, caller_role).await.map_err(api_err)?;
         Ok(Response::new(resp))
     }
 

@@ -304,6 +304,9 @@ impl RoomService {
             "Room creation completed"
         );
 
+        // Track room metrics
+        crate::metrics::http::ROOMS_ACTIVE.inc();
+
         // Invalidate permission cache outside transaction
         self.permission_service.invalidate_cache(&created_room.id, &created_by).await;
 
@@ -475,6 +478,9 @@ impl RoomService {
 
         // Delete room
         self.room_repo.delete(&room_id).await?;
+
+        // Track room metrics
+        crate::metrics::http::ROOMS_ACTIVE.dec();
 
         // Invalidate room cache across all replicas
         self.notify_room_invalidation(&room_id).await;
@@ -1298,6 +1304,7 @@ impl RoomService {
     pub async fn admin_delete_room(&self, room_id: &RoomId) -> Result<()> {
         let _ = self.notification_service.notify_room_deleted(room_id).await;
         self.room_repo.delete(room_id).await?;
+        crate::metrics::http::ROOMS_ACTIVE.dec();
         self.notify_room_invalidation(room_id).await;
         Ok(())
     }

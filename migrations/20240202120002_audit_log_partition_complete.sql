@@ -195,7 +195,7 @@ BEGIN
           AND tablename < 'audit_logs_' || TO_CHAR(cutoff_date, 'YYYY_MM')
         ORDER BY tablename
     LOOP
-        EXECUTE 'DROP TABLE IF EXISTS ' || partition_record.tablename;
+        EXECUTE format('DROP TABLE IF EXISTS %I', partition_record.tablename);
         dropped := dropped || json_build_object('partition', partition_record.tablename);
         drop_count := drop_count + 1;
 
@@ -247,7 +247,7 @@ BEGIN
     FOR partition_record IN
         SELECT
             tablename,
-            pg_total_relation_size(schemaname || '.' || tablename) as size
+            pg_total_relation_size(format('%I.%I', schemaname, tablename)) as size
         FROM pg_tables
         WHERE schemaname = 'public'
           AND tablename LIKE 'audit_logs_%'

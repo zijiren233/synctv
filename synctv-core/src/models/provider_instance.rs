@@ -89,7 +89,7 @@ pub struct UserProviderCredential {
     /// Associated media provider instance name (optional)
     pub provider_instance_name: Option<String>,
 
-    /// Credential data in JSONB format (plaintext storage per design doc)
+    /// Credential data in JSONB format (encrypted at rest via AES-256-GCM)
     pub credential_data: Value,
 
     /// Credential expiration time (optional, for tokens/cookies with TTL)

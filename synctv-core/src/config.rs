@@ -51,6 +51,10 @@ pub struct ServerConfig {
     /// Development mode enables relaxed security checks for local development.
     /// WARNING: Never enable in production!
     pub development_mode: bool,
+    /// Enable the `/metrics` Prometheus endpoint.
+    /// Independent of `development_mode` so metrics can be scraped in production.
+    /// Defaults to `false`. In Kubernetes, set via Helm `metrics.enabled`.
+    pub metrics_enabled: bool,
     /// Trusted proxy IP addresses/CIDRs for X-Forwarded-For validation.
     /// When set, X-Forwarded-For/X-Real-IP headers are only trusted from these addresses.
     /// Example: ["10.0.0.0/8", "192.168.0.0/16"] for internal load balancers.
@@ -80,6 +84,7 @@ impl Default for ServerConfig {
             http_port: 8080,
             enable_reflection: true,
             development_mode: false,
+            metrics_enabled: false,
             trusted_proxies: Vec::new(),
             cors_allowed_origins: Vec::new(),
             cluster_secret: String::new(),
@@ -873,6 +878,7 @@ mod tests {
                 http_port: 8080,
                 enable_reflection: true,
                 development_mode: false,
+                metrics_enabled: false,
                 trusted_proxies: Vec::new(),
                 cors_allowed_origins: Vec::new(),
                 cluster_secret: String::new(),
@@ -904,6 +910,7 @@ mod tests {
                 grpc_port: 50051,
                 http_port: 8080,
                 development_mode: false,
+                metrics_enabled: false,
                 enable_reflection: false,
                 trusted_proxies: Vec::new(),
                 cors_allowed_origins: Vec::new(),

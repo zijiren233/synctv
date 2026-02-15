@@ -614,6 +614,9 @@ impl StreamMessageHandler {
         self.connection_manager
             .mark_rtc_joined(&self.room_id, &self.user_id, &conn_id, true);
 
+        // Track WebRTC peer metrics
+        synctv_core::metrics::http::WEBRTC_PEERS_ACTIVE.inc();
+
         // Broadcast Join event to all RTC-joined users in the room
         let event = ClusterEvent::WebRTCJoin {
             event_id: nanoid::nanoid!(16),
@@ -639,6 +642,9 @@ impl StreamMessageHandler {
         // Mark this connection as left WebRTC session
         self.connection_manager
             .mark_rtc_joined(&self.room_id, &self.user_id, &conn_id, false);
+
+        // Track WebRTC peer metrics
+        synctv_core::metrics::http::WEBRTC_PEERS_ACTIVE.dec();
 
         // Broadcast Leave event to all RTC-joined users in the room
         let event = ClusterEvent::WebRTCLeave {

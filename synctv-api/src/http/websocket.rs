@@ -235,6 +235,15 @@ async fn handle_socket(
     room_id: String,
     user_id: UserId,
 ) {
+    // Track WebSocket metrics
+    synctv_core::metrics::http::WEBSOCKET_CONNECTIONS_ACTIVE
+        .with_label_values(&[&room_id])
+        .inc();
+    synctv_core::metrics::http::WEBSOCKET_CONNECTIONS_TOTAL
+        .with_label_values(&[&room_id])
+        .inc();
+    synctv_core::metrics::http::USERS_ONLINE.inc();
+
     // Get username from user service
     let username = state
         .user_service
@@ -317,6 +326,12 @@ async fn handle_socket(
     if let Err(e) = stream_handler.run(&mut stream).await {
         error!("Stream handler error: {}", e);
     }
+
+    // Decrement WebSocket metrics on disconnect (always runs, even on error paths)
+    synctv_core::metrics::http::WEBSOCKET_CONNECTIONS_ACTIVE
+        .with_label_values(&[&room_id])
+        .dec();
+    synctv_core::metrics::http::USERS_ONLINE.dec();
 
     info!(
         "WebSocket connection closed: user={}, room={}",

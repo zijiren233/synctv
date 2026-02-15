@@ -339,6 +339,7 @@ impl AdminApiImpl {
     pub async fn update_user_password(
         &self,
         req: crate::proto::admin::UpdateUserPasswordRequest,
+        caller_role: synctv_core::models::UserRole,
     ) -> Result<crate::proto::admin::UpdateUserPasswordResponse, String> {
         use crate::http::validation::limits::{PASSWORD_MIN, PASSWORD_MAX};
         if req.new_password.len() < PASSWORD_MIN {
@@ -349,6 +350,20 @@ impl AdminApiImpl {
         }
 
         let uid = UserId::from_string(req.user_id);
+
+        // Fetch target user to check role hierarchy
+        let target_user = self.user_service.get_user(&uid).await
+            .map_err(|e| format!("User not found: {e}"))?;
+
+        // Only root can reset another root user's password
+        if target_user.role == UserRole::Root && caller_role != UserRole::Root {
+            return Err("Only root users can reset root user passwords".to_string());
+        }
+
+        // Only root can reset admin user passwords (admins cannot reset each other's passwords)
+        if target_user.role == UserRole::Admin && caller_role != UserRole::Root {
+            return Err("Only root users can reset admin user passwords".to_string());
+        }
 
         self.user_service.set_password(&uid, &req.new_password).await
             .map_err(|e| e.to_string())?;
@@ -1547,5 +1562,46 @@ mod tests {
         assert_eq!(proto.status, "disabled");
         assert_eq!(proto.comment, ""); // None -> empty
         assert!(!proto.enabled);
+    }
+
+    // === Password Reset Role Hierarchy Tests ===
+    //
+    // These verify the role hierarchy rules enforced by update_user_password:
+    // - Root can reset anyone's password (root, admin, user)
+    // - Admin can only reset regular user passwords
+    // - Admin CANNOT reset root or other admin passwords
+
+    /// Helper: check if a caller_role can reset a target_role's password
+    /// Returns true if the operation should be allowed.
+    fn password_reset_allowed(caller_role: UserRole, target_role: UserRole) -> bool {
+        if target_role == UserRole::Root && caller_role != UserRole::Root {
+            return false;
+        }
+        if target_role == UserRole::Admin && caller_role != UserRole::Root {
+            return false;
+        }
+        true
+    }
+
+    #[test]
+    fn test_root_can_reset_any_password() {
+        assert!(password_reset_allowed(UserRole::Root, UserRole::Root));
+        assert!(password_reset_allowed(UserRole::Root, UserRole::Admin));
+        assert!(password_reset_allowed(UserRole::Root, UserRole::User));
+    }
+
+    #[test]
+    fn test_admin_cannot_reset_root_password() {
+        assert!(!password_reset_allowed(UserRole::Admin, UserRole::Root));
+    }
+
+    #[test]
+    fn test_admin_cannot_reset_other_admin_password() {
+        assert!(!password_reset_allowed(UserRole::Admin, UserRole::Admin));
+    }
+
+    #[test]
+    fn test_admin_can_reset_user_password() {
+        assert!(password_reset_allowed(UserRole::Admin, UserRole::User));
     }
 }

@@ -14,16 +14,17 @@ use crate::http::{AppState, AppResult, middleware::AuthUser};
 
 /// Get current playing media for a room
 ///
+/// Requires authentication and room membership.
 /// Delegates to `ClientApiImpl::get_playing_media()` for consistent behavior.
 #[axum::debug_handler]
 pub async fn get_playing_media(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
     let response = state
         .client_api
-        .get_playing_media(&room_id)
+        .get_playing_media(&auth.user_id.to_string(), &room_id)
         .await
         .map_err(super::error::impls_err_to_app_error)?;
 

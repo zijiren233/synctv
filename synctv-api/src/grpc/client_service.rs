@@ -97,6 +97,7 @@ pub struct ClientServiceConfig {
     pub connection_manager: ConnectionManager,
     pub email_service: Option<Arc<synctv_core::service::EmailService>>,
     pub email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
+    pub token_blacklist_service: synctv_core::service::TokenBlacklistService,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
     pub providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     pub config: Arc<synctv_core::Config>,
@@ -116,6 +117,7 @@ pub struct ClientServiceImpl {
     connection_manager: Arc<ConnectionManager>,
     email_service: Option<Arc<synctv_core::service::EmailService>>,
     email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
+    token_blacklist_service: synctv_core::service::TokenBlacklistService,
     client_api: Arc<crate::impls::ClientApiImpl>,
 }
 
@@ -132,6 +134,7 @@ impl ClientServiceImpl {
         connection_manager: ConnectionManager,
         email_service: Option<Arc<synctv_core::service::EmailService>>,
         email_token_service: Option<Arc<synctv_core::service::EmailTokenService>>,
+        token_blacklist_service: synctv_core::service::TokenBlacklistService,
         _settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
         _providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
         _config: Arc<synctv_core::Config>,
@@ -148,6 +151,7 @@ impl ClientServiceImpl {
             connection_manager: Arc::new(connection_manager),
             email_service,
             email_token_service,
+            token_blacklist_service,
             client_api,
         }
     }
@@ -165,6 +169,7 @@ impl ClientServiceImpl {
             connection_manager: Arc::new(config.connection_manager),
             email_service: config.email_service,
             email_token_service: config.email_token_service,
+            token_blacklist_service: config.token_blacklist_service,
             client_api: config.client_api,
         }
     }
@@ -184,12 +189,23 @@ impl ClientServiceImpl {
     }
 
     /// Extract `user_id` from `UserContext` (injected by `inject_user` interceptor)
+    /// and check token blacklist.
     #[allow(clippy::result_large_err)]
-    fn get_user_id(&self, request: &Request<impl std::fmt::Debug>) -> Result<UserId, Status> {
+    async fn get_user_id(&self, request: &Request<impl std::fmt::Debug>) -> Result<UserId, Status> {
         let user_context = request
             .extensions()
             .get::<super::interceptors::UserContext>()
             .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+
+        // Check if token has been revoked (e.g. after logout)
+        if self
+            .token_blacklist_service
+            .is_blacklisted(&user_context.raw_token)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(Status::unauthenticated("Token has been revoked"));
+        }
 
         Ok(UserId::from_string(user_context.user_id.clone()))
     }
@@ -279,7 +295,7 @@ impl UserService for ClientServiceImpl {
         &self,
         request: Request<GetProfileRequest>,
     ) -> Result<Response<GetProfileResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let response = self.client_api.get_profile(user_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
     }
@@ -288,7 +304,7 @@ impl UserService for ClientServiceImpl {
         &self,
         request: Request<SetUsernameRequest>,
     ) -> Result<Response<SetUsernameResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let req = request.into_inner();
         let response = self.client_api.set_username(user_id.as_str(), req).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -298,7 +314,7 @@ impl UserService for ClientServiceImpl {
         &self,
         request: Request<SetPasswordRequest>,
     ) -> Result<Response<SetPasswordResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let req = request.into_inner();
         let response = self.client_api.set_password(user_id.as_str(), req).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -308,7 +324,7 @@ impl UserService for ClientServiceImpl {
         &self,
         request: Request<ListCreatedRoomsRequest>,
     ) -> Result<Response<ListCreatedRoomsResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let req = request.into_inner();
         let response = self.client_api.list_created_rooms(user_id.as_str(), req).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -318,7 +334,7 @@ impl UserService for ClientServiceImpl {
         &self,
         request: Request<ListParticipatedRoomsRequest>,
     ) -> Result<Response<ListParticipatedRoomsResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let req = request.into_inner();
         let page = if req.page > 0 { req.page } else { 1 };
         let page_size = req.page_size.clamp(1, 100);
@@ -335,7 +351,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<CreateRoomRequest>,
     ) -> Result<Response<CreateRoomResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let req = request.into_inner();
         let response = self.client_api.create_room(user_id.as_str(), req).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -345,7 +361,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<GetRoomRequest>,
     ) -> Result<Response<GetRoomResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.get_room(user_id.as_str(), room_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -355,7 +371,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<JoinRoomRequest>,
     ) -> Result<Response<JoinRoomResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.join_room(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -366,7 +382,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<LeaveRoomRequest>,
     ) -> Result<Response<LeaveRoomResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.leave_room(user_id.as_str(), room_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -376,7 +392,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<DeleteRoomRequest>,
     ) -> Result<Response<DeleteRoomResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.delete_room(user_id.as_str(), room_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -386,7 +402,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<UpdateRoomSettingsRequest>,
     ) -> Result<Response<UpdateRoomSettingsResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.update_room_settings(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -397,7 +413,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<GetRoomMembersRequest>,
     ) -> Result<Response<GetRoomMembersResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.get_room_members(user_id.as_str(), room_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -407,7 +423,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<UpdateMemberPermissionsRequest>,
     ) -> Result<Response<UpdateMemberPermissionsResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.update_member_permissions(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -418,7 +434,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<KickMemberRequest>,
     ) -> Result<Response<KickMemberResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.kick_member(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -429,7 +445,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<BanMemberRequest>,
     ) -> Result<Response<BanMemberResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.ban_member(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -440,7 +456,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<UnbanMemberRequest>,
     ) -> Result<Response<UnbanMemberResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.unban_member(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -451,8 +467,9 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<GetRoomSettingsRequest>,
     ) -> Result<Response<GetRoomSettingsResponse>, Status> {
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
-        let response = self.client_api.get_room_settings(room_id.as_str()).await.map_err(impls_err_to_status)?;
+        let response = self.client_api.get_room_settings(user_id.as_str(), room_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
     }
 
@@ -460,7 +477,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<ResetRoomSettingsRequest>,
     ) -> Result<Response<ResetRoomSettingsResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.reset_room_settings(user_id.as_str(), room_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -470,7 +487,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<SetRoomPasswordRequest>,
     ) -> Result<Response<SetRoomPasswordResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.set_room_password(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -481,10 +498,14 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<CheckRoomPasswordRequest>,
     ) -> Result<Response<CheckRoomPasswordResponse>, Status> {
-        let _user_id = self.get_user_id(&request)?;
+        let _user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
+        let client_ip = request
+            .remote_addr()
+            .map(|addr| addr.ip().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
         let req = request.into_inner();
-        let response = self.client_api.check_room_password(room_id.as_str(), req).await.map_err(impls_err_to_status)?;
+        let response = self.client_api.check_room_password(room_id.as_str(), req, &client_ip).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
     }
 
@@ -499,11 +520,29 @@ impl RoomService for ClientServiceImpl {
         use nanoid::nanoid;
         use tokio::sync::mpsc;
 
-        // Extract user_id from JWT token
-        let user_id = self.get_user_id(&request)?;
-
-        // Extract room_id from metadata
+        // Extract all data from request BEFORE any await points.
+        // Request<Streaming<_>> is !Sync, so holding it across .await makes
+        // the future !Send, violating the tonic trait requirement.
+        let user_context = request
+            .extensions()
+            .get::<super::interceptors::UserContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?
+            .clone();
         let room_id = self.get_room_id(&request)?;
+        // Consume request now so it is not held across await points
+        let mut client_stream = request.into_inner();
+
+        // Check if token has been revoked
+        if self
+            .token_blacklist_service
+            .is_blacklisted(&user_context.raw_token)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(Status::unauthenticated("Token has been revoked"));
+        }
+
+        let user_id = UserId::from_string(user_context.user_id.clone());
 
         // Get user details from service
         let user = self
@@ -552,8 +591,6 @@ impl RoomService for ClientServiceImpl {
                 "Cannot join room: {e}"
             )));
         }
-
-        let mut client_stream = request.into_inner();
 
         // Create channel for outgoing messages with bounded capacity to prevent memory exhaustion
         // Buffer size of 1000 messages provides backpressure for slow clients
@@ -632,7 +669,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<GetChatHistoryRequest>,
     ) -> Result<Response<GetChatHistoryResponse>, Status> {
-        let _user_id = self.get_user_id(&request)?;
+        let _user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.get_chat_history(room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -643,7 +680,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<GetIceServersRequest>,
     ) -> Result<Response<GetIceServersResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.get_ice_servers(&room_id, &user_id).await
             .map_err(|e| internal_err("Failed to get ICE servers", e))?;
@@ -654,7 +691,7 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<GetNetworkQualityRequest>,
     ) -> Result<Response<GetNetworkQualityResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.get_network_quality(&room_id, &user_id).await
             .map_err(|e| internal_err("Failed to get network quality", e))?;
@@ -698,7 +735,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<AddMediaRequest>,
     ) -> Result<Response<AddMediaResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.add_media(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -709,7 +746,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<RemoveMediaRequest>,
     ) -> Result<Response<RemoveMediaResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.remove_media(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -720,7 +757,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<EditMediaRequest>,
     ) -> Result<Response<EditMediaResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.edit_media(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -731,7 +768,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<ListPlaylistRequest>,
     ) -> Result<Response<ListPlaylistResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.get_playlist(user_id.as_str(), room_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -741,7 +778,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<ListPlaylistItemsRequest>,
     ) -> Result<Response<ListPlaylistItemsResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.list_playlist_items(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -752,7 +789,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<SwapMediaRequest>,
     ) -> Result<Response<SwapMediaResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.swap_media(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -763,7 +800,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<ClearPlaylistRequest>,
     ) -> Result<Response<ClearPlaylistResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.clear_playlist(user_id.as_str(), room_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
@@ -773,7 +810,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<AddMediaBatchRequest>,
     ) -> Result<Response<AddMediaBatchResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.add_media_batch(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -784,7 +821,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<RemoveMediaBatchRequest>,
     ) -> Result<Response<RemoveMediaBatchResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.remove_media_batch(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -795,7 +832,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<ReorderMediaBatchRequest>,
     ) -> Result<Response<ReorderMediaBatchResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.reorder_media_batch(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -803,7 +840,7 @@ impl MediaService for ClientServiceImpl {
     }
 
     async fn play(&self, request: Request<PlayRequest>) -> Result<Response<PlayResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.play(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -814,14 +851,14 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<PauseRequest>,
     ) -> Result<Response<PauseResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let response = self.client_api.pause(user_id.as_str(), room_id.as_str()).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
     }
 
     async fn seek(&self, request: Request<SeekRequest>) -> Result<Response<SeekResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.seek(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -832,7 +869,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<SetPlaybackSpeedRequest>,
     ) -> Result<Response<SetPlaybackSpeedResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.set_playback_speed(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -843,7 +880,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<GetPlaybackStateRequest>,
     ) -> Result<Response<GetPlaybackStateResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.get_playback_state(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -854,7 +891,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<CreatePublishKeyRequest>,
     ) -> Result<Response<CreatePublishKeyResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
 
@@ -869,7 +906,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<GetStreamInfoRequest>,
     ) -> Result<Response<GetStreamInfoResponse>, Status> {
-        let _user_id = self.get_user_id(&request)?;
+        let _user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
 
@@ -884,7 +921,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<ListRoomStreamsRequest>,
     ) -> Result<Response<ListRoomStreamsResponse>, Status> {
-        let _user_id = self.get_user_id(&request)?;
+        let _user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let _req = request.into_inner();
 
@@ -900,7 +937,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<CreatePlaylistRequest>,
     ) -> Result<Response<CreatePlaylistResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.create_playlist(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -911,7 +948,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<UpdatePlaylistRequest>,
     ) -> Result<Response<UpdatePlaylistResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.update_playlist(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -922,7 +959,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<DeletePlaylistRequest>,
     ) -> Result<Response<DeletePlaylistResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.delete_playlist(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -933,7 +970,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<ListPlaylistsRequest>,
     ) -> Result<Response<ListPlaylistsResponse>, Status> {
-        let _user_id = self.get_user_id(&request)?;
+        let _user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.list_playlists(room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -944,7 +981,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<SetCurrentMediaRequest>,
     ) -> Result<Response<SetCurrentMediaResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.set_current_media(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
@@ -955,7 +992,7 @@ impl MediaService for ClientServiceImpl {
         &self,
         request: Request<GetMovieInfoRequest>,
     ) -> Result<Response<GetMovieInfoResponse>, Status> {
-        let user_id = self.get_user_id(&request)?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
         let response = self.client_api.get_movie_info(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;

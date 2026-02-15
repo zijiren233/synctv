@@ -15,7 +15,8 @@ CREATE TABLE user_media_provider_credentials (
     -- Associated Provider Instance (optional)
     provider_instance_name VARCHAR(64),
 
-    -- Credential Data (JSONB, plaintext storage per design doc)
+    -- Credential Data (JSONB, encrypted at rest via AES-256-GCM when encryption key is configured)
+    -- Format: "enc:<base64(nonce+ciphertext)>" for encrypted, raw JSON for legacy plaintext
     credential_data JSONB NOT NULL,
 
     -- Expiration Time (optional, for tokens/cookies with TTL)
@@ -45,11 +46,11 @@ CREATE TRIGGER update_user_media_provider_credentials_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Comments
-COMMENT ON TABLE user_media_provider_credentials IS 'User credentials for media providers';
+COMMENT ON TABLE user_media_provider_credentials IS 'User credentials for media providers. Credential data is encrypted at rest when encryption key is configured.';
 COMMENT ON COLUMN user_media_provider_credentials.provider IS 'Media provider type (bilibili, alist, emby)';
 COMMENT ON COLUMN user_media_provider_credentials.server_id IS 'Server identifier (required): Bilibili uses "bilibili" (one per user), Alist/Emby use MD5(host)';
 COMMENT ON COLUMN user_media_provider_credentials.provider_instance_name IS 'Associated media provider instance name (optional, for specifying parsing instance)';
-COMMENT ON COLUMN user_media_provider_credentials.credential_data IS 'Credential data (JSONB, plaintext storage)';
+COMMENT ON COLUMN user_media_provider_credentials.credential_data IS 'Credential data (JSONB). Encrypted at rest via AES-256-GCM when SYNCTV_CREDENTIAL_ENCRYPTION_KEY is configured.';
 COMMENT ON COLUMN user_media_provider_credentials.expires_at IS 'Credential expiration time (optional, for tokens/cookies with TTL)';
 COMMENT ON CONSTRAINT valid_server_id ON user_media_provider_credentials IS 'server_id must not be empty or whitespace';
 COMMENT ON CONSTRAINT unique_user_media_provider_server ON user_media_provider_credentials IS 'User can only have one credential per provider per server (Bilibili: one per user, Alist/Emby: multiple allowed)';

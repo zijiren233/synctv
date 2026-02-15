@@ -50,6 +50,18 @@ async fn validate_auth_user(parts: &mut Parts, app_state: &AppState) -> Result<c
         .validate_http(auth_str)
         .map_err(|e| AppError::unauthorized(format!("{e}")))?;
 
+    // Check if the token has been revoked (e.g. after logout)
+    let raw_token = JwtValidator::extract_bearer_token(auth_str)
+        .map_err(|e| AppError::unauthorized(format!("{e}")))?;
+    if app_state
+        .token_blacklist_service
+        .is_blacklisted(&raw_token)
+        .await
+        .unwrap_or(false)
+    {
+        return Err(AppError::unauthorized("Token has been revoked"));
+    }
+
     let user_id = UserId::from_string(claims.sub);
 
     crate::impls::admin::validate_admin_auth(&app_state.user_service, user_id, claims.iat)
@@ -390,7 +402,7 @@ async fn set_user_role(
 }
 
 async fn set_user_password(
-    _auth: AuthAdmin,
+    auth: AuthAdmin,
     State(state): State<AppState>,
     Path(user_id): Path<String>,
     Json(req): Json<SetUserPasswordRequest>,
@@ -400,7 +412,7 @@ async fn set_user_password(
         .update_user_password(admin::UpdateUserPasswordRequest {
             user_id,
             new_password: req.password,
-        })
+        }, auth.role)
         .await
         .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))

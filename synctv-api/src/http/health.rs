@@ -22,11 +22,11 @@ use tracing::{error, warn};
 use crate::http::AppState;
 use crate::observability::metrics;
 
-/// Health check and metrics router
+/// Health check router (without metrics endpoint)
 ///
-/// Metrics endpoint is only exposed in development mode to prevent
-/// information disclosure in production. In production, use a separate
-/// metrics collection mechanism (e.g., Prometheus scraping on a private port).
+/// To expose the `/metrics` endpoint, set `server.metrics_enabled = true`
+/// in the application config (or `metrics.enabled` in Helm values).
+/// The metrics endpoint is also exposed when `development_mode` is true.
 pub fn create_health_router() -> Router<AppState> {
     
 
@@ -37,7 +37,7 @@ pub fn create_health_router() -> Router<AppState> {
         .route("/health/ready", get(readiness_check))
 }
 
-/// Create health router with optional metrics endpoint (development mode only)
+/// Create health router with `/metrics` Prometheus endpoint
 pub fn create_health_router_with_metrics() -> Router<AppState> {
     Router::new()
         .route("/health", get(liveness_check))

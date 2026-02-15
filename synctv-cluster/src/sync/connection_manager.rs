@@ -253,6 +253,10 @@ impl ConnectionManager {
 
         // Update metrics
         self.total_connections_ever.fetch_add(1, Ordering::Relaxed);
+        synctv_core::metrics::ACTIVE_CONNECTIONS.inc();
+        synctv_core::metrics::cluster::CLUSTER_CONNECTIONS.set(
+            self.total_connections.load(Ordering::Relaxed) as i64,
+        );
 
         info!(
             connection_id = %connection_id,
@@ -319,6 +323,10 @@ impl ConnectionManager {
             return Err("Connection not found".to_string());
         }
 
+        synctv_core::metrics::cluster::CLUSTER_ROOMS.set(
+            self.room_connections.len() as i64,
+        );
+
         debug!(
             connection_id = %connection_id,
             room_id = %room_id.as_str(),
@@ -362,6 +370,14 @@ impl ConnectionManager {
                     }
                 }
             }
+
+            synctv_core::metrics::ACTIVE_CONNECTIONS.dec();
+            synctv_core::metrics::cluster::CLUSTER_CONNECTIONS.set(
+                self.total_connections.load(Ordering::Relaxed) as i64,
+            );
+            synctv_core::metrics::cluster::CLUSTER_ROOMS.set(
+                self.room_connections.len() as i64,
+            );
 
             info!(
                 connection_id = %connection_id,

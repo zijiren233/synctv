@@ -77,6 +77,9 @@ impl UserCache {
     pub async fn get(&self, user_id: &UserId) -> Result<Option<CachedUser>> {
         // Check L1 (in-memory) cache first
         if let Some(user) = self.l1_cache.get(user_id).await {
+            crate::metrics::cache::CACHE_HITS
+                .with_label_values(&["user", "l1"])
+                .inc();
             tracing::debug!(
                 user_id = %user_id.as_str(),
                 "User cache hit (L1)"
@@ -98,6 +101,9 @@ impl UserCache {
                 .map_err(|e| Error::Internal(format!("Failed to get user from cache: {e}")))?;
 
             if let Some(json) = user_json {
+                crate::metrics::cache::CACHE_HITS
+                    .with_label_values(&["user", "l2"])
+                    .inc();
                 tracing::debug!(
                     user_id = %user_id.as_str(),
                     "User cache hit (L2)"
@@ -114,6 +120,9 @@ impl UserCache {
             }
         }
 
+        crate::metrics::cache::CACHE_MISSES
+            .with_label_values(&["user", "l1"])
+            .inc();
         tracing::debug!(user_id = %user_id.as_str(), "User cache miss");
         Ok(None)
     }
@@ -183,6 +192,9 @@ impl UserCache {
         // Then remove from L1 cache
         self.l1_cache.invalidate(user_id).await;
 
+        crate::metrics::cache::CACHE_EVICTIONS
+            .with_label_values(&["user"])
+            .inc();
         tracing::debug!(user_id = %user_id.as_str(), "User cache invalidated (L2 then L1)");
 
         Ok(())

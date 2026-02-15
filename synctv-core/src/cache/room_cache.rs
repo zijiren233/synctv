@@ -77,6 +77,9 @@ impl RoomCache {
     pub async fn get(&self, room_id: &RoomId) -> Result<Option<CachedRoom>> {
         // Check L1 (in-memory) cache first
         if let Some(room) = self.l1_cache.get(room_id).await {
+            crate::metrics::cache::CACHE_HITS
+                .with_label_values(&["room", "l1"])
+                .inc();
             tracing::debug!(
                 room_id = %room_id.0,
                 "Room cache hit (L1)"
@@ -98,6 +101,9 @@ impl RoomCache {
                 .map_err(|e| Error::Internal(format!("Failed to get room from cache: {e}")))?;
 
             if let Some(json) = room_json {
+                crate::metrics::cache::CACHE_HITS
+                    .with_label_values(&["room", "l2"])
+                    .inc();
                 tracing::debug!(
                     room_id = %room_id.0,
                     "Room cache hit (L2)"
@@ -114,6 +120,9 @@ impl RoomCache {
             }
         }
 
+        crate::metrics::cache::CACHE_MISSES
+            .with_label_values(&["room", "l1"])
+            .inc();
         tracing::debug!(room_id = %room_id.0, "Room cache miss");
         Ok(None)
     }
@@ -182,6 +191,9 @@ impl RoomCache {
         // Then remove from L1 cache
         self.l1_cache.invalidate(room_id).await;
 
+        crate::metrics::cache::CACHE_EVICTIONS
+            .with_label_values(&["room"])
+            .inc();
         tracing::debug!(room_id = %room_id.0, "Room cache invalidated (L2 then L1)");
 
         Ok(())

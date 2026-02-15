@@ -30,6 +30,28 @@ pub async fn init_database(config: &Config) -> Result<PgPool> {
             anyhow::anyhow!("Database connection failed: {e}")
         })?;
 
+    // Set database pool metrics
+    crate::metrics::database::DB_POOL_SIZE_MAX.set(config.database.max_connections as i64);
+
+    // Spawn periodic task to update pool usage metrics
+    let pool_clone = pool.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            ticker.tick().await;
+            let size = pool_clone.size() as i64;
+            let idle = pool_clone.num_idle() as i64;
+            crate::metrics::database::DB_CONNECTIONS_ACTIVE.set(size - idle);
+            crate::metrics::database::DB_CONNECTIONS_IDLE.set(idle);
+            let max = crate::metrics::database::DB_POOL_SIZE_MAX.get();
+            if max > 0 {
+                crate::metrics::database::DB_POOL_UTILIZATION
+                    .with_label_values(&["main"])
+                    .set((size - idle) as f64 / max as f64);
+            }
+        }
+    });
+
     info!("Database connected successfully");
 
     Ok(pool)

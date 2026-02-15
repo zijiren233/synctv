@@ -21,6 +21,9 @@ pub struct UserContext {
     pub user_id: String,
     /// Token issued-at timestamp (Unix seconds), used for password-change invalidation
     pub iat: i64,
+    /// Raw bearer token, used for blacklist checking at the service layer
+    /// (interceptors are sync and cannot perform async Redis lookups)
+    pub raw_token: String,
 }
 
 /// Room context - contains `UserContext` and `room_id`
@@ -52,15 +55,19 @@ impl AuthInterceptor {
     /// Used for `UserService` and `AdminService`
     #[allow(clippy::result_large_err)]
     pub fn inject_user<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
+        // Extract raw token before validation (for blacklist checking at service layer)
+        let raw_token = Self::extract_raw_token(request.metadata())?;
+
         // Use unified validator for gRPC validation
         let claims = self
             .jwt_validator
             .validate_grpc_as_status(request.metadata())?;
 
-        // Inject UserContext with user_id and iat
+        // Inject UserContext with user_id, iat, and raw token
         let user_context = UserContext {
             user_id: claims.sub,
             iat: claims.iat,
+            raw_token,
         };
         request.extensions_mut().insert(user_context);
 
@@ -71,6 +78,9 @@ impl AuthInterceptor {
     /// Used for `RoomService` and `MediaService`
     #[allow(clippy::result_large_err)]
     pub fn inject_room<T>(&self, mut request: Request<T>) -> Result<Request<T>, Status> {
+        // Extract raw token before validation (for blacklist checking at service layer)
+        let raw_token = Self::extract_raw_token(request.metadata())?;
+
         // Use unified validator for gRPC validation
         let claims = self
             .jwt_validator
@@ -89,6 +99,7 @@ impl AuthInterceptor {
         let user_context = UserContext {
             user_id: claims.sub.clone(),
             iat: claims.iat,
+            raw_token: raw_token.clone(),
         };
         request.extensions_mut().insert(user_context);
 
@@ -97,12 +108,29 @@ impl AuthInterceptor {
             user_ctx: UserContext {
                 user_id: claims.sub,
                 iat: claims.iat,
+                raw_token,
             },
             room_id,
         };
         request.extensions_mut().insert(room_context);
 
         Ok(request)
+    }
+
+    /// Extract the raw bearer token from gRPC metadata.
+    ///
+    /// Used to capture the token for async blacklist checking at the service layer,
+    /// since interceptors are synchronous and cannot call Redis.
+    #[allow(clippy::result_large_err)]
+    fn extract_raw_token(metadata: &tonic::metadata::MetadataMap) -> Result<String, Status> {
+        let auth_header = metadata
+            .get("authorization")
+            .ok_or_else(|| Status::unauthenticated("Missing authorization header"))?
+            .to_str()
+            .map_err(|_| Status::unauthenticated("Invalid authorization header format"))?;
+
+        JwtValidator::extract_bearer_token(auth_header)
+            .map_err(|e| Status::unauthenticated(format!("Token extraction failed: {e}")))
     }
 }
 
@@ -349,5 +377,61 @@ impl Debug for GrpcRateLimitInterceptor {
             .field("default_max_requests", &self.default_max_requests)
             .field("window_seconds", &self.window_seconds)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_raw_token_valid() {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        metadata.insert("authorization", "Bearer my_jwt_token_here".parse().unwrap());
+        let token = AuthInterceptor::extract_raw_token(&metadata).unwrap();
+        assert_eq!(token, "my_jwt_token_here");
+    }
+
+    #[test]
+    fn test_extract_raw_token_missing_header() {
+        let metadata = tonic::metadata::MetadataMap::new();
+        let result = AuthInterceptor::extract_raw_token(&metadata);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
+    }
+
+    #[test]
+    fn test_extract_raw_token_no_bearer_prefix() {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        metadata.insert("authorization", "Basic dXNlcjpwYXNz".parse().unwrap());
+        let result = AuthInterceptor::extract_raw_token(&metadata);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_constant_time_eq_equal() {
+        assert!(constant_time_eq(b"secret", b"secret"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_not_equal() {
+        assert!(!constant_time_eq(b"secret", b"Secret"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_different_lengths() {
+        assert!(!constant_time_eq(b"short", b"longer_string"));
+    }
+
+    #[test]
+    fn test_user_context_has_raw_token() {
+        let ctx = UserContext {
+            user_id: "user1".to_string(),
+            iat: 1234567890,
+            raw_token: "token123".to_string(),
+        };
+        assert_eq!(ctx.raw_token, "token123");
+        assert_eq!(ctx.user_id, "user1");
+        assert_eq!(ctx.iat, 1234567890);
     }
 }

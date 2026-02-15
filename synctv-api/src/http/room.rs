@@ -376,27 +376,32 @@ pub async fn set_room_password(
 pub async fn check_password(
     _auth: AuthUser,
     State(state): State<AppState>,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Path(room_id): Path<String>,
     Json(req): Json<CheckRoomPasswordRequest>,
 ) -> AppResult<Json<CheckRoomPasswordResponse>> {
+    let client_ip = connect_info
+        .map(|ci| ci.0.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
     let response = state
         .client_api
-        .check_room_password(&room_id, req)
+        .check_room_password(&room_id, req, &client_ip)
         .await
         .map_err(super::error::impls_err_to_app_error)?;
 
     Ok(Json(response))
 }
 
-/// Get room settings (requires authentication)
+/// Get room settings (requires authentication and room membership)
 pub async fn get_room_settings(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<crate::proto::client::GetRoomSettingsResponse>> {
     let response = state
         .client_api
-        .get_room_settings(&room_id)
+        .get_room_settings(&auth.user_id.to_string(), &room_id)
         .await
         .map_err(super::error::impls_err_to_app_error)?;
 

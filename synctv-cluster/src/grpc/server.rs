@@ -146,6 +146,9 @@ impl ClusterService for ClusterServer {
         &self,
         request: Request<RegisterNodeRequest>,
     ) -> std::result::Result<Response<RegisterNodeResponse>, Status> {
+        let _timer = synctv_core::metrics::grpc::GRPC_REQUEST_DURATION
+            .with_label_values(&["cluster", "register_node", "ok"])
+            .start_timer();
         let req = request.into_inner();
 
         // Validate inputs
@@ -214,6 +217,9 @@ impl ClusterService for ClusterServer {
         &self,
         request: Request<HeartbeatRequest>,
     ) -> std::result::Result<Response<HeartbeatResponse>, Status> {
+        let _timer = synctv_core::metrics::grpc::GRPC_REQUEST_DURATION
+            .with_label_values(&["cluster", "heartbeat", "ok"])
+            .start_timer();
         let req = request.into_inner();
 
         Self::validate_node_id(&req.node_id)?;
@@ -244,6 +250,9 @@ impl ClusterService for ClusterServer {
         &self,
         _request: Request<GetNodesRequest>,
     ) -> std::result::Result<Response<GetNodesResponse>, Status> {
+        let _timer = synctv_core::metrics::grpc::GRPC_REQUEST_DURATION
+            .with_label_values(&["cluster", "get_nodes", "ok"])
+            .start_timer();
         match self.node_registry.get_all_nodes().await {
             Ok(nodes) => {
                 let proto_nodes: Vec<NodeInfo> = nodes
@@ -265,6 +274,9 @@ impl ClusterService for ClusterServer {
         &self,
         request: Request<DeregisterNodeRequest>,
     ) -> std::result::Result<Response<DeregisterNodeResponse>, Status> {
+        let _timer = synctv_core::metrics::grpc::GRPC_REQUEST_DURATION
+            .with_label_values(&["cluster", "deregister_node", "ok"])
+            .start_timer();
         let req = request.into_inner();
 
         Self::validate_node_id(&req.node_id)?;
@@ -311,6 +323,9 @@ impl ClusterService for ClusterServer {
         &self,
         request: Request<GetUserOnlineStatusRequest>,
     ) -> std::result::Result<Response<GetUserOnlineStatusResponse>, Status> {
+        let _timer = synctv_core::metrics::grpc::GRPC_REQUEST_DURATION
+            .with_label_values(&["cluster", "get_user_online_status", "ok"])
+            .start_timer();
         let req = request.into_inner();
 
         if req.user_ids.len() > Self::MAX_USER_IDS {
@@ -359,6 +374,9 @@ impl ClusterService for ClusterServer {
         &self,
         request: Request<GetRoomConnectionsRequest>,
     ) -> std::result::Result<Response<GetRoomConnectionsResponse>, Status> {
+        let _timer = synctv_core::metrics::grpc::GRPC_REQUEST_DURATION
+            .with_label_values(&["cluster", "get_room_connections", "ok"])
+            .start_timer();
         let req = request.into_inner();
 
         let Some(ref cm) = self.connection_manager else {

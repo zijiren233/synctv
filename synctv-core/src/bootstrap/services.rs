@@ -108,9 +108,21 @@ pub async fn init_services(
     let provider_instance_repo = Arc::new(ProviderInstanceRepository::new(pool.clone()));
     info!("ProviderInstanceRepository initialized");
 
-    // Initialize UserProviderCredentialRepository
-    let user_provider_credential_repo = Arc::new(UserProviderCredentialRepository::new(pool.clone()));
-    info!("UserProviderCredentialRepository initialized");
+    // Initialize UserProviderCredentialRepository (with optional encryption)
+    let credential_encryption = init_credential_encryption();
+    let user_provider_credential_repo = match credential_encryption {
+        Some(enc) => {
+            info!("UserProviderCredentialRepository initialized with encryption enabled");
+            Arc::new(UserProviderCredentialRepository::new_with_encryption(pool.clone(), enc))
+        }
+        None => {
+            warn!(
+                "Credential encryption key not configured (set SYNCTV_CREDENTIAL_ENCRYPTION_KEY). \
+                 Provider credentials will be stored in plaintext."
+            );
+            Arc::new(UserProviderCredentialRepository::new(pool.clone()))
+        }
+    };
 
     // Initialize rate limiter
     let rate_limiter = RateLimiter::new(redis_conn.clone(), config.redis.key_prefix.clone());
@@ -369,6 +381,36 @@ fn load_jwt_service(config: &Config) -> Result<JwtService, anyhow::Error> {
         config.jwt.clock_skew_leeway_secs,
     )
     .map_err(|e| anyhow::anyhow!("Failed to initialize JWT service: {e}"))
+}
+
+/// Initialize credential encryption from environment variable or secret file
+///
+/// Tries the following sources in order:
+/// 1. Secret file: `/run/secrets/credential_encryption_key`
+/// 2. Environment variable: `SYNCTV_CREDENTIAL_ENCRYPTION_KEY`
+///
+/// The key must be a 64-character hex string (32 bytes).
+fn init_credential_encryption() -> Option<crate::service::CredentialEncryption> {
+    use crate::secrets::{SecretLoader, SecretSource};
+
+    // Try file first, then env var
+    let hex_key = SecretLoader::load_with_fallback(
+        "credential_encryption_key",
+        SecretSource::File("/run/secrets/credential_encryption_key"),
+        SecretSource::Env("SYNCTV_CREDENTIAL_ENCRYPTION_KEY"),
+    ).ok()?;
+
+    match crate::service::CredentialEncryption::from_hex_key(&hex_key) {
+        Ok(enc) => {
+            info!("Credential encryption initialized (AES-256-GCM)");
+            Some(enc)
+        }
+        Err(e) => {
+            error!("Failed to initialize credential encryption: {}", e);
+            error!("Key must be a 64-character hex string (32 bytes for AES-256)");
+            None
+        }
+    }
 }
 
 /// Initialize Email service (optional - requires SMTP configuration)

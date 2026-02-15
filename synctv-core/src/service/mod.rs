@@ -23,6 +23,7 @@ pub mod notification;
 pub mod user_notification;
 pub mod audit;
 pub mod audit_partition_manager;
+pub mod credential_encryption;
 pub mod distributed_lock;
 pub mod email;
 pub mod email_templates;
@@ -57,6 +58,7 @@ pub use audit_partition_manager::{
     AuditPartitionManager, PartitionHealth, PartitionStats,
     ensure_audit_partitions_on_startup
 };
+pub use credential_encryption::CredentialEncryption;
 pub use distributed_lock::{DistributedLock, LockGuard};
 pub use email::{EmailService, EmailConfig};
 pub use email_templates::{EmailTemplateManager, EmailTemplateType};

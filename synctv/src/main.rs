@@ -582,6 +582,7 @@ async fn main() -> Result<()> {
         node_registry,
         health_monitor,
         load_balancer,
+        token_blacklist: synctv_services.token_blacklist.clone(),
         redis_conn: synctv_services.redis_conn.clone(),
     };
 

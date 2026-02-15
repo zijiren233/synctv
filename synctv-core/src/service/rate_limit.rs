@@ -484,4 +484,70 @@ mod tests {
         // key2 should still work (independent bucket)
         assert!(limiter.check_rate_limit("key2", 5, 1).await.is_ok());
     }
+
+    /// Validates the per-IP per-room password check rate limiting pattern.
+    ///
+    /// This mirrors the key format used in `ClientApiImpl::check_room_password`:
+    /// `room_password_check:{client_ip}:{room_id}`
+    #[tokio::test]
+    async fn test_room_password_rate_limit_pattern() {
+        let limiter = RateLimiter::new(None, "test:".to_string());
+
+        let ip = "192.168.1.1";
+        let room_id = "room_abc";
+        let key = format!("room_password_check:{ip}:{room_id}");
+
+        // 5 attempts should succeed (matching the MAX_PASSWORD_ATTEMPTS constant)
+        for i in 0..5 {
+            limiter
+                .check_rate_limit(&key, 5, 300)
+                .await
+                .unwrap_or_else(|_| panic!("Attempt {} should succeed", i + 1));
+        }
+
+        // 6th attempt should be rate limited
+        let result = limiter.check_rate_limit(&key, 5, 300).await;
+        assert!(
+            matches!(result, Err(RateLimitError::RateLimitExceeded { .. })),
+            "6th attempt should be rate limited"
+        );
+    }
+
+    /// Different IPs checking the same room should have independent limits.
+    #[tokio::test]
+    async fn test_room_password_rate_limit_per_ip_isolation() {
+        let limiter = RateLimiter::new(None, "test:".to_string());
+
+        let room_id = "room_xyz";
+        let key_ip1 = format!("room_password_check:10.0.0.1:{room_id}");
+        let key_ip2 = format!("room_password_check:10.0.0.2:{room_id}");
+
+        // Exhaust limit for IP1
+        for _ in 0..5 {
+            limiter.check_rate_limit(&key_ip1, 5, 300).await.unwrap();
+        }
+        assert!(limiter.check_rate_limit(&key_ip1, 5, 300).await.is_err());
+
+        // IP2 should still be allowed (independent bucket)
+        assert!(limiter.check_rate_limit(&key_ip2, 5, 300).await.is_ok());
+    }
+
+    /// Same IP checking different rooms should have independent limits.
+    #[tokio::test]
+    async fn test_room_password_rate_limit_per_room_isolation() {
+        let limiter = RateLimiter::new(None, "test:".to_string());
+
+        let ip = "10.0.0.1";
+        let key_room1 = format!("room_password_check:{ip}:room_1");
+        let key_room2 = format!("room_password_check:{ip}:room_2");
+
+        // Exhaust limit for room1
+        for _ in 0..5 {
+            limiter.check_rate_limit(&key_room1, 5, 300).await.unwrap();
+        }
+        assert!(limiter.check_rate_limit(&key_room1, 5, 300).await.is_err());
+
+        // room2 should still be allowed (independent bucket)
+        assert!(limiter.check_rate_limit(&key_room2, 5, 300).await.is_ok());
+    }
 }

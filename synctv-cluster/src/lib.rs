@@ -11,4 +11,4 @@ pub use sync::{
     MessageDeduplicator, DedupKey, ConnectionId, Subscriber,
     MessageSender as ClusterMessageSender,
 };
-pub use grpc::{ClusterServer, ClusterServiceServer, ClusterAuthInterceptor};
+pub use grpc::{ClusterClient, ClusterClientConfig, ClusterServer, ClusterServiceServer, ClusterAuthInterceptor, FanOutResult};

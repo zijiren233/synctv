@@ -95,6 +95,8 @@ pub struct ClientApiImpl {
     pub redis_publish_tx: Option<tokio::sync::mpsc::Sender<synctv_cluster::sync::PublishRequest>>,
     /// Shared Redis connection for playback caching
     pub redis_conn: Option<redis::aio::ConnectionManager>,
+    /// Rate limiter for per-endpoint rate limiting (password checks, etc.)
+    pub rate_limiter: Option<synctv_core::service::rate_limit::RateLimiter>,
 }
 
 impl ClientApiImpl {
@@ -128,6 +130,7 @@ impl ClientApiImpl {
             settings_registry,
             redis_publish_tx: None,
             redis_conn: None,
+            rate_limiter: None,
         }
     }
 
@@ -147,6 +150,7 @@ impl ClientApiImpl {
             settings_registry: config.settings_registry,
             redis_publish_tx: None,
             redis_conn: None,
+            rate_limiter: None,
         }
     }
 
@@ -161,6 +165,13 @@ impl ClientApiImpl {
     #[must_use]
     pub fn with_redis_conn(mut self, conn: Option<redis::aio::ConnectionManager>) -> Self {
         self.redis_conn = conn;
+        self
+    }
+
+    /// Set the rate limiter for per-endpoint rate limiting (password checks, etc.)
+    #[must_use]
+    pub fn with_rate_limiter(mut self, rate_limiter: synctv_core::service::rate_limit::RateLimiter) -> Self {
+        self.rate_limiter = Some(rate_limiter);
         self
     }
 

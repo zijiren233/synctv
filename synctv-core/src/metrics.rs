@@ -492,4 +492,153 @@ mod tests {
         assert_eq!(normalize_path("/api/health"), "/api/health");
         assert_eq!(normalize_path("/metrics"), "/metrics");
     }
+
+    #[test]
+    fn test_websocket_metrics_gauges() {
+        // Verify WebSocket gauge operations work correctly.
+        // Use a unique label to avoid interference from other tests.
+        let before = http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).get();
+        http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).inc();
+        http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).inc();
+        assert_eq!(http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).get(), before + 2);
+
+        http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).dec();
+        assert_eq!(http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).get(), before + 1);
+
+        let before_total = http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["test_ws_gauge"]).get();
+        http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["test_ws_gauge"]).inc();
+        assert_eq!(http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["test_ws_gauge"]).get(), before_total + 1);
+    }
+
+    #[test]
+    fn test_room_and_user_metrics() {
+        // Verify gauges respond correctly to inc/dec (relative assertions).
+        let rooms_before = http::ROOMS_ACTIVE.get();
+        http::ROOMS_ACTIVE.inc();
+        http::ROOMS_ACTIVE.inc();
+        http::ROOMS_ACTIVE.dec();
+        assert_eq!(http::ROOMS_ACTIVE.get(), rooms_before + 1);
+
+        let users_before = http::USERS_ONLINE.get();
+        http::USERS_ONLINE.inc();
+        http::USERS_ONLINE.inc();
+        http::USERS_ONLINE.dec();
+        assert_eq!(http::USERS_ONLINE.get(), users_before + 1);
+    }
+
+    #[test]
+    fn test_stream_and_webrtc_metrics() {
+        let streams_before = http::STREAMS_ACTIVE.get();
+        http::STREAMS_ACTIVE.inc();
+        assert_eq!(http::STREAMS_ACTIVE.get(), streams_before + 1);
+        http::STREAMS_ACTIVE.dec();
+        assert_eq!(http::STREAMS_ACTIVE.get(), streams_before);
+
+        let rtc_before = http::WEBRTC_PEERS_ACTIVE.get();
+        http::WEBRTC_PEERS_ACTIVE.inc();
+        assert_eq!(http::WEBRTC_PEERS_ACTIVE.get(), rtc_before + 1);
+        http::WEBRTC_PEERS_ACTIVE.dec();
+        assert_eq!(http::WEBRTC_PEERS_ACTIVE.get(), rtc_before);
+    }
+
+    #[test]
+    fn test_cache_metrics() {
+        cache::CACHE_HITS.with_label_values(&["room", "l1"]).inc();
+        cache::CACHE_HITS.with_label_values(&["room", "l2"]).inc();
+        cache::CACHE_MISSES.with_label_values(&["room", "l1"]).inc();
+        cache::CACHE_EVICTIONS.with_label_values(&["room"]).inc();
+
+        cache::CACHE_HITS.with_label_values(&["user", "l1"]).inc();
+        cache::CACHE_MISSES.with_label_values(&["user", "l1"]).inc();
+        cache::CACHE_EVICTIONS.with_label_values(&["user"]).inc();
+
+        // Verify gathered metrics contain cache metrics
+        let output = gather_metrics();
+        assert!(output.contains("cache_hits_total"));
+        assert!(output.contains("cache_misses_total"));
+        assert!(output.contains("cache_evictions_total"));
+    }
+
+    #[test]
+    fn test_database_pool_metrics() {
+        // Verify the gauge operations work (not exact values, since global
+        // state is shared across parallel tests).
+        database::DB_POOL_SIZE_MAX.set(20);
+        // Value should be >= 0 (another test may race and set to 0)
+        assert!(database::DB_POOL_SIZE_MAX.get() >= 0);
+
+        database::DB_CONNECTIONS_ACTIVE.set(5);
+        database::DB_CONNECTIONS_IDLE.set(15);
+        // Verify these gauges are operational
+        assert!(database::DB_CONNECTIONS_ACTIVE.get() >= 0);
+        assert!(database::DB_CONNECTIONS_IDLE.get() >= 0);
+
+        // Verify all three appear in gathered output
+        let output = gather_metrics();
+        assert!(output.contains("db_pool_size_max"), "Missing db_pool_size_max");
+        assert!(output.contains("db_connections_active"), "Missing db_connections_active");
+        assert!(output.contains("db_connections_idle"), "Missing db_connections_idle");
+    }
+
+    #[test]
+    fn test_grpc_duration_histogram() {
+        // Verify gRPC duration histogram can be observed with correct labels
+        let timer = grpc::GRPC_REQUEST_DURATION
+            .with_label_values(&["cluster", "get_nodes", "ok"])
+            .start_timer();
+        timer.observe_duration();
+
+        let output = gather_metrics();
+        assert!(output.contains("grpc_request_duration_seconds"));
+    }
+
+    #[test]
+    fn test_cluster_event_metrics() {
+        cluster::CLUSTER_EVENTS_PUBLISHED.with_label_values(&["chat_message"]).inc();
+        cluster::CLUSTER_EVENTS_RECEIVED.with_label_values(&["chat_message"]).inc();
+        cluster::CLUSTER_EVENTS_DROPPED.with_label_values(&["channel_full"]).inc();
+
+        let output = gather_metrics();
+        assert!(output.contains("synctv_cluster_events_published_total"));
+        assert!(output.contains("synctv_cluster_events_received_total"));
+        assert!(output.contains("synctv_cluster_events_dropped_total"));
+    }
+
+    #[test]
+    fn test_all_metrics_in_gathered_output() {
+        // Touch all metric families to ensure they appear in gathered output.
+        // IntGaugeVec and IntCounterVec need at least one label set touched.
+        http::HTTP_REQUESTS_IN_FLIGHT.inc();
+        http::HTTP_REQUESTS_IN_FLIGHT.dec();
+        http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["_test"]).set(0);
+        http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["_test"]).inc();
+        http::ROOMS_ACTIVE.set(0);
+        http::USERS_ONLINE.set(0);
+        http::STREAMS_ACTIVE.set(0);
+        http::WEBRTC_PEERS_ACTIVE.set(0);
+        database::DB_CONNECTIONS_ACTIVE.set(0);
+        database::DB_CONNECTIONS_IDLE.set(0);
+        database::DB_POOL_SIZE_MAX.set(0);
+        grpc::GRPC_REQUEST_DURATION
+            .with_label_values(&["_test", "_test", "_test"])
+            .observe(0.0);
+
+        let output = gather_metrics();
+
+        // HTTP metrics
+        assert!(output.contains("websocket_connections_active"), "Missing websocket_connections_active");
+        assert!(output.contains("websocket_connections_total"), "Missing websocket_connections_total");
+        assert!(output.contains("rooms_active"), "Missing rooms_active");
+        assert!(output.contains("users_online"), "Missing users_online");
+        assert!(output.contains("streams_active"), "Missing streams_active");
+        assert!(output.contains("webrtc_peers_active"), "Missing webrtc_peers_active");
+
+        // Database metrics
+        assert!(output.contains("db_connections_active"), "Missing db_connections_active");
+        assert!(output.contains("db_connections_idle"), "Missing db_connections_idle");
+        assert!(output.contains("db_pool_size_max"), "Missing db_pool_size_max");
+
+        // gRPC metrics
+        assert!(output.contains("grpc_request_duration_seconds"), "Missing grpc_request_duration_seconds");
+    }
 }

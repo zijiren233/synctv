@@ -77,6 +77,7 @@ pub struct GrpcServerConfig<'a> {
     pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     pub node_registry: Option<Arc<synctv_cluster::discovery::NodeRegistry>>,
+    pub token_blacklist_service: synctv_core::service::TokenBlacklistService,
     pub shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
@@ -108,6 +109,7 @@ pub async fn serve(
     publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
     notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     node_registry: Option<Arc<synctv_cluster::discovery::NodeRegistry>>,
+    token_blacklist_service: synctv_core::service::TokenBlacklistService,
     shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
@@ -152,7 +154,8 @@ pub async fn serve(
         live_streaming_infrastructure.clone(),
         providers_manager_for_client.clone(),
         settings_registry.clone(),
-    ).with_redis_publish_tx(redis_publish_tx.clone()));
+    ).with_redis_publish_tx(redis_publish_tx.clone())
+     .with_rate_limiter(rate_limiter.clone()));
 
     // Create transport-level rate limit interceptor before consuming rate_limiter
     // Aligned with HTTP tiers: 100 req/min per client (matches HTTP read tier)
@@ -172,6 +175,7 @@ pub async fn serve(
         connection_manager,
         email_service,
         email_token_service,
+        token_blacklist_service,
         settings_registry: settings_registry.clone(),
         providers_manager: providers_manager_for_client,
         config: Arc::new(config.clone()),
@@ -358,6 +362,7 @@ pub async fn serve(
             alist_api: Arc::new(crate::impls::AlistApiImpl::new(alist_provider.clone())),
             emby_api: Arc::new(crate::impls::EmbyApiImpl::new(emby_provider.clone())),
             redis_conn: None, // gRPC path does not use playback caching (yet)
+            token_blacklist_service: synctv_core::service::TokenBlacklistService::new(None),
         });
 
         // Register provider gRPC services with auth interceptor
@@ -486,6 +491,7 @@ pub async fn serve_from_config(config: GrpcServerConfig<'_>) -> anyhow::Result<(
         config.publish_key_service,
         config.notification_service,
         config.node_registry,
+        config.token_blacklist_service,
         config.shutdown_rx,
     )
     .await

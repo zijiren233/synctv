@@ -141,6 +141,9 @@ impl StreamTracker {
         self.by_stream.insert(sk.clone(), user_id);
         self.by_rtmp.insert(rk.clone(), sk.clone());
         self.rtmp_reverse.insert(sk, rk);
+
+        // Track active stream metrics
+        synctv_core::metrics::http::STREAMS_ACTIVE.inc();
     }
 
     /// Remove ALL tracking entries for a user. Returns list of `(room_id, media_id)`.
@@ -164,6 +167,11 @@ impl StreamTracker {
                     }
                     removed.push((room_id, media_id));
                 }
+            }
+            // Decrement stream count for all removed streams
+            let count = removed.len();
+            if count > 0 {
+                synctv_core::metrics::http::STREAMS_ACTIVE.sub(count as i64);
             }
         }
         removed
@@ -192,6 +200,7 @@ impl StreamTracker {
                     self.by_room.remove(room_id);
                 }
             }
+            synctv_core::metrics::http::STREAMS_ACTIVE.dec();
             Some(user_id)
         } else {
             None
@@ -256,6 +265,7 @@ impl StreamTracker {
                     self.by_room.remove(room_id);
                 }
             }
+            synctv_core::metrics::http::STREAMS_ACTIVE.dec();
             Some(user_id)
         } else {
             None

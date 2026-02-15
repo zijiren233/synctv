@@ -40,7 +40,7 @@ use utoipa_swagger_ui::SwaggerUi;
 use synctv_cluster::sync::PublishRequest;
 use synctv_core::provider::{AlistProvider, BilibiliProvider, EmbyProvider};
 use synctv_core::repository::UserProviderCredentialRepository;
-use synctv_core::service::{RemoteProviderManager, RoomService, UserService};
+use synctv_core::service::{RemoteProviderManager, RoomService, TokenBlacklistService, UserService};
 use synctv_livestream::api::LiveStreamingInfrastructure;
 use tokio::sync::mpsc;
 use tower_http::timeout::TimeoutLayer;
@@ -72,6 +72,8 @@ pub struct RouterConfig {
     pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     pub rate_limiter: synctv_core::service::rate_limit::RateLimiter,
+    /// Token blacklist service for checking revoked tokens
+    pub token_blacklist_service: TokenBlacklistService,
     /// WebSocket ticket service for secure WebSocket authentication (HTTP only)
     pub ws_ticket_service: Option<Arc<synctv_core::service::WsTicketService>>,
     /// Shared Redis connection for playback caching
@@ -105,6 +107,8 @@ pub struct AppState {
     pub rate_limit_config: Arc<middleware::RateLimitConfig>,
     /// Shared JWT validator (created once at startup, not per-request)
     pub jwt_validator: Arc<synctv_core::service::auth::JwtValidator>,
+    /// Token blacklist service for checking revoked tokens
+    pub token_blacklist_service: TokenBlacklistService,
     /// WebSocket ticket service for secure WebSocket authentication (HTTP only)
     pub ws_ticket_service: Option<Arc<synctv_core::service::WsTicketService>>,
     // Unified API implementation layer
@@ -140,7 +144,8 @@ fn build_app_state(config: RouterConfig) -> AppState {
         None,
         config.settings_registry.clone(),
     ).with_redis_publish_tx(config.redis_publish_tx.clone())
-     .with_redis_conn(config.redis_conn.clone()));
+     .with_redis_conn(config.redis_conn.clone())
+     .with_rate_limiter(config.rate_limiter.clone()));
 
     let admin_api = config.settings_service.as_ref().map(|settings_svc| {
         let email_svc = config.email_service.clone().unwrap_or_else(|| {
@@ -201,6 +206,7 @@ fn build_app_state(config: RouterConfig) -> AppState {
         rate_limiter: config.rate_limiter,
         rate_limit_config,
         jwt_validator,
+        token_blacklist_service: config.token_blacklist_service,
         ws_ticket_service: config.ws_ticket_service,
         client_api,
         admin_api,
@@ -310,7 +316,7 @@ fn register_read_routes(state: &AppState) -> Router<AppState> {
 
 /// Assemble all route groups into a single router.
 fn register_all_routes(state: AppState) -> Router<AppState> {
-    let health_router = if state.config.server.development_mode {
+    let health_router = if state.config.server.metrics_enabled || state.config.server.development_mode {
         health::create_health_router_with_metrics()
     } else {
         health::create_health_router()

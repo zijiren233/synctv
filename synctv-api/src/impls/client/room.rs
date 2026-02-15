@@ -11,11 +11,20 @@ use super::{validate_password_for_set, validate_password_for_verify};
 
 impl ClientApiImpl {
     /// Get the currently playing media for a room.
+    ///
+    /// Requires the caller to be a member of the room.
     pub async fn get_playing_media(
         &self,
+        user_id: &str,
         room_id: &str,
     ) -> Result<Option<crate::proto::client::Media>, String> {
+        let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
+
+        // Check membership before returning playing media
+        self.room_service.check_membership(&rid, &uid).await
+            .map_err(|e| format!("Forbidden: {e}"))?;
+
         let media = self.room_service.get_playing_media(&rid).await
             .map_err(|e| e.to_string())?;
         Ok(media.map(|m| media_to_proto(&m)))
@@ -283,12 +292,35 @@ impl ClientApiImpl {
     }
 
     /// Check room password validity
+    ///
+    /// Enforces per-IP per-room rate limiting to prevent brute-force attacks.
+    /// After 5 failed attempts within a 5-minute window, further attempts are
+    /// temporarily blocked.
     pub async fn check_room_password(
         &self,
         room_id: &str,
         req: crate::proto::client::CheckRoomPasswordRequest,
+        client_ip: &str,
     ) -> Result<crate::proto::client::CheckRoomPasswordResponse, String> {
         let rid = RoomId::from_string(room_id.to_string());
+
+        // --- Rate limit: per-IP per-room password check (5 attempts / 300s window) ---
+        const MAX_PASSWORD_ATTEMPTS: u32 = 5;
+        const PASSWORD_WINDOW_SECONDS: u64 = 300; // 5 minutes
+        if let Some(ref rate_limiter) = self.rate_limiter {
+            let rate_key = format!("room_password_check:{client_ip}:{room_id}");
+            if let Err(e) = rate_limiter
+                .check_rate_limit(&rate_key, MAX_PASSWORD_ATTEMPTS, PASSWORD_WINDOW_SECONDS)
+                .await
+            {
+                tracing::warn!(
+                    client_ip = %client_ip,
+                    room_id = %room_id,
+                    "Room password check rate limit exceeded"
+                );
+                return Err(e.to_string());
+            }
+        }
 
         // Validate password length
         validate_password_for_verify(&req.password)?;
@@ -302,17 +334,33 @@ impl ClientApiImpl {
             .await
             .map_err(|e| format!("Password verification failed: {e}"))?;
 
+        if !valid {
+            tracing::info!(
+                client_ip = %client_ip,
+                room_id = %room_id,
+                "Failed room password check attempt"
+            );
+        }
+
         Ok(crate::proto::client::CheckRoomPasswordResponse { valid })
     }
 
     // === Room Settings Operations ===
 
     /// Get room settings
+    ///
+    /// Requires the caller to be a member of the room.
     pub async fn get_room_settings(
         &self,
+        user_id: &str,
         room_id: &str,
     ) -> Result<crate::proto::client::GetRoomSettingsResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
+
+        // Check membership before returning settings
+        self.room_service.check_membership(&rid, &uid).await
+            .map_err(|e| format!("Forbidden: {e}"))?;
 
         let settings = self.room_service.get_room_settings(&rid).await
             .map_err(|e| e.to_string())?;
