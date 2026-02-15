@@ -50,11 +50,33 @@ impl std::str::FromStr for NotificationType {
     }
 }
 
+// Database mapping: NotificationType <-> TEXT
+impl sqlx::Type<sqlx::Postgres> for NotificationType {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for NotificationType {
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        let s = self.to_string();
+        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&s, buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for NotificationType {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let s = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        s.parse().map_err(|e: anyhow::Error| e.into())
+    }
+}
+
 /// Notification model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Notification {
     pub id: Uuid,
     pub user_id: UserId,
+    #[sqlx(rename = "type")]
     pub notification_type: NotificationType,
     pub title: String,
     pub content: String,

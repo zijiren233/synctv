@@ -3,15 +3,15 @@
 //! This module provides production-grade metrics collection using prometheus crate.
 //! All metrics are automatically exposed via the /metrics endpoint for Prometheus scraping.
 
-use prometheus::{CounterVec, HistogramVec, Registry, IntGauge, IntCounterVec, IntGaugeVec, TextEncoder, Encoder, register_counter_vec_with_registry, register_histogram_vec_with_registry, register_int_gauge_with_registry};
+use prometheus::{CounterVec, HistogramVec, Registry, IntGauge, IntCounterVec, TextEncoder, Encoder, register_counter_vec_with_registry, register_histogram_vec_with_registry, register_int_gauge_with_registry};
 
 /// Global metrics registry
 pub static REGISTRY: std::sync::LazyLock<Registry> = std::sync::LazyLock::new(Registry::new);
 
 /// HTTP metrics
 pub mod http {
-    use super::{IntCounterVec, REGISTRY, HistogramVec, IntGauge, IntGaugeVec};
-    use prometheus::{HistogramOpts, Opts, register_int_counter_vec_with_registry, register_int_gauge_with_registry, register_int_gauge_vec_with_registry};
+    use super::{IntCounterVec, REGISTRY, HistogramVec, IntGauge};
+    use prometheus::{HistogramOpts, Opts, register_int_counter_vec_with_registry, register_int_gauge_with_registry};
 
     /// Total HTTP requests, labeled by method, path, and status code.
     pub static HTTP_REQUESTS_TOTAL: std::sync::LazyLock<IntCounterVec> = std::sync::LazyLock::new(|| {
@@ -45,20 +45,20 @@ pub mod http {
         ).expect("Failed to register HTTP_REQUESTS_IN_FLIGHT")
     });
 
-    /// Active WebSocket connections, labeled by `room_id`.
-    pub static WEBSOCKET_CONNECTIONS_ACTIVE: std::sync::LazyLock<IntGaugeVec> = std::sync::LazyLock::new(|| {
-        register_int_gauge_vec_with_registry!(
-            Opts::new("websocket_connections_active", "Number of active WebSocket connections"),
-            &["room_id"],
+    /// Active WebSocket connections (aggregate; per-room stats belong in application dashboards).
+    pub static WEBSOCKET_CONNECTIONS_ACTIVE: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "websocket_connections_active",
+            "Number of active WebSocket connections",
             REGISTRY.clone()
         ).expect("Failed to register WEBSOCKET_CONNECTIONS_ACTIVE")
     });
 
-    /// Total WebSocket connections opened.
+    /// Total WebSocket connections opened, labeled by connection outcome.
     pub static WEBSOCKET_CONNECTIONS_TOTAL: std::sync::LazyLock<IntCounterVec> = std::sync::LazyLock::new(|| {
         register_int_counter_vec_with_registry!(
             Opts::new("websocket_connections_total", "Total number of WebSocket connections opened"),
-            &["room_id"],
+            &["status"],
             REGISTRY.clone()
         ).expect("Failed to register WEBSOCKET_CONNECTIONS_TOTAL")
     });
@@ -315,12 +315,12 @@ pub mod cluster {
 pub mod stream {
     use super::{register_histogram_vec_with_registry, register_int_gauge_with_registry, register_counter_vec_with_registry, HistogramVec, REGISTRY, IntGauge, CounterVec};
 
-    /// Stream relay duration histogram
+    /// Stream relay duration histogram, labeled by stream type (rtmp/hls/webrtc).
     pub static STREAM_RELAY_DURATION: std::sync::LazyLock<HistogramVec> = std::sync::LazyLock::new(|| {
         register_histogram_vec_with_registry!(
             "stream_relay_duration_seconds",
             "Stream relay operation duration in seconds",
-            &["stream_id"],
+            &["stream_type"],
             REGISTRY.clone()
         ).expect("Failed to register STREAM_RELAY_DURATION")
     });
@@ -334,12 +334,12 @@ pub mod stream {
         ).expect("Failed to register ACTIVE_RELAY_STREAMS")
     });
 
-    /// Stream error counter
+    /// Stream error counter, labeled by stream type and error classification.
     pub static STREAM_ERRORS: std::sync::LazyLock<CounterVec> = std::sync::LazyLock::new(|| {
         register_counter_vec_with_registry!(
             "stream_errors_total",
             "Total number of stream errors",
-            &["error_type", "stream_id"],
+            &["stream_type", "error_type"],
             REGISTRY.clone()
         ).expect("Failed to register STREAM_ERRORS")
     });
@@ -496,18 +496,17 @@ mod tests {
     #[test]
     fn test_websocket_metrics_gauges() {
         // Verify WebSocket gauge operations work correctly.
-        // Use a unique label to avoid interference from other tests.
-        let before = http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).get();
-        http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).inc();
-        http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).inc();
-        assert_eq!(http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).get(), before + 2);
+        let before = http::WEBSOCKET_CONNECTIONS_ACTIVE.get();
+        http::WEBSOCKET_CONNECTIONS_ACTIVE.inc();
+        http::WEBSOCKET_CONNECTIONS_ACTIVE.inc();
+        assert_eq!(http::WEBSOCKET_CONNECTIONS_ACTIVE.get(), before + 2);
 
-        http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).dec();
-        assert_eq!(http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["test_ws_gauge"]).get(), before + 1);
+        http::WEBSOCKET_CONNECTIONS_ACTIVE.dec();
+        assert_eq!(http::WEBSOCKET_CONNECTIONS_ACTIVE.get(), before + 1);
 
-        let before_total = http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["test_ws_gauge"]).get();
-        http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["test_ws_gauge"]).inc();
-        assert_eq!(http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["test_ws_gauge"]).get(), before_total + 1);
+        let before_total = http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["success"]).get();
+        http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["success"]).inc();
+        assert_eq!(http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["success"]).get(), before_total + 1);
     }
 
     #[test]
@@ -607,11 +606,11 @@ mod tests {
     #[test]
     fn test_all_metrics_in_gathered_output() {
         // Touch all metric families to ensure they appear in gathered output.
-        // IntGaugeVec and IntCounterVec need at least one label set touched.
+        // IntCounterVec needs at least one label set touched.
         http::HTTP_REQUESTS_IN_FLIGHT.inc();
         http::HTTP_REQUESTS_IN_FLIGHT.dec();
-        http::WEBSOCKET_CONNECTIONS_ACTIVE.with_label_values(&["_test"]).set(0);
-        http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["_test"]).inc();
+        http::WEBSOCKET_CONNECTIONS_ACTIVE.set(0);
+        http::WEBSOCKET_CONNECTIONS_TOTAL.with_label_values(&["success"]).inc();
         http::ROOMS_ACTIVE.set(0);
         http::USERS_ONLINE.set(0);
         http::STREAMS_ACTIVE.set(0);

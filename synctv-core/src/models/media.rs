@@ -52,7 +52,7 @@ impl std::fmt::Display for ProviderType {
 /// - For direct type: contains `PlaybackResult` (with danmakus in PlaybackInfo.danmakus)
 /// - For provider types: contains provider-specific config (e.g., `BilibiliConfig`)
 ///   Provider's `generate_playback()` will deserialize `source_config` and return `PlaybackResult`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Media {
     pub id: MediaId,
     pub playlist_id: PlaylistId,

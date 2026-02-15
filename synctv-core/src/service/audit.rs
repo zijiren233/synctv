@@ -151,20 +151,17 @@ impl AuditService {
         };
 
         // Insert into database
-        // Note: This assumes an audit_logs table exists
-        // In production, you would create the table with migrations
         let query = r"
             INSERT INTO audit_logs (
-                id, actor_id, actor_username, action, target_type, target_id,
+                actor_id, actor_username, action, target_type, target_id,
                 details, ip_address, user_agent, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ";
 
         let action_str = audit_log.action.as_str();
         let target_str = audit_log.target_type.as_str();
 
         sqlx::query(query)
-            .bind(&audit_log.id)
             .bind(&audit_log.actor_id)
             .bind(&audit_log.actor_username)
             .bind(action_str)

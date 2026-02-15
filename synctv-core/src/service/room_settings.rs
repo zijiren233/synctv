@@ -21,6 +21,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use rand::Rng;
 
 use crate::{
     models::{RoomId, RoomSettings},
@@ -88,6 +89,10 @@ impl RoomSettingsService {
     const CACHE_TTL_SECS: u64 = 300; // 5 minutes
     const CACHE_MAX_CAPACITY: u64 = 10_000;
     const PUBSUB_CHANNEL: &'static str = "room_settings_updates";
+    /// Maximum retry attempts for optimistic lock conflicts
+    const MAX_RETRIES: u32 = 3;
+    /// Base backoff in milliseconds (exponential: 5ms, 10ms, 20ms)
+    const BACKOFF_BASE_MS: u64 = 5;
 
     /// Create a new room settings service
     #[must_use]
@@ -181,87 +186,80 @@ impl RoomSettingsService {
         Ok(settings)
     }
 
-    /// Set room settings (write-through cache)
+    /// Set room settings (write-through cache) with optimistic locking.
+    ///
+    /// Uses CAS (Compare-And-Swap) with automatic retry on version conflicts.
     ///
     /// # Multi-Replica Synchronization
-    /// - Updates database
+    /// - Reads current version from database
+    /// - Updates database with version check
     /// - Updates local cache
     /// - Publishes invalidation to Pub/Sub (if configured)
     /// - Sends WebSocket notification to connected clients
     pub async fn set(&self, room_id: &RoomId, settings: &RoomSettings) -> Result<()> {
-        // Save to database
-        self.repo.set_settings(room_id, settings).await?;
+        for attempt in 0..Self::MAX_RETRIES {
+            // Get current version (bypass cache)
+            let (_current, version) = self.repo.get_with_version(room_id).await?;
 
-        // Update local cache
-        let () = self.cache.insert(room_id.clone(), settings.clone()).await;
-
-        // Notify other replicas via Pub/Sub (if configured)
-        if let Some(ref invalidation) = self.invalidation {
-            let message = SettingsUpdateMessage {
-                room_id: room_id.as_str().to_string(),
-                version: chrono::Utc::now().timestamp(),
-            };
-
-            if let Err(e) = invalidation.publish(
-                Self::PUBSUB_CHANNEL,
-                &serde_json::to_string(&message).unwrap_or_default(),
-            ).await {
-                tracing::error!("Failed to publish settings update: {}", e);
+            // CAS write
+            match self.repo.set_settings_with_version(room_id, settings, version).await {
+                Ok(new_version) => {
+                    // Update local cache
+                    self.cache.insert(room_id.clone(), settings.clone()).await;
+                    self.publish_and_notify(room_id, settings, new_version).await;
+                    return Ok(());
+                }
+                Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
+                    let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
         }
 
-        // Notify connected clients
-        self.notify_settings_changed(room_id, settings).await;
-
-        Ok(())
+        Err(Error::Internal("Settings update failed after maximum retry attempts".to_string()))
     }
 
-    /// Update a single setting field with database-level locking
+    /// Update a single setting field with optimistic locking (CAS).
     ///
-    /// Uses a transaction with FOR UPDATE to prevent concurrent read-modify-write
-    /// races, rather than reading from cache and writing back.
+    /// Reads current settings and version, applies the updater, then writes back
+    /// with a version check. Retries automatically on concurrent modification.
     pub async fn update_field<F>(
         &self,
         room_id: &RoomId,
         updater: F,
     ) -> Result<RoomSettings>
     where
-        F: FnOnce(&mut RoomSettings) + Send,
+        F: Fn(&mut RoomSettings) + Send,
     {
-        // Use FOR UPDATE within a transaction to lock the row
-        let pool = self.repo.pool();
-        let mut tx = pool.begin().await?;
-        let mut settings = self.repo.get_for_update(room_id, &mut *tx).await?;
+        for attempt in 0..Self::MAX_RETRIES {
+            // Read current settings with version (bypass cache for freshness)
+            let (mut settings, version) = self.repo.get_with_version(room_id).await?;
 
-        // Apply update
-        updater(&mut settings);
+            // Apply update
+            updater(&mut settings);
 
-        // Save within the same transaction
-        self.repo.set_settings_with_executor(room_id, &settings, &mut *tx).await?;
-        tx.commit().await?;
-
-        // Update local cache after commit
-        self.cache.insert(room_id.clone(), settings.clone()).await;
-
-        // Notify other replicas via Pub/Sub (if configured)
-        if let Some(ref invalidation) = self.invalidation {
-            let message = SettingsUpdateMessage {
-                room_id: room_id.as_str().to_string(),
-                version: chrono::Utc::now().timestamp(),
-            };
-
-            if let Err(e) = invalidation.publish(
-                Self::PUBSUB_CHANNEL,
-                &serde_json::to_string(&message).unwrap_or_default(),
-            ).await {
-                tracing::error!("Failed to publish settings update: {}", e);
+            // CAS write with version check
+            match self.repo.set_settings_with_version(room_id, &settings, version).await {
+                Ok(new_version) => {
+                    // Update local cache after successful write
+                    self.cache.insert(room_id.clone(), settings.clone()).await;
+                    self.publish_and_notify(room_id, &settings, new_version).await;
+                    return Ok(settings);
+                }
+                Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
+                    let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
         }
 
-        // Notify connected clients
-        self.notify_settings_changed(room_id, &settings).await;
-
-        Ok(settings)
+        Err(Error::Internal("Settings update failed after maximum retry attempts".to_string()))
     }
 
     /// Reset room settings to default
@@ -278,7 +276,7 @@ impl RoomSettingsService {
         // Invalidate cache
         self.invalidate_local(room_id).await;
 
-        // Notify other replicas
+        // Notify other replicas (use timestamp as pseudo-version since row is deleted)
         if let Some(ref invalidation) = self.invalidation {
             let message = SettingsUpdateMessage {
                 room_id: room_id.as_str().to_string(),
@@ -292,6 +290,25 @@ impl RoomSettingsService {
         }
 
         Ok(())
+    }
+
+    /// Publish invalidation to other replicas and notify connected clients.
+    async fn publish_and_notify(&self, room_id: &RoomId, settings: &RoomSettings, version: i64) {
+        if let Some(ref invalidation) = self.invalidation {
+            let message = SettingsUpdateMessage {
+                room_id: room_id.as_str().to_string(),
+                version,
+            };
+
+            if let Err(e) = invalidation.publish(
+                Self::PUBSUB_CHANNEL,
+                &serde_json::to_string(&message).unwrap_or_default(),
+            ).await {
+                tracing::error!("Failed to publish settings update: {}", e);
+            }
+        }
+
+        self.notify_settings_changed(room_id, settings).await;
     }
 
     /// Invalidate local cache for a room

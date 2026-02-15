@@ -346,8 +346,8 @@ impl ChatService {
                     _ = interval.tick() => {}
                 }
 
-                // Get current max_chat_messages setting
-                let max_messages = settings_registry.max_chat_messages.get().unwrap_or(500);
+                // Get current max_chat_messages_per_room setting
+                let max_messages = settings_registry.max_chat_messages_per_room.get().unwrap_or(500);
 
                 match self.cleanup_all_rooms(max_messages, activity_window_minutes).await {
                     Ok(deleted) => {

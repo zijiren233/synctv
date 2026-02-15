@@ -250,6 +250,10 @@ pub struct SettingsRegistry {
     pub external_stun_servers: Setting<StunServerList>,
     /// TURN servers (dynamic, managed via settings API)
     pub turn_servers: Setting<TurnServerList>,
+
+    // Chat message retention settings
+    /// Maximum number of messages to keep per room (0 = unlimited)
+    pub max_chat_messages_per_room: Setting<u64>,
 }
 
 impl std::fmt::Debug for SettingsRegistry {
@@ -346,7 +350,18 @@ impl SettingsRegistry {
 
             // WebRTC settings
             external_stun_servers: setting!(StunServerList, "webrtc.external_stun_servers", storage.clone(), StunServerList::new()),
-            turn_servers: setting!(TurnServerList, "webrtc.turn_servers", storage, TurnServerList::new()),
+            turn_servers: setting!(TurnServerList, "webrtc.turn_servers", storage.clone(), TurnServerList::new()),
+
+            // Chat message retention settings
+            max_chat_messages_per_room: setting!(u64, "chat.max_messages_per_room", storage, 500,
+                |v: &u64| -> anyhow::Result<()> {
+                    if *v <= 100000 {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!("max_chat_messages_per_room must be <= 100000 (0 = unlimited)"))
+                    }
+                }
+            ),
         }
     }
 

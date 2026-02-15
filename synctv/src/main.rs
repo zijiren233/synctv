@@ -114,8 +114,30 @@ async fn main() -> Result<()> {
     let _audit_task = audit_manager.start_auto_management(24);
     info!("Audit log partition management started");
 
-    // 5. Initialize services
+    // 5. Initialize services (needed for settings_registry)
     let mut synctv_services = init_services(pool.clone(), &config).await?;
+
+    // 4.6. Initialize chat message partitions with dynamic granularity
+    info!("Initializing chat message partitions...");
+    synctv_core::service::ensure_chat_partitions_on_startup(
+        &pool,
+        synctv_services.settings_registry.clone()
+    )
+        .await
+        .map_err(|e| {
+            warn!("Failed to initialize chat partitions (non-fatal): {}", e);
+            e
+        })
+        .ok();
+
+    // Start automatic chat partition management (time-based)
+    // Check interval: 24 hours (only manages partitions, not per-room limits)
+    let chat_partition_manager = synctv_core::service::ChatPartitionManager::new(
+        pool.clone(),
+        synctv_services.settings_registry.clone()
+    );
+    let _chat_partition_task = chat_partition_manager.start_auto_management(24);
+    info!("Chat message partition management started (check interval: 24 hours)");
 
     // 6. Initialize connection manager with configurable limits (needed early for heartbeat loop)
     use synctv_cluster::sync::ConnectionLimits;

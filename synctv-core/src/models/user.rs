@@ -233,7 +233,7 @@ impl SignupMethod {
     }
 
     /// Parse signup method from string name (defaults to email for unknown values)
-    #[must_use] 
+    #[must_use]
     pub fn from_str_name(s: &str) -> Self {
         match s {
             "email" => Self::Email,
@@ -243,7 +243,27 @@ impl SignupMethod {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Database mapping: SignupMethod <-> TEXT
+impl sqlx::Type<sqlx::Postgres> for SignupMethod {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for SignupMethod {
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        <&str as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.as_str(), buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for SignupMethod {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let s = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        Ok(Self::from_str_name(&s))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     pub id: UserId,
     pub username: String,

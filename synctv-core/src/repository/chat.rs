@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
-use sqlx::{postgres::PgRow, PgPool, Row};
+use sqlx::PgPool;
 
 use crate::{
-    models::{ChatMessage, RoomId, UserId},
+    models::{ChatMessage, RoomId},
     Result,
 };
 
@@ -20,7 +20,7 @@ impl ChatRepository {
 
     /// Create a new chat message
     pub async fn create(&self, message: &ChatMessage) -> Result<ChatMessage> {
-        let row = sqlx::query(
+        let msg = sqlx::query_as::<_, ChatMessage>(
             r"
             INSERT INTO chat_messages (id, room_id, user_id, content, created_at)
             VALUES ($1, $2, $3, $4, $5)
@@ -35,7 +35,7 @@ impl ChatRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_message(row)
+        Ok(msg)
     }
 
     /// Get chat history for a room
@@ -48,8 +48,8 @@ impl ChatRepository {
     ) -> Result<Vec<ChatMessage>> {
         let limit = limit.min(100); // Cap at 100 messages per request
 
-        let rows = if let Some(before_time) = before {
-            sqlx::query(
+        let messages = if let Some(before_time) = before {
+            sqlx::query_as::<_, ChatMessage>(
                 r"
                 SELECT id, room_id, user_id, content, created_at
                 FROM chat_messages
@@ -64,7 +64,7 @@ impl ChatRepository {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query(
+            sqlx::query_as::<_, ChatMessage>(
                 r"
                 SELECT id, room_id, user_id, content, created_at
                 FROM chat_messages
@@ -79,14 +79,12 @@ impl ChatRepository {
             .await?
         };
 
-        rows.into_iter()
-            .map(|row| self.row_to_message(row))
-            .collect()
+        Ok(messages)
     }
 
     /// Get a specific message by ID
     pub async fn get_by_id(&self, message_id: &str) -> Result<Option<ChatMessage>> {
-        let row = sqlx::query(
+        let msg = sqlx::query_as::<_, ChatMessage>(
             r"
             SELECT id, room_id, user_id, content, created_at
             FROM chat_messages
@@ -97,10 +95,7 @@ impl ChatRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        match row {
-            Some(row) => Ok(Some(self.row_to_message(row)?)),
-            None => Ok(None),
-        }
+        Ok(msg)
     }
 
     /// Delete a message (physical delete)
@@ -200,16 +195,6 @@ impl ChatRepository {
         Ok(result.rows_affected())
     }
 
-    /// Convert database row to `ChatMessage`
-    fn row_to_message(&self, row: PgRow) -> Result<ChatMessage> {
-        Ok(ChatMessage {
-            id: row.try_get("id")?,
-            room_id: RoomId::from_string(row.try_get("room_id")?),
-            user_id: UserId::from_string(row.try_get("user_id")?),
-            content: row.try_get("content")?,
-            created_at: row.try_get("created_at")?,
-        })
-    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 //!
 //! Design reference: /Volumes/workspace/rust/design/04-数据库设计.md §2.4.2
 
-use sqlx::{postgres::PgRow, PgPool, Row};
+use sqlx::{PgPool, FromRow};
 
 use crate::{
     models::{Media, MediaId, PageParams, PlaylistId, RoomId},
@@ -54,7 +54,7 @@ impl MediaRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_media(row)
+        Ok(Media::from_row(&row)?)
     }
 
     /// Batch insert media items
@@ -121,7 +121,7 @@ impl MediaRepository {
 
         let rows = query.fetch_all(executor).await?;
         for row in rows {
-            results.push(self.row_to_media(row)?);
+            results.push(Media::from_row(&row)?);
         }
 
         Ok(results)
@@ -150,7 +150,7 @@ impl MediaRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_media(row)
+        Ok(Media::from_row(&row)?)
     }
 
     /// Get media by ID
@@ -169,7 +169,7 @@ impl MediaRepository {
         .await?;
 
         match row {
-            Some(row) => Ok(Some(self.row_to_media(row)?)),
+            Some(row) => Ok(Some(Media::from_row(&row)?)),
             None => Ok(None),
         }
     }
@@ -202,7 +202,7 @@ impl MediaRepository {
         .fetch_all(executor)
         .await?;
 
-        rows.into_iter().map(|row| self.row_to_media(row)).collect()
+        rows.into_iter().map(|row| Ok(Media::from_row(&row)?)).collect()
     }
 
     /// Get playlist for a room (all media in room's root playlist and sub-playlists)
@@ -221,7 +221,7 @@ impl MediaRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(|row| self.row_to_media(row)).collect()
+        rows.into_iter().map(|row| Ok(Media::from_row(&row)?)).collect()
     }
 
     /// Get media in a specific playlist
@@ -240,7 +240,7 @@ impl MediaRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(|row| self.row_to_media(row)).collect()
+        rows.into_iter().map(|row| Ok(Media::from_row(&row)?)).collect()
     }
 
     /// Get paginated playlist
@@ -280,7 +280,7 @@ impl MediaRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let items: Vec<Media> = rows.into_iter().map(|row| self.row_to_media(row)).collect::<Result<Vec<Media>>>()?;
+        let items: Vec<Media> = rows.into_iter().map(|row| Ok(Media::from_row(&row)?)).collect::<Result<Vec<Media>>>()?;
 
         Ok((items, total))
     }
@@ -487,22 +487,6 @@ impl MediaRepository {
         Ok(result)
     }
 
-    /// Convert database row to Media
-    fn row_to_media(&self, row: PgRow) -> Result<Media> {
-        Ok(Media {
-            id: MediaId::from_string(row.try_get("id")?),
-            playlist_id: PlaylistId::from_string(row.try_get("playlist_id")?),
-            room_id: RoomId::from_string(row.try_get("room_id")?),
-            creator_id: crate::models::UserId::from_string(row.try_get("creator_id")?),
-            name: row.try_get("name")?,
-            position: row.try_get("position")?,
-            source_provider: row.try_get("source_provider")?,
-            source_config: row.try_get("source_config")?,
-            provider_instance_name: row.try_get("provider_instance_name")?,
-            added_at: row.try_get("added_at")?,
-            deleted_at: row.try_get("deleted_at")?,
-        })
-    }
 }
 
 #[cfg(test)]

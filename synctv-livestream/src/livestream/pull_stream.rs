@@ -123,6 +123,13 @@ impl PullStream {
         let child_token = self.cancel_token.child_token();
         let handle = tokio::spawn(async move {
             info!("gRPC puller task started for {} / {}", room_id, media_id);
+
+            // Track relay duration via histogram (stream_type = "rtmp" for gRPC RTMP relay)
+            let timer = synctv_core::metrics::stream::STREAM_RELAY_DURATION
+                .with_label_values(&["rtmp"])
+                .start_timer();
+            synctv_core::metrics::stream::ACTIVE_RELAY_STREAMS.inc();
+
             // Race the puller against cancellation for graceful shutdown
             let result = tokio::select! {
                 r = grpc_puller.run() => r,
@@ -131,8 +138,24 @@ impl PullStream {
                     Ok(())
                 }
             };
+
+            timer.observe_duration();
+            synctv_core::metrics::stream::ACTIVE_RELAY_STREAMS.dec();
+
             if let Err(ref e) = result {
                 error!("gRPC puller task failed for {} / {}: {}", room_id, media_id, e);
+
+                let error_type = if e.to_string().contains("timeout") {
+                    "timeout"
+                } else if e.to_string().contains("connection") {
+                    "connection"
+                } else {
+                    "other"
+                };
+                synctv_core::metrics::stream::STREAM_ERRORS
+                    .with_label_values(&["rtmp", error_type])
+                    .inc();
+
                 // Mark is_running as false so is_healthy() returns false
                 // This ensures the stream will be removed from the pool on next access
                 is_running_flag.store(false, std::sync::atomic::Ordering::SeqCst);

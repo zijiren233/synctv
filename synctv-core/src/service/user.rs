@@ -151,6 +151,11 @@ impl UserService {
         // Verify refresh token
         let claims = self.jwt_service.verify_refresh_token(&refresh_token)?;
 
+        // Check if the refresh token has been individually blacklisted (e.g. via logout)
+        if self.blacklist_service.is_blacklisted(&refresh_token).await? {
+            return Err(Error::Authentication("Token has been revoked".to_string()));
+        }
+
         // Get user to ensure they still exist and are active
         let user_id = UserId::from_string(claims.sub);
         let user = self

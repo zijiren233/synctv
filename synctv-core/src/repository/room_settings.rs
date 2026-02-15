@@ -39,12 +39,19 @@ impl RoomSettingsRepository {
     /// This uses **automatic serde deserialization** - no manual mapping needed!
     /// The entire settings struct is stored as a single JSON value under key "_settings".
     pub async fn get(&self, room_id: &RoomId) -> Result<RoomSettings> {
+        let (settings, _version) = self.get_with_version(room_id).await?;
+        Ok(settings)
+    }
+
+    /// Get all settings for a room along with the current version for optimistic locking.
+    ///
+    /// Returns `(settings, version)` where version is 0 if no settings row exists yet.
+    pub async fn get_with_version(&self, room_id: &RoomId) -> Result<(RoomSettings, i64)> {
         let room_id_str = room_id.as_str();
 
-        // Try to load the complete settings JSON first
         let row = sqlx::query(
             r"
-            SELECT value
+            SELECT value, version
             FROM room_settings
             WHERE room_id = $1 AND key = '_settings'
         "
@@ -55,13 +62,13 @@ impl RoomSettingsRepository {
 
         if let Some(row) = row {
             let value: String = row.try_get("value")?;
-            // Deserialize directly using serde - no manual mapping!
+            let version: i64 = row.try_get("version")?;
             let settings: RoomSettings = serde_json::from_str(&value)
                 .map_err(|e| Error::Internal(format!("Failed to deserialize room settings: {e}")))?;
-            Ok(settings)
+            Ok((settings, version))
         } else {
-            // No settings stored, return defaults
-            Ok(RoomSettings::default())
+            // No settings stored, return defaults with version 0
+            Ok((RoomSettings::default(), 0))
         }
     }
 
@@ -77,7 +84,7 @@ impl RoomSettingsRepository {
 
         let row = sqlx::query(
             r"
-            SELECT value
+            SELECT value, version
             FROM room_settings
             WHERE room_id = $1 AND key = '_settings'
             FOR UPDATE
@@ -103,10 +110,10 @@ impl RoomSettingsRepository {
 
         sqlx::query(
             r"
-            INSERT INTO room_settings (room_id, key, value)
-            VALUES ($1, $2, $3)
+            INSERT INTO room_settings (room_id, key, value, version)
+            VALUES ($1, $2, $3, 1)
             ON CONFLICT (room_id, key)
-            DO UPDATE SET value = $3, updated_at = NOW()
+            DO UPDATE SET value = $3, version = room_settings.version + 1, updated_at = NOW()
         "
         )
         .bind(room_id_str)
@@ -127,10 +134,10 @@ impl RoomSettingsRepository {
 
         sqlx::query(
             r"
-            INSERT INTO room_settings (room_id, key, value)
-            VALUES ($1, $2, $3)
+            INSERT INTO room_settings (room_id, key, value, version)
+            VALUES ($1, $2, $3, 1)
             ON CONFLICT (room_id, key)
-            DO UPDATE SET value = $3, updated_at = NOW()
+            DO UPDATE SET value = $3, version = room_settings.version + 1, updated_at = NOW()
         "
         )
         .bind(room_id_str)
@@ -154,10 +161,10 @@ impl RoomSettingsRepository {
 
         sqlx::query(
             r"
-            INSERT INTO room_settings (room_id, key, value)
-            VALUES ($1, '_settings', $2)
+            INSERT INTO room_settings (room_id, key, value, version)
+            VALUES ($1, '_settings', $2, 1)
             ON CONFLICT (room_id, key)
-            DO UPDATE SET value = $2, updated_at = NOW()
+            DO UPDATE SET value = $2, version = room_settings.version + 1, updated_at = NOW()
         "
         )
         .bind(room_id_str)
@@ -234,10 +241,10 @@ impl RoomSettingsRepository {
         // Upsert settings as single JSON value (ON CONFLICT handles existing rows)
         sqlx::query(
             r"
-            INSERT INTO room_settings (room_id, key, value)
-            VALUES ($1, '_settings', $2)
+            INSERT INTO room_settings (room_id, key, value, version)
+            VALUES ($1, '_settings', $2, 1)
             ON CONFLICT (room_id, key)
-            DO UPDATE SET value = $2, updated_at = NOW()
+            DO UPDATE SET value = $2, version = room_settings.version + 1, updated_at = NOW()
         "
         )
         .bind(room_id_str)
@@ -246,6 +253,65 @@ impl RoomSettingsRepository {
         .await?;
 
         Ok(())
+    }
+
+    /// Set settings with optimistic locking (CAS - Compare And Swap).
+    ///
+    /// Updates settings only if the current version matches `expected_version`.
+    /// Returns `Err(Error::OptimisticLockConflict)` if the version has changed
+    /// (concurrent modification detected).
+    pub async fn set_settings_with_version(
+        &self,
+        room_id: &RoomId,
+        settings: &RoomSettings,
+        expected_version: i64,
+    ) -> Result<i64> {
+        let room_id_str = room_id.as_str();
+
+        let json_value = serde_json::to_string(settings)
+            .map_err(|e| Error::Internal(format!("Failed to serialize room settings: {e}")))?;
+
+        if expected_version == 0 {
+            // No existing row -- INSERT with conflict check on version
+            let row = sqlx::query(
+                r"
+                INSERT INTO room_settings (room_id, key, value, version)
+                VALUES ($1, '_settings', $2, 1)
+                ON CONFLICT (room_id, key) DO NOTHING
+                RETURNING version
+                "
+            )
+            .bind(room_id_str)
+            .bind(&json_value)
+            .fetch_optional(&self.pool)
+            .await?;
+
+            match row {
+                Some(row) => Ok(row.try_get("version")?),
+                // Row already exists (someone inserted concurrently)
+                None => Err(Error::OptimisticLockConflict),
+            }
+        } else {
+            // Existing row -- UPDATE with version check
+            let row = sqlx::query(
+                r"
+                UPDATE room_settings
+                SET value = $2, version = version + 1, updated_at = NOW()
+                WHERE room_id = $1 AND key = '_settings' AND version = $3
+                RETURNING version
+                "
+            )
+            .bind(room_id_str)
+            .bind(&json_value)
+            .bind(expected_version)
+            .fetch_optional(&self.pool)
+            .await?;
+
+            match row {
+                Some(row) => Ok(row.try_get("version")?),
+                None => Err(Error::OptimisticLockConflict),
+            }
+        }
     }
 
     /// Delete a specific setting for a room (revert to default)

@@ -152,7 +152,7 @@ impl Default for AutoPlaySettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Room {
     pub id: RoomId,
     pub name: String,

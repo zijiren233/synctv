@@ -42,27 +42,27 @@ BEGIN
 
     -- 自动创建所有必要的复合索引（幂等，重复执行不会报错）
 
-    -- 复合索引1: 用户审计历史 (user_id, created_at DESC, event_type)
-    -- 优化查询：SELECT * FROM audit_logs WHERE user_id = ? AND created_at > ? ORDER BY created_at DESC
+    -- 复合索引1: 操作者审计历史 (actor_id, created_at DESC)
+    -- 优化查询：SELECT * FROM audit_logs WHERE actor_id = ? AND created_at > ? ORDER BY created_at DESC
     EXECUTE format(
-        'CREATE INDEX IF NOT EXISTS %I ON %I(user_id, created_at DESC, event_type) WHERE user_id IS NOT NULL',
-        partition_name || '_idx_user_created_event', partition_name
+        'CREATE INDEX IF NOT EXISTS %I ON %I(actor_id, created_at DESC) WHERE actor_id IS NOT NULL',
+        partition_name || '_idx_actor_created', partition_name
     );
     index_count := index_count + 1;
 
-    -- 复合索引2: 房间审计历史 (room_id, created_at DESC, event_type)
-    -- 优化查询：SELECT * FROM audit_logs WHERE room_id = ? AND created_at > ? ORDER BY created_at DESC
+    -- 复合索引2: 操作类型 (action, created_at DESC)
+    -- 优化查询：SELECT * FROM audit_logs WHERE action = 'user_banned' ORDER BY created_at DESC
     EXECUTE format(
-        'CREATE INDEX IF NOT EXISTS %I ON %I(room_id, created_at DESC, event_type) WHERE room_id IS NOT NULL',
-        partition_name || '_idx_room_created_event', partition_name
+        'CREATE INDEX IF NOT EXISTS %I ON %I(action, created_at DESC)',
+        partition_name || '_idx_action_created', partition_name
     );
     index_count := index_count + 1;
 
-    -- 复合索引3: 事件类型 (event_type, created_at DESC)
-    -- 优化查询：SELECT * FROM audit_logs WHERE event_type = 'login' ORDER BY created_at DESC
+    -- 复合索引3: 目标对象 (target_type, target_id, created_at DESC)
+    -- 优化查询：SELECT * FROM audit_logs WHERE target_type = 'user' AND target_id = ? ORDER BY created_at DESC
     EXECUTE format(
-        'CREATE INDEX IF NOT EXISTS %I ON %I(event_type, created_at DESC)',
-        partition_name || '_idx_event_created', partition_name
+        'CREATE INDEX IF NOT EXISTS %I ON %I(target_type, target_id, created_at DESC) WHERE target_type IS NOT NULL',
+        partition_name || '_idx_target_created', partition_name
     );
     index_count := index_count + 1;
 
@@ -356,22 +356,22 @@ SELECT drop_old_audit_logs_partitions(12);
 
 查询优化示例：
 ---------------------------------------
--- 用户审计历史（使用索引）
+-- 操作者审计历史（使用索引）
 SELECT * FROM audit_logs
-WHERE user_id = 'xxx'
+WHERE actor_id = 'xxx'
   AND created_at > CURRENT_DATE - INTERVAL '30 days'
 ORDER BY created_at DESC;
 
--- 房间审计历史（使用索引）
+-- 目标对象审计历史（使用索引）
 SELECT * FROM audit_logs
-WHERE room_id = 'xxx'
-  AND event_type = 'delete_message'
+WHERE target_type = 'user'
+  AND target_id = 'xxx'
   AND created_at > CURRENT_DATE - INTERVAL '7 days'
 ORDER BY created_at DESC;
 
--- 按事件类型查询（使用索引）
+-- 按操作类型查询（使用索引）
 SELECT * FROM audit_logs
-WHERE event_type = 'login'
+WHERE action = 'user_banned'
 ORDER BY created_at DESC
 LIMIT 100;
 

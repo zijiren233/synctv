@@ -62,8 +62,8 @@ pub struct SfuRoom {
     /// Published tracks: `track_id` -> (`publisher_peer_id`, track)
     published_tracks: DashMap<TrackId, (PeerId, Arc<MediaTrack>)>,
 
-    /// Track subscriptions: (`subscriber_peer_id`, `track_id`) -> ()
-    subscriptions: DashMap<(PeerId, TrackId), ()>,
+    /// Track subscribers: `track_id` -> list of subscriber `peer_id`s
+    track_subscribers: Arc<DashMap<TrackId, Vec<PeerId>>>,
 
     /// Forwarding tasks for each track
     forwarding_tasks: DashMap<TrackId, tokio::task::JoinHandle<()>>,
@@ -95,7 +95,7 @@ impl SfuRoom {
             mode: Arc::new(RwLock::new(RoomMode::P2P)),
             peers: DashMap::new(),
             published_tracks: DashMap::new(),
-            subscriptions: DashMap::new(),
+            track_subscribers: Arc::new(DashMap::new()),
             forwarding_tasks: DashMap::new(),
             config,
             stats: Arc::new(RwLock::new(RoomStats::default())),
@@ -187,24 +187,9 @@ impl SfuRoom {
             }
         }
 
-        // Remove all subscriptions by this peer
-        let subs_to_remove: Vec<(PeerId, TrackId)> = self
-            .subscriptions
-            .iter()
-            .filter(|entry| &entry.key().0 == peer_id)
-            .map(|entry| entry.key().clone())
-            .collect();
-
-        for (sub_peer_id, track_id) in subs_to_remove {
-            if let Err(e) = self.unsubscribe_track(&sub_peer_id, &track_id).await {
-                warn!(
-                    room_id = %self.id,
-                    peer_id = %peer_id,
-                    track_id = %track_id,
-                    error = %e,
-                    "Failed to remove subscription during peer cleanup, continuing"
-                );
-            }
+        // Remove this peer from all track subscriber lists
+        for mut entry in self.track_subscribers.iter_mut() {
+            entry.value_mut().retain(|id| id != peer_id);
         }
 
         // Update statistics
@@ -298,16 +283,7 @@ impl SfuRoom {
         }
 
         // Remove all subscriptions to this track
-        let subs_to_remove: Vec<(PeerId, TrackId)> = self
-            .subscriptions
-            .iter()
-            .filter(|entry| &entry.key().1 == track_id)
-            .map(|entry| entry.key().clone())
-            .collect();
-
-        for (sub_peer_id, sub_track_id) in subs_to_remove {
-            self.unsubscribe_track(&sub_peer_id, &sub_track_id).await?;
-        }
+        self.track_subscribers.remove(track_id);
 
         Ok(())
     }
@@ -327,8 +303,10 @@ impl SfuRoom {
             .ok_or_else(|| anyhow!("Track not found in room"))?;
 
         // Add subscription (safe: references still held)
-        self.subscriptions
-            .insert((subscriber_peer_id.clone(), track_id.clone()), ());
+        self.track_subscribers
+            .entry(track_id.clone())
+            .or_default()
+            .push(subscriber_peer_id.clone());
 
         info!(
             room_id = %self.id,
@@ -346,8 +324,9 @@ impl SfuRoom {
         subscriber_peer_id: &PeerId,
         track_id: &TrackId,
     ) -> Result<()> {
-        self.subscriptions
-            .remove(&(subscriber_peer_id.clone(), track_id.clone()));
+        if let Some(mut subscribers) = self.track_subscribers.get_mut(track_id) {
+            subscribers.retain(|id| id != subscriber_peer_id);
+        }
 
         info!(
             room_id = %self.id,
@@ -370,7 +349,7 @@ impl SfuRoom {
         let track_id_clone = track_id.clone();
         let room_id = self.id.clone();
         let peers = self.peers.clone();
-        let subscriptions = self.subscriptions.clone();
+        let track_subscribers = Arc::clone(&self.track_subscribers);
         let packets_relayed = Arc::clone(&self.packets_relayed);
         let bytes_relayed = Arc::clone(&self.bytes_relayed);
 
@@ -381,7 +360,7 @@ impl SfuRoom {
                 track_id_clone,
                 track,
                 peers,
-                subscriptions,
+                track_subscribers,
                 publisher_peer_id,
                 packets_relayed,
                 bytes_relayed,
@@ -404,7 +383,7 @@ impl SfuRoom {
         track_id: TrackId,
         track: Arc<MediaTrack>,
         peers: DashMap<PeerId, Arc<SfuPeer>>,
-        subscriptions: DashMap<(PeerId, TrackId), ()>,
+        track_subscribers: Arc<DashMap<TrackId, Vec<PeerId>>>,
         publisher_peer_id: PeerId,
         packets_relayed: Arc<AtomicU64>,
         bytes_relayed: Arc<AtomicU64>,
@@ -420,15 +399,16 @@ impl SfuRoom {
 
         // Forward packets to subscribers
         while let Some(packet) = packet_rx.recv().await {
-            // Find all subscribers for this track (excluding the publisher)
-            let subscribers: Vec<PeerId> = subscriptions
-                .iter()
-                .filter(|entry| {
-                    let (subscriber_id, sub_track_id) = entry.key();
-                    sub_track_id == &track_id && subscriber_id != &publisher_peer_id
+            // O(subscribers_of_track) lookup instead of O(total_subscriptions)
+            let subscribers: Vec<PeerId> = track_subscribers
+                .get(&track_id)
+                .map(|subs| {
+                    subs.iter()
+                        .filter(|id| *id != &publisher_peer_id)
+                        .cloned()
+                        .collect()
                 })
-                .map(|entry| entry.key().0.clone())
-                .collect();
+                .unwrap_or_default();
 
             // Forward to each subscriber via their packet channel
             let packet_size = packet.data.len();
@@ -653,7 +633,7 @@ impl Drop for SfuRoom {
         let task_count = self.forwarding_tasks.len();
         let peer_count = self.peers.len();
         let track_count = self.published_tracks.len();
-        let sub_count = self.subscriptions.len();
+        let sub_count = self.track_subscribers.len();
 
         // Abort all forwarding tasks to prevent leaked spawned tasks
         for entry in &self.forwarding_tasks {
@@ -668,7 +648,7 @@ impl Drop for SfuRoom {
 
         // Clear all state
         self.forwarding_tasks.clear();
-        self.subscriptions.clear();
+        self.track_subscribers.clear();
         self.published_tracks.clear();
         self.peers.clear();
 

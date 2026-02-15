@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Row, FromRow};
 use uuid::Uuid;
 
 use crate::{
@@ -28,7 +28,7 @@ impl NotificationRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        let row = sqlx::query(
+        let n = sqlx::query_as::<_, Notification>(
             r"
             INSERT INTO notifications (id, user_id, type, title, content, data, is_read, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -47,12 +47,12 @@ impl NotificationRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_notification(row)
+        Ok(n)
     }
 
     /// Get notification by ID
     pub async fn get_by_id(&self, notification_id: Uuid) -> Result<Option<Notification>> {
-        let row = sqlx::query(
+        let n = sqlx::query_as::<_, Notification>(
             r"
             SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at
             FROM notifications
@@ -63,10 +63,7 @@ impl NotificationRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        match row {
-            Some(row) => Ok(Some(self.row_to_notification(row)?)),
-            None => Ok(None),
-        }
+        Ok(n)
     }
 
     /// List notifications for a user with pagination, filters, and total count.
@@ -107,7 +104,7 @@ impl NotificationRepository {
 
         let total = rows.first().map_or(0i64, |row| row.try_get("total_count").unwrap_or(0));
         let notifications: Result<Vec<Notification>> = rows.into_iter()
-            .map(|row| self.row_to_notification(row))
+            .map(|row| Ok(Notification::from_row(&row)?))
             .collect();
 
         Ok((notifications?, total))
@@ -247,22 +244,4 @@ impl NotificationRepository {
         Ok(result.rows_affected())
     }
 
-    /// Helper method to convert database row to Notification
-    fn row_to_notification(&self, row: sqlx::postgres::PgRow) -> Result<Notification> {
-        let type_str: String = row.try_get("type")?;
-        let notification_type = type_str.parse()
-            .map_err(|e| Error::Internal(format!("Invalid notification type: {e}")))?;
-
-        Ok(Notification {
-            id: row.try_get("id")?,
-            user_id: UserId::from_string(row.try_get("user_id")?),
-            notification_type,
-            title: row.try_get("title")?,
-            content: row.try_get("content")?,
-            data: row.try_get("data")?,
-            is_read: row.try_get("is_read")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
 }

@@ -1,6 +1,6 @@
 -- Create email verification and password reset tokens table
 CREATE TABLE IF NOT EXISTS email_tokens (
-    id CHAR(32) PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token VARCHAR(255) UNIQUE NOT NULL,
     user_id CHAR(12) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_type VARCHAR(20) NOT NULL, -- 'email_verification' or 'password_reset'

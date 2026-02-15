@@ -2,7 +2,7 @@
 //!
 //! Design reference: /Volumes/workspace/rust/design/04-数据库设计.md §2.4.1
 
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, FromRow};
 use crate::{
     models::{Playlist, PlaylistId, RoomId},
     Result,
@@ -36,7 +36,7 @@ impl PlaylistRepository {
         .await?;
 
         match row {
-            Some(row) => Ok(Some(self.row_to_playlist(row)?)),
+            Some(row) => Ok(Some(Playlist::from_row(&row)?)),
             None => Ok(None),
         }
     }
@@ -56,7 +56,7 @@ impl PlaylistRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_playlist(row)
+        Ok(Playlist::from_row(&row)?)
     }
 
     /// Get children playlists of a parent
@@ -76,7 +76,7 @@ impl PlaylistRepository {
         .await?;
 
         rows.into_iter()
-            .map(|row| self.row_to_playlist(row))
+            .map(|row| Ok(Playlist::from_row(&row)?))
             .collect()
     }
 
@@ -97,7 +97,7 @@ impl PlaylistRepository {
         .await?;
 
         rows.into_iter()
-            .map(|row| self.row_to_playlist(row))
+            .map(|row| Ok(Playlist::from_row(&row)?))
             .collect()
     }
 
@@ -126,7 +126,7 @@ impl PlaylistRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_playlist(row)
+        Ok(Playlist::from_row(&row)?)
     }
 
     /// Create a playlist using a provided executor (pool or transaction)
@@ -157,7 +157,7 @@ impl PlaylistRepository {
         .fetch_one(executor)
         .await?;
 
-        self.row_to_playlist(row)
+        Ok(Playlist::from_row(&row)?)
     }
 
     /// Get next available position in a parent
@@ -201,7 +201,7 @@ impl PlaylistRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_playlist(row)
+        Ok(Playlist::from_row(&row)?)
     }
 
     /// Delete playlist (cascade to children and media)
@@ -244,23 +244,7 @@ impl PlaylistRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(|row| self.row_to_playlist(row)).collect()
+        rows.into_iter().map(|row| Ok(Playlist::from_row(&row)?)).collect()
     }
 
-    fn row_to_playlist(&self, row: sqlx::postgres::PgRow) -> Result<Playlist> {
-        Ok(Playlist {
-            id: crate::models::PlaylistId::from_string(row.try_get("id")?),
-            room_id: crate::models::RoomId::from_string(row.try_get("room_id")?),
-            creator_id: crate::models::UserId::from_string(row.try_get("creator_id")?),
-            name: row.try_get("name")?,
-            parent_id: row.try_get::<Option<String>, _>("parent_id")?
-                .map(crate::models::PlaylistId::from_string),
-            position: row.try_get("position")?,
-            source_provider: row.try_get("source_provider")?,
-            source_config: row.try_get("source_config")?,
-            provider_instance_name: row.try_get("provider_instance_name")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
 }

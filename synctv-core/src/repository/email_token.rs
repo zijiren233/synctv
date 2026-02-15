@@ -1,7 +1,7 @@
 //! Email token repository for database operations
 
 use chrono::Utc;
-use sqlx::{postgres::PgRow, PgPool, Row};
+use sqlx::PgPool;
 use crate::{
     models::UserId,
     service::email_token::EmailTokenType,
@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Email token record
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct EmailToken {
     pub id: String,
     pub token: String,
@@ -40,11 +40,11 @@ impl EmailTokenRepository {
         token_type: EmailTokenType,
         expires_at: chrono::DateTime<Utc>,
     ) -> Result<EmailToken> {
-        let row = sqlx::query(
+        let t = sqlx::query_as::<_, EmailToken>(
             r"
             INSERT INTO email_tokens (token, user_id, token_type, expires_at, created_at)
             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-            RETURNING id, token, user_id, token_type, expires_at, used_at, created_at
+            RETURNING id::TEXT, token, user_id, token_type, expires_at, used_at, created_at
             ",
         )
         .bind(token)
@@ -55,14 +55,14 @@ impl EmailTokenRepository {
         .await
         .map_err(Error::Database)?;
 
-        self.row_to_token(row)
+        Ok(t)
     }
 
     /// Get token by token string
     pub async fn get(&self, token: &str) -> Result<Option<EmailToken>> {
-        let row = sqlx::query(
+        let t = sqlx::query_as::<_, EmailToken>(
             r"
-            SELECT id, token, user_id, token_type, expires_at, used_at, created_at
+            SELECT id::TEXT, token, user_id, token_type, expires_at, used_at, created_at
             FROM email_tokens
             WHERE token = $1
             ",
@@ -71,20 +71,17 @@ impl EmailTokenRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        match row {
-            Some(r) => Ok(Some(self.row_to_token(r)?)),
-            None => Ok(None),
-        }
+        Ok(t)
     }
 
     /// Mark token as used
     pub async fn mark_as_used(&self, token: &str) -> Result<EmailToken> {
-        let row = sqlx::query(
+        let t = sqlx::query_as::<_, EmailToken>(
             r"
             UPDATE email_tokens
             SET used_at = CURRENT_TIMESTAMP
             WHERE token = $1
-            RETURNING id, token, user_id, token_type, expires_at, used_at, created_at
+            RETURNING id::TEXT, token, user_id, token_type, expires_at, used_at, created_at
             ",
         )
         .bind(token)
@@ -97,7 +94,7 @@ impl EmailTokenRepository {
             _ => Error::Database(e),
         })?;
 
-        self.row_to_token(row)
+        Ok(t)
     }
 
     /// Atomically validate and consume a token.
@@ -110,7 +107,7 @@ impl EmailTokenRepository {
         token: &str,
         token_type: EmailTokenType,
     ) -> Result<Option<EmailToken>> {
-        let row = sqlx::query(
+        let t = sqlx::query_as::<_, EmailToken>(
             r"
             UPDATE email_tokens
             SET used_at = CURRENT_TIMESTAMP
@@ -118,7 +115,7 @@ impl EmailTokenRepository {
               AND token_type = $2
               AND used_at IS NULL
               AND expires_at > CURRENT_TIMESTAMP
-            RETURNING id, token, user_id, token_type, expires_at, used_at, created_at
+            RETURNING id::TEXT, token, user_id, token_type, expires_at, used_at, created_at
             ",
         )
         .bind(token)
@@ -126,10 +123,7 @@ impl EmailTokenRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        match row {
-            Some(r) => Ok(Some(self.row_to_token(r)?)),
-            None => Ok(None),
-        }
+        Ok(t)
     }
 
     /// Delete all tokens of a specific type for a user
@@ -168,17 +162,6 @@ impl EmailTokenRepository {
         Ok(result.rows_affected() as usize)
     }
 
-    fn row_to_token(&self, row: PgRow) -> Result<EmailToken> {
-        Ok(EmailToken {
-            id: row.try_get("id")?,
-            token: row.try_get("token")?,
-            user_id: UserId::from_string(row.try_get("user_id")?),
-            token_type: row.try_get("token_type")?,
-            expires_at: row.try_get("expires_at")?,
-            used_at: row.try_get("used_at")?,
-            created_at: row.try_get("created_at")?,
-        })
-    }
 }
 
 #[cfg(test)]

@@ -1,11 +1,9 @@
-use sqlx::{PgPool, postgres::PgRow, Row};
+use sqlx::{PgPool, Row, FromRow};
 
 use crate::{
     models::{Room, RoomId, RoomStatus, UserId, RoomListQuery, PageParams},
     Error, Result,
 };
-
-// L-06: tracing for unknown status warning
 
 /// Room repository for database operations
 #[derive(Clone)]
@@ -30,14 +28,14 @@ impl RoomRepository {
         .bind(&room.name)
         .bind(&room.description)
         .bind(room.created_by.as_str())
-        .bind(self.status_to_i16(&room.status))
+        .bind(room.status)
         .bind(room.is_banned)
         .bind(room.created_at)
         .bind(room.updated_at)
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_room(row)
+        Ok(Room::from_row(&row)?)
     }
 
     /// Create a new room using a provided executor (pool or transaction)
@@ -54,14 +52,14 @@ impl RoomRepository {
         .bind(&room.name)
         .bind(&room.description)
         .bind(room.created_by.as_str())
-        .bind(self.status_to_i16(&room.status))
+        .bind(room.status)
         .bind(room.is_banned)
         .bind(room.created_at)
         .bind(room.updated_at)
         .fetch_one(executor)
         .await?;
 
-        self.row_to_room(row)
+        Ok(Room::from_row(&row)?)
     }
 
     /// Get room by ID
@@ -76,7 +74,7 @@ impl RoomRepository {
         .await?;
 
         match row {
-            Some(row) => Ok(Some(self.row_to_room(row)?)),
+            Some(row) => Ok(Some(Room::from_row(&row)?)),
             None => Ok(None),
         }
     }
@@ -92,13 +90,13 @@ impl RoomRepository {
         .bind(room.id.as_str())
         .bind(&room.name)
         .bind(&room.description)
-        .bind(self.status_to_i16(&room.status))
+        .bind(room.status)
         .bind(room.is_banned)
         .bind(chrono::Utc::now())
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_room(row)
+        Ok(Room::from_row(&row)?)
     }
 
     /// Soft delete room
@@ -205,7 +203,7 @@ impl RoomRepository {
                 .await?
         };
 
-        let rooms: Result<Vec<Room>> = rows.into_iter().map(|row| self.row_to_room(row)).collect();
+        let rooms: Result<Vec<Room>> = rows.into_iter().map(|row| Ok(Room::from_row(&row)?)).collect();
 
         Ok((rooms?, count))
     }
@@ -298,7 +296,7 @@ impl RoomRepository {
             .into_iter()
             .map(|row| {
                 let member_count: i32 = row.try_get("member_count")?;
-                let room = self.row_to_room(row)?;
+                let room = Room::from_row(&row)?;
                 Ok(crate::models::RoomWithCount {
                     room,
                     member_count,
@@ -366,7 +364,7 @@ impl RoomRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let rooms: Result<Vec<Room>> = rows.into_iter().map(|row| self.row_to_room(row)).collect();
+        let rooms: Result<Vec<Room>> = rows.into_iter().map(|row| Ok(Room::from_row(&row)?)).collect();
 
         Ok((rooms?, count))
     }
@@ -415,7 +413,7 @@ impl RoomRepository {
             .into_iter()
             .map(|row| {
                 let member_count: i32 = row.try_get("member_count")?;
-                let room = self.row_to_room(row)?;
+                let room = Room::from_row(&row)?;
                 Ok(crate::models::RoomWithCount {
                     room,
                     member_count,
@@ -426,27 +424,8 @@ impl RoomRepository {
         Ok((rooms_with_count?, count))
     }
 
-    /// Convert database row to Room model
-    fn row_to_room(&self, row: PgRow) -> Result<Room> {
-        let status_i16: i16 = row.try_get("status")?;
-
-        Ok(Room {
-            id: RoomId::from_string(row.try_get("id")?),
-            name: row.try_get("name")?,
-            description: row.try_get("description")?,
-            created_by: UserId::from_string(row.try_get("created_by")?),
-            status: self.i16_to_status(status_i16),
-            is_banned: row.try_get("is_banned")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            deleted_at: row.try_get("deleted_at")?,
-        })
-    }
-
     /// Update room status
     pub async fn update_status(&self, room_id: &RoomId, status: RoomStatus) -> Result<Room> {
-        let status_i16 = self.status_to_i16(&status);
-
         let row = sqlx::query(
             r"
             UPDATE rooms
@@ -455,13 +434,13 @@ impl RoomRepository {
             RETURNING id, name, description, created_by, status, is_banned, created_at, updated_at, deleted_at
             ",
         )
-        .bind(status_i16)
+        .bind(status)
         .bind(room_id.as_str())
         .fetch_one(&self.pool)
         .await
         .map_err(Error::Database)?;
 
-        self.row_to_room(row)
+        Ok(Room::from_row(&row)?)
     }
 
     /// Update room ban status (admin only)
@@ -480,7 +459,7 @@ impl RoomRepository {
         .await
         .map_err(Error::Database)?;
 
-        self.row_to_room(row)
+        Ok(Room::from_row(&row)?)
     }
 
     /// Update room description
@@ -499,28 +478,9 @@ impl RoomRepository {
         .await
         .map_err(Error::Database)?;
 
-        self.row_to_room(row)
+        Ok(Room::from_row(&row)?)
     }
 
-    const fn status_to_i16(&self, status: &RoomStatus) -> i16 {
-        match status {
-            RoomStatus::Active => 1,
-            RoomStatus::Pending => 2,
-            RoomStatus::Closed => 3,
-        }
-    }
-
-    fn i16_to_status(&self, val: i16) -> RoomStatus {
-        match val {
-            1 => RoomStatus::Active,
-            2 => RoomStatus::Pending,
-            3 => RoomStatus::Closed,
-            _ => {
-                tracing::warn!("Unknown room status value: {val}, defaulting to Active");
-                RoomStatus::Active
-            }
-        }
-    }
 }
 
 #[cfg(test)]

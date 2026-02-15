@@ -9,7 +9,7 @@ use serde_json::Value as JsonValue;
 use super::id::{RoomId, UserId, PlaylistId};
 
 /// Playlist (directory/folder)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Playlist {
     pub id: PlaylistId,
     pub room_id: RoomId,

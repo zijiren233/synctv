@@ -80,6 +80,17 @@ async fn extract_user_id(
                 let user_id = validator
                     .validate_and_extract_user_id(token)
                     .map_err(|e| AppError::unauthorized(format!("Invalid token: {e}")))?;
+
+                // Check if token has been revoked (e.g. via logout)
+                if state
+                    .token_blacklist_service
+                    .is_blacklisted(token)
+                    .await
+                    .unwrap_or(false)
+                {
+                    return Err(AppError::unauthorized("Token has been revoked"));
+                }
+
                 return Ok((user_id, AuthMethod::Header));
             }
         }
@@ -104,6 +115,17 @@ async fn extract_user_id(
         let user_id = validator
             .validate_and_extract_user_id(token)
             .map_err(|e| AppError::unauthorized(format!("Invalid token: {e}")))?;
+
+        // Check if token has been revoked (e.g. via logout)
+        if state
+            .token_blacklist_service
+            .is_blacklisted(token)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(AppError::unauthorized("Token has been revoked"));
+        }
+
         return Ok((user_id, AuthMethod::TokenQuery));
     }
 
@@ -235,12 +257,10 @@ async fn handle_socket(
     room_id: String,
     user_id: UserId,
 ) {
-    // Track WebSocket metrics
-    synctv_core::metrics::http::WEBSOCKET_CONNECTIONS_ACTIVE
-        .with_label_values(&[&room_id])
-        .inc();
+    // Track WebSocket metrics (aggregate; per-room stats belong in application dashboards)
+    synctv_core::metrics::http::WEBSOCKET_CONNECTIONS_ACTIVE.inc();
     synctv_core::metrics::http::WEBSOCKET_CONNECTIONS_TOTAL
-        .with_label_values(&[&room_id])
+        .with_label_values(&["success"])
         .inc();
     synctv_core::metrics::http::USERS_ONLINE.inc();
 
@@ -328,9 +348,7 @@ async fn handle_socket(
     }
 
     // Decrement WebSocket metrics on disconnect (always runs, even on error paths)
-    synctv_core::metrics::http::WEBSOCKET_CONNECTIONS_ACTIVE
-        .with_label_values(&[&room_id])
-        .dec();
+    synctv_core::metrics::http::WEBSOCKET_CONNECTIONS_ACTIVE.dec();
     synctv_core::metrics::http::USERS_ONLINE.dec();
 
     info!(

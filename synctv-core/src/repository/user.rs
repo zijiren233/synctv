@@ -1,9 +1,9 @@
 use std::str::FromStr;
 use chrono::Utc;
-use sqlx::{postgres::PgRow, PgPool, Row};
+use sqlx::{PgPool, FromRow};
 
 use crate::{
-    models::{SignupMethod, User, UserId, UserListQuery, UserRole, UserStatus},
+    models::{User, UserId, UserListQuery},
     Error, Result,
 };
 
@@ -30,7 +30,7 @@ impl UserRepository {
     /// Relies on database UNIQUE constraints on `username` and `email` columns
     /// to prevent duplicates atomically (no TOCTOU race condition).
     pub async fn create(&self, user: &User) -> Result<User> {
-        let row = sqlx::query(
+        let u = sqlx::query_as::<_, User>(
             r"
             INSERT INTO users (id, username, email, password_hash, signup_method, role, status, email_verified, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -63,12 +63,12 @@ impl UserRepository {
             _ => Error::Database(e),
         })?;
 
-        self.row_to_user(row)
+        Ok(u)
     }
 
     /// Get user by ID
     pub async fn get_by_id(&self, user_id: &UserId) -> Result<Option<User>> {
-        let row = sqlx::query(
+        let u = sqlx::query_as::<_, User>(
             r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
@@ -79,10 +79,7 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        match row {
-            Some(row) => Ok(Some(self.row_to_user(row)?)),
-            None => Ok(None),
-        }
+        Ok(u)
     }
 
     /// Get multiple users by IDs in a single batch query
@@ -92,7 +89,7 @@ impl UserRepository {
         }
 
         let ids: Vec<&str> = user_ids.iter().map(super::super::models::id::UserId::as_str).collect();
-        let rows = sqlx::query(
+        let users = sqlx::query_as::<_, User>(
             r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
@@ -103,12 +100,12 @@ impl UserRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(|row| self.row_to_user(row)).collect()
+        Ok(users)
     }
 
     /// Get user by username
     pub async fn get_by_username(&self, username: &str) -> Result<Option<User>> {
-        let row = sqlx::query(
+        let u = sqlx::query_as::<_, User>(
             r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
@@ -119,15 +116,12 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        match row {
-            Some(row) => Ok(Some(self.row_to_user(row)?)),
-            None => Ok(None),
-        }
+        Ok(u)
     }
 
     /// Get user by email
     pub async fn get_by_email(&self, email: &str) -> Result<Option<User>> {
-        let row = sqlx::query(
+        let u = sqlx::query_as::<_, User>(
             r"
             SELECT id, username, email, password_hash, signup_method, role, status, created_at, updated_at, deleted_at, email_verified
             FROM users
@@ -138,15 +132,12 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        match row {
-            Some(row) => Ok(Some(self.row_to_user(row)?)),
-            None => Ok(None),
-        }
+        Ok(u)
     }
 
     /// Update user
     pub async fn update(&self, user: &User) -> Result<User> {
-        let row = sqlx::query(
+        let u = sqlx::query_as::<_, User>(
             r"
             UPDATE users
             SET username = $2, email = $3, password_hash = $4, role = $5, status = $6, updated_at = $7
@@ -164,7 +155,7 @@ impl UserRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_user(row)
+        Ok(u)
     }
 
     /// Soft delete user
@@ -186,7 +177,7 @@ impl UserRepository {
 
     /// Update user password
     pub async fn update_password(&self, user_id: &UserId, password_hash: &str) -> Result<User> {
-        let row = sqlx::query(
+        let u = sqlx::query_as::<_, User>(
             r"
             UPDATE users
             SET password_hash = $2, updated_at = $3
@@ -200,12 +191,12 @@ impl UserRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_user(row)
+        Ok(u)
     }
 
     /// Update user email verification status
     pub async fn update_email_verified(&self, user_id: &UserId, email_verified: bool) -> Result<User> {
-        let row = sqlx::query(
+        let u = sqlx::query_as::<_, User>(
             r"
             UPDATE users
             SET email_verified = $2, updated_at = $3
@@ -219,7 +210,7 @@ impl UserRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        self.row_to_user(row)
+        Ok(u)
     }
 
     /// List users with pagination
@@ -315,7 +306,9 @@ impl UserRepository {
         }
         let rows = list_qb.fetch_all(&self.pool).await?;
 
-        let users: Result<Vec<User>> = rows.into_iter().map(|row| self.row_to_user(row)).collect();
+        let users: Result<Vec<User>> = rows.into_iter()
+            .map(|row| Ok(User::from_row(&row)?))
+            .collect();
 
         Ok((users?, count))
     }
@@ -352,30 +345,6 @@ impl UserRepository {
         Ok(count > 0)
     }
 
-    /// Convert database row to User model
-    fn row_to_user(&self, row: PgRow) -> Result<User> {
-        let signup_method_str: Option<String> = row.try_get("signup_method")?;
-        let signup_method = signup_method_str.map(|s| SignupMethod::from_str_name(&s));
-
-        let email_verified: bool = row.try_get("email_verified")?;
-
-        let role: UserRole = row.try_get("role")?;
-        let status: UserStatus = row.try_get("status")?;
-
-        Ok(User {
-            id: UserId::from_string(row.try_get("id")?),
-            username: row.try_get("username")?,
-            email: row.try_get("email")?,
-            password_hash: row.try_get("password_hash")?,
-            signup_method,
-            email_verified,
-            role,
-            status,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            deleted_at: row.try_get("deleted_at")?,
-        })
-    }
 }
 
 #[cfg(test)]

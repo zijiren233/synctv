@@ -44,6 +44,8 @@ ingress:
   className: "nginx"
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
     nginx.ingress.kubernetes.io/proxy-body-size: "500m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
@@ -177,7 +179,7 @@ config:
     host: "postgresql.synctv.svc.cluster.local"
     port: 5432
     name: "synctv"
-    maxConnections: 100
+    maxConnections: 20
     minConnections: 5
     connectTimeoutSeconds: 10
     idleTimeoutSeconds: 600
@@ -327,6 +329,12 @@ metrics:
     interval: "30s"
     scrapeTimeout: ""
     labels: {}
+
+## Alerting (PrometheusRule)
+## Requires metrics.enabled=true and Prometheus Operator CRDs installed
+alerting:
+  enabled: true
+  evaluationInterval: "30s"
 
 ## Network Policy
 networkPolicy:

@@ -4,6 +4,7 @@
 
 use sqlx::PgPool;
 use chrono::{DateTime, Utc};
+use rand::Rng;
 
 use crate::{
     cache::CacheInvalidationService,
@@ -78,6 +79,11 @@ impl std::fmt::Debug for RoomService {
 }
 
 impl RoomService {
+    /// Maximum retry attempts for optimistic lock conflicts on settings updates
+    const MAX_RETRIES: u32 = 3;
+    /// Base backoff in milliseconds (exponential: 5ms, 10ms, 20ms)
+    const BACKOFF_BASE_MS: u64 = 5;
+
     /// Get the playlist service
     #[must_use]
     pub const fn playlist_service(&self) -> &PlaylistService {
@@ -490,7 +496,10 @@ impl RoomService {
         Ok(())
     }
 
-    /// Set room settings
+    /// Set room settings with optimistic locking (CAS).
+    ///
+    /// Uses version-based CAS to prevent concurrent overwrites. Retries
+    /// automatically on version conflicts.
     pub async fn set_settings(
         &self,
         room_id: RoomId,
@@ -512,21 +521,29 @@ impl RoomService {
             .await?
             .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
 
-        // Save settings to room_settings table
-        self.room_settings_repo.set_settings(&room_id, &settings).await?;
+        // CAS write with retry
+        for attempt in 0..Self::MAX_RETRIES {
+            let (_current, version) = self.room_settings_repo.get_with_version(&room_id).await?;
+            match self.room_settings_repo.set_settings_with_version(&room_id, &settings, version).await {
+                Ok(_new_version) => {
+                    // Invalidate permission cache for all room members
+                    self.permission_service.invalidate_room_cache(&room_id).await;
+                    self.notify_room_invalidation(&room_id).await;
+                    let settings_json = serde_json::to_value(&settings)?;
+                    let _ = self.notification_service.notify_settings_updated(&room_id, settings_json).await;
+                    return Ok(room);
+                }
+                Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
+                    let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
 
-        // Invalidate permission cache for all room members (room-level permission
-        // settings like admin/member/guest added/removed affect everyone)
-        self.permission_service.invalidate_room_cache(&room_id).await;
-
-        // Invalidate room cache across all replicas
-        self.notify_room_invalidation(&room_id).await;
-
-        // Notify room members
-        let settings_json = serde_json::to_value(&settings)?;
-        let _ = self.notification_service.notify_settings_updated(&room_id, settings_json).await;
-
-        Ok(room)
+        Err(Error::Internal("Settings update failed after maximum retry attempts".to_string()))
     }
 
     // ========== Query Operations ==========
@@ -556,21 +573,31 @@ impl RoomService {
         self.room_settings_repo.get_batch(room_ids).await
     }
 
-    /// Set room settings (replace entire settings object)
+    /// Set room settings (replace entire settings object) with optimistic locking.
     pub async fn set_room_settings(&self, room_id: &RoomId, settings: &RoomSettings) -> Result<RoomSettings> {
-        self.room_settings_repo.set_settings(room_id, settings).await?;
-        // Return the updated settings
-        self.room_settings_repo.get(room_id).await
+        for attempt in 0..Self::MAX_RETRIES {
+            let (_current, version) = self.room_settings_repo.get_with_version(room_id).await?;
+            match self.room_settings_repo.set_settings_with_version(room_id, settings, version).await {
+                Ok(_new_version) => return Ok(settings.clone()),
+                Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
+                    let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(Error::Internal("Settings update failed after maximum retry attempts".to_string()))
     }
 
     /// Update single room setting by key (requires `UPDATE_ROOM_SETTINGS` permission)
     ///
-    /// The flow is fully generic — no per-setting special cases here:
+    /// The flow is fully generic -- no per-setting special cases here:
     /// 1. Permission check
     /// 2. Registry validates type + value constraints (incl. macro validators)
-    /// 3. Pre-apply hooks check async preconditions (e.g., DB state)
-    /// 4. Transactional update via `set_by_key` (dispatched through dyn trait)
-    /// 5. Post-apply hooks handle side effects (e.g., kick guests)
+    /// 3. CAS (Compare-And-Swap) update with automatic retry on version conflict
+    /// 4. Post-apply hooks handle side effects (e.g., kick guests)
     pub async fn update_room_setting(&self, room_id: &RoomId, user_id: &UserId, key: &str, value: &str) -> Result<String> {
         use crate::models::room_settings::RoomSettingsRegistry;
 
@@ -582,13 +609,30 @@ impl RoomService {
         // 2. Validate via registry (type parsing + value constraints from macro validators)
         RoomSettingsRegistry::validate_setting(key, value)?;
 
-        // 3. Transactional update with FOR UPDATE lock
-        let mut tx = self.pool.begin().await?;
-        let mut settings = self.room_settings_repo.get_for_update(room_id, &mut *tx).await?;
-        settings.set_by_key(key, value)?;
-        settings.validate_permissions()?;
-        self.room_settings_repo.set_settings_with_executor(room_id, &settings, &mut *tx).await?;
-        tx.commit().await?;
+        // 3. CAS update with retry
+        let mut final_settings = None;
+        for attempt in 0..Self::MAX_RETRIES {
+            let (mut settings, version) = self.room_settings_repo.get_with_version(room_id).await?;
+            settings.set_by_key(key, value)?;
+            settings.validate_permissions()?;
+
+            match self.room_settings_repo.set_settings_with_version(room_id, &settings, version).await {
+                Ok(_new_version) => {
+                    final_settings = Some(settings);
+                    break;
+                }
+                Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
+                    let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        let settings = final_settings
+            .ok_or_else(|| Error::Internal("Settings update failed after maximum retry attempts".to_string()))?;
 
         // 4. Post-apply hooks (side effects after commit)
         self.permission_service.invalidate_room_cache(room_id).await;
@@ -620,18 +664,32 @@ impl RoomService {
         }
     }
 
-    /// Reset room settings to default values
+    /// Reset room settings to default values with optimistic locking.
     pub async fn reset_room_settings(&self, room_id: &RoomId, user_id: &UserId) -> Result<String> {
         self.permission_service
             .check_permission(room_id, user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
             .await?;
 
         let default_settings = RoomSettings::default();
-        self.room_settings_repo.set_settings(room_id, &default_settings).await?;
 
-        // Return default settings as JSON string
-        serde_json::to_string(&default_settings)
-            .map_err(|e| Error::Internal(format!("Failed to serialize settings: {e}")))
+        for attempt in 0..Self::MAX_RETRIES {
+            let (_current, version) = self.room_settings_repo.get_with_version(room_id).await?;
+            match self.room_settings_repo.set_settings_with_version(room_id, &default_settings, version).await {
+                Ok(_new_version) => {
+                    return serde_json::to_string(&default_settings)
+                        .map_err(|e| Error::Internal(format!("Failed to serialize settings: {e}")));
+                }
+                Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
+                    let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(Error::Internal("Settings reset failed after maximum retry attempts".to_string()))
     }
 
     /// Check room password
@@ -671,23 +729,72 @@ impl RoomService {
 
     /// Core password update logic: atomically set/remove password hash and sync `require_password`.
     ///
-    /// Runs in a transaction with row-level locking. Does NOT trigger side effects
-    /// (guest kicking, notifications) — callers handle that.
+    /// Uses a transaction for the password hash row (separate key) plus CAS for the
+    /// settings row. Does NOT trigger side effects (guest kicking, notifications) --
+    /// callers handle that.
     async fn do_set_password_hash(&self, room_id: &RoomId, password_hash: Option<String>) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        let mut settings = self.room_settings_repo.get_for_update(room_id, &mut *tx).await?;
+        for attempt in 0..Self::MAX_RETRIES {
+            // Read current settings and version
+            let (mut settings, version) = self.room_settings_repo.get_with_version(room_id).await?;
 
-        if let Some(pwd_hash) = password_hash {
-            self.room_settings_repo.set_with_executor(room_id, "password", &pwd_hash, &mut *tx).await?;
-            settings.require_password = crate::models::room_settings::RequirePassword(true);
-        } else {
-            self.room_settings_repo.delete_with_executor(room_id, "password", &mut *tx).await?;
-            settings.require_password = crate::models::room_settings::RequirePassword(false);
+            // Update password hash in a transaction (separate key row, not version-checked)
+            let mut tx = self.pool.begin().await?;
+            if let Some(ref pwd_hash) = password_hash {
+                self.room_settings_repo.set_with_executor(room_id, "password", pwd_hash, &mut *tx).await?;
+                settings.require_password = crate::models::room_settings::RequirePassword(true);
+            } else {
+                self.room_settings_repo.delete_with_executor(room_id, "password", &mut *tx).await?;
+                settings.require_password = crate::models::room_settings::RequirePassword(false);
+            }
+
+            // CAS update for the _settings row within the same transaction
+            let json_value = serde_json::to_string(&settings)
+                .map_err(|e| Error::Internal(format!("Failed to serialize room settings: {e}")))?;
+
+            let cas_result = if version == 0 {
+                sqlx::query(
+                    r"
+                    INSERT INTO room_settings (room_id, key, value, version)
+                    VALUES ($1, '_settings', $2, 1)
+                    ON CONFLICT (room_id, key) DO NOTHING
+                    RETURNING version
+                    "
+                )
+                .bind(room_id.as_str())
+                .bind(&json_value)
+                .fetch_optional(&mut *tx)
+                .await?
+            } else {
+                sqlx::query(
+                    r"
+                    UPDATE room_settings
+                    SET value = $2, version = version + 1, updated_at = NOW()
+                    WHERE room_id = $1 AND key = '_settings' AND version = $3
+                    RETURNING version
+                    "
+                )
+                .bind(room_id.as_str())
+                .bind(&json_value)
+                .bind(version)
+                .fetch_optional(&mut *tx)
+                .await?
+            };
+
+            if cas_result.is_some() {
+                tx.commit().await?;
+                return Ok(());
+            }
+
+            // Version mismatch -- rollback and retry
+            tx.rollback().await?;
+            if attempt + 1 < Self::MAX_RETRIES {
+                let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
+                let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
+            }
         }
 
-        self.room_settings_repo.set_settings_with_executor(room_id, &settings, &mut *tx).await?;
-        tx.commit().await?;
-        Ok(())
+        Err(Error::Internal("Password update failed after maximum retry attempts".to_string()))
     }
 
     /// Update room description

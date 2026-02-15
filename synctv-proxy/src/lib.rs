@@ -99,6 +99,31 @@ fn apply_provider_headers(
 
 /// Fetch a remote URL and return the response.
 pub async fn proxy_fetch_and_forward(cfg: ProxyConfig<'_>) -> Result<Response, anyhow::Error> {
+    let timer = synctv_core::metrics::stream::STREAM_RELAY_DURATION
+        .with_label_values(&["hls"])
+        .start_timer();
+
+    let result = proxy_fetch_and_forward_inner(cfg).await;
+
+    timer.observe_duration();
+    if let Err(ref e) = result {
+        let error_type = if e.to_string().contains("timeout") {
+            "timeout"
+        } else if e.to_string().contains("connection") {
+            "connection"
+        } else {
+            "other"
+        };
+        synctv_core::metrics::stream::STREAM_ERRORS
+            .with_label_values(&["hls", error_type])
+            .inc();
+    }
+
+    result
+}
+
+/// Inner implementation of proxy fetch, separated for metrics wrapping.
+async fn proxy_fetch_and_forward_inner(cfg: ProxyConfig<'_>) -> Result<Response, anyhow::Error> {
     validate_proxy_url(cfg.url).await?;
 
     let mut request = PROXY_CLIENT.get(cfg.url);
