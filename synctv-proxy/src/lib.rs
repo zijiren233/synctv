@@ -265,26 +265,56 @@ pub async fn proxy_options_preflight() -> impl IntoResponse {
 // M3U8 rewriting helpers
 // ------------------------------------------------------------------
 
+/// Maximum number of URLs that can be rewritten in a single M3U8 playlist.
+/// This prevents abuse via extremely large playlists that could cause memory
+/// exhaustion or excessive proxy traffic.
+const MAX_M3U8_URLS: usize = 1000;
+
 /// Rewrite URLs inside an M3U8 playlist so they proxy through the server.
+///
+/// # Limits
+/// - Maximum 1000 URLs per playlist (prevents abuse)
 fn rewrite_m3u8(m3u8: &str, source_url: &str, proxy_base: &str) -> String {
     let base = url::Url::parse(source_url).ok();
     let mut output = String::with_capacity(m3u8.len());
+    let mut url_count = 0usize;
 
     for line in m3u8.lines() {
         if line.starts_with('#') {
-            let rewritten_line = rewrite_uri_attribute(line, base.as_ref(), proxy_base);
+            let (rewritten_line, count) = rewrite_uri_attribute_with_count(line, base.as_ref(), proxy_base);
+            url_count += count;
             output.push_str(&rewritten_line);
         } else {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 output.push_str(line);
             } else {
+                url_count += 1;
+                if url_count > MAX_M3U8_URLS {
+                    tracing::warn!(
+                        source_url = %source_url,
+                        url_count = url_count,
+                        max = MAX_M3U8_URLS,
+                        "M3U8 playlist exceeded maximum URL limit, truncating"
+                    );
+                    // Still output the line but don't proxy it
+                    output.push_str("# ERROR: Too many URLs in playlist\n");
+                    continue;
+                }
                 let absolute = make_absolute(trimmed, base.as_ref());
                 let proxied = format!("{}?url={}", proxy_base, percent_encode(&absolute));
                 output.push_str(&proxied);
             }
         }
         output.push('\n');
+    }
+
+    if url_count > MAX_M3U8_URLS / 2 {
+        tracing::info!(
+            source_url = %source_url,
+            url_count = url_count,
+            "M3U8 playlist has many URLs"
+        );
     }
 
     output
@@ -304,10 +334,12 @@ fn make_absolute(raw: &str, base: Option<&url::Url>) -> String {
 }
 
 /// Rewrite any `URI="..."` values found in an M3U8 tag line.
-fn rewrite_uri_attribute(line: &str, base: Option<&url::Url>, proxy_base: &str) -> String {
+/// Returns the rewritten line and the count of URLs rewritten.
+fn rewrite_uri_attribute_with_count(line: &str, base: Option<&url::Url>, proxy_base: &str) -> (String, usize) {
     let pattern = "URI=\"";
     let mut result = String::with_capacity(line.len());
     let mut remaining = line;
+    let mut count = 0usize;
 
     while let Some(start) = remaining.find(pattern) {
         result.push_str(&remaining[..start + pattern.len()]);
@@ -320,6 +352,7 @@ fn rewrite_uri_attribute(line: &str, base: Option<&url::Url>, proxy_base: &str) 
             result.push_str(&proxied);
             result.push('"');
             remaining = &remaining[end + 1..];
+            count += 1;
         } else {
             result.push_str(remaining);
             remaining = "";
@@ -327,7 +360,7 @@ fn rewrite_uri_attribute(line: &str, base: Option<&url::Url>, proxy_base: &str) 
     }
 
     result.push_str(remaining);
-    result
+    (result, count)
 }
 
 /// Percent-encode a string for use in URL query parameter values.

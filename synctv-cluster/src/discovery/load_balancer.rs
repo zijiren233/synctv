@@ -101,15 +101,55 @@ impl LoadBalancer {
             LoadBalancingStrategy::LeastConnections => {
                 // Select node with fewest connections based on metadata.
                 // Nodes report connection count in metadata["connections"] via heartbeat.
-                // Nodes without connection metadata are treated as having 0 connections
-                // (useful for newly joined nodes).
+                //
+                // For nodes without connection metadata (newly joined), we use a
+                // warmup penalty to avoid immediately routing traffic to them.
+                // The penalty is based on registered_at timestamp - nodes registered
+                // within the last 60 seconds get a higher effective connection count
+                // to reduce the "thundering herd" problem on new nodes.
+                const WARMUP_PERIOD_SECS: i64 = 60;
+                const WARMUP_PENALTY: usize = 1000; // High value to deprioritize new nodes
+
+                let now = chrono::Utc::now();
+
                 nodes
                     .iter()
                     .min_by_key(|n| {
-                        n.metadata
+                        let connections = n.metadata
                             .get("connections")
-                            .and_then(|v| v.parse::<usize>().ok())
-                            .unwrap_or(0)
+                            .and_then(|v| v.parse::<usize>().ok());
+
+                        match connections {
+                            Some(conn) => conn,
+                            None => {
+                                // Node hasn't reported connections - check if in warmup
+                                let registered_at = n.metadata
+                                    .get("registered_at")
+                                    .and_then(|v| v.parse::<i64>().ok())
+                                    .unwrap_or(0);
+
+                                let age_secs = now.timestamp() - registered_at;
+                                if age_secs < WARMUP_PERIOD_SECS {
+                                    // In warmup period - apply penalty that decreases over time
+                                    let warmup_progress = age_secs as f64 / WARMUP_PERIOD_SECS as f64;
+                                    let penalty = (WARMUP_PENALTY as f64 * (1.0 - warmup_progress)) as usize;
+                                    tracing::trace!(
+                                        node_id = %n.node_id,
+                                        age_secs = age_secs,
+                                        effective_connections = penalty,
+                                        "Node in warmup period"
+                                    );
+                                    penalty
+                                } else {
+                                    // Past warmup but still no connection data - use moderate value
+                                    tracing::debug!(
+                                        node_id = %n.node_id,
+                                        "Node has no connection metadata, using default"
+                                    );
+                                    500 // Moderate default
+                                }
+                            }
+                        }
                     })
                     .ok_or_else(|| Error::NotFound("No nodes available".to_string()))?
                     .node_id

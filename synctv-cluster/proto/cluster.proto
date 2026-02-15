@@ -149,21 +149,21 @@ message ClusterEvent {
     int32 sequence = 4; // Sequence number for ordering
 
     oneof event {
-        PlaybackStateChangedEvent playback_state_changed = 10;
-        UserJoinedRoomEvent user_joined_room = 11;
-        UserLeftRoomEvent user_left_room = 12;
-        RoomCreatedEvent room_created = 13;
-        RoomDeletedEvent room_deleted = 14;
-        RoomSettingsChangedEvent room_settings_changed = 15;
-        ChatMessageEvent chat_message = 16;
-        DanmakuMessageEvent danmaku_message = 17;
-        CacheInvalidateEvent cache_invalidate = 18;
-        MediaAddedEvent media_added = 19;
-        MediaRemovedEvent media_removed = 20;
-        WebRTCSignalingEvent webrtc_signaling = 21;
-        KickPublisherEvent kick_publisher = 22;
-        KickUserEvent kick_user = 23;
-        PermissionChangedEvent permission_changed = 24;
+        PlaybackStateChangedEvent playback_state_changed = 5;
+        UserJoinedRoomEvent user_joined_room = 6;
+        UserLeftRoomEvent user_left_room = 7;
+        RoomCreatedEvent room_created = 8;
+        RoomDeletedEvent room_deleted = 9;
+        RoomSettingsChangedEvent room_settings_changed = 10;
+        ChatMessageEvent chat_message = 11;
+        DanmakuMessageEvent danmaku_message = 12;
+        CacheInvalidateEvent cache_invalidate = 13;
+        MediaAddedEvent media_added = 14;
+        MediaRemovedEvent media_removed = 15;
+        WebRTCSignalingEvent webrtc_signaling = 16;
+        KickPublisherEvent kick_publisher = 17;
+        KickUserEvent kick_user = 18;
+        PermissionChangedEvent permission_changed = 19;
     }
 }
 

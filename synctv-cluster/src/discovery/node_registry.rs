@@ -193,6 +193,8 @@ pub struct NodeRegistry {
     redis_client: Option<redis::Client>,
     /// Cached multiplexed connection, reused across operations
     cached_conn: tokio::sync::Mutex<Option<redis::aio::MultiplexedConnection>>,
+    /// Timestamp of last successful connection health check (Unix seconds)
+    last_health_check: AtomicU64,
     node_id: String,
     pub heartbeat_timeout_secs: i64,
     local_nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
@@ -219,6 +221,7 @@ impl NodeRegistry {
         Ok(Self {
             redis_client,
             cached_conn: tokio::sync::Mutex::new(None),
+            last_health_check: AtomicU64::new(0),
             node_id,
             heartbeat_timeout_secs,
             local_nodes: Arc::new(RwLock::new(HashMap::new())),
@@ -227,15 +230,65 @@ impl NodeRegistry {
         })
     }
 
-    /// Get or create a cached multiplexed Redis connection.
+    /// Get or create a cached multiplexed Redis connection with periodic health checks.
     ///
     /// `MultiplexedConnection` handles concurrent requests internally and
     /// reconnects automatically, so we reuse a single instance.
+    /// Every 30 seconds, we PING the connection to detect stale connections early.
     async fn get_conn(&self, client: &redis::Client) -> Result<redis::aio::MultiplexedConnection> {
+        const HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
+
         let mut guard = self.cached_conn.lock().await;
+
+        // Check if we need to verify connection health
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let last_check = self.last_health_check.load(Ordering::Relaxed);
+        let needs_health_check = now.saturating_sub(last_check) >= HEALTH_CHECK_INTERVAL_SECS;
+
         if let Some(ref conn) = *guard {
-            return Ok(conn.clone());
+            // If we have a cached connection and don't need health check, return it
+            if !needs_health_check {
+                return Ok(conn.clone());
+            }
+
+            // Perform health check with PING command
+            let mut conn_clone = conn.clone();
+            drop(guard); // Release lock during PING to avoid blocking others
+
+            let ping_result = timeout(
+                Duration::from_secs(2),
+                redis::cmd("PING").query_async::<String>(&mut conn_clone),
+            ).await;
+
+            guard = self.cached_conn.lock().await; // Re-acquire lock
+
+            match ping_result {
+                Ok(Ok(_)) => {
+                    // PING succeeded, update health check timestamp
+                    self.last_health_check.store(now, Ordering::Relaxed);
+                    // Connection might have been replaced while we released the lock
+                    if let Some(ref current_conn) = *guard {
+                        return Ok(current_conn.clone());
+                    }
+                    // Connection was cleared, fall through to create new one
+                }
+                Ok(Err(ref e)) => {
+                    // PING failed, clear cache and create new connection
+                    tracing::debug!("Redis connection health check PING failed: {}, reconnecting", e);
+                    *guard = None;
+                }
+                Err(_) => {
+                    // PING timeout, clear cache and create new connection
+                    tracing::debug!("Redis connection health check PING timeout, reconnecting");
+                    *guard = None;
+                }
+            }
         }
+
+        // Create new connection
         let conn = timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
             client.get_multiplexed_async_connection(),
@@ -244,6 +297,7 @@ impl NodeRegistry {
         .map_err(|_| Error::Timeout("Redis connection timed out".to_string()))?
         .map_err(|e| Error::Database(format!("Redis connection failed: {e}")))?;
         *guard = Some(conn.clone());
+        self.last_health_check.store(now, Ordering::Relaxed);
         Ok(conn)
     }
 
@@ -293,6 +347,8 @@ impl NodeRegistry {
             // Create node info template
             let mut node_info = NodeInfo::new(self.node_id.clone(), grpc_address, http_address);
             node_info.metadata.insert("local_epoch".to_string(), local_epoch.to_string());
+            // Record registration timestamp for load balancer warmup logic
+            node_info.metadata.insert("registered_at".to_string(), chrono::Utc::now().timestamp().to_string());
             let node_json = serde_json::to_string(&node_info)
                 .map_err(|e| Error::Serialization(format!("Failed to serialize node info: {e}")))?;
 

@@ -443,10 +443,10 @@ message SetCurrentMediaResponse {
 
 message AddMediaRequest {
     string playlist_id = 1; // Target playlist ID
-    string provider = 3; // Optional, provider type name (e.g., "bilibili", "alist")
-    string provider_instance_name = 4; // Optional, specific provider instance (e.g., "bilibili_main")
-    bytes source_config = 5; // JSON source config (e.g., {"url": "...", "path": "..."})
-    string title = 6; // Optional media title
+    string provider = 2; // Optional, provider type name (e.g., "bilibili", "alist")
+    string provider_instance_name = 3; // Optional, specific provider instance (e.g., "bilibili_main")
+    bytes source_config = 4; // JSON source config (e.g., {"url": "...", "path": "..."})
+    string title = 5; // Optional media title
 }
 
 message AddMediaResponse {
@@ -592,41 +592,40 @@ message GetPlaybackStateResponse {
 
 // Real-time Messaging
 message ClientMessage {
-    reserved 2;
     oneof message {
         ChatMessageSend chat = 1;
-        HeartbeatMessage heartbeat = 3;
+        HeartbeatMessage heartbeat = 2;
         // WebRTC signaling messages (P2P and SFU modes)
-        WebRTCOffer webrtc_offer = 10;
-        WebRTCAnswer webrtc_answer = 11;
-        WebRTCIceCandidate webrtc_ice_candidate = 12;
-        WebRTCJoin webrtc_join = 13;
-        WebRTCLeave webrtc_leave = 14;
+        WebRTCOffer webrtc_offer = 3;
+        WebRTCAnswer webrtc_answer = 4;
+        WebRTCIceCandidate webrtc_ice_candidate = 5;
+        WebRTCJoin webrtc_join = 6;
+        WebRTCLeave webrtc_leave = 7;
     }
 }
 
 message ServerMessage {
     oneof message {
         ChatMessageReceive chat = 1;
-        PlaybackStateChanged playback_state = 3;
-        UserJoinedRoom user_joined = 4;
-        UserLeftRoom user_left = 5;
-        RoomSettingsChanged room_settings = 6;
-        HeartbeatAck heartbeat_ack = 7;
-        ErrorMessage error = 8;
-        MediaAdded media_added = 9;
-        MediaRemoved media_removed = 10;
-        PermissionChanged permission_changed = 11;
-        PlaylistCreated playlist_created = 12;
-        PlaylistUpdated playlist_updated = 13;
-        PlaylistDeleted playlist_deleted = 14;
-        PlayingChanged playing_changed = 15;
+        PlaybackStateChanged playback_state = 2;
+        UserJoinedRoom user_joined = 3;
+        UserLeftRoom user_left = 4;
+        RoomSettingsChanged room_settings = 5;
+        HeartbeatAck heartbeat_ack = 6;
+        ErrorMessage error = 7;
+        MediaAdded media_added = 8;
+        MediaRemoved media_removed = 9;
+        PermissionChanged permission_changed = 10;
+        PlaylistCreated playlist_created = 11;
+        PlaylistUpdated playlist_updated = 12;
+        PlaylistDeleted playlist_deleted = 13;
+        PlayingChanged playing_changed = 14;
         // WebRTC signaling messages (forwarded from other peers)
-        WebRTCOffer webrtc_offer = 20;
-        WebRTCAnswer webrtc_answer = 21;
-        WebRTCIceCandidate webrtc_ice_candidate = 22;
-        WebRTCJoin webrtc_join = 23;
-        WebRTCLeave webrtc_leave = 24;
+        WebRTCOffer webrtc_offer = 15;
+        WebRTCAnswer webrtc_answer = 16;
+        WebRTCIceCandidate webrtc_ice_candidate = 17;
+        WebRTCJoin webrtc_join = 18;
+        WebRTCLeave webrtc_leave = 19;
     }
 }
 

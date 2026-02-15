@@ -166,7 +166,7 @@ pub struct ClusterEvent {
     pub sequence: i32,
     #[prost(
         oneof = "cluster_event::Event",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24"
+        tags = "5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19"
     )]
     pub event: ::core::option::Option<cluster_event::Event>,
 }
@@ -174,35 +174,35 @@ pub struct ClusterEvent {
 pub mod cluster_event {
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Event {
-        #[prost(message, tag = "10")]
+        #[prost(message, tag = "5")]
         PlaybackStateChanged(super::PlaybackStateChangedEvent),
-        #[prost(message, tag = "11")]
+        #[prost(message, tag = "6")]
         UserJoinedRoom(super::UserJoinedRoomEvent),
-        #[prost(message, tag = "12")]
+        #[prost(message, tag = "7")]
         UserLeftRoom(super::UserLeftRoomEvent),
-        #[prost(message, tag = "13")]
+        #[prost(message, tag = "8")]
         RoomCreated(super::RoomCreatedEvent),
-        #[prost(message, tag = "14")]
+        #[prost(message, tag = "9")]
         RoomDeleted(super::RoomDeletedEvent),
-        #[prost(message, tag = "15")]
+        #[prost(message, tag = "10")]
         RoomSettingsChanged(super::RoomSettingsChangedEvent),
-        #[prost(message, tag = "16")]
+        #[prost(message, tag = "11")]
         ChatMessage(super::ChatMessageEvent),
-        #[prost(message, tag = "17")]
+        #[prost(message, tag = "12")]
         DanmakuMessage(super::DanmakuMessageEvent),
-        #[prost(message, tag = "18")]
+        #[prost(message, tag = "13")]
         CacheInvalidate(super::CacheInvalidateEvent),
-        #[prost(message, tag = "19")]
+        #[prost(message, tag = "14")]
         MediaAdded(super::MediaAddedEvent),
-        #[prost(message, tag = "20")]
+        #[prost(message, tag = "15")]
         MediaRemoved(super::MediaRemovedEvent),
-        #[prost(message, tag = "21")]
+        #[prost(message, tag = "16")]
         WebrtcSignaling(super::WebRtcSignalingEvent),
-        #[prost(message, tag = "22")]
+        #[prost(message, tag = "17")]
         KickPublisher(super::KickPublisherEvent),
-        #[prost(message, tag = "23")]
+        #[prost(message, tag = "18")]
         KickUser(super::KickUserEvent),
-        #[prost(message, tag = "24")]
+        #[prost(message, tag = "19")]
         PermissionChanged(super::PermissionChangedEvent),
     }
 }

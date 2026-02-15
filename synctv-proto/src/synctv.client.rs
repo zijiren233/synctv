@@ -524,16 +524,16 @@ pub struct AddMediaRequest {
     #[prost(string, tag = "1")]
     pub playlist_id: ::prost::alloc::string::String,
     /// Optional, provider type name (e.g., "bilibili", "alist")
-    #[prost(string, tag = "3")]
+    #[prost(string, tag = "2")]
     pub provider: ::prost::alloc::string::String,
     /// Optional, specific provider instance (e.g., "bilibili_main")
-    #[prost(string, tag = "4")]
+    #[prost(string, tag = "3")]
     pub provider_instance_name: ::prost::alloc::string::String,
     /// JSON source config (e.g., {"url": "...", "path": "..."})
-    #[prost(bytes = "vec", tag = "5")]
+    #[prost(bytes = "vec", tag = "4")]
     pub source_config: ::prost::alloc::vec::Vec<u8>,
     /// Optional media title
-    #[prost(string, tag = "6")]
+    #[prost(string, tag = "5")]
     pub title: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -771,7 +771,7 @@ pub struct GetPlaybackStateResponse {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClientMessage {
-    #[prost(oneof = "client_message::Message", tags = "1, 3, 10, 11, 12, 13, 14")]
+    #[prost(oneof = "client_message::Message", tags = "1, 2, 3, 4, 5, 6, 7")]
     pub message: ::core::option::Option<client_message::Message>,
 }
 /// Nested message and enum types in `ClientMessage`.
@@ -781,18 +781,18 @@ pub mod client_message {
     pub enum Message {
         #[prost(message, tag = "1")]
         Chat(super::ChatMessageSend),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag = "2")]
         Heartbeat(super::HeartbeatMessage),
         /// WebRTC signaling messages (P2P and SFU modes)
-        #[prost(message, tag = "10")]
+        #[prost(message, tag = "3")]
         WebrtcOffer(super::WebRtcOffer),
-        #[prost(message, tag = "11")]
+        #[prost(message, tag = "4")]
         WebrtcAnswer(super::WebRtcAnswer),
-        #[prost(message, tag = "12")]
+        #[prost(message, tag = "5")]
         WebrtcIceCandidate(super::WebRtcIceCandidate),
-        #[prost(message, tag = "13")]
+        #[prost(message, tag = "6")]
         WebrtcJoin(super::WebRtcJoin),
-        #[prost(message, tag = "14")]
+        #[prost(message, tag = "7")]
         WebrtcLeave(super::WebRtcLeave),
     }
 }
@@ -801,7 +801,7 @@ pub mod client_message {
 pub struct ServerMessage {
     #[prost(
         oneof = "server_message::Message",
-        tags = "1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 21, 22, 23, 24"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19"
     )]
     pub message: ::core::option::Option<server_message::Message>,
 }
@@ -812,42 +812,42 @@ pub mod server_message {
     pub enum Message {
         #[prost(message, tag = "1")]
         Chat(super::ChatMessageReceive),
-        #[prost(message, tag = "3")]
+        #[prost(message, tag = "2")]
         PlaybackState(super::PlaybackStateChanged),
-        #[prost(message, tag = "4")]
+        #[prost(message, tag = "3")]
         UserJoined(super::UserJoinedRoom),
-        #[prost(message, tag = "5")]
+        #[prost(message, tag = "4")]
         UserLeft(super::UserLeftRoom),
-        #[prost(message, tag = "6")]
+        #[prost(message, tag = "5")]
         RoomSettings(super::RoomSettingsChanged),
-        #[prost(message, tag = "7")]
+        #[prost(message, tag = "6")]
         HeartbeatAck(super::HeartbeatAck),
-        #[prost(message, tag = "8")]
+        #[prost(message, tag = "7")]
         Error(super::ErrorMessage),
-        #[prost(message, tag = "9")]
+        #[prost(message, tag = "8")]
         MediaAdded(super::MediaAdded),
-        #[prost(message, tag = "10")]
+        #[prost(message, tag = "9")]
         MediaRemoved(super::MediaRemoved),
-        #[prost(message, tag = "11")]
+        #[prost(message, tag = "10")]
         PermissionChanged(super::PermissionChanged),
-        #[prost(message, tag = "12")]
+        #[prost(message, tag = "11")]
         PlaylistCreated(super::PlaylistCreated),
-        #[prost(message, tag = "13")]
+        #[prost(message, tag = "12")]
         PlaylistUpdated(super::PlaylistUpdated),
-        #[prost(message, tag = "14")]
+        #[prost(message, tag = "13")]
         PlaylistDeleted(super::PlaylistDeleted),
-        #[prost(message, tag = "15")]
+        #[prost(message, tag = "14")]
         PlayingChanged(super::PlayingChanged),
         /// WebRTC signaling messages (forwarded from other peers)
-        #[prost(message, tag = "20")]
+        #[prost(message, tag = "15")]
         WebrtcOffer(super::WebRtcOffer),
-        #[prost(message, tag = "21")]
+        #[prost(message, tag = "16")]
         WebrtcAnswer(super::WebRtcAnswer),
-        #[prost(message, tag = "22")]
+        #[prost(message, tag = "17")]
         WebrtcIceCandidate(super::WebRtcIceCandidate),
-        #[prost(message, tag = "23")]
+        #[prost(message, tag = "18")]
         WebrtcJoin(super::WebRtcJoin),
-        #[prost(message, tag = "24")]
+        #[prost(message, tag = "19")]
         WebrtcLeave(super::WebRtcLeave),
     }
 }
