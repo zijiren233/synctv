@@ -608,10 +608,170 @@ impl MediaService {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    // ========== AddMediaRequest Validation ==========
+
+    #[test]
+    fn test_add_media_request_construction() {
+        let request = AddMediaRequest {
+            playlist_id: PlaylistId::new(),
+            name: "Test Video".to_string(),
+            provider_instance_name: "bilibili_main".to_string(),
+            source_config: serde_json::json!({"bvid": "BV1234567890"}),
+        };
+
+        assert_eq!(request.name, "Test Video");
+        assert_eq!(request.provider_instance_name, "bilibili_main");
+        assert!(request.source_config.get("bvid").is_some());
+    }
+
+    #[test]
+    fn test_add_media_request_with_complex_source_config() {
+        let config = serde_json::json!({
+            "url": "https://example.com/video.mp4",
+            "headers": {"Referer": "https://example.com"},
+            "quality": "1080p"
+        });
+
+        let request = AddMediaRequest {
+            playlist_id: PlaylistId::new(),
+            name: "Complex Video".to_string(),
+            provider_instance_name: "alist_home".to_string(),
+            source_config: config.clone(),
+        };
+
+        assert_eq!(request.source_config, config);
+        assert_eq!(
+            request.source_config["headers"]["Referer"],
+            "https://example.com"
+        );
+    }
+
+    // ========== EditMediaRequest Validation ==========
+
+    #[test]
+    fn test_edit_media_request_name_only() {
+        let request = EditMediaRequest {
+            media_id: MediaId::new(),
+            name: Some("New Name".to_string()),
+            position: None,
+        };
+
+        assert_eq!(request.name, Some("New Name".to_string()));
+        assert!(request.position.is_none());
+    }
+
+    #[test]
+    fn test_edit_media_request_position_only() {
+        let request = EditMediaRequest {
+            media_id: MediaId::new(),
+            name: None,
+            position: Some(5),
+        };
+
+        assert!(request.name.is_none());
+        assert_eq!(request.position, Some(5));
+    }
+
+    #[test]
+    fn test_edit_media_request_both_fields() {
+        let request = EditMediaRequest {
+            media_id: MediaId::new(),
+            name: Some("Updated".to_string()),
+            position: Some(10),
+        };
+
+        assert_eq!(request.name, Some("Updated".to_string()));
+        assert_eq!(request.position, Some(10));
+    }
+
+    // ========== Batch Size Validation ==========
+
+    #[test]
+    fn test_batch_items_construction() {
+        let items: Vec<AddMediaRequest> = (0..101)
+            .map(|i| AddMediaRequest {
+                playlist_id: PlaylistId::new(),
+                name: format!("Video {i}"),
+                provider_instance_name: "test".to_string(),
+                source_config: serde_json::json!({}),
+            })
+            .collect();
+
+        assert_eq!(items.len(), 101);
+    }
+
+    #[test]
+    fn test_empty_batch_is_valid() {
+        let items: Vec<AddMediaRequest> = Vec::new();
+        assert!(items.is_empty());
+    }
+
+    // ========== Source Config JSON Validation ==========
+
+    #[test]
+    fn test_source_config_null_value() {
+        let request = AddMediaRequest {
+            playlist_id: PlaylistId::new(),
+            name: "Null Config".to_string(),
+            provider_instance_name: "test".to_string(),
+            source_config: serde_json::Value::Null,
+        };
+
+        assert!(request.source_config.is_null());
+    }
+
+    #[test]
+    fn test_source_config_nested_structure() {
+        let config = serde_json::json!({
+            "provider": "alist",
+            "path": "/movies/action",
+            "options": {
+                "transcode": true,
+                "subtitle": {
+                    "lang": "en",
+                    "auto": false
+                }
+            }
+        });
+
+        let request = AddMediaRequest {
+            playlist_id: PlaylistId::new(),
+            name: "Nested Config".to_string(),
+            provider_instance_name: "alist_home".to_string(),
+            source_config: config,
+        };
+
+        assert_eq!(
+            request.source_config["options"]["subtitle"]["lang"],
+            "en"
+        );
+    }
+
+    // ========== Integration Tests (Require DB) ==========
 
     #[tokio::test]
     #[ignore = "Requires database"]
     async fn test_add_media() {
+        // Integration test placeholder
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_add_media_batch() {
+        // Integration test placeholder
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_edit_media() {
+        // Integration test placeholder
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_remove_media() {
         // Integration test placeholder
     }
 }

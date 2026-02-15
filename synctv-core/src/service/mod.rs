@@ -48,7 +48,7 @@ pub use token_blacklist::TokenBlacklistService;
 pub use permission::PermissionService;
 pub use member::{MemberService, AddMemberOptions};
 pub use media::MediaService;
-pub use playback::PlaybackService;
+pub use playback::{PlaybackService, PlaybackBroadcaster};
 pub use publish_key::{PublishKeyService, PublishKey};
 pub use notification::{NotificationService, RoomEvent};
 pub use user_notification::UserNotificationService;

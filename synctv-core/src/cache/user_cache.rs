@@ -29,6 +29,20 @@ pub struct CachedUser {
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
+impl CachedUser {
+    /// Create a new `CachedUser`
+    #[must_use]
+    pub fn new(
+        id: String,
+        username: String,
+        role: String,
+        status: String,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
+        Self { id, username, role, status, created_at }
+    }
+}
+
 impl UserCache {
     /// Create a new `UserCache`
     ///
@@ -229,6 +243,16 @@ impl UserCache {
         );
 
         Ok(result)
+    }
+
+    /// Invalidate a specific user's L1 cache entry by ID string
+    ///
+    /// Used by the cross-replica invalidation listener to remove a single
+    /// entry from the local in-memory cache without touching L2 (Redis).
+    pub async fn invalidate_by_id(&self, user_id: &str) {
+        let id = UserId::from_string(user_id.to_string());
+        self.l1_cache.invalidate(&id).await;
+        tracing::debug!(user_id = %user_id, "User L1 cache invalidated by id (cross-replica)");
     }
 
     /// Clear L1 cache (memory only)

@@ -55,6 +55,8 @@ pub struct Services {
     pub publish_key_service: Arc<PublishKeyService>,
     /// User notification service
     pub notification_service: Arc<UserNotificationService>,
+    /// Shared Redis connection (optional, None if Redis not configured)
+    pub redis_conn: Option<redis::aio::ConnectionManager>,
 }
 
 /// Initialize all core services
@@ -229,6 +231,7 @@ pub async fn init_services(
         email_token_service,
         publish_key_service: Arc::new(publish_key_service),
         notification_service: Arc::new(notification_service),
+        redis_conn,
     })
 }
 

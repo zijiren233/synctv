@@ -1,65 +1,95 @@
 //! Cache manager for coordinating multiple cache layers
 //!
-//! Provides a unified interface for managing all cache layers and statistics.
+//! Provides a unified interface for managing all cache layers.
+//! Supports cross-replica cache invalidation via `CacheInvalidationService`.
 
-use super::{user_cache::UserCache, room_cache::RoomCache, CacheConfig, CacheStats};
-use redis::Client;
+use super::{
+    user_cache::UserCache,
+    room_cache::RoomCache,
+    CacheInvalidationService,
+    InvalidationMessage,
+};
 use std::sync::Arc;
-
-use crate::{Error, Result};
+use tokio::sync::broadcast;
+use tracing::{debug, warn};
 
 /// Cache manager that coordinates all cache layers
 #[derive(Clone)]
 pub struct CacheManager {
     pub user_cache: Arc<UserCache>,
     pub room_cache: Arc<RoomCache>,
-    config: CacheConfig,
 }
 
 impl CacheManager {
-    /// Create a new cache manager with Redis support
-    ///
-    /// # Arguments
-    /// * `redis_url` - Optional Redis URL. If None, only L1 (in-memory) caching is used.
-    /// * `config` - Cache configuration
-    pub fn new(redis_url: Option<String>, config: CacheConfig) -> Result<Self> {
-        let redis_client = if let Some(url) = redis_url {
-            Some(
-                Client::open(url)
-                    .map_err(|e| Error::Internal(format!("Failed to connect to Redis: {}", e)))?,
-            )
-        } else {
-            None
-        };
-
-        let l1_ttl_minutes = config.l1_ttl.as_secs() / 60;
-
-        let user_cache = Arc::new(UserCache::new(
-            redis_client.clone(),
-            config.l1_max_capacity as u64,
-            l1_ttl_minutes as u64,
-            config.l2_ttl.as_secs() as u64,
-            format!("{}user:", config.redis_key_prefix),
-        )?);
-
-        let room_cache = Arc::new(RoomCache::new(
-            redis_client,
-            config.l1_max_capacity as u64,
-            l1_ttl_minutes as u64,
-            config.l2_ttl.as_secs() as u64,
-            format!("{}room:", config.redis_key_prefix),
-        )?);
-
-        Ok(Self {
+    /// Create a new cache manager
+    #[must_use]
+    pub fn new(user_cache: Arc<UserCache>, room_cache: Arc<RoomCache>) -> Self {
+        Self {
             user_cache,
             room_cache,
-            config,
-        })
+        }
     }
 
-    /// Create a cache manager with default configuration
-    pub fn with_defaults(redis_url: Option<String>) -> Result<Self> {
-        Self::new(redis_url, CacheConfig::default())
+    /// Start listening for cross-replica cache invalidation messages
+    ///
+    /// Subscribes to `CacheInvalidationService` and dispatches invalidation
+    /// messages to the appropriate cache:
+    /// - `InvalidationMessage::User { user_id }` -> `user_cache.invalidate_by_id()`
+    /// - `InvalidationMessage::Room { room_id }` -> `room_cache.invalidate_by_id()`
+    /// - `InvalidationMessage::All` -> `clear_all_l1()`
+    ///
+    /// Permission-related messages are ignored here (handled by `PermissionService`).
+    pub fn start_invalidation_listener(&self, invalidation_service: &CacheInvalidationService) {
+        let user_cache = self.user_cache.clone();
+        let room_cache = self.room_cache.clone();
+        let mut receiver = invalidation_service.subscribe();
+
+        tokio::spawn(async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(msg) => {
+                        match msg {
+                            InvalidationMessage::User { ref user_id } => {
+                                user_cache.invalidate_by_id(user_id).await;
+                                debug!(
+                                    user_id = %user_id,
+                                    "User cache invalidated (cross-replica)"
+                                );
+                            }
+                            InvalidationMessage::Room { ref room_id } => {
+                                room_cache.invalidate_by_id(room_id).await;
+                                debug!(
+                                    room_id = %room_id,
+                                    "Room cache invalidated (cross-replica)"
+                                );
+                            }
+                            InvalidationMessage::All => {
+                                user_cache.clear_l1().await;
+                                room_cache.clear_l1().await;
+                                debug!("All L1 caches cleared (cross-replica)");
+                            }
+                            // Permission messages are handled by PermissionService;
+                            // PlaybackState messages are handled by PlaybackService
+                            InvalidationMessage::UserPermission { .. }
+                            | InvalidationMessage::RoomPermission { .. }
+                            | InvalidationMessage::PlaybackState { .. } => {}
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        debug!("Cache invalidation channel closed, stopping CacheManager listener");
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(
+                            lagged_messages = n,
+                            "CacheManager invalidation listener lagged, flushing all L1 caches"
+                        );
+                        user_cache.clear_l1().await;
+                        room_cache.clear_l1().await;
+                    }
+                }
+            }
+        });
     }
 
     /// Clear all L1 caches (memory only)
@@ -71,87 +101,151 @@ impl CacheManager {
         self.room_cache.clear_l1().await;
         tracing::debug!("All L1 caches cleared");
     }
-
-    /// Get aggregated cache statistics
-    pub async fn aggregated_stats(&self) -> AggregatedCacheStats {
-        let user_stats = self.user_cache.stats().await;
-        let room_stats = self.room_cache.stats().await;
-
-        let total_hits = user_stats.l1_hit_count + room_stats.l1_hit_count;
-        let total_misses = user_stats.l1_miss_count + room_stats.l1_miss_count;
-        let total_entries = user_stats.l1_size + room_stats.l1_size;
-        let total_capacity = 2 * self.config.l1_max_capacity as u64;
-
-        let hit_rate = if total_hits + total_misses > 0 {
-            total_hits as f64 / (total_hits + total_misses) as f64
-        } else {
-            0.0
-        };
-
-        AggregatedCacheStats {
-            total_entries,
-            total_capacity,
-            hit_rate,
-            user_stats,
-            room_stats,
-        }
-    }
-
-    /// Get cache configuration
-    pub fn config(&self) -> &CacheConfig {
-        &self.config
-    }
 }
 
 impl std::fmt::Debug for CacheManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CacheManager")
-            .field("config", &self.config)
-            .finish()
+        f.debug_struct("CacheManager").finish()
     }
-}
-
-/// Aggregated cache statistics across all cache types
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AggregatedCacheStats {
-    /// Total number of entries across all L1 caches
-    pub total_entries: u64,
-    /// Total capacity across all L1 caches
-    pub total_capacity: u64,
-    /// Overall cache hit rate (L1 only)
-    pub hit_rate: f64,
-    /// User cache statistics
-    pub user_stats: super::user_cache::UserCacheStats,
-    /// Room cache statistics
-    pub room_stats: super::room_cache::RoomCacheStats,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn make_caches() -> (Arc<UserCache>, Arc<RoomCache>) {
+        let user_cache = Arc::new(
+            UserCache::new(None, 100, 5, 0, "test:user:".to_string()).unwrap(),
+        );
+        let room_cache = Arc::new(
+            RoomCache::new(None, 100, 5, 0, "test:room:".to_string()).unwrap(),
+        );
+        (user_cache, room_cache)
+    }
+
     #[tokio::test]
     async fn test_cache_manager_creation() {
-        let manager = CacheManager::with_defaults(None).unwrap();
-        assert_eq!(manager.config().l1_max_capacity, 10_000);
+        let (user_cache, room_cache) = make_caches();
+        let _manager = CacheManager::new(user_cache, room_cache);
     }
 
     #[tokio::test]
     async fn test_clear_all_l1() {
-        let manager = CacheManager::with_defaults(None).unwrap();
-
+        let (user_cache, room_cache) = make_caches();
+        let manager = CacheManager::new(user_cache, room_cache);
         // This should not panic
         manager.clear_all_l1().await;
     }
 
     #[tokio::test]
-    async fn test_aggregated_stats() {
-        let manager = CacheManager::with_defaults(None).unwrap();
-        let stats = manager.aggregated_stats().await;
+    async fn test_invalidation_listener_user() {
+        let (user_cache, room_cache) = make_caches();
+        let manager = CacheManager::new(user_cache.clone(), room_cache.clone());
 
-        // Should have zero entries initially
-        assert_eq!(stats.total_entries, 0);
-        assert_eq!(stats.total_capacity, 20_000);
-        assert_eq!(stats.hit_rate, 0.0);
+        let service = CacheInvalidationService::new(None, "test-node".to_string());
+        manager.start_invalidation_listener(&service);
+
+        // Insert a user into L1 cache
+        let user_id = crate::models::UserId::from_string("u1".to_string());
+        let cached_user = crate::cache::user_cache::CachedUser::new(
+            "u1".to_string(),
+            "alice".to_string(),
+            "user".to_string(),
+            "active".to_string(),
+            chrono::Utc::now(),
+        );
+        user_cache.set(&user_id, cached_user).await.unwrap();
+        assert!(user_cache.get(&user_id).await.unwrap().is_some());
+
+        // Broadcast invalidation (all nodes including local)
+        service
+            .broadcast_all(InvalidationMessage::User {
+                user_id: "u1".to_string(),
+            })
+            .await
+            .unwrap();
+
+        // Give the spawned task time to process
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // L1 entry should be gone
+        assert!(user_cache.get(&user_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_invalidation_listener_room() {
+        let (user_cache, room_cache) = make_caches();
+        let manager = CacheManager::new(user_cache.clone(), room_cache.clone());
+
+        let service = CacheInvalidationService::new(None, "test-node".to_string());
+        manager.start_invalidation_listener(&service);
+
+        // Insert a room into L1 cache
+        let room_id = crate::models::RoomId("r1".to_string());
+        let cached_room = crate::cache::room_cache::CachedRoom::new(
+            "r1".to_string(),
+            "Test Room".to_string(),
+            "u1".to_string(),
+            true,
+            chrono::Utc::now(),
+        );
+        room_cache.set(&room_id, cached_room).await.unwrap();
+        assert!(room_cache.get(&room_id).await.unwrap().is_some());
+
+        // Broadcast invalidation (all nodes including local)
+        service
+            .broadcast_all(InvalidationMessage::Room {
+                room_id: "r1".to_string(),
+            })
+            .await
+            .unwrap();
+
+        // Give the spawned task time to process
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // L1 entry should be gone
+        assert!(room_cache.get(&room_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_invalidation_listener_all() {
+        let (user_cache, room_cache) = make_caches();
+        let manager = CacheManager::new(user_cache.clone(), room_cache.clone());
+
+        let service = CacheInvalidationService::new(None, "test-node".to_string());
+        manager.start_invalidation_listener(&service);
+
+        // Insert entries
+        let user_id = crate::models::UserId::from_string("u1".to_string());
+        let cached_user = crate::cache::user_cache::CachedUser::new(
+            "u1".to_string(),
+            "alice".to_string(),
+            "user".to_string(),
+            "active".to_string(),
+            chrono::Utc::now(),
+        );
+        user_cache.set(&user_id, cached_user).await.unwrap();
+
+        let room_id = crate::models::RoomId("r1".to_string());
+        let cached_room = crate::cache::room_cache::CachedRoom::new(
+            "r1".to_string(),
+            "Test Room".to_string(),
+            "u1".to_string(),
+            true,
+            chrono::Utc::now(),
+        );
+        room_cache.set(&room_id, cached_room).await.unwrap();
+
+        // Broadcast All invalidation
+        service
+            .broadcast_all(InvalidationMessage::All)
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Both L1 entries should be gone
+        assert!(user_cache.get(&user_id).await.unwrap().is_none());
+        assert!(room_cache.get(&room_id).await.unwrap().is_none());
     }
 }

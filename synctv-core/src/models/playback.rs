@@ -31,66 +31,40 @@ impl RoomPlaybackState {
             version: 0,
         }
     }
-
-    pub fn play(&mut self) {
-        self.is_playing = true;
-        self.updated_at = Utc::now();
-        self.version += 1;
-    }
-
-    pub fn pause(&mut self) {
-        self.is_playing = false;
-        self.updated_at = Utc::now();
-        self.version += 1;
-    }
-
-    pub fn seek(&mut self, current_time: f64) {
-        self.current_time = current_time;
-        self.updated_at = Utc::now();
-        self.version += 1;
-    }
-
-    pub fn change_speed(&mut self, speed: f64) {
-        self.speed = speed;
-        self.updated_at = Utc::now();
-        self.version += 1;
-    }
-
-    pub fn switch_media(
-        &mut self,
-        media_id: MediaId,
-        playlist_id: Option<PlaylistId>,
-        media_path: String,
-    ) {
-        self.playing_media_id = Some(media_id);
-        self.playing_playlist_id = playlist_id;
-        self.relative_path = media_path;
-        self.current_time = 0.0;
-        self.is_playing = false;
-        self.updated_at = Utc::now();
-        self.version += 1;
-    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaybackControlRequest {
-    pub room_id: RoomId,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeekRequest {
-    pub room_id: RoomId,
-    pub current_time: f64,
-}
+    #[test]
+    fn test_playback_state_new() {
+        let room_id = RoomId::from_string("test_room_01".to_string());
+        let state = RoomPlaybackState::new(room_id.clone());
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChangeSpeedRequest {
-    pub room_id: RoomId,
-    pub speed: f64,
-}
+        assert_eq!(state.room_id, room_id);
+        assert!(state.playing_media_id.is_none());
+        assert!(state.playing_playlist_id.is_none());
+        assert!(state.relative_path.is_empty());
+        assert!((state.current_time - 0.0).abs() < f64::EPSILON);
+        assert!((state.speed - 1.0).abs() < f64::EPSILON);
+        assert!(!state.is_playing);
+        assert_eq!(state.version, 0);
+    }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SwitchMediaRequest {
-    pub room_id: RoomId,
-    pub media_id: MediaId,
+    #[test]
+    fn test_playback_state_serialization_roundtrip() {
+        let room_id = RoomId::from_string("test_room_02".to_string());
+        let state = RoomPlaybackState::new(room_id);
+
+        let json = serde_json::to_string(&state).expect("serialize");
+        let deserialized: RoomPlaybackState =
+            serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(deserialized.room_id, state.room_id);
+        assert!((deserialized.current_time - state.current_time).abs() < f64::EPSILON);
+        assert!((deserialized.speed - state.speed).abs() < f64::EPSILON);
+        assert_eq!(deserialized.is_playing, state.is_playing);
+        assert_eq!(deserialized.version, state.version);
+    }
 }

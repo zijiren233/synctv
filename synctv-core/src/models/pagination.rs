@@ -52,8 +52,7 @@ impl PageParams {
         let page = page.unwrap_or(MIN_PAGE).max(MIN_PAGE);
         let page_size = page_size
             .unwrap_or(DEFAULT_PAGE_SIZE)
-            .min(MAX_PAGE_SIZE)
-            .max(1); // At least 1 item per page
+            .clamp(1, MAX_PAGE_SIZE);
 
         Self { page, page_size }
     }

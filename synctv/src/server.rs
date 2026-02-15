@@ -59,6 +59,8 @@ pub struct Services {
     pub node_registry: Option<Arc<synctv_cluster::discovery::NodeRegistry>>,
     pub health_monitor: Option<Arc<synctv_cluster::discovery::HealthMonitor>>,
     pub load_balancer: Option<Arc<synctv_cluster::discovery::LoadBalancer>>,
+    /// Shared Redis connection for playback caching
+    pub redis_conn: Option<redis::aio::ConnectionManager>,
 }
 
 /// `SyncTV` server - manages all server components
@@ -431,6 +433,7 @@ impl SyncTvServer {
                 sfu_manager,
                 rate_limiter: self.services.rate_limiter.clone(),
                 ws_ticket_service,
+                redis_conn: self.services.redis_conn.clone(),
             },
         );
 

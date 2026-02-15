@@ -495,6 +495,29 @@ impl SfuManager {
     }
 }
 
+impl Drop for SfuManager {
+    fn drop(&mut self) {
+        // Cancel all background tasks (cleanup + stats collection)
+        self.cancel_token.cancel();
+
+        // Abort background task handles to prevent leaked spawned tasks
+        for handle in self.background_tasks.lock().drain(..) {
+            handle.abort();
+        }
+
+        // Clear rooms (SfuRoom's Drop handles forwarding task cleanup)
+        let room_count = self.rooms.len();
+        self.rooms.clear();
+
+        if room_count > 0 {
+            info!(
+                room_count,
+                "SfuManager dropped, cleaned up all rooms"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

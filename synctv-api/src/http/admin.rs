@@ -54,7 +54,7 @@ async fn validate_auth_user(parts: &mut Parts, app_state: &AppState) -> Result<c
 
     crate::impls::admin::validate_admin_auth(&app_state.user_service, user_id, claims.iat)
         .await
-        .map_err(|e| AppError::unauthorized(e))
+        .map_err(AppError::unauthorized)
 }
 
 /// Authenticated admin user (admin or root role required)

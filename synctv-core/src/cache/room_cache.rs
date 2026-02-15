@@ -29,6 +29,20 @@ pub struct CachedRoom {
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
+impl CachedRoom {
+    /// Create a new `CachedRoom`
+    #[must_use]
+    pub fn new(
+        id: String,
+        name: String,
+        owner_id: String,
+        is_public: bool,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
+        Self { id, name, owner_id, is_public, created_at }
+    }
+}
+
 impl RoomCache {
     /// Create a new `RoomCache`
     ///
@@ -228,6 +242,16 @@ impl RoomCache {
         );
 
         Ok(result)
+    }
+
+    /// Invalidate a specific room's L1 cache entry by ID string
+    ///
+    /// Used by the cross-replica invalidation listener to remove a single
+    /// entry from the local in-memory cache without touching L2 (Redis).
+    pub async fn invalidate_by_id(&self, room_id: &str) {
+        let id = RoomId(room_id.to_string());
+        self.l1_cache.invalidate(&id).await;
+        tracing::debug!(room_id = %room_id, "Room L1 cache invalidated by id (cross-replica)");
     }
 
     /// Clear L1 cache (memory only)

@@ -9,22 +9,62 @@ To learn more about the release, try:
 
 SyncTV is starting up with {{ .Values.replicaCount }} replicas.
 
-Services:
-  - HTTP API: {{ .Values.config.server.httpPort }}
-  - gRPC API: {{ .Values.config.server.grpcPort }}
-  - RTMP Ingest: {{ .Values.config.livestream.rtmpPort }}
+## Check pod status
+
+  $ kubectl get pods -l "app.kubernetes.io/name={{ include "synctv.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -n {{ .Release.Namespace }}
+
+## Get the application URL
 
 {{- if .Values.ingress.enabled }}
-
-Ingress:
+Ingress is enabled. Access the application at:
 {{- range .Values.ingress.hosts }}
-  - https://{{ .host }}
+  https://{{ .host }}
 {{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "synctv.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "HTTP API: http://$NODE_IP:$NODE_PORT"
+{{- else if contains "LoadBalancer" .Values.service.type }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  Watch status with:
+    kubectl get svc --namespace {{ .Release.Namespace }} -w {{ include "synctv.fullname" . }}
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "synctv.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo "HTTP API: http://$SERVICE_IP:{{ .Values.config.server.httpPort }}"
+  echo "gRPC API: $SERVICE_IP:{{ .Values.config.server.grpcPort }}"
+  echo "RTMP Ingest: rtmp://$SERVICE_IP:{{ .Values.config.livestream.rtmpPort }}"
+{{- else }}
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "synctv.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME {{ .Values.config.server.httpPort }}:{{ .Values.config.server.httpPort }}
+  echo "HTTP API: http://127.0.0.1:{{ .Values.config.server.httpPort }}"
 {{- end }}
+
+## Services
+
+  - HTTP API:    port {{ .Values.config.server.httpPort }}
+  - gRPC API:    port {{ .Values.config.server.grpcPort }}
+  - RTMP Ingest: port {{ .Values.config.livestream.rtmpPort }}
+{{- if .Values.config.webrtc.enableBuiltinStun }}
+  - STUN (UDP):  port {{ .Values.config.webrtc.stunPort }}
+{{- end }}
+
+## Connection info
+
+  - Database: {{ .Values.config.database.host }}:{{ .Values.config.database.port }}/{{ .Values.config.database.name }}
+  - Redis:    {{ .Values.config.redis.host }}:{{ .Values.config.redis.port }}
 
 {{- if .Values.autoscaling.enabled }}
 
-Autoscaling: Enabled (min: {{ .Values.autoscaling.minReplicas }}, max: {{ .Values.autoscaling.maxReplicas }})
+## Autoscaling
+
+  Enabled (min: {{ .Values.autoscaling.minReplicas }}, max: {{ .Values.autoscaling.maxReplicas }})
+{{- end }}
+
+{{- if .Values.headlessService.enabled }}
+
+## Cluster discovery
+
+  Mode: {{ .Values.config.cluster.discoveryMode | default "redis" }}
+  Headless service: {{ include "synctv.fullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local
 {{- end }}
 
 IMPORTANT: Remember to update the secrets in production!

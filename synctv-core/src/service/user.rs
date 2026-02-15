@@ -2,8 +2,10 @@ use sqlx::PgPool;
 use chrono::Utc;
 use std::collections::HashMap;
 
+use std::sync::Arc;
+
 use crate::{
-    cache::UsernameCache,
+    cache::{CacheInvalidationService, UsernameCache},
     models::{User, UserId, SignupMethod},
     models::oauth2_client::OAuth2Provider,
     repository::UserRepository,
@@ -19,6 +21,8 @@ pub struct UserService {
     jwt_service: JwtService,
     blacklist_service: TokenBlacklistService,
     username_cache: UsernameCache,
+    /// Optional cache invalidation service for cross-replica user cache sync
+    cache_invalidation: Option<Arc<CacheInvalidationService>>,
 }
 
 impl std::fmt::Debug for UserService {
@@ -30,7 +34,7 @@ impl std::fmt::Debug for UserService {
 }
 
 impl UserService {
-    #[must_use] 
+    #[must_use]
     pub const fn new(
         pool: PgPool,
         jwt_service: JwtService,
@@ -42,7 +46,13 @@ impl UserService {
             jwt_service,
             blacklist_service,
             username_cache,
+            cache_invalidation: None,
         }
+    }
+
+    /// Set the cache invalidation service for cross-replica user cache sync
+    pub fn set_cache_invalidation(&mut self, service: Arc<CacheInvalidationService>) {
+        self.cache_invalidation = Some(service);
     }
 
     /// Register a new user
@@ -187,7 +197,9 @@ impl UserService {
 
     /// Update user (entire user object)
     pub async fn update_user(&self, user: &User) -> Result<User> {
-        self.repository.update(user).await
+        let updated = self.repository.update(user).await?;
+        self.notify_user_invalidation(&user.id).await;
+        Ok(updated)
     }
 
     /// Change user password (requires old password verification)
@@ -249,6 +261,9 @@ impl UserService {
         // Update password in database (only reached if token invalidation succeeded)
         let updated_user = self.repository.update_password(user_id, &password_hash).await?;
 
+        // Invalidate user cache across all replicas
+        self.notify_user_invalidation(user_id).await;
+
         tracing::info!("Password updated for user {}", user_id.as_str());
 
         Ok(updated_user)
@@ -257,6 +272,9 @@ impl UserService {
     /// Set user email verification status
     pub async fn set_email_verified(&self, user_id: &UserId, email_verified: bool) -> Result<User> {
         let updated_user = self.repository.update_email_verified(user_id, email_verified).await?;
+
+        // Invalidate user cache across all replicas
+        self.notify_user_invalidation(user_id).await;
 
         tracing::info!(
             "Email verification status set to {} for user {}",
@@ -520,6 +538,22 @@ impl UserService {
 
         Ok(())
     }
+
+    /// Broadcast a user cache invalidation message to other replicas.
+    ///
+    /// Best-effort: logs a warning on failure but does not propagate the error,
+    /// since cache invalidation is not critical to the mutation itself.
+    async fn notify_user_invalidation(&self, user_id: &UserId) {
+        if let Some(ref service) = self.cache_invalidation {
+            if let Err(e) = service.invalidate_user(user_id).await {
+                tracing::warn!(
+                    error = %e,
+                    user_id = %user_id.as_str(),
+                    "Failed to broadcast user cache invalidation"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -561,5 +595,183 @@ mod tests {
         assert!(service.validate_password("short").is_err()); // Too short
         assert!(service.validate_password("password123").is_err()); // No uppercase
         assert!(service.validate_password(&"a".repeat(129)).is_err()); // Too long
+    }
+
+    // ========== Username Validation Edge Cases ==========
+
+    #[tokio::test]
+    async fn test_validate_username_empty() {
+        let service = create_test_service();
+        assert!(service.validate_username("").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_username_exact_min_length() {
+        let service = create_test_service();
+        assert!(service.validate_username("abc").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_username_exact_max_length() {
+        let service = create_test_service();
+        assert!(service.validate_username(&"a".repeat(50)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_username_starts_with_underscore() {
+        let service = create_test_service();
+        assert!(service.validate_username("_username").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_username_starts_with_hyphen() {
+        let service = create_test_service();
+        assert!(service.validate_username("-username").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_username_special_chars() {
+        let service = create_test_service();
+        assert!(service.validate_username("user@name").is_err());
+        assert!(service.validate_username("user name").is_err());
+        assert!(service.validate_username("user.name").is_err());
+        assert!(service.validate_username("user!name").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_username_alphanumeric_with_underscores_hyphens() {
+        let service = create_test_service();
+        assert!(service.validate_username("user_name-123").is_ok());
+        assert!(service.validate_username("User123").is_ok());
+        assert!(service.validate_username("a-b-c").is_ok());
+        assert!(service.validate_username("a_b_c").is_ok());
+    }
+
+    // ========== Email Validation ==========
+
+    #[tokio::test]
+    async fn test_validate_email_valid() {
+        let service = create_test_service();
+        assert!(service.validate_email("user@example.com").is_ok());
+        assert!(service.validate_email("user.name@example.co.uk").is_ok());
+        assert!(service.validate_email("user+tag@example.com").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_email_invalid() {
+        let service = create_test_service();
+        assert!(service.validate_email("notanemail").is_err());
+        assert!(service.validate_email("@example.com").is_err());
+        assert!(service.validate_email("user@").is_err());
+        assert!(service.validate_email("user@example").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_email_empty() {
+        let service = create_test_service();
+        assert!(service.validate_email("").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_email_whitespace_trimmed() {
+        let service = create_test_service();
+        assert!(service.validate_email("  user@example.com  ").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_email_only_whitespace() {
+        let service = create_test_service();
+        assert!(service.validate_email("   ").is_err());
+    }
+
+    // ========== Password Validation Edge Cases ==========
+
+    #[tokio::test]
+    async fn test_validate_password_empty() {
+        let service = create_test_service();
+        assert!(service.validate_password("").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_password_no_lowercase() {
+        let service = create_test_service();
+        assert!(service.validate_password("PASSWORD123").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_password_no_digit() {
+        let service = create_test_service();
+        assert!(service.validate_password("Passworddd").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_password_exact_min_length() {
+        let service = create_test_service();
+        assert!(service.validate_password("Abcdefg1").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_password_one_below_min() {
+        let service = create_test_service();
+        assert!(service.validate_password("Abcdef1").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_password_exact_max_length() {
+        let service = create_test_service();
+        let pwd = "A".to_string() + &"a".repeat(63) + &"1".repeat(64);
+        assert_eq!(pwd.len(), 128);
+        assert!(service.validate_password(&pwd).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_password_over_max_length() {
+        let service = create_test_service();
+        let pwd = "A".to_string() + &"a".repeat(64) + &"1".repeat(64);
+        assert_eq!(pwd.len(), 129);
+        assert!(service.validate_password(&pwd).is_err());
+    }
+
+    // ========== Error Type Validation ==========
+
+    #[tokio::test]
+    async fn test_validate_username_returns_invalid_input_error() {
+        let service = create_test_service();
+        let err = service.validate_username("ab").unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn test_validate_email_returns_invalid_input_error() {
+        let service = create_test_service();
+        let err = service.validate_email("notanemail").unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn test_validate_password_returns_invalid_input_error() {
+        let service = create_test_service();
+        let err = service.validate_password("short").unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    // ========== Integration Tests (Require DB) ==========
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_register_user() {
+        // Integration test placeholder
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_login_user() {
+        // Integration test placeholder
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_refresh_token() {
+        // Integration test placeholder
     }
 }

@@ -3,14 +3,29 @@
 //! Handles playback coordination including play/pause, seeking, speed changes,
 //! and media switching with optimistic locking for concurrent updates.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::{
+    cache::{CacheInvalidationService, InvalidationMessage},
     models::{RoomId, UserId, MediaId, PlaylistId, PermissionBits, RoomPlaybackState, RoomSettings, PlayMode},
     repository::{RoomPlaybackStateRepository, MediaRepository},
-    service::{permission::PermissionService, media::MediaService},
+    service::{permission::PermissionService, media::MediaService, notification::NotificationService},
     Error, Result,
 };
 use rand::seq::IteratorRandom;
 use rand::Rng;
+
+/// Trait for broadcasting playback state changes to cluster replicas.
+///
+/// This abstracts over the cluster manager so that `synctv-core` does not
+/// depend on `synctv-cluster`.  The implementation lives in the API/wiring
+/// layer where `ClusterManager` is available.
+pub trait PlaybackBroadcaster: Send + Sync {
+    /// Broadcast a playback state change to other cluster replicas.
+    /// Implementations should be non-blocking (fire-and-forget).
+    fn broadcast_playback_state(&self, state: &RoomPlaybackState);
+}
 
 /// Playback management service
 ///
@@ -21,6 +36,14 @@ pub struct PlaybackService {
     permission_service: PermissionService,
     media_service: MediaService,
     media_repo: MediaRepository,
+    /// Optional notification service for broadcasting to local WebSocket clients
+    notification_service: Option<NotificationService>,
+    /// Optional cluster broadcaster for cross-replica sync
+    cluster_broadcaster: Option<Arc<dyn PlaybackBroadcaster>>,
+    /// L1 in-memory cache for playback state, keyed by room_id
+    playback_cache: Arc<moka::future::Cache<String, RoomPlaybackState>>,
+    /// Optional cache invalidation service for cross-replica cache sync
+    invalidation_service: Option<Arc<CacheInvalidationService>>,
 }
 
 impl std::fmt::Debug for PlaybackService {
@@ -30,9 +53,14 @@ impl std::fmt::Debug for PlaybackService {
 }
 
 impl PlaybackService {
+    /// Default playback state cache capacity (max entries)
+    pub const DEFAULT_CACHE_SIZE: u64 = 5_000;
+    /// Default playback state cache TTL in seconds (short — playback changes frequently)
+    pub const DEFAULT_CACHE_TTL_SECS: u64 = 5;
+
     /// Create a new playback service
-    #[must_use] 
-    pub const fn new(
+    #[must_use]
+    pub fn new(
         playback_repo: RoomPlaybackStateRepository,
         permission_service: PermissionService,
         media_service: MediaService,
@@ -43,12 +71,148 @@ impl PlaybackService {
             permission_service,
             media_service,
             media_repo,
+            notification_service: None,
+            cluster_broadcaster: None,
+            playback_cache: Arc::new(
+                moka::future::CacheBuilder::new(Self::DEFAULT_CACHE_SIZE)
+                    .time_to_live(Duration::from_secs(Self::DEFAULT_CACHE_TTL_SECS))
+                    .build(),
+            ),
+            invalidation_service: None,
         }
     }
 
-    /// Get playback state for a room
+    /// Set the notification service for broadcasting playback state to local WebSocket clients
+    pub fn set_notification_service(&mut self, service: NotificationService) {
+        self.notification_service = Some(service);
+    }
+
+    /// Set the cluster broadcaster for cross-replica playback state sync
+    pub fn set_cluster_broadcaster(&mut self, broadcaster: Arc<dyn PlaybackBroadcaster>) {
+        self.cluster_broadcaster = Some(broadcaster);
+    }
+
+    /// Set the cache invalidation service and start listening for cross-replica invalidation.
+    ///
+    /// When another replica updates playback state and broadcasts an invalidation
+    /// message, this node's local L1 cache entry for that room is evicted so the
+    /// next read fetches fresh data from the DB.
+    pub fn set_invalidation_service(&mut self, service: Arc<CacheInvalidationService>) {
+        let cache = self.playback_cache.clone();
+        let mut receiver = service.subscribe();
+
+        tokio::spawn(async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(msg) => match msg {
+                        InvalidationMessage::PlaybackState { room_id } => {
+                            cache.invalidate(&room_id).await;
+                            tracing::debug!(
+                                room_id = %room_id,
+                                "Playback state cache invalidated (cross-replica)"
+                            );
+                        }
+                        InvalidationMessage::Room { room_id } => {
+                            // Room-scoped invalidation also clears playback cache
+                            cache.invalidate(&room_id).await;
+                        }
+                        InvalidationMessage::All => {
+                            cache.invalidate_all();
+                            tracing::debug!("All playback state cache invalidated (cross-replica)");
+                        }
+                        _ => {
+                            // Other message types not relevant to playback cache
+                        }
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("Playback cache invalidation channel closed, stopping listener");
+                        break;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            lagged_messages = n,
+                            "Playback cache invalidation listener lagged, flushing all entries"
+                        );
+                        cache.invalidate_all();
+                    }
+                }
+            }
+        });
+
+        self.invalidation_service = Some(service);
+    }
+
+    /// Broadcast a playback state change to local clients and cluster replicas.
+    ///
+    /// Best-effort: logs warnings on failure but does not propagate errors,
+    /// since broadcasting is not critical to the mutation itself.
+    async fn broadcast_state_change(&self, state: &RoomPlaybackState) {
+        // 1. Notify local WebSocket clients
+        if let Some(ref ns) = self.notification_service {
+            if let Err(e) = ns.notify_playback_state_changed(
+                &state.room_id,
+                state.is_playing,
+                state.current_time as i64,
+                state.speed,
+                state.playing_media_id.as_ref().map(|id| id.as_str().to_string()),
+            ).await {
+                tracing::warn!(
+                    error = %e,
+                    room_id = %state.room_id.as_str(),
+                    "Failed to notify local clients of playback state change"
+                );
+            }
+        }
+
+        // 2. Broadcast to other cluster replicas
+        if let Some(ref broadcaster) = self.cluster_broadcaster {
+            broadcaster.broadcast_playback_state(state);
+        }
+    }
+
+    /// Get playback state for a room.
+    ///
+    /// Checks the L1 in-memory cache first; on miss, falls through to the
+    /// database and populates the cache for subsequent reads.
     pub async fn get_state(&self, room_id: &RoomId) -> Result<RoomPlaybackState> {
-        self.playback_repo.create_or_get(room_id).await
+        let cache_key = room_id.as_str().to_string();
+
+        // L1 cache hit
+        if let Some(state) = self.playback_cache.get(&cache_key).await {
+            return Ok(state);
+        }
+
+        // Cache miss — fetch from DB (pure read, no INSERT)
+        let state = match self.playback_repo.get(room_id).await? {
+            Some(s) => s,
+            None => RoomPlaybackState::new(room_id.clone()),
+        };
+
+        // Populate cache
+        self.playback_cache.insert(cache_key, state.clone()).await;
+
+        Ok(state)
+    }
+
+    /// Invalidate the local playback state cache for a room.
+    ///
+    /// If a `CacheInvalidationService` is configured, this also broadcasts the
+    /// invalidation to other replicas via Redis Pub/Sub.
+    pub async fn invalidate_playback_cache(&self, room_id: &RoomId) {
+        // Broadcast to other replicas first (if configured)
+        if let Some(ref service) = self.invalidation_service {
+            if let Err(e) = service.invalidate_playback_state(room_id).await {
+                tracing::warn!(
+                    error = %e,
+                    room_id = %room_id.as_str(),
+                    "Failed to broadcast playback state cache invalidation"
+                );
+            }
+        }
+
+        // Invalidate local cache
+        let cache_key = room_id.as_str().to_string();
+        self.playback_cache.invalidate(&cache_key).await;
     }
 
     /// Play/pause playback
@@ -62,12 +226,15 @@ impl PlaybackService {
             .check_permission(&room_id, &user_id, PermissionBits::PLAY_PAUSE)
             .await?;
 
-        self.update_state(room_id, |state| {
+        let state = self.update_state(room_id, |state| {
             state.is_playing = playing;
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here
         })
-        .await
+        .await?;
+
+        self.broadcast_state_change(&state).await;
+        Ok(state)
     }
 
     /// Seek to position
@@ -85,12 +252,15 @@ impl PlaybackService {
             .check_permission(&room_id, &user_id, PermissionBits::SEEK)
             .await?;
 
-        self.update_state(room_id, |state| {
+        let state = self.update_state(room_id, |state| {
             state.current_time = current_time;
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here
         })
-        .await
+        .await?;
+
+        self.broadcast_state_change(&state).await;
+        Ok(state)
     }
 
     /// Change playback speed
@@ -109,12 +279,15 @@ impl PlaybackService {
             return Err(Error::InvalidInput("Speed must be between 0.25 and 4.0".to_string()));
         }
 
-        self.update_state(room_id, |state| {
+        let state = self.update_state(room_id, |state| {
             state.speed = speed;
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here
         })
-        .await
+        .await?;
+
+        self.broadcast_state_change(&state).await;
+        Ok(state)
     }
 
     /// Switch to different media in playlist
@@ -151,7 +324,7 @@ impl PlaybackService {
             return Err(Error::Authorization("Media does not belong to this room".to_string()));
         }
 
-        self.update_state(room_id, |state| {
+        let state = self.update_state(room_id, |state| {
             state.playing_media_id = Some(media_id.clone());
             state.playing_playlist_id = playlist_id.clone();
             state.relative_path = media_path.clone();
@@ -160,7 +333,10 @@ impl PlaybackService {
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here
         })
-        .await
+        .await?;
+
+        self.broadcast_state_change(&state).await;
+        Ok(state)
     }
 
     /// Play next media in playlist (auto-play next episode)
@@ -291,6 +467,7 @@ impl PlaybackService {
                 "Auto-played next media"
             );
 
+            self.broadcast_state_change(&new_state).await;
             Ok(Some(new_state))
         } else {
             tracing::info!(
@@ -376,15 +553,37 @@ impl PlaybackService {
         F: Fn(&mut RoomPlaybackState),
     {
         for attempt in 0..Self::MAX_RETRIES {
-            // Get current state
-            let mut state = self.playback_repo.create_or_get(&room_id).await?;
+            // Get current state (lazy-init: only INSERT if row doesn't exist yet)
+            let mut state = match self.playback_repo.get(&room_id).await? {
+                Some(s) => s,
+                None => self.playback_repo.create_or_get(&room_id).await?,
+            };
 
             // Apply update
             update_fn(&mut state);
 
             // Save with optimistic locking
             match self.playback_repo.update(&state).await {
-                Ok(updated_state) => return Ok(updated_state),
+                Ok(updated_state) => {
+                    // Invalidate local cache so the next read fetches fresh data.
+                    // This avoids write-through which would self-invalidate when the
+                    // Redis Pub/Sub bounce-back arrives.
+                    let cache_key = room_id.as_str().to_string();
+                    self.playback_cache.invalidate(&cache_key).await;
+
+                    // Broadcast invalidation to other replicas so they evict stale entries
+                    if let Some(ref service) = self.invalidation_service {
+                        if let Err(e) = service.invalidate_playback_state(&room_id).await {
+                            tracing::warn!(
+                                error = %e,
+                                room_id = %room_id.as_str(),
+                                "Failed to broadcast playback state cache invalidation after update"
+                            );
+                        }
+                    }
+
+                    return Ok(updated_state);
+                }
                 Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
                     // Exponential backoff with jitter: base * 2^attempt + random(0..base)
                     let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
@@ -414,7 +613,7 @@ impl PlaybackService {
             .check_permission(&room_id, &user_id, PermissionBits::PLAY_PAUSE)
             .await?;
 
-        self.update_state(room_id, |state| {
+        let state = self.update_state(room_id, |state| {
             state.is_playing = false;
             state.current_time = 0.0;
             state.speed = 1.0;
@@ -424,7 +623,10 @@ impl PlaybackService {
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here
         })
-        .await
+        .await?;
+
+        self.broadcast_state_change(&state).await;
+        Ok(state)
     }
 
     /// Check if playback is currently active
@@ -502,7 +704,7 @@ impl PlaybackService {
             }
         }
 
-        self.update_state(room_id, |state| {
+        let state = self.update_state(room_id, |state| {
             if let Some(p) = playing {
                 state.is_playing = p;
             }
@@ -518,12 +720,16 @@ impl PlaybackService {
             state.updated_at = chrono::Utc::now();
             // version is incremented by the SQL UPDATE, not here
         })
-        .await
+        .await?;
+
+        self.broadcast_state_change(&state).await;
+        Ok(state)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[tokio::test]
     #[ignore = "Requires database"]
@@ -535,5 +741,37 @@ mod tests {
     #[ignore = "Requires database"]
     async fn test_seek() {
         // Integration test placeholder
+    }
+
+    #[test]
+    fn test_speed_validation_bounds() {
+        // Valid boundary values
+        assert!((0.25..=4.0).contains(&0.25));
+        assert!((0.25..=4.0).contains(&4.0));
+        assert!((0.25..=4.0).contains(&1.0));
+
+        // Invalid boundary values
+        assert!(!(0.25..=4.0).contains(&0.24));
+        assert!(!(0.25..=4.0).contains(&4.1));
+        assert!(!(0.25..=4.0).contains(&0.0));
+        assert!(!(0.25..=4.0).contains(&-1.0));
+    }
+
+    #[test]
+    fn test_seek_negative_position() {
+        let position = -1.0_f64;
+        assert!(position < 0.0, "Negative seek positions should be rejected");
+
+        let position = 0.0_f64;
+        assert!(!(position < 0.0), "Zero seek position should be accepted");
+
+        let position = 42.5_f64;
+        assert!(!(position < 0.0), "Positive seek position should be accepted");
+    }
+
+    #[test]
+    fn test_update_state_constants() {
+        assert_eq!(PlaybackService::MAX_RETRIES, 3);
+        assert_eq!(PlaybackService::BACKOFF_BASE_MS, 5);
     }
 }

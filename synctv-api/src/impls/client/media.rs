@@ -69,8 +69,30 @@ impl ClientApiImpl {
         let media_id_str = req.media_id.clone();
         let mid = synctv_core::models::MediaId::from_string(req.media_id);
 
+        // Fetch media before deletion so we can invalidate its playback cache
+        let media = self.room_service.media_service()
+            .get_media(&mid).await
+            .ok()
+            .flatten();
+
         self.room_service.remove_media(rid, uid, mid).await
             .map_err(|e| e.to_string())?;
+
+        // Invalidate playback cache (best-effort)
+        if let (Some(media), Some(pm)) = (&media, self.providers_manager.as_ref()) {
+            if !media.is_direct() {
+                let instance_name = media.provider_instance_name
+                    .as_deref()
+                    .unwrap_or(&media.source_provider);
+                if let Some(provider) = pm.get(instance_name).await {
+                    crate::http::provider_common::invalidate_playback_cache(
+                        provider.as_ref(),
+                        &media.source_config,
+                        self.redis_conn.as_ref(),
+                    ).await;
+                }
+            }
+        }
 
         // Kick active stream for deleted media (local + cluster-wide)
         self.kick_stream_cluster(room_id, &media_id_str, "media_deleted");
@@ -118,10 +140,25 @@ impl ClientApiImpl {
             .await
             .map_err(|e| e.to_string())?;
 
+        // Fetch all media before deletion for cache invalidation
+        let media_items = self.room_service
+            .get_playlist(&rid)
+            .await
+            .unwrap_or_default();
+
         let deleted_count = self.room_service
             .clear_playlist(rid, uid)
             .await
             .map_err(|e| format!("Failed to clear playlist: {e}"))?;
+
+        // Invalidate playback cache for cleared media (best-effort)
+        if let Some(pm) = self.providers_manager.as_ref() {
+            crate::http::provider_common::invalidate_playback_cache_batch(
+                &media_items,
+                pm,
+                self.redis_conn.as_ref(),
+            ).await;
+        }
 
         Ok(crate::proto::client::ClearPlaylistResponse {
             success: true,
@@ -202,11 +239,31 @@ impl ClientApiImpl {
             .map(synctv_core::models::MediaId::from_string)
             .collect();
 
+        // Fetch media items before deletion for cache invalidation
+        let media_items: Vec<synctv_core::models::Media> = {
+            let mut items = Vec::with_capacity(mids.len());
+            for mid in &mids {
+                if let Ok(Some(m)) = self.room_service.media_service().get_media(mid).await {
+                    items.push(m);
+                }
+            }
+            items
+        };
+
         let deleted_count = self.room_service
             .media_service()
             .remove_media_batch(rid, uid, mids)
             .await
             .map_err(|e| e.to_string())?;
+
+        // Invalidate playback cache for deleted media (best-effort)
+        if let Some(pm) = self.providers_manager.as_ref() {
+            crate::http::provider_common::invalidate_playback_cache_batch(
+                &media_items,
+                pm,
+                self.redis_conn.as_ref(),
+            ).await;
+        }
 
         // Kick active streams for deleted media (local + cluster-wide)
         for media_id in &media_id_strings {
@@ -456,10 +513,14 @@ impl ClientApiImpl {
             .with_user_id(user_id)
             .with_room_id(room_id);
 
-        let result = provider
-            .generate_playback(&ctx, &media.source_config)
-            .await
-            .map_err(|e| format!("generate_playback failed: {e}"))?;
+        let result = crate::http::provider_common::cached_generate_playback(
+            provider.as_ref(),
+            &ctx,
+            &media.source_config,
+            self.redis_conn.as_ref(),
+        )
+        .await
+        .map_err(|e| format!("generate_playback failed: {e}"))?;
 
         // 4. Check movie_proxy setting
         let movie_proxy = self.settings_registry.as_ref()

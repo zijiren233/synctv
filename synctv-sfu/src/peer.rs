@@ -15,6 +15,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
+use tracing::debug;
 
 /// Maximum number of samples to retain in the bandwidth estimator.
 /// This prevents unbounded memory growth under high packet rates.
@@ -214,6 +215,18 @@ impl SfuPeer {
     /// Reset statistics
     pub fn reset_stats(&self) {
         *self.stats.write() = PeerStats::default();
+    }
+}
+
+impl Drop for SfuPeer {
+    fn drop(&mut self) {
+        debug!(
+            peer_id = %self.id,
+            bandwidth_kbps = self.bandwidth_estimator.read().get_current(),
+            "SfuPeer dropped"
+        );
+        // The mpsc::Sender (packet_tx) is dropped here, which closes the channel
+        // and signals the output task to stop reading. No explicit cleanup needed.
     }
 }
 

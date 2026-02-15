@@ -176,7 +176,15 @@ impl SfuRoom {
             .collect();
 
         for track_id in tracks_to_remove {
-            self.remove_published_track(peer_id, &track_id).await?;
+            if let Err(e) = self.remove_published_track(peer_id, &track_id).await {
+                warn!(
+                    room_id = %self.id,
+                    peer_id = %peer_id,
+                    track_id = %track_id,
+                    error = %e,
+                    "Failed to remove published track during peer cleanup, continuing"
+                );
+            }
         }
 
         // Remove all subscriptions by this peer
@@ -188,7 +196,15 @@ impl SfuRoom {
             .collect();
 
         for (sub_peer_id, track_id) in subs_to_remove {
-            self.unsubscribe_track(&sub_peer_id, &track_id).await?;
+            if let Err(e) = self.unsubscribe_track(&sub_peer_id, &track_id).await {
+                warn!(
+                    room_id = %self.id,
+                    peer_id = %peer_id,
+                    track_id = %track_id,
+                    error = %e,
+                    "Failed to remove subscription during peer cleanup, continuing"
+                );
+            }
         }
 
         // Update statistics
@@ -634,15 +650,43 @@ impl SfuRoom {
 
 impl Drop for SfuRoom {
     fn drop(&mut self) {
+        let task_count = self.forwarding_tasks.len();
+        let peer_count = self.peers.len();
+        let track_count = self.published_tracks.len();
+        let sub_count = self.subscriptions.len();
+
         // Abort all forwarding tasks to prevent leaked spawned tasks
         for entry in &self.forwarding_tasks {
             entry.value().abort();
         }
-        debug!(
-            room_id = %self.id,
-            task_count = self.forwarding_tasks.len(),
-            "Room dropped, aborted all forwarding tasks"
-        );
+
+        // Deactivate all media tracks so their RTP reader tasks are cancelled
+        for entry in &self.published_tracks {
+            let (_, track) = entry.value();
+            track.deactivate();
+        }
+
+        // Clear all state
+        self.forwarding_tasks.clear();
+        self.subscriptions.clear();
+        self.published_tracks.clear();
+        self.peers.clear();
+
+        if task_count > 0 || peer_count > 0 {
+            info!(
+                room_id = %self.id,
+                task_count,
+                peer_count,
+                track_count,
+                sub_count,
+                "Room dropped, cleaned up all resources"
+            );
+        } else {
+            debug!(
+                room_id = %self.id,
+                "Room dropped (was already empty)"
+            );
+        }
     }
 }
 

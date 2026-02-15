@@ -29,9 +29,7 @@ pub use oauth2_client::{
     OAuth2Provider, OAuth2UserInfo,
 };
 pub use permission::{PermissionBits, Role as RoomRole};
-pub use playback::{
-    ChangeSpeedRequest, PlaybackControlRequest, RoomPlaybackState, SeekRequest, SwitchMediaRequest,
-};
+pub use playback::RoomPlaybackState;
 pub use playlist::{Playlist, PlaylistWithCount, CreatePlaylistRequest, UpdatePlaylistRequest};
 pub use provider_instance::{ProviderCredential, ProviderInstance, UserProviderCredential};
 pub use room::{

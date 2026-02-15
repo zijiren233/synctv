@@ -31,6 +31,7 @@ pub struct DnsPeer {
 ///
 /// Resolves the headless service DNS name to discover peer pod IPs,
 /// then constructs gRPC/HTTP addresses using configured ports.
+#[derive(Clone)]
 pub struct K8sDnsDiscovery {
     /// Headless service DNS name (e.g., "synctv-headless.default.svc.cluster.local")
     dns_name: String,
@@ -195,60 +196,19 @@ impl K8sDnsDiscovery {
         &self,
         interval_secs: u64,
     ) -> tokio::task::JoinHandle<()> {
-        let dns_name = self.dns_name.clone();
-        let grpc_port = self.grpc_port;
-        let http_port = self.http_port;
-        let self_ip = self.self_ip.clone();
-        let peers = self.peers.clone();
-        let cancel_token = self.cancel_token.clone();
+        let this = self.clone();
 
         tokio::spawn(async move {
             let mut timer = interval(Duration::from_secs(interval_secs));
 
             loop {
                 tokio::select! {
-                    () = cancel_token.cancelled() => {
+                    () = this.cancel_token.cancelled() => {
                         tracing::info!("K8s DNS discovery refresh loop shutting down");
                         return;
                     }
                     _ = timer.tick() => {
-                        let lookup_addr = format!("{}:{}", dns_name, grpc_port);
-                        let result = tokio::net::lookup_host(&lookup_addr).await;
-                        match result {
-                            Ok(addrs) => {
-                                let mut new_peers = Vec::new();
-                                let mut seen_ips = std::collections::HashSet::new();
-
-                                for addr in addrs {
-                                    let ip = addr.ip().to_string();
-                                    if ip == self_ip {
-                                        continue;
-                                    }
-                                    if !seen_ips.insert(ip.clone()) {
-                                        continue;
-                                    }
-                                    new_peers.push(DnsPeer {
-                                        ip: ip.clone(),
-                                        grpc_address: format!("{}:{}", ip, grpc_port),
-                                        http_address: format!("{}:{}", ip, http_port),
-                                    });
-                                }
-
-                                let count = new_peers.len();
-                                let mut cached = peers.write().await;
-                                *cached = new_peers;
-                                tracing::debug!(
-                                    peer_count = count,
-                                    "K8s DNS discovery refreshed"
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    "K8s DNS refresh failed, keeping cached peers"
-                                );
-                            }
-                        }
+                        let _ = this.refresh().await;
                     }
                 }
             }

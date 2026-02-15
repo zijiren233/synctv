@@ -13,6 +13,7 @@ use super::{
 };
 use crate::service::RemoteProviderManager;
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -186,6 +187,9 @@ impl MediaProvider for AlistProvider {
                         task.template_name.clone()
                     };
 
+                    // Alist transcoded URLs typically valid for ~15 minutes
+                    let task_expires_at = Some(Utc::now().timestamp() + 15 * 60);
+
                     playback_infos.insert(
                         format!("transcoded_{quality_name}"),
                         PlaybackInfo {
@@ -202,7 +206,7 @@ impl MediaProvider for AlistProvider {
                                     format: "srt".to_string(),
                                 })
                                 .collect(),
-                            expires_at: None,
+                            expires_at: task_expires_at,
                         },
                     );
                 }
@@ -220,6 +224,9 @@ impl MediaProvider for AlistProvider {
 
         // Always add direct URL (raw_url) as fallback
         if !file_info.raw_url.is_empty() {
+            // Alist direct URLs typically valid for ~15 minutes
+            let direct_expires_at = Some(Utc::now().timestamp() + 15 * 60);
+
             playback_infos.insert(
                 "direct".to_string(),
                 PlaybackInfo {
@@ -227,7 +234,7 @@ impl MediaProvider for AlistProvider {
                     format: Self::detect_format(&file_info.name),
                     headers: HashMap::new(),
                     subtitles: Vec::new(),
-                    expires_at: None,
+                    expires_at: direct_expires_at,
                 },
             );
         }

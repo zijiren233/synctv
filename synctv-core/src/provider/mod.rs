@@ -57,3 +57,4 @@ pub fn parse_source_config<T: serde::de::DeserializeOwned>(
         ProviderError::InvalidConfig(format!("Failed to parse {provider_name} source config: {e}"))
     })
 }
+

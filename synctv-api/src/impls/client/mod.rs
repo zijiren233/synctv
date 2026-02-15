@@ -93,6 +93,8 @@ pub struct ClientApiImpl {
     pub providers_manager: Option<Arc<synctv_core::service::ProvidersManager>>,
     pub settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
     pub redis_publish_tx: Option<tokio::sync::mpsc::Sender<synctv_cluster::sync::PublishRequest>>,
+    /// Shared Redis connection for playback caching
+    pub redis_conn: Option<redis::aio::ConnectionManager>,
 }
 
 impl ClientApiImpl {
@@ -125,6 +127,7 @@ impl ClientApiImpl {
             providers_manager,
             settings_registry,
             redis_publish_tx: None,
+            redis_conn: None,
         }
     }
 
@@ -143,6 +146,7 @@ impl ClientApiImpl {
             providers_manager: config.providers_manager,
             settings_registry: config.settings_registry,
             redis_publish_tx: None,
+            redis_conn: None,
         }
     }
 
@@ -150,6 +154,13 @@ impl ClientApiImpl {
     #[must_use]
     pub fn with_redis_publish_tx(mut self, tx: Option<tokio::sync::mpsc::Sender<synctv_cluster::sync::PublishRequest>>) -> Self {
         self.redis_publish_tx = tx;
+        self
+    }
+
+    /// Set the Redis connection for playback caching
+    #[must_use]
+    pub fn with_redis_conn(mut self, conn: Option<redis::aio::ConnectionManager>) -> Self {
+        self.redis_conn = conn;
         self
     }
 

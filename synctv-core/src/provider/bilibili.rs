@@ -10,6 +10,7 @@ use super::{
     PlaybackInfo, PlaybackResult, ProviderContext, ProviderError, SubtitleTrack,
 };
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -320,6 +321,9 @@ impl MediaProvider for BilibiliProvider {
                 metadata.insert("aid".to_string(), json!(aid));
                 metadata.insert("cid".to_string(), json!(cid));
 
+                // Bilibili CDN URLs are typically valid for ~2 hours
+                let expires_at = Some(Utc::now().timestamp() + 2 * 3600);
+
                 // Keep a "dash" PlaybackInfo with headers for proxy layer
                 let mut playback_infos = HashMap::new();
                 playback_infos.insert(
@@ -329,7 +333,7 @@ impl MediaProvider for BilibiliProvider {
                         format: "mpd".to_string(),
                         headers: bilibili_headers(),
                         subtitles,
-                        expires_at: None,
+                        expires_at,
                     },
                 );
 
@@ -367,6 +371,9 @@ impl MediaProvider for BilibiliProvider {
                 metadata.insert("epid".to_string(), json!(epid));
                 metadata.insert("cid".to_string(), json!(cid));
 
+                // Bilibili CDN URLs are typically valid for ~2 hours
+                let expires_at = Some(Utc::now().timestamp() + 2 * 3600);
+
                 let mut playback_infos = HashMap::new();
                 playback_infos.insert(
                     "dash".to_string(),
@@ -375,7 +382,7 @@ impl MediaProvider for BilibiliProvider {
                         format: "mpd".to_string(),
                         headers: bilibili_headers(),
                         subtitles: Vec::new(),
-                        expires_at: None,
+                        expires_at,
                     },
                 );
 
@@ -402,6 +409,8 @@ impl MediaProvider for BilibiliProvider {
                 let mut playback_infos = HashMap::new();
                 let mut metadata = HashMap::new();
 
+                let live_expires_at = Some(Utc::now().timestamp() + 120);
+
                 for stream in live_resp.live_streams {
                     let quality_name = if stream.desc.is_empty() {
                         format!("quality_{}", stream.quality)
@@ -422,7 +431,7 @@ impl MediaProvider for BilibiliProvider {
                                 h
                             },
                             subtitles: Vec::new(),
-                            expires_at: None,
+                            expires_at: live_expires_at,
                         },
                     );
                 }

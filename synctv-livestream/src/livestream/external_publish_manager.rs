@@ -307,6 +307,32 @@ impl ExternalPublishStream {
     }
 }
 
+impl Drop for ExternalPublishStream {
+    fn drop(&mut self) {
+        // Send UnPublish to StreamHub so the local stream entry is removed.
+        let stream_name = format!("{}/{}", self.room_id, self.media_id);
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name,
+        };
+        if let Err(e) = self
+            .stream_hub_event_sender
+            .try_send(StreamHubEvent::UnPublish { identifier })
+        {
+            warn!(
+                "ExternalPublishStream drop: failed to send UnPublish for {}/{}: {}",
+                self.room_id, self.media_id, e
+            );
+        }
+
+        debug!(
+            "ExternalPublishStream dropped for {}/{}",
+            self.room_id, self.media_id
+        );
+        // StreamLifecycle's Drop will abort the task handle
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -203,3 +203,33 @@ impl PullStream {
         self.lifecycle.restore_running();
     }
 }
+
+impl Drop for PullStream {
+    fn drop(&mut self) {
+        // Cancel the puller task gracefully via token
+        self.cancel_token.cancel();
+
+        // Send UnPublish to StreamHub so the local stream entry is removed.
+        // Best-effort: if the channel is full or closed, we log and move on.
+        let stream_name = format!("{}/{}", self.room_id, self.media_id);
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: "live".to_string(),
+            stream_name,
+        };
+        if let Err(e) = self
+            .stream_hub_event_sender
+            .try_send(StreamHubEvent::UnPublish { identifier })
+        {
+            warn!(
+                "PullStream drop: failed to send UnPublish for {}/{}: {}",
+                self.room_id, self.media_id, e
+            );
+        }
+
+        debug!(
+            "PullStream dropped for {}/{}",
+            self.room_id, self.media_id
+        );
+        // StreamLifecycle's Drop will abort the task handle
+    }
+}

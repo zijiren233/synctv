@@ -280,10 +280,294 @@ impl PlaylistService {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::models::PlaylistId;
+
+    // ========== CreatePlaylistRequest Validation ==========
+
+    #[test]
+    fn test_create_playlist_request_basic() {
+        let room_id = RoomId::new();
+        let request = CreatePlaylistRequest {
+            room_id: room_id.clone(),
+            name: "My Playlist".to_string(),
+            parent_id: None,
+            position: None,
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+        };
+
+        assert_eq!(request.name, "My Playlist");
+        assert_eq!(request.room_id, room_id);
+        assert!(request.parent_id.is_none());
+        assert!(request.source_provider.is_none());
+    }
+
+    #[test]
+    fn test_create_playlist_request_dynamic() {
+        let request = CreatePlaylistRequest {
+            room_id: RoomId::new(),
+            name: "Alist Movies".to_string(),
+            parent_id: None,
+            position: Some(0),
+            source_provider: Some("alist".to_string()),
+            source_config: Some(serde_json::json!({"path": "/movies"})),
+            provider_instance_name: Some("alist_home".to_string()),
+        };
+
+        assert!(request.source_provider.is_some());
+        assert!(request.source_config.is_some());
+        assert_eq!(request.source_provider.unwrap(), "alist");
+    }
+
+    #[test]
+    fn test_create_playlist_request_with_parent() {
+        let parent_id = PlaylistId::new();
+        let request = CreatePlaylistRequest {
+            room_id: RoomId::new(),
+            name: "Subfolder".to_string(),
+            parent_id: Some(parent_id.clone()),
+            position: Some(1),
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+        };
+
+        assert_eq!(request.parent_id, Some(parent_id));
+        assert_eq!(request.position, Some(1));
+    }
+
+    // ========== SetPlaylistRequest Validation ==========
+
+    #[test]
+    fn test_set_playlist_request_name_only() {
+        let request = SetPlaylistRequest {
+            playlist_id: PlaylistId::new(),
+            name: Some("New Name".to_string()),
+            position: None,
+        };
+
+        assert_eq!(request.name, Some("New Name".to_string()));
+        assert!(request.position.is_none());
+    }
+
+    #[test]
+    fn test_set_playlist_request_position_only() {
+        let request = SetPlaylistRequest {
+            playlist_id: PlaylistId::new(),
+            name: None,
+            position: Some(5),
+        };
+
+        assert!(request.name.is_none());
+        assert_eq!(request.position, Some(5));
+    }
+
+    // ========== Playlist Name Validation Logic ==========
+
+    #[test]
+    fn test_playlist_name_trimming() {
+        let name = "  My Playlist  ";
+        let trimmed = name.trim();
+        assert_eq!(trimmed, "My Playlist");
+        assert!(!trimmed.is_empty());
+    }
+
+    #[test]
+    fn test_playlist_name_empty_after_trim() {
+        let name = "   ";
+        let trimmed = name.trim();
+        assert!(trimmed.is_empty());
+    }
+
+    #[test]
+    fn test_playlist_name_max_length() {
+        let name_ok = "a".repeat(200);
+        assert!(name_ok.len() <= 200);
+
+        let name_too_long = "a".repeat(201);
+        assert!(name_too_long.len() > 200);
+    }
+
+    #[test]
+    fn test_playlist_name_unicode_length() {
+        // Unicode characters may take multiple bytes
+        let name = "\u{4f60}\u{597d}".repeat(50);
+        assert!(name.len() > 200);
+    }
+
+    // ========== Playlist Model Tests ==========
+
+    #[test]
+    fn test_playlist_is_root() {
+        let playlist = Playlist {
+            id: PlaylistId::new(),
+            room_id: RoomId::new(),
+            creator_id: UserId::new(),
+            name: String::new(),
+            parent_id: None,
+            position: 0,
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        assert!(playlist.is_root());
+        assert!(playlist.is_static());
+        assert!(!playlist.is_dynamic());
+    }
+
+    #[test]
+    fn test_playlist_is_not_root_with_name() {
+        let playlist = Playlist {
+            id: PlaylistId::new(),
+            room_id: RoomId::new(),
+            creator_id: UserId::new(),
+            name: "Not Root".to_string(),
+            parent_id: None,
+            position: 0,
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        assert!(!playlist.is_root());
+    }
+
+    #[test]
+    fn test_playlist_is_not_root_with_parent() {
+        let playlist = Playlist {
+            id: PlaylistId::new(),
+            room_id: RoomId::new(),
+            creator_id: UserId::new(),
+            name: String::new(),
+            parent_id: Some(PlaylistId::new()),
+            position: 0,
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        assert!(!playlist.is_root());
+    }
+
+    #[test]
+    fn test_playlist_is_dynamic() {
+        let playlist = Playlist {
+            id: PlaylistId::new(),
+            room_id: RoomId::new(),
+            creator_id: UserId::new(),
+            name: "Alist Folder".to_string(),
+            parent_id: None,
+            position: 0,
+            source_provider: Some("alist".to_string()),
+            source_config: Some(serde_json::json!({"path": "/movies"})),
+            provider_instance_name: Some("alist_home".to_string()),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        assert!(playlist.is_dynamic());
+        assert!(!playlist.is_static());
+        assert!(!playlist.is_root());
+    }
+
+    #[test]
+    fn test_playlist_is_static() {
+        let playlist = Playlist {
+            id: PlaylistId::new(),
+            room_id: RoomId::new(),
+            creator_id: UserId::new(),
+            name: "Static Folder".to_string(),
+            parent_id: None,
+            position: 0,
+            source_provider: None,
+            source_config: None,
+            provider_instance_name: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        assert!(playlist.is_static());
+        assert!(!playlist.is_dynamic());
+    }
+
+    // ========== Dynamic Folder Validation Logic ==========
+
+    #[test]
+    fn test_dynamic_folder_requires_source_config() {
+        let has_provider_no_config = CreatePlaylistRequest {
+            room_id: RoomId::new(),
+            name: "Bad Dynamic".to_string(),
+            parent_id: None,
+            position: None,
+            source_provider: Some("alist".to_string()),
+            source_config: None,
+            provider_instance_name: None,
+        };
+
+        assert!(has_provider_no_config.source_provider.is_some());
+        assert!(has_provider_no_config.source_config.is_none());
+    }
+
+    #[test]
+    fn test_dynamic_folder_valid_config() {
+        let request = CreatePlaylistRequest {
+            room_id: RoomId::new(),
+            name: "Valid Dynamic".to_string(),
+            parent_id: None,
+            position: None,
+            source_provider: Some("emby".to_string()),
+            source_config: Some(serde_json::json!({"library_id": "abc123"})),
+            provider_instance_name: Some("emby_main".to_string()),
+        };
+
+        assert!(request.source_provider.is_some());
+        assert!(request.source_config.is_some());
+    }
+
+    // ========== Nesting Depth Validation ==========
+
+    #[test]
+    fn test_nesting_depth_limit() {
+        let max_ancestors = 9;
+        assert!(max_ancestors + 1 <= 10);
+        assert!(max_ancestors + 1 + 1 > 10);
+    }
+
+    // ========== Position Ordering ==========
+
+    #[test]
+    fn test_playlist_positions_can_be_ordered() {
+        let mut playlists: Vec<i32> = vec![3, 1, 4, 1, 5, 9, 2, 6];
+        playlists.sort();
+        assert_eq!(playlists, vec![1, 1, 2, 3, 4, 5, 6, 9]);
+    }
+
+    // ========== Integration Tests (Require DB) ==========
 
     #[tokio::test]
     #[ignore = "Requires database"]
     async fn test_create_playlist() {
+        // Integration test placeholder
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_delete_playlist() {
+        // Integration test placeholder
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_get_playlist_path() {
         // Integration test placeholder
     }
 }

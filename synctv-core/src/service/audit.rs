@@ -299,10 +299,271 @@ impl std::fmt::Debug for AuditService {
 mod tests {
     use super::*;
 
+    // ========== AuditAction Serialization ==========
+
     #[test]
     fn test_audit_action_serialization() {
         let action = AuditAction::UserCreated;
         let json = serde_json::to_string(&action).unwrap();
         assert!(json.contains("user_created"));
+    }
+
+    #[test]
+    fn test_all_audit_actions_serialize_to_snake_case() {
+        let actions = vec![
+            (AuditAction::UserCreated, "user_created"),
+            (AuditAction::UserDeleted, "user_deleted"),
+            (AuditAction::UserBanned, "user_banned"),
+            (AuditAction::UserUnbanned, "user_unbanned"),
+            (AuditAction::UserPasswordUpdated, "user_password_updated"),
+            (AuditAction::UserUsernameUpdated, "user_username_updated"),
+            (AuditAction::UserRoleUpdated, "user_role_updated"),
+            (AuditAction::RoomCreated, "room_created"),
+            (AuditAction::RoomDeleted, "room_deleted"),
+            (AuditAction::RoomBanned, "room_banned"),
+            (AuditAction::RoomUnbanned, "room_unbanned"),
+            (AuditAction::RoomPasswordUpdated, "room_password_updated"),
+            (AuditAction::PermissionGranted, "permission_granted"),
+            (AuditAction::PermissionRevoked, "permission_revoked"),
+            (AuditAction::ProviderInstanceCreated, "provider_instance_created"),
+            (AuditAction::ProviderInstanceUpdated, "provider_instance_updated"),
+            (AuditAction::ProviderInstanceDeleted, "provider_instance_deleted"),
+            (AuditAction::SettingsUpdated, "settings_updated"),
+        ];
+
+        for (action, expected) in actions {
+            let json = serde_json::to_string(&action).unwrap();
+            assert_eq!(json, format!("\"{expected}\""), "Mismatch for {expected}");
+        }
+    }
+
+    #[test]
+    fn test_audit_action_deserialization() {
+        let json = r#""user_banned""#;
+        let action: AuditAction = serde_json::from_str(json).unwrap();
+        assert!(matches!(action, AuditAction::UserBanned));
+    }
+
+    #[test]
+    fn test_audit_action_round_trip() {
+        let original = AuditAction::PermissionGranted;
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: AuditAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(original.as_str(), deserialized.as_str());
+    }
+
+    // ========== AuditAction::as_str ==========
+
+    #[test]
+    fn test_audit_action_as_str_matches_serialization() {
+        let actions = vec![
+            AuditAction::UserCreated,
+            AuditAction::UserDeleted,
+            AuditAction::UserBanned,
+            AuditAction::UserUnbanned,
+            AuditAction::UserPasswordUpdated,
+            AuditAction::UserUsernameUpdated,
+            AuditAction::UserRoleUpdated,
+            AuditAction::RoomCreated,
+            AuditAction::RoomDeleted,
+            AuditAction::RoomBanned,
+            AuditAction::RoomUnbanned,
+            AuditAction::RoomPasswordUpdated,
+            AuditAction::PermissionGranted,
+            AuditAction::PermissionRevoked,
+            AuditAction::ProviderInstanceCreated,
+            AuditAction::ProviderInstanceUpdated,
+            AuditAction::ProviderInstanceDeleted,
+            AuditAction::SettingsUpdated,
+        ];
+
+        for action in actions {
+            let as_str = action.as_str();
+            let serialized = serde_json::to_string(&action).unwrap();
+            // Serialized form is quoted: "user_created"
+            assert_eq!(serialized, format!("\"{as_str}\""));
+        }
+    }
+
+    // ========== AuditTargetType ==========
+
+    #[test]
+    fn test_all_target_types_serialize_to_snake_case() {
+        let targets = vec![
+            (AuditTargetType::User, "user"),
+            (AuditTargetType::Room, "room"),
+            (AuditTargetType::ProviderInstance, "provider_instance"),
+            (AuditTargetType::Settings, "settings"),
+            (AuditTargetType::System, "system"),
+        ];
+
+        for (target, expected) in targets {
+            let json = serde_json::to_string(&target).unwrap();
+            assert_eq!(json, format!("\"{expected}\""), "Mismatch for {expected}");
+        }
+    }
+
+    #[test]
+    fn test_target_type_as_str_matches_serialization() {
+        let targets = vec![
+            AuditTargetType::User,
+            AuditTargetType::Room,
+            AuditTargetType::ProviderInstance,
+            AuditTargetType::Settings,
+            AuditTargetType::System,
+        ];
+
+        for target in targets {
+            let as_str = target.as_str();
+            let serialized = serde_json::to_string(&target).unwrap();
+            assert_eq!(serialized, format!("\"{as_str}\""));
+        }
+    }
+
+    #[test]
+    fn test_target_type_deserialization() {
+        let json = r#""provider_instance""#;
+        let target: AuditTargetType = serde_json::from_str(json).unwrap();
+        assert!(matches!(target, AuditTargetType::ProviderInstance));
+    }
+
+    // ========== AuditLog Construction ==========
+
+    #[test]
+    fn test_audit_log_construction() {
+        let log = AuditLog {
+            id: "test_id".to_string(),
+            actor_id: "actor_123".to_string(),
+            actor_username: "admin".to_string(),
+            action: AuditAction::UserBanned,
+            target_type: AuditTargetType::User,
+            target_id: Some("user_456".to_string()),
+            details: serde_json::json!({"reason": "spam"}),
+            ip_address: Some("192.168.1.1".to_string()),
+            user_agent: Some("Mozilla/5.0".to_string()),
+            created_at: Utc::now(),
+        };
+
+        assert_eq!(log.id, "test_id");
+        assert_eq!(log.actor_id, "actor_123");
+        assert_eq!(log.actor_username, "admin");
+        assert_eq!(log.action.as_str(), "user_banned");
+        assert_eq!(log.target_type.as_str(), "user");
+        assert_eq!(log.target_id, Some("user_456".to_string()));
+        assert_eq!(log.details["reason"], "spam");
+    }
+
+    #[test]
+    fn test_audit_log_optional_fields() {
+        let log = AuditLog {
+            id: "test".to_string(),
+            actor_id: "system".to_string(),
+            actor_username: "system".to_string(),
+            action: AuditAction::SettingsUpdated,
+            target_type: AuditTargetType::Settings,
+            target_id: None,
+            details: serde_json::json!({}),
+            ip_address: None,
+            user_agent: None,
+            created_at: Utc::now(),
+        };
+
+        assert!(log.target_id.is_none());
+        assert!(log.ip_address.is_none());
+        assert!(log.user_agent.is_none());
+    }
+
+    #[test]
+    fn test_audit_log_serialization_round_trip() {
+        let log = AuditLog {
+            id: "audit_1".to_string(),
+            actor_id: "user_1".to_string(),
+            actor_username: "alice".to_string(),
+            action: AuditAction::RoomCreated,
+            target_type: AuditTargetType::Room,
+            target_id: Some("room_1".to_string()),
+            details: serde_json::json!({"room_name": "Test Room"}),
+            ip_address: Some("10.0.0.1".to_string()),
+            user_agent: Some("TestAgent/1.0".to_string()),
+            created_at: Utc::now(),
+        };
+
+        let json = serde_json::to_string(&log).unwrap();
+        let deserialized: AuditLog = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.id, log.id);
+        assert_eq!(deserialized.actor_id, log.actor_id);
+        assert_eq!(deserialized.actor_username, log.actor_username);
+        assert_eq!(deserialized.action.as_str(), log.action.as_str());
+        assert_eq!(deserialized.target_type.as_str(), log.target_type.as_str());
+        assert_eq!(deserialized.target_id, log.target_id);
+        assert_eq!(deserialized.details, log.details);
+    }
+
+    // ========== AuditEventParams ==========
+
+    #[test]
+    fn test_audit_event_params_construction() {
+        let params = AuditEventParams {
+            actor_id: "admin_1".to_string(),
+            actor_username: "superadmin".to_string(),
+            action: AuditAction::UserRoleUpdated,
+            target_type: AuditTargetType::User,
+            target_id: Some("user_42".to_string()),
+            details: serde_json::json!({
+                "old_role": "user",
+                "new_role": "admin"
+            }),
+            ip_address: Some("203.0.113.50".to_string()),
+            user_agent: None,
+        };
+
+        assert_eq!(params.actor_id, "admin_1");
+        assert_eq!(params.action.as_str(), "user_role_updated");
+        assert_eq!(params.details["old_role"], "user");
+        assert_eq!(params.details["new_role"], "admin");
+    }
+
+    // ========== Details JSON Formatting ==========
+
+    #[test]
+    fn test_permission_change_details_format() {
+        let details = serde_json::json!({
+            "old_permissions": 0u64,
+            "new_permissions": 255u64
+        });
+
+        assert_eq!(details["old_permissions"], 0);
+        assert_eq!(details["new_permissions"], 255);
+    }
+
+    #[test]
+    fn test_details_with_nested_info() {
+        let details = serde_json::json!({
+            "reason": "Terms of service violation",
+            "evidence": {
+                "report_id": "rpt_123",
+                "reported_by": ["user_a", "user_b"]
+            },
+            "duration": "permanent"
+        });
+
+        assert_eq!(details["reason"], "Terms of service violation");
+        assert!(details["evidence"]["reported_by"].is_array());
+        assert_eq!(details["evidence"]["reported_by"].as_array().unwrap().len(), 2);
+    }
+
+    // ========== Integration Tests (Require DB) ==========
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_log_audit_event() {
+        // Integration test placeholder
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_log_with_params() {
+        // Integration test placeholder
     }
 }

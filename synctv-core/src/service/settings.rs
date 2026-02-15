@@ -340,14 +340,218 @@ pub fn get_default_settings_json(group: &str) -> Option<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::settings::{
+        SettingsGroup, get_default_settings, default_server_settings,
+        default_email_settings, default_oauth_settings,
+    };
 
     #[tokio::test]
     async fn test_get_default_values() {
-        // These tests verify the helper functions work
         let allow_reg = get_default_settings_json("server")
             .and_then(|v| v.get("allow_registration").cloned())
             .and_then(|v| v.as_bool());
 
         assert_eq!(allow_reg, Some(true));
+    }
+
+    // ========== Default Settings Groups ==========
+
+    #[test]
+    fn test_default_server_settings() {
+        let settings = default_server_settings();
+        assert_eq!(settings["allow_registration"], true);
+        assert_eq!(settings["allow_room_creation"], true);
+        assert_eq!(settings["max_rooms_per_user"], 10);
+        assert_eq!(settings["max_members_per_room"], 100);
+        assert!(settings["default_room_settings"].is_object());
+        assert_eq!(settings["default_room_settings"]["require_password"], false);
+        assert_eq!(settings["default_room_settings"]["allow_guest"], true);
+    }
+
+    #[test]
+    fn test_default_email_settings() {
+        let settings = default_email_settings();
+        assert_eq!(settings["enabled"], false);
+        assert_eq!(settings["smtp_port"], 587);
+        assert_eq!(settings["use_tls"], true);
+        assert_eq!(settings["from_name"], "SyncTV");
+        assert_eq!(settings["smtp_host"], "");
+        assert_eq!(settings["smtp_username"], "");
+    }
+
+    #[test]
+    fn test_default_oauth_settings() {
+        let settings = default_oauth_settings();
+        assert_eq!(settings["github_enabled"], false);
+        assert_eq!(settings["google_enabled"], false);
+        assert_eq!(settings["microsoft_enabled"], false);
+        assert_eq!(settings["discord_enabled"], false);
+    }
+
+    #[test]
+    fn test_default_rate_limit_settings() {
+        let settings = get_default_settings("rate_limit").unwrap();
+        assert_eq!(settings["enabled"], true);
+        assert_eq!(settings["api_rate_limit"], 100);
+        assert_eq!(settings["api_rate_window"], 60);
+        assert_eq!(settings["ws_rate_limit"], 50);
+        assert_eq!(settings["ws_rate_window"], 60);
+    }
+
+    #[test]
+    fn test_default_content_moderation_settings() {
+        let settings = get_default_settings("content_moderation").unwrap();
+        assert_eq!(settings["enabled"], false);
+        assert_eq!(settings["filter_profanity"], false);
+        assert_eq!(settings["max_message_length"], 1000);
+        assert_eq!(settings["link_filter_enabled"], false);
+    }
+
+    #[test]
+    fn test_unknown_group_returns_none() {
+        assert!(get_default_settings("nonexistent").is_none());
+        assert!(get_default_settings("").is_none());
+        assert!(get_default_settings_json("foobar").is_none());
+    }
+
+    // ========== SettingsGroup Model ==========
+
+    #[test]
+    fn test_settings_group_new() {
+        let group = SettingsGroup::new(
+            "server".to_string(),
+            r#"{"allow_registration": true}"#.to_string(),
+        );
+
+        assert_eq!(group.group, "server");
+        assert_eq!(group.key, "server.default");
+        assert_eq!(group.value, r#"{"allow_registration": true}"#);
+    }
+
+    #[test]
+    fn test_settings_group_parse_json() {
+        let group = SettingsGroup::new(
+            "test".to_string(),
+            serde_json::json!({"key": "value", "count": 42}).to_string(),
+        );
+
+        let parsed = group.parse_json().unwrap();
+        assert_eq!(parsed["key"], "value");
+        assert_eq!(parsed["count"], 42);
+    }
+
+    #[test]
+    fn test_settings_group_parse_json_invalid() {
+        let group = SettingsGroup::new(
+            "test".to_string(),
+            "not valid json {{{".to_string(),
+        );
+
+        assert!(group.parse_json().is_err());
+    }
+
+    #[test]
+    fn test_settings_group_as_object() {
+        let group = SettingsGroup::new(
+            "test".to_string(),
+            serde_json::json!({"a": 1, "b": "two"}).to_string(),
+        );
+
+        let obj = group.as_object().unwrap();
+        assert_eq!(obj.len(), 2);
+        assert!(obj.contains_key("a"));
+        assert!(obj.contains_key("b"));
+    }
+
+    #[test]
+    fn test_settings_group_as_object_not_object() {
+        let group = SettingsGroup::new(
+            "test".to_string(),
+            serde_json::json!([1, 2, 3]).to_string(),
+        );
+
+        assert!(group.as_object().is_err());
+    }
+
+    #[test]
+    fn test_settings_group_as_object_string_value() {
+        let group = SettingsGroup::new(
+            "test".to_string(),
+            r#""just a string""#.to_string(),
+        );
+
+        assert!(group.as_object().is_err());
+    }
+
+    // ========== Settings Serialization Round-Trip ==========
+
+    #[test]
+    fn test_settings_group_serialization() {
+        let group = SettingsGroup::new(
+            "server".to_string(),
+            serde_json::json!({"test": true}).to_string(),
+        );
+
+        let json = serde_json::to_string(&group).unwrap();
+        let deserialized: SettingsGroup = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.group, group.group);
+        assert_eq!(deserialized.key, group.key);
+        assert_eq!(deserialized.value, group.value);
+    }
+
+    // ========== Settings Value Types ==========
+
+    #[test]
+    fn test_settings_boolean_values() {
+        let group = SettingsGroup::new(
+            "test".to_string(),
+            serde_json::json!({"enabled": true}).to_string(),
+        );
+
+        let parsed = group.parse_json().unwrap();
+        assert_eq!(parsed["enabled"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_settings_numeric_values() {
+        let group = SettingsGroup::new(
+            "test".to_string(),
+            serde_json::json!({"port": 8080, "timeout": 30.5}).to_string(),
+        );
+
+        let parsed = group.parse_json().unwrap();
+        assert_eq!(parsed["port"].as_i64(), Some(8080));
+        assert_eq!(parsed["timeout"].as_f64(), Some(30.5));
+    }
+
+    #[test]
+    fn test_settings_nested_values() {
+        let group = SettingsGroup::new(
+            "server".to_string(),
+            serde_json::json!({
+                "database": {
+                    "host": "localhost",
+                    "port": 5432,
+                    "pool": {"max": 10, "min": 2}
+                }
+            }).to_string(),
+        );
+
+        let parsed = group.parse_json().unwrap();
+        assert_eq!(parsed["database"]["host"], "localhost");
+        assert_eq!(parsed["database"]["port"], 5432);
+        assert_eq!(parsed["database"]["pool"]["max"], 10);
+    }
+
+    // ========== Helper Function ==========
+
+    #[test]
+    fn test_get_default_settings_json_returns_same_as_get_default_settings() {
+        for group_name in &["server", "email", "oauth", "rate_limit", "content_moderation"] {
+            let from_helper = get_default_settings_json(group_name);
+            let from_model = get_default_settings(group_name);
+            assert_eq!(from_helper, from_model, "Mismatch for group: {group_name}");
+        }
     }
 }

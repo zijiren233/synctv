@@ -98,7 +98,7 @@ impl AdminServiceImpl {
             token_iat,
         )
         .await
-        .map_err(|e| Status::unauthenticated(e))?;
+        .map_err(Status::unauthenticated)?;
 
         Ok(validated.role)
     }

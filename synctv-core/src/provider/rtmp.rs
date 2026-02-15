@@ -7,6 +7,7 @@ use super::{
     MediaProvider, PlaybackInfo, PlaybackResult, ProviderContext, ProviderError,
 };
 use async_trait::async_trait;
+use chrono::Utc;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -51,6 +52,7 @@ impl MediaProvider for RtmpProvider {
             .ok_or_else(|| ProviderError::InvalidConfig("Missing room_id".to_string()))?;
 
         let mut playback_infos = HashMap::new();
+        let live_expires_at = Some(Utc::now().timestamp() + 30);
 
         // HLS URL — matches actual HTTP route: /api/room/movie/live/hls/list/:media_id?room_id=:room_id
         playback_infos.insert(
@@ -63,7 +65,7 @@ impl MediaProvider for RtmpProvider {
                 format: "m3u8".to_string(),
                 headers: HashMap::new(),
                 subtitles: Vec::new(),
-                expires_at: None,
+                expires_at: live_expires_at,
             },
         );
 
@@ -78,7 +80,7 @@ impl MediaProvider for RtmpProvider {
                 format: "flv".to_string(),
                 headers: HashMap::new(),
                 subtitles: Vec::new(),
-                expires_at: None,
+                expires_at: live_expires_at,
             },
         );
 

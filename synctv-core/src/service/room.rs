@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use chrono::{DateTime, Utc};
 
 use crate::{
+    cache::CacheInvalidationService,
     models::{
         Room, RoomId, RoomMember, RoomSettings, RoomStatus, RoomWithCount, UserId,
         PermissionBits, RoomRole, MemberStatus, RoomPlaybackState, Media, MediaId,
@@ -65,6 +66,9 @@ pub struct RoomService {
     playback_service: PlaybackService,
     notification_service: NotificationService,
     user_service: UserService,
+
+    /// Optional cache invalidation service for cross-replica room cache sync
+    cache_invalidation: Option<Arc<CacheInvalidationService>>,
 }
 
 impl std::fmt::Debug for RoomService {
@@ -93,7 +97,23 @@ impl RoomService {
         self.distributed_lock = Some(lock);
     }
 
-    #[must_use] 
+    /// Set the cache invalidation service for cross-replica room cache sync
+    pub fn set_cache_invalidation(&mut self, service: Arc<CacheInvalidationService>) {
+        self.cache_invalidation = Some(service);
+    }
+
+    /// Set the cluster broadcaster on the inner playback service for cross-replica sync
+    pub fn set_playback_cluster_broadcaster(&mut self, broadcaster: Arc<dyn crate::service::PlaybackBroadcaster>) {
+        self.playback_service.set_cluster_broadcaster(broadcaster);
+    }
+
+    /// Wire the cache invalidation service into the inner playback service
+    /// so it can broadcast invalidation messages to other replicas on updates.
+    pub fn set_playback_cache_invalidation(&mut self, service: Arc<CacheInvalidationService>) {
+        self.playback_service.set_invalidation_service(service);
+    }
+
+    #[must_use]
     pub fn new(pool: PgPool, user_service: UserService) -> Self {
         // Initialize repositories
         let room_repo = RoomRepository::new(pool.clone());
@@ -129,8 +149,9 @@ impl RoomService {
             permission_service.clone(),
             providers_manager,
         );
-        let playback_service = PlaybackService::new(playback_repo.clone(), permission_service.clone(), media_service.clone(), media_repo);
         let notification_service = NotificationService::default();
+        let mut playback_service = PlaybackService::new(playback_repo.clone(), permission_service.clone(), media_service.clone(), media_repo);
+        playback_service.set_notification_service(notification_service.clone());
 
         Self {
             pool,
@@ -148,6 +169,7 @@ impl RoomService {
             playback_service,
             notification_service,
             user_service,
+            cache_invalidation: None,
         }
     }
 
@@ -454,6 +476,9 @@ impl RoomService {
         // Delete room
         self.room_repo.delete(&room_id).await?;
 
+        // Invalidate room cache across all replicas
+        self.notify_room_invalidation(&room_id).await;
+
         tracing::info!(room_id = %room_id, user_id = %user_id, "Room deleted successfully");
 
         Ok(())
@@ -487,6 +512,9 @@ impl RoomService {
         // Invalidate permission cache for all room members (room-level permission
         // settings like admin/member/guest added/removed affect everyone)
         self.permission_service.invalidate_room_cache(&room_id).await;
+
+        // Invalidate room cache across all replicas
+        self.notify_room_invalidation(&room_id).await;
 
         // Notify room members
         let settings_json = serde_json::to_value(&settings)?;
@@ -558,6 +586,7 @@ impl RoomService {
 
         // 4. Post-apply hooks (side effects after commit)
         self.permission_service.invalidate_room_cache(room_id).await;
+        self.notify_room_invalidation(room_id).await;
         self.run_post_apply_hooks(room_id, key, value).await;
 
         serde_json::to_string(&settings)
@@ -619,6 +648,9 @@ impl RoomService {
         let password_was_set = password_hash.is_some();
         self.do_set_password_hash(room_id, password_hash).await?;
 
+        // Invalidate room cache across all replicas
+        self.notify_room_invalidation(room_id).await;
+
         // Side effects outside transaction
         if password_was_set {
             if let Err(e) = self.notification_service.kick_all_guests(
@@ -657,7 +689,9 @@ impl RoomService {
         if description.chars().count() > 500 {
             return Err(Error::InvalidInput("Room description too long (max 500 characters)".to_string()));
         }
-        self.room_repo.update_description(room_id, &description).await
+        let room = self.room_repo.update_description(room_id, &description).await?;
+        self.notify_room_invalidation(room_id).await;
+        Ok(room)
     }
 
     /// List all rooms (paginated)
@@ -1248,18 +1282,23 @@ impl RoomService {
 
     /// Update room status (admin use, bypasses permission checks)
     pub async fn update_room_status(&self, room_id: &RoomId, status: crate::models::RoomStatus) -> Result<Room> {
-        self.room_repo.update_status(room_id, status).await
+        let room = self.room_repo.update_status(room_id, status).await?;
+        self.notify_room_invalidation(room_id).await;
+        Ok(room)
     }
 
     /// Update room directly (admin use, bypasses permission checks)
     pub async fn admin_update_room(&self, room: &Room) -> Result<Room> {
-        self.room_repo.update(room).await
+        let updated = self.room_repo.update(room).await?;
+        self.notify_room_invalidation(&room.id).await;
+        Ok(updated)
     }
 
     /// Delete room (admin use, bypasses permission checks)
     pub async fn admin_delete_room(&self, room_id: &RoomId) -> Result<()> {
         let _ = self.notification_service.notify_room_deleted(room_id).await;
         self.room_repo.delete(room_id).await?;
+        self.notify_room_invalidation(room_id).await;
         Ok(())
     }
 
@@ -1342,6 +1381,7 @@ impl RoomService {
         }
 
         let updated_room = self.room_repo.update_ban_status(room_id, true).await?;
+        self.notify_room_invalidation(room_id).await;
 
         Ok(updated_room)
     }
@@ -1359,6 +1399,7 @@ impl RoomService {
         }
 
         let updated_room = self.room_repo.update_ban_status(room_id, false).await?;
+        self.notify_room_invalidation(room_id).await;
 
         Ok(updated_room)
     }
@@ -1376,9 +1417,25 @@ impl RoomService {
     }
 
     /// Get reference to notification service
-    #[must_use] 
+    #[must_use]
     pub const fn notification_service(&self) -> &NotificationService {
         &self.notification_service
+    }
+
+    /// Broadcast a room cache invalidation message to other replicas.
+    ///
+    /// Best-effort: logs a warning on failure but does not propagate the error,
+    /// since cache invalidation is not critical to the mutation itself.
+    async fn notify_room_invalidation(&self, room_id: &RoomId) {
+        if let Some(ref service) = self.cache_invalidation {
+            if let Err(e) = service.invalidate_room(room_id).await {
+                tracing::warn!(
+                    error = %e,
+                    room_id = %room_id.as_str(),
+                    "Failed to broadcast room cache invalidation"
+                );
+            }
+        }
     }
 }
 

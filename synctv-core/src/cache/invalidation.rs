@@ -38,6 +38,10 @@ pub enum InvalidationMessage {
     Room {
         room_id: String,
     },
+    /// Invalidate playback state cache for a room
+    PlaybackState {
+        room_id: String,
+    },
     /// Invalidate all caches
     All,
 }
@@ -307,6 +311,13 @@ impl CacheInvalidationService {
     /// Invalidate room cache
     pub async fn invalidate_room(&self, room_id: &RoomId) -> Result<()> {
         self.broadcast_remote(InvalidationMessage::Room {
+            room_id: room_id.as_str().to_string(),
+        }).await
+    }
+
+    /// Invalidate playback state cache for a room
+    pub async fn invalidate_playback_state(&self, room_id: &RoomId) -> Result<()> {
+        self.broadcast_remote(InvalidationMessage::PlaybackState {
             room_id: room_id.as_str().to_string(),
         }).await
     }

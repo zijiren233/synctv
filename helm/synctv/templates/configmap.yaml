@@ -45,6 +45,9 @@ data:
     logging:
       level: {{ .Values.config.logging.level | quote }}
       format: {{ .Values.config.logging.format | quote }}
+      {{- if .Values.config.logging.filePath }}
+      file_path: {{ .Values.config.logging.filePath | quote }}
+      {{- end }}
 
     livestream:
       rtmp_port: {{ .Values.config.livestream.rtmpPort }}
@@ -55,6 +58,7 @@ data:
       pull_max_retries: {{ .Values.config.livestream.pullMaxRetries | default 10 }}
       pull_initial_backoff_ms: {{ .Values.config.livestream.pullInitialBackoffMs | default 1000 }}
       pull_max_backoff_ms: {{ .Values.config.livestream.pullMaxBackoffMs | default 30000 }}
+      max_flv_tag_size_bytes: {{ .Values.config.livestream.maxFlvTagSizeBytes | default 10485760 }}
 
     cluster:
       critical_channel_capacity: {{ .Values.config.cluster.criticalChannelCapacity }}
@@ -66,10 +70,19 @@ data:
       enable_builtin_stun: {{ .Values.config.webrtc.enableBuiltinStun | default true }}
       stun_port: {{ .Values.config.webrtc.stunPort | default 3478 }}
       stun_host: {{ .Values.config.webrtc.stunHost | default "0.0.0.0" | quote }}
+      {{- if .Values.config.webrtc.stunExternalAddr }}
+      stun_external_addr: {{ .Values.config.webrtc.stunExternalAddr | quote }}
+      {{- end }}
       sfu_threshold: {{ .Values.config.webrtc.sfuThreshold | default 5 }}
       enable_simulcast: {{ .Values.config.webrtc.enableSimulcast | default true }}
       max_sfu_rooms: {{ .Values.config.webrtc.maxSfuRooms | default 0 }}
       max_peers_per_sfu_room: {{ .Values.config.webrtc.maxPeersPerSfuRoom | default 50 }}
+      {{- if .Values.config.webrtc.simulcastLayers }}
+      simulcast_layers:
+        {{- range .Values.config.webrtc.simulcastLayers }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
       max_bitrate_per_peer: {{ .Values.config.webrtc.maxBitratePerPeer | default 0 }}
       enable_bandwidth_estimation: {{ .Values.config.webrtc.enableBandwidthEstimation | default true }}
 
@@ -91,6 +104,11 @@ data:
       from_email: {{ .Values.config.email.fromEmail | quote }}
       from_name: {{ .Values.config.email.fromName | default "SyncTV" | quote }}
       use_tls: {{ .Values.config.email.useTls | default true }}
+    {{- end }}
+
+    {{- if .Values.config.mediaProviders }}
+    media_providers:
+      providers: {{ .Values.config.mediaProviders.providers | default "{}" | toJson }}
     {{- end }}
 
     {{- if .Values.config.oauth2 }}

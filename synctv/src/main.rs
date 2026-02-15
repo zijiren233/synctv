@@ -16,6 +16,27 @@ use synctv_cluster::discovery::{NodeRegistry, HealthMonitor, LoadBalancer, LoadB
 
 use server::{SyncTvServer, Services};
 
+/// Adapter that implements `PlaybackBroadcaster` by delegating to `ClusterManager`.
+struct ClusterPlaybackBroadcaster {
+    cluster_manager: Arc<ClusterManager>,
+}
+
+impl synctv_core::service::PlaybackBroadcaster for ClusterPlaybackBroadcaster {
+    fn broadcast_playback_state(&self, state: &synctv_core::models::RoomPlaybackState) {
+        let event = synctv_cluster::sync::ClusterEvent::PlaybackStateChanged {
+            event_id: nanoid::nanoid!(16),
+            room_id: state.room_id.clone(),
+            // For system-initiated broadcasts (auto-play, reset), use a sentinel user_id.
+            // The consumer in messaging.rs only reads the state payload, not the user fields.
+            user_id: synctv_core::models::UserId::from_string("system".to_string()),
+            username: "system".to_string(),
+            state: state.clone(),
+            timestamp: chrono::Utc::now(),
+        };
+        let _ = self.cluster_manager.broadcast(event);
+    }
+}
+
 /// Generate a unique node ID for this server instance.
 /// Prefers the POD_NAME environment variable (set by Kubernetes downward API)
 /// for predictable, consistent node IDs in K8s deployments.
@@ -94,7 +115,7 @@ async fn main() -> Result<()> {
     info!("Audit log partition management started");
 
     // 5. Initialize services
-    let synctv_services = init_services(pool.clone(), &config).await?;
+    let mut synctv_services = init_services(pool.clone(), &config).await?;
 
     // 6. Initialize connection manager with configurable limits (needed early for heartbeat loop)
     use synctv_cluster::sync::ConnectionLimits;
@@ -157,6 +178,40 @@ async fn main() -> Result<()> {
             }
         }
     };
+
+    // Wire cluster broadcaster into PlaybackService for cross-replica playback sync
+    if let Some(ref cm) = cluster_manager {
+        if let Some(room_svc) = Arc::get_mut(&mut synctv_services.room_service) {
+            room_svc.set_playback_cluster_broadcaster(Arc::new(ClusterPlaybackBroadcaster {
+                cluster_manager: cm.clone(),
+            }));
+            info!("PlaybackService wired with cluster broadcaster");
+        } else {
+            warn!("Could not wire cluster broadcaster into PlaybackService (Arc has multiple references)");
+        }
+    }
+
+    // 7.1. Initialize CacheInvalidationService for cross-replica cache sync
+    let redis_client_for_cache = if config.redis.url.is_empty() {
+        None
+    } else {
+        redis::Client::open(config.redis.url.clone()).ok()
+    };
+    let cache_invalidation_service = Arc::new(
+        synctv_core::cache::CacheInvalidationService::new(redis_client_for_cache, node_id.clone()),
+    );
+    if let Err(e) = cache_invalidation_service.start().await {
+        warn!("Failed to start cache invalidation listener: {}", e);
+    }
+
+    // Wire CacheInvalidationService into PlaybackService and RoomService
+    if let Some(room_svc) = Arc::get_mut(&mut synctv_services.room_service) {
+        room_svc.set_playback_cache_invalidation(cache_invalidation_service.clone());
+        room_svc.set_cache_invalidation(cache_invalidation_service.clone());
+        info!("CacheInvalidationService wired into PlaybackService and RoomService");
+    } else {
+        warn!("Could not wire CacheInvalidationService (Arc has multiple references)");
+    }
 
     // 7.5. Initialize cluster discovery infrastructure (NodeRegistry + HeartbeatLoop + HealthMonitor + LoadBalancer)
     // Supports two discovery modes:
@@ -527,6 +582,7 @@ async fn main() -> Result<()> {
         node_registry,
         health_monitor,
         load_balancer,
+        redis_conn: synctv_services.redis_conn.clone(),
     };
 
     let server = SyncTvServer::new(config, services, livestream_state, pool);

@@ -365,21 +365,10 @@ pub struct UpdateUserRequest {
     pub password: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserListQuery {
     pub pagination: super::pagination::PageParams,
     pub search: Option<String>,
     pub status: Option<String>, // "active", "banned", etc.
     pub role: Option<String>,   // "user", "admin", "root"
-}
-
-impl Default for UserListQuery {
-    fn default() -> Self {
-        Self {
-            pagination: super::pagination::PageParams::default(),
-            search: None,
-            status: None,
-            role: None,
-        }
-    }
 }

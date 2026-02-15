@@ -136,6 +136,22 @@ impl Default for StreamLifecycle {
     }
 }
 
+impl Drop for StreamLifecycle {
+    fn drop(&mut self) {
+        // Mark as not running so any external health checks fail immediately
+        self.is_running.store(false, Ordering::Release);
+
+        // Abort the task handle if it exists to prevent leaked background tasks.
+        // Use try_lock() since we may be inside an async runtime where blocking_lock panics.
+        // If we can't acquire the lock, the task will still be aborted when the Mutex is dropped.
+        if let Ok(mut guard) = self.task_handle.try_lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+            }
+        }
+    }
+}
+
 /// Trait for streams managed by [`StreamPool`].
 pub trait ManagedStream: Send + Sync + 'static {
     fn lifecycle(&self) -> &StreamLifecycle;
@@ -209,6 +225,21 @@ impl<S: ManagedStream> StreamPool<S> {
     /// Cancel all cleanup tasks. Call during server shutdown.
     pub fn cancel_all(&self) {
         self.cancel_token.cancel();
+    }
+
+    /// Stop all managed streams: abort their tasks and clear the pool.
+    ///
+    /// Call this during graceful shutdown to ensure all streams are cleaned up.
+    pub async fn stop_all(&self) {
+        let keys: Vec<String> = self.streams.iter().map(|e| e.key().clone()).collect();
+        for key in &keys {
+            if let Some((_, stream)) = self.streams.remove(key) {
+                stream.lifecycle().mark_stopping();
+                stream.lifecycle().abort_task().await;
+            }
+        }
+        self.creation_locks.clear();
+        debug!("Stopped all managed streams ({} removed)", keys.len());
     }
 
     /// Try to reuse an existing healthy stream (fast path, no lock).
@@ -405,6 +436,32 @@ impl<S: ManagedStream> StreamPool<S> {
             }
         }
         Ok(())
+    }
+}
+
+impl<S: ManagedStream> Drop for StreamPool<S> {
+    fn drop(&mut self) {
+        // Cancel all background cleanup tasks
+        self.cancel_token.cancel();
+
+        // Abort task handles for all remaining streams to prevent leaked tasks.
+        // Use try_lock() since we may be inside an async runtime where blocking_lock panics.
+        // StreamLifecycle's own Drop will also attempt to abort tasks as a safety net.
+        for entry in self.streams.iter() {
+            entry.value().lifecycle().is_running.store(false, Ordering::Release);
+            if let Ok(mut guard) = entry.value().lifecycle().task_handle.try_lock() {
+                if let Some(handle) = guard.take() {
+                    handle.abort();
+                }
+            }
+        }
+
+        let count = self.streams.len();
+        self.streams.clear();
+        self.creation_locks.clear();
+        if count > 0 {
+            debug!("StreamPool dropped, cleaned up {} streams", count);
+        }
     }
 }
 

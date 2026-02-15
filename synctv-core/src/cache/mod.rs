@@ -4,6 +4,7 @@ pub mod username_cache;
 pub mod user_cache;
 pub mod room_cache;
 pub mod invalidation;
+pub mod manager;
 pub mod singleflight;
 
 pub use key_builder::KeyBuilder;
@@ -14,4 +15,5 @@ pub use room_cache::RoomCache;
 pub use invalidation::{
     CacheInvalidationService, InvalidationMessage, CACHE_INVALIDATION_CHANNEL,
 };
+pub use manager::CacheManager;
 pub use singleflight::{SingleFlight, SingleFlightError};

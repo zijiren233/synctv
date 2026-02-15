@@ -357,6 +357,7 @@ pub async fn serve(
             bilibili_api: Arc::new(crate::impls::BilibiliApiImpl::new(bilibili_provider.clone())),
             alist_api: Arc::new(crate::impls::AlistApiImpl::new(alist_provider.clone())),
             emby_api: Arc::new(crate::impls::EmbyApiImpl::new(emby_provider.clone())),
+            redis_conn: None, // gRPC path does not use playback caching (yet)
         });
 
         // Register provider gRPC services with auth interceptor

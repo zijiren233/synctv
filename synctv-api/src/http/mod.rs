@@ -74,6 +74,8 @@ pub struct RouterConfig {
     pub rate_limiter: synctv_core::service::rate_limit::RateLimiter,
     /// WebSocket ticket service for secure WebSocket authentication (HTTP only)
     pub ws_ticket_service: Option<Arc<synctv_core::service::WsTicketService>>,
+    /// Shared Redis connection for playback caching
+    pub redis_conn: Option<redis::aio::ConnectionManager>,
 }
 
 /// Shared application state
@@ -113,6 +115,8 @@ pub struct AppState {
     pub bilibili_api: Arc<crate::impls::BilibiliApiImpl>,
     pub alist_api: Arc<crate::impls::AlistApiImpl>,
     pub emby_api: Arc<crate::impls::EmbyApiImpl>,
+    /// Shared Redis connection for playback caching
+    pub redis_conn: Option<redis::aio::ConnectionManager>,
 }
 
 /// Create the HTTP router from configuration struct
@@ -135,7 +139,8 @@ fn build_app_state(config: RouterConfig) -> AppState {
         config.live_streaming_infrastructure.clone(),
         None,
         config.settings_registry.clone(),
-    ).with_redis_publish_tx(config.redis_publish_tx.clone()));
+    ).with_redis_publish_tx(config.redis_publish_tx.clone())
+     .with_redis_conn(config.redis_conn.clone()));
 
     let admin_api = config.settings_service.as_ref().map(|settings_svc| {
         let email_svc = config.email_service.clone().unwrap_or_else(|| {
@@ -203,6 +208,7 @@ fn build_app_state(config: RouterConfig) -> AppState {
         bilibili_api,
         alist_api,
         emby_api,
+        redis_conn: config.redis_conn,
     }
 }
 

@@ -9,6 +9,7 @@ use super::{
 };
 use crate::service::RemoteProviderManager;
 use async_trait::async_trait;
+use chrono::Utc;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -155,6 +156,9 @@ impl MediaProvider for EmbyProvider {
 
         let mut playback_infos = HashMap::new();
 
+        // Emby session-based URLs: default to 30 minutes
+        let emby_expires_at = Some(Utc::now().timestamp() + 30 * 60);
+
         // Process media sources
         for (idx, source) in playback_info.media_source_info.iter().enumerate() {
             let mode_name = if source.name.is_empty() {
@@ -229,7 +233,7 @@ impl MediaProvider for EmbyProvider {
                     format,
                     headers: HashMap::new(),
                     subtitles,
-                    expires_at: None,
+                    expires_at: emby_expires_at,
                 },
             );
 
@@ -248,7 +252,7 @@ impl MediaProvider for EmbyProvider {
                         format: "hls".to_string(), // Emby transcodes to HLS
                         headers: HashMap::new(),
                         subtitles: Vec::new(), // Subtitles burned in for transcode
-                        expires_at: None,
+                        expires_at: emby_expires_at,
                     },
                 );
             }

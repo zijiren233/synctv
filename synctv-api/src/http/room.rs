@@ -825,3 +825,68 @@ pub async fn get_hot_rooms(
 
     Ok(Json(response))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::UpdatePlaybackRequest;
+
+    #[test]
+    fn test_update_playback_request_deserialize_state_only() {
+        let json = r#"{"state": "playing"}"#;
+        let req: UpdatePlaybackRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.state.as_deref(), Some("playing"));
+        assert!(req.position.is_none());
+        assert!(req.speed.is_none());
+        assert!(req.media_id.is_none());
+    }
+
+    #[test]
+    fn test_update_playback_request_deserialize_position_only() {
+        let json = r#"{"position": 42.5}"#;
+        let req: UpdatePlaybackRequest = serde_json::from_str(json).unwrap();
+        assert!(req.state.is_none());
+        assert!((req.position.unwrap() - 42.5).abs() < f64::EPSILON);
+        assert!(req.speed.is_none());
+        assert!(req.media_id.is_none());
+    }
+
+    #[test]
+    fn test_update_playback_request_deserialize_speed_only() {
+        let json = r#"{"speed": 2.0}"#;
+        let req: UpdatePlaybackRequest = serde_json::from_str(json).unwrap();
+        assert!(req.state.is_none());
+        assert!(req.position.is_none());
+        assert!((req.speed.unwrap() - 2.0).abs() < f64::EPSILON);
+        assert!(req.media_id.is_none());
+    }
+
+    #[test]
+    fn test_update_playback_request_deserialize_media_id_only() {
+        let json = r#"{"media_id": "media_abc123"}"#;
+        let req: UpdatePlaybackRequest = serde_json::from_str(json).unwrap();
+        assert!(req.state.is_none());
+        assert!(req.position.is_none());
+        assert!(req.speed.is_none());
+        assert_eq!(req.media_id.as_deref(), Some("media_abc123"));
+    }
+
+    #[test]
+    fn test_update_playback_request_deserialize_combined() {
+        let json = r#"{"state": "paused", "position": 10.0, "speed": 1.5, "media_id": "m1"}"#;
+        let req: UpdatePlaybackRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.state.as_deref(), Some("paused"));
+        assert!((req.position.unwrap() - 10.0).abs() < f64::EPSILON);
+        assert!((req.speed.unwrap() - 1.5).abs() < f64::EPSILON);
+        assert_eq!(req.media_id.as_deref(), Some("m1"));
+    }
+
+    #[test]
+    fn test_update_playback_request_deserialize_empty() {
+        let json = r#"{}"#;
+        let req: UpdatePlaybackRequest = serde_json::from_str(json).unwrap();
+        assert!(req.state.is_none());
+        assert!(req.position.is_none());
+        assert!(req.speed.is_none());
+        assert!(req.media_id.is_none());
+    }
+}
