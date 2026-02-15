@@ -21,7 +21,7 @@ pub mod util;
 // Re-exports for convenience
 pub use libraries::storage::HlsStorage;
 pub use protocols::httpflv::HttpFlvSession;
-pub use protocols::hls::{HlsServer, CustomHlsRemuxer, StreamRegistry};
+pub use protocols::hls::{CustomHlsRemuxer, StreamRegistry};
 pub use protocols::rtmp::RtmpAuthCallbackImpl;
 pub use api::{LiveStreamingInfrastructure, FlvStreamingApi, HlsStreamingApi};
 pub use livestream::{LivestreamServer, LivestreamConfig, LivestreamHandle, PullStreamManager, SegmentManager};

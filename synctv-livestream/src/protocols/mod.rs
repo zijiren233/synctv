@@ -4,4 +4,4 @@ pub mod hls;
 
 pub use self::rtmp::RtmpAuthCallbackImpl;
 pub use httpflv::HttpFlvSession;
-pub use hls::{HlsServer, CustomHlsRemuxer, StreamRegistry, StreamProcessorState, SegmentInfo};
+pub use hls::{CustomHlsRemuxer, StreamRegistry, StreamProcessorState, SegmentInfo};

@@ -27,6 +27,60 @@ use crate::proto::admin;
 #[derive(Clone)]
 struct JwtValidatorExt(Arc<JwtValidator>);
 
+/// Validated user info returned by the shared auth helper.
+struct ValidatedUser {
+    user_id: UserId,
+    role: synctv_core::models::UserRole,
+}
+
+/// Shared JWT validation, user lookup, and password-change invalidation logic
+/// used by both `AuthAdmin` and `AuthRoot` extractors.
+async fn validate_auth_user(parts: &mut Parts, app_state: &AppState) -> Result<ValidatedUser, AppError> {
+    let validator = parts
+        .extensions
+        .get::<JwtValidatorExt>().map_or_else(|| {
+            Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())))
+        }, |v| v.0.clone());
+
+    let auth_header = parts
+        .headers
+        .get(axum::http::header::AUTHORIZATION)
+        .ok_or_else(|| AppError::unauthorized("Missing Authorization header"))?;
+
+    let auth_str = auth_header
+        .to_str()
+        .map_err(|e| AppError::unauthorized(format!("Invalid Authorization header: {e}")))?;
+
+    let claims = validator
+        .validate_http(auth_str)
+        .map_err(|e| AppError::unauthorized(format!("{e}")))?;
+
+    let user_id = UserId::from_string(claims.sub);
+
+    let user = app_state
+        .user_service
+        .get_user(&user_id)
+        .await
+        .map_err(|_| AppError::unauthorized("Failed to verify user"))?;
+
+    if user.is_deleted() || user.status == UserStatus::Banned {
+        return Err(AppError::unauthorized("Authentication failed"));
+    }
+
+    if app_state
+        .user_service
+        .is_token_invalidated_by_password_change(&user_id, claims.iat)
+        .await
+        .unwrap_or(false)
+    {
+        return Err(AppError::unauthorized(
+            "Token invalidated due to password change. Please log in again.",
+        ));
+    }
+
+    Ok(ValidatedUser { user_id, role: user.role })
+}
+
 /// Authenticated admin user (admin or root role required)
 #[derive(Debug, Clone)]
 pub struct AuthAdmin {
@@ -44,57 +98,13 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let app_state = AppState::from_ref(state);
+        let validated = validate_auth_user(parts, &app_state).await?;
 
-        // Use cached validator from extensions if available
-        let validator = parts
-            .extensions
-            .get::<JwtValidatorExt>().map_or_else(|| {
-                Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())))
-            }, |v| v.0.clone());
-
-        let auth_header = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .ok_or_else(|| AppError::unauthorized("Missing Authorization header"))?;
-
-        let auth_str = auth_header
-            .to_str()
-            .map_err(|e| AppError::unauthorized(format!("Invalid Authorization header: {e}")))?;
-
-        let claims = validator
-            .validate_http(auth_str)
-            .map_err(|e| AppError::unauthorized(format!("{e}")))?;
-
-        let user_id = UserId::from_string(claims.sub);
-
-        // Verify admin role and check banned/deleted status
-        let user = app_state
-            .user_service
-            .get_user(&user_id)
-            .await
-            .map_err(|_| AppError::unauthorized("Failed to verify user"))?;
-
-        if user.is_deleted() || user.status == UserStatus::Banned {
-            return Err(AppError::unauthorized("Authentication failed"));
-        }
-
-        // Reject tokens issued before last password change
-        if app_state
-            .user_service
-            .is_token_invalidated_by_password_change(&user_id, claims.iat)
-            .await
-            .unwrap_or(false)
-        {
-            return Err(AppError::unauthorized(
-                "Token invalidated due to password change. Please log in again.",
-            ));
-        }
-
-        if !user.role.is_admin_or_above() {
+        if !validated.role.is_admin_or_above() {
             return Err(AppError::forbidden("Admin role required"));
         }
 
-        Ok(Self { user_id, role: user.role })
+        Ok(Self { user_id: validated.user_id, role: validated.role })
     }
 }
 
@@ -114,57 +124,13 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let app_state = AppState::from_ref(state);
+        let validated = validate_auth_user(parts, &app_state).await?;
 
-        // Use cached validator from extensions if available
-        let validator = parts
-            .extensions
-            .get::<JwtValidatorExt>().map_or_else(|| {
-                Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())))
-            }, |v| v.0.clone());
-
-        let auth_header = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .ok_or_else(|| AppError::unauthorized("Missing Authorization header"))?;
-
-        let auth_str = auth_header
-            .to_str()
-            .map_err(|e| AppError::unauthorized(format!("Invalid Authorization header: {e}")))?;
-
-        let claims = validator
-            .validate_http(auth_str)
-            .map_err(|e| AppError::unauthorized(format!("{e}")))?;
-
-        let user_id = UserId::from_string(claims.sub);
-
-        // Check banned/deleted status
-        let user = app_state
-            .user_service
-            .get_user(&user_id)
-            .await
-            .map_err(|_| AppError::unauthorized("Failed to verify user"))?;
-
-        if user.is_deleted() || user.status == UserStatus::Banned {
-            return Err(AppError::unauthorized("Authentication failed"));
-        }
-
-        // Reject tokens issued before last password change
-        if app_state
-            .user_service
-            .is_token_invalidated_by_password_change(&user_id, claims.iat)
-            .await
-            .unwrap_or(false)
-        {
-            return Err(AppError::unauthorized(
-                "Token invalidated due to password change. Please log in again.",
-            ));
-        }
-
-        if !matches!(user.role, synctv_core::models::UserRole::Root) {
+        if !matches!(validated.role, synctv_core::models::UserRole::Root) {
             return Err(AppError::forbidden("Root role required"));
         }
 
-        Ok(Self { user_id })
+        Ok(Self { user_id: validated.user_id })
     }
 }
 
@@ -847,18 +813,10 @@ async fn list_streams(
     Ok(Json(admin::ListActiveStreamsResponse { streams }))
 }
 
-#[derive(serde::Deserialize)]
-struct KickStreamRequest {
-    room_id: String,
-    media_id: String,
-    #[serde(default)]
-    reason: String,
-}
-
 async fn kick_stream(
     _auth: AuthAdmin,
     State(state): State<AppState>,
-    Json(req): Json<KickStreamRequest>,
+    Json(req): Json<admin::KickStreamRequest>,
 ) -> AppResult<Json<admin::KickStreamResponse>> {
     if req.room_id.is_empty() || req.media_id.is_empty() {
         return Err(AppError::bad_request("room_id and media_id are required"));

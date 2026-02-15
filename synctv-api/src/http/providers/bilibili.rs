@@ -17,10 +17,9 @@ use futures::stream::Stream;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::http::{AppState, error::AppResult, middleware::AuthUser, provider_common::{InstanceQuery, error_response, parse_provider_error}};
+use crate::http::{AppState, error::AppResult, middleware::AuthUser, provider_common::{InstanceQuery, error_response, parse_provider_error, resolve_media_from_playlist, resolve_provider_playback_result}};
 
 use synctv_core::models::{MediaId, RoomId};
-use synctv_core::provider::{MediaProvider, PlaybackResult, ProviderContext};
 
 /// Build Bilibili HTTP routes
 pub fn bilibili_routes() -> Router<AppState> {
@@ -68,39 +67,6 @@ struct MpdQuery {
     token: Option<String>,
 }
 
-/// Resolve full `PlaybackResult` from Bilibili provider for a media item.
-async fn resolve_bilibili_playback_result(
-    auth: &AuthUser,
-    room_id: &RoomId,
-    media_id: &MediaId,
-    state: &AppState,
-) -> Result<PlaybackResult, crate::http::AppError> {
-    // Verify user is a member of this room
-    state.room_service.check_membership(room_id, &auth.user_id).await
-        .map_err(|_| crate::http::AppError::forbidden("Not a member of this room"))?;
-
-    let playlist = state
-        .room_service
-        .get_playlist(room_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to get playlist: {e}"))?;
-
-    let media = playlist
-        .iter()
-        .find(|m| m.id == *media_id)
-        .ok_or_else(|| anyhow::anyhow!("Media not found in playlist"))?;
-
-    let ctx = ProviderContext::new("synctv")
-        .with_user_id(auth.user_id.as_str())
-        .with_room_id(room_id.as_str());
-
-    state
-        .bilibili_provider
-        .generate_playback(&ctx, &media.source_config)
-        .await
-        .map_err(|e| anyhow::anyhow!("Bilibili generate_playback failed: {e}").into())
-}
-
 /// GET /`proxy/:room_id/:media_id/mpd` - Serve MPEG-DASH MPD manifest
 async fn serve_mpd(
     auth: AuthUser,
@@ -112,7 +78,7 @@ async fn serve_mpd(
     let media_id_parsed = MediaId::from_string(media_id.clone());
 
     let result =
-        resolve_bilibili_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state)
+        resolve_provider_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state, state.bilibili_provider.as_ref())
             .await?;
 
     // Select AVC or HEVC variant
@@ -169,7 +135,7 @@ async fn proxy_stream(
     let media_id_parsed = MediaId::from_string(media_id);
 
     let result =
-        resolve_bilibili_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state)
+        resolve_provider_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state, state.bilibili_provider.as_ref())
             .await?;
 
     let dash = result
@@ -220,7 +186,7 @@ async fn proxy_subtitle(
     let media_id_parsed = MediaId::from_string(media_id);
 
     let result =
-        resolve_bilibili_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state)
+        resolve_provider_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state, state.bilibili_provider.as_ref())
             .await?;
 
     // Find subtitle by name across all playback infos
@@ -255,7 +221,7 @@ async fn proxy_m3u8(
     let media_id_parsed = MediaId::from_string(media_id.clone());
 
     let result =
-        resolve_bilibili_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state)
+        resolve_provider_playback_result(&auth, &room_id_parsed, &media_id_parsed, &state, state.bilibili_provider.as_ref())
             .await?;
 
     let default_info = result
@@ -322,20 +288,9 @@ async fn resolve_danmu_info(
     media_id: &MediaId,
     state: &AppState,
 ) -> Result<Event, anyhow::Error> {
-    // Verify user is a member of this room
-    state.room_service.check_membership(room_id, &auth.user_id).await
-        .map_err(|e| anyhow::anyhow!("Not a member of this room: {e}"))?;
-
-    let playlist = state
-        .room_service
-        .get_playlist(room_id)
+    let media = resolve_media_from_playlist(auth, room_id, media_id, state)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to get playlist: {e}"))?;
-
-    let media = playlist
-        .iter()
-        .find(|m| m.id == *media_id)
-        .ok_or_else(|| anyhow::anyhow!("Media not found in playlist"))?;
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Parse source_config to determine if this is a live stream
     #[derive(serde::Deserialize)]

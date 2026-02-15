@@ -48,7 +48,6 @@ data:
 
     livestream:
       rtmp_port: {{ .Values.config.livestream.rtmpPort }}
-      hls_port: {{ .Values.config.livestream.hlsPort | default 8081 }}
       max_streams: {{ .Values.config.livestream.maxStreams }}
       gop_cache_size: {{ .Values.config.livestream.gopCacheSize }}
       stream_timeout_seconds: {{ .Values.config.livestream.streamTimeoutSeconds }}

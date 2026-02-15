@@ -2,40 +2,29 @@
 //!
 //! REST API for managing user notifications.
 //! Delegates to NotificationApiImpl for shared business logic.
+//!
+//! Uses proto-generated types for request/response to ensure type consistency
+//! with gRPC handlers.
 
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::http::error::AppResult;
 use crate::http::middleware::AuthUser;
 use crate::http::AppState;
+use crate::proto::client::{
+    ListNotificationsResponse, NotificationProto,
+    NotificationType as ProtoNotificationType,
+    MarkAsReadRequest, MarkAllAsReadRequest,
+    GetNotificationResponse,
+};
 
-/// List notifications response
-#[derive(Debug, Serialize)]
-pub struct ListNotificationsResponse {
-    pub notifications: Vec<synctv_core::models::notification::Notification>,
-    pub total: i64,
-    pub unread_count: i64,
-}
-
-/// Mark as read request
-#[derive(Debug, Deserialize)]
-pub struct MarkAsReadRequest {
-    pub notification_ids: Vec<Uuid>,
-}
-
-/// Mark all as read request
-#[derive(Debug, Deserialize)]
-pub struct MarkAllAsReadRequest {
-    pub before: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-/// Query parameters for listing notifications
+/// Query parameters for listing notifications (HTTP-specific, not in proto)
 #[derive(Debug, Deserialize)]
 pub struct ListNotificationsQuery {
     pub page: Option<i32>,
@@ -53,6 +42,45 @@ fn get_notification_api(state: &AppState) -> Result<&crate::impls::NotificationA
         ))
 }
 
+/// Convert a domain Notification to a proto NotificationProto
+fn notification_to_proto(n: synctv_core::models::notification::Notification) -> NotificationProto {
+    use synctv_core::models::notification::NotificationType as CoreNotificationType;
+
+    let notification_type = match n.notification_type {
+        CoreNotificationType::RoomInvitation => ProtoNotificationType::RoomInvitation,
+        CoreNotificationType::SystemAnnouncement => ProtoNotificationType::SystemAnnouncement,
+        CoreNotificationType::RoomEvent => ProtoNotificationType::RoomEvent,
+        CoreNotificationType::PasswordReset => ProtoNotificationType::PasswordReset,
+        CoreNotificationType::EmailVerification => ProtoNotificationType::EmailVerification,
+    };
+
+    NotificationProto {
+        id: n.id.to_string(),
+        user_id: n.user_id.as_str().to_string(),
+        notification_type: notification_type as i32,
+        title: n.title,
+        content: n.content,
+        data: serde_json::to_vec(&n.data).unwrap_or_default(),
+        is_read: n.is_read,
+        created_at: n.created_at.timestamp(),
+        updated_at: n.updated_at.timestamp(),
+    }
+}
+
+/// Convert a proto NotificationType enum value to a domain NotificationType
+fn proto_notification_type_to_core(value: i32) -> Option<synctv_core::models::notification::NotificationType> {
+    use synctv_core::models::notification::NotificationType as CoreNotificationType;
+
+    match ProtoNotificationType::try_from(value) {
+        Ok(ProtoNotificationType::RoomInvitation) => Some(CoreNotificationType::RoomInvitation),
+        Ok(ProtoNotificationType::SystemAnnouncement) => Some(CoreNotificationType::SystemAnnouncement),
+        Ok(ProtoNotificationType::RoomEvent) => Some(CoreNotificationType::RoomEvent),
+        Ok(ProtoNotificationType::PasswordReset) => Some(CoreNotificationType::PasswordReset),
+        Ok(ProtoNotificationType::EmailVerification) => Some(CoreNotificationType::EmailVerification),
+        _ => None,
+    }
+}
+
 /// GET /api/notifications - List user's notifications
 pub async fn list_notifications(
     auth: AuthUser,
@@ -63,7 +91,9 @@ pub async fn list_notifications(
 
     let notification_type = query
         .notification_type
-        .and_then(|t| t.parse().ok());
+        .as_deref()
+        .and_then(|t| t.parse::<i32>().ok())
+        .and_then(proto_notification_type_to_core);
 
     let result = api
         .list_notifications(
@@ -77,7 +107,7 @@ pub async fn list_notifications(
         .map_err(crate::http::AppError::internal)?;
 
     Ok(Json(ListNotificationsResponse {
-        notifications: result.notifications,
+        notifications: result.notifications.into_iter().map(notification_to_proto).collect(),
         total: result.total,
         unread_count: result.unread_count,
     }))
@@ -88,7 +118,7 @@ pub async fn get_notification(
     auth: AuthUser,
     Path(notification_id): Path<Uuid>,
     State(state): State<AppState>,
-) -> AppResult<Json<synctv_core::models::notification::Notification>> {
+) -> AppResult<Json<GetNotificationResponse>> {
     let api = get_notification_api(&state)?;
 
     let notification = api
@@ -96,7 +126,9 @@ pub async fn get_notification(
         .await
         .map_err(crate::http::AppError::internal)?;
 
-    Ok(Json(notification))
+    Ok(Json(GetNotificationResponse {
+        notification: Some(notification_to_proto(notification)),
+    }))
 }
 
 /// POST /api/notifications/read - Mark notifications as read
@@ -107,7 +139,16 @@ pub async fn mark_as_read(
 ) -> AppResult<StatusCode> {
     let api = get_notification_api(&state)?;
 
-    api.mark_as_read(&auth.user_id, req.notification_ids)
+    let notification_ids: Vec<Uuid> = req
+        .notification_ids
+        .iter()
+        .map(|id| {
+            Uuid::parse_str(id)
+                .map_err(|_| crate::http::AppError::bad_request(format!("Invalid notification_id: {id}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    api.mark_as_read(&auth.user_id, notification_ids)
         .await
         .map_err(crate::http::AppError::internal)?;
 
@@ -122,7 +163,13 @@ pub async fn mark_all_as_read(
 ) -> AppResult<StatusCode> {
     let api = get_notification_api(&state)?;
 
-    let before = req.and_then(|r| r.before);
+    let before = req
+        .and_then(|r| r.before)
+        .map(|ts| {
+            chrono::DateTime::from_timestamp(ts, 0)
+                .ok_or_else(|| crate::http::AppError::bad_request("Invalid timestamp"))
+        })
+        .transpose()?;
 
     api.mark_all_as_read(&auth.user_id, before)
         .await

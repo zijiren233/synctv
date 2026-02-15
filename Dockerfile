@@ -55,7 +55,7 @@ COPY --from=builder \
 USER synctv
 
 # Expose ports
-# 8080: HTTP API
+# 8080: HTTP API (also serves HLS via /api/room/movie/live/hls/*)
 # 50051: gRPC API
 # 1935: RTMP (livestream)
 # 3478/udp: STUN (WebRTC)

@@ -1,10 +1,10 @@
 // Livestream server facade
 //
 // Single entry point for starting the entire livestream infrastructure:
-// StreamHub, RTMP server, PullStreamManager, ExternalPublishManager,
-// PublisherManager, and LiveStreamingInfrastructure.
+// StreamHub, RTMP server, HLS remuxer, PullStreamManager,
+// ExternalPublishManager, PublisherManager, and LiveStreamingInfrastructure.
 //
-// The synctv binary never touches synctv_xiu directly — all xiu interaction
+// The synctv binary never touches synctv_xiu directly -- all xiu interaction
 // is encapsulated here.
 
 use crate::{
@@ -12,11 +12,15 @@ use crate::{
     livestream::{
         pull_manager::PullStreamManager,
         external_publish_manager::ExternalPublishManager,
+        segment_manager::{SegmentManager, CleanupConfig},
     },
+    protocols::hls::{CustomHlsRemuxer, StreamRegistry},
     api::{LiveStreamingInfrastructure, UserStreamTracker},
     error::StreamResult,
 };
 use synctv_xiu::rtmp::auth::AuthCallback;
+use synctv_xiu::storage::MemoryStorage;
+use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -30,20 +34,24 @@ pub struct LivestreamConfig {
     pub node_id: String,
     pub cleanup_check_interval_seconds: u64,
     pub stream_timeout_seconds: u64,
+    /// Cluster secret for authenticating gRPC HLS proxy calls
+    pub cluster_secret: Option<String>,
 }
 
 /// Handle returned by [`LivestreamServer::start`].
 ///
-/// Owns the spawned tasks (`StreamHub` event loop, RTMP server, `PublisherManager`)
-/// and exposes the shared infrastructure components.
+/// Owns the spawned tasks (`StreamHub` event loop, RTMP server, HLS remuxer,
+/// `PublisherManager`) and exposes the shared infrastructure components.
 pub struct LivestreamHandle {
     pub infrastructure: Arc<LiveStreamingInfrastructure>,
     pub pull_manager: Arc<PullStreamManager>,
     hub_handle: JoinHandle<()>,
     rtmp_handle: JoinHandle<()>,
+    hls_remuxer_handle: JoinHandle<()>,
     publisher_manager_handle: JoinHandle<()>,
     pull_manager_cleanup: JoinHandle<()>,
     external_publish_cleanup: JoinHandle<()>,
+    hls_shutdown_token: CancellationToken,
 }
 
 impl LivestreamHandle {
@@ -55,6 +63,8 @@ impl LivestreamHandle {
         self.external_publish_cleanup.abort();
         self.pull_manager_cleanup.abort();
         self.publisher_manager_handle.abort();
+        self.hls_shutdown_token.cancel();
+        self.hls_remuxer_handle.abort();
         self.rtmp_handle.abort();
         self.hub_handle.abort();
     }
@@ -98,14 +108,22 @@ impl LivestreamHandle {
             all_graceful = false;
         }
 
-        // 4. Stop RTMP server
+        // 4. Stop HLS remuxer (cancel token triggers graceful drain)
+        self.hls_shutdown_token.cancel();
+        if timeout(timeout_duration, &mut self.hls_remuxer_handle).await.is_ok() { info!("HLS remuxer stopped") } else {
+            warn!("HLS remuxer shutdown timed out");
+            self.hls_remuxer_handle.abort();
+            all_graceful = false;
+        }
+
+        // 5. Stop RTMP server
         self.rtmp_handle.abort();
         if timeout(timeout_duration, &mut self.rtmp_handle).await.is_ok() { info!("RTMP server stopped") } else {
             warn!("RTMP server shutdown timed out");
             all_graceful = false;
         }
 
-        // 5. Stop StreamHub (last, as other components depend on it)
+        // 6. Stop StreamHub (last, as other components depend on it)
         self.hub_handle.abort();
         if timeout(timeout_duration, &mut self.hub_handle).await.is_ok() { info!("StreamHub stopped") } else {
             warn!("StreamHub shutdown timed out");
@@ -152,7 +170,7 @@ impl LivestreamServer {
 
     /// Start the entire livestream infrastructure.
     ///
-    /// Creates `StreamHub`, RTMP server, `PullStreamManager`,
+    /// Creates `StreamHub`, RTMP server, HLS remuxer, `PullStreamManager`,
     /// `ExternalPublishManager`, `PublisherManager`, and `LiveStreamingInfrastructure`.
     /// Returns a handle with public components.
     pub async fn start(self) -> StreamResult<LivestreamHandle> {
@@ -164,14 +182,17 @@ impl LivestreamServer {
             event_receiver,
         );
 
-        // Get broadcast receiver BEFORE spawning the hub
+        // Get broadcast receivers BEFORE spawning the hub
+        // One for PublisherManager, one for HLS remuxer
         let broadcast_receiver = streams_hub.get_client_event_consumer();
+        let hls_broadcast_receiver = streams_hub.get_client_event_consumer();
+        let hls_hub_event_sender = streams_hub.get_hub_event_sender();
 
         // Clone registry for cleanup on StreamHub restart
         let registry_for_cleanup = self.publisher_registry.clone();
         let node_id_for_cleanup = self.config.node_id.clone();
 
-        // Cancellation token for RTMP sessions — cancelled on StreamHub restart
+        // Cancellation token for RTMP sessions -- cancelled on StreamHub restart
         // to actively terminate all sessions instead of waiting for broken pipe detection.
         // The RTMP server's shutdown_token is a child of this, so cancelling it
         // propagates to the server and all its sessions.
@@ -240,7 +261,36 @@ impl LivestreamServer {
             }
         });
 
-        // 4. Create PullStreamManager
+        // 4. Start HLS remuxer (converts RTMP to HLS segments)
+        let hls_storage = Arc::new(MemoryStorage::new()) as Arc<dyn synctv_xiu::storage::HlsStorage>;
+        let segment_manager = Arc::new(SegmentManager::new(hls_storage, CleanupConfig::default()));
+        let stream_registry: StreamRegistry = Arc::new(DashMap::new());
+        let hls_shutdown_token = CancellationToken::new();
+
+        // Start segment cleanup background task
+        segment_manager.clone().start_cleanup_task(hls_shutdown_token.clone());
+
+        // Start the HLS remuxer
+        let hls_segment_manager = segment_manager.clone();
+        let hls_stream_registry = stream_registry.clone();
+        let hls_cancel = hls_shutdown_token.clone();
+        let hls_remuxer_handle = tokio::spawn(async move {
+            let mut remuxer = CustomHlsRemuxer::new(
+                hls_broadcast_receiver,
+                hls_hub_event_sender,
+                hls_segment_manager,
+                hls_stream_registry,
+                hls_cancel,
+            );
+
+            if let Err(e) = remuxer.run().await {
+                error!("HLS remuxer error: {}", e);
+            }
+        });
+
+        info!("HLS remuxer started (in-process, no standalone HTTP server)");
+
+        // 5. Create PullStreamManager
         let pull_manager = Arc::new(PullStreamManager::with_timeouts(
             self.publisher_registry.clone(),
             self.config.node_id.clone(),
@@ -251,7 +301,7 @@ impl LivestreamServer {
         // Start periodic cleanup of stale creation locks to prevent memory leaks
         let pull_manager_cleanup = pull_manager.start_cleanup_task();
 
-        // 5. Create ExternalPublishManager
+        // 6. Create ExternalPublishManager
         let external_publish_manager = Arc::new(ExternalPublishManager::with_timeouts(
             self.publisher_registry.clone(),
             self.config.node_id.clone(),
@@ -262,8 +312,10 @@ impl LivestreamServer {
         // Start periodic cleanup of stale creation locks to prevent memory leaks
         let external_publish_cleanup = external_publish_manager.start_cleanup_task();
 
-        // 6. Start PublisherManager — listens to StreamHub broadcast events
+        // 7. Start PublisherManager -- listens to StreamHub broadcast events
         // and registers/unregisters publishers in Redis for multi-node relay
+        let local_node_id = self.config.node_id.clone();
+        let cluster_secret = self.config.cluster_secret.clone();
         let publisher_manager = Arc::new(PublisherManager::new(
             self.publisher_registry.clone(),
             self.config.node_id,
@@ -275,14 +327,23 @@ impl LivestreamServer {
             }
         });
 
-        // 7. Create LiveStreamingInfrastructure
-        let infrastructure = Arc::new(LiveStreamingInfrastructure::new(
-            self.publisher_registry,
-            event_sender,
-            pull_manager.clone(),
-            external_publish_manager,
-            self.user_stream_tracker,
-        ));
+        // 8. Create HLS proxy client for cross-node HLS streaming (cluster mode)
+        let hls_proxy = crate::grpc::HlsProxyClient::with_defaults(cluster_secret);
+
+        // 9. Create LiveStreamingInfrastructure with HLS components wired in
+        let infrastructure = Arc::new(
+            LiveStreamingInfrastructure::new(
+                self.publisher_registry,
+                event_sender,
+                pull_manager.clone(),
+                external_publish_manager,
+                self.user_stream_tracker,
+            )
+            .with_segment_manager(segment_manager)
+            .with_hls_stream_registry(stream_registry)
+            .with_local_node_id(local_node_id)
+            .with_hls_proxy(hls_proxy)
+        );
 
         info!(
             "Livestream infrastructure initialized, RTMP server listening on rtmp://{}",
@@ -294,9 +355,11 @@ impl LivestreamServer {
             pull_manager,
             hub_handle,
             rtmp_handle,
+            hls_remuxer_handle,
             publisher_manager_handle,
             pull_manager_cleanup,
             external_publish_cleanup,
+            hls_shutdown_token,
         })
     }
 }

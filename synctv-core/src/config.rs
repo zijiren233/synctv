@@ -266,7 +266,6 @@ impl Default for LoggingConfig {
 #[serde(default)]
 pub struct LivestreamConfig {
     pub rtmp_port: u16,
-    pub hls_port: u16,
     pub max_streams: u32,
     pub gop_cache_size: u32,
     /// Idle timeout before auto-stopping a pull stream (seconds)
@@ -287,7 +286,6 @@ impl Default for LivestreamConfig {
     fn default() -> Self {
         Self {
             rtmp_port: 1935,
-            hls_port: 8081,
             max_streams: 50,
             gop_cache_size: 2,
             stream_timeout_seconds: 300,
@@ -556,7 +554,6 @@ impl Config {
             ("server.http_port", self.server.http_port),
             ("server.grpc_port", self.server.grpc_port),
             ("livestream.rtmp_port", self.livestream.rtmp_port),
-            ("livestream.hls_port", self.livestream.hls_port),
         ];
         for (name, port) in ports_to_check {
             if *port == 0 {

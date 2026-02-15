@@ -260,9 +260,6 @@ async fn handle_hls_playlist(
     let infrastructure = state.client_api.live_infrastructure()
         .ok_or_else(|| AppError::internal_server_error("Live streaming not configured"))?;
 
-    // Look up external source URL for LiveProxy media (validates media belongs to room)
-    let source_url = state.client_api.get_live_proxy_source_url(&room_id, &media_id).await;
-
     // Build segment URL base following synctv-go pattern
     // TS segments are at: /api/room/movie/live/hls/data/{roomId}/{movieId}/
     //
@@ -272,12 +269,12 @@ async fn handle_hls_playlist(
     // hashes making them unguessable without the authenticated playlist.
     let segment_url_base = format!("/api/room/movie/live/hls/data/{room_id}/{media_id}/");
 
-    // Generate HLS playlist with simple URL format
-    let playlist = HlsStreamingApi::generate_playlist_with_pull_simple(
+    // Generate HLS playlist (local or proxied from publisher node).
+    // HLS does NOT trigger RTMP pull streams -- only FLV does.
+    let playlist = HlsStreamingApi::generate_playlist_simple(
         infrastructure,
         &room_id,
         &media_id,
-        source_url.as_deref(),
         &segment_url_base,
     )
     .await

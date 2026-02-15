@@ -695,7 +695,7 @@ impl StreamsHub {
                     };
 
                     let result = match self
-                        .publish(identifier.clone(), receiver, stream_handler)
+                        .publish(identifier.clone(), info.pub_type, receiver, stream_handler)
                         .await
                     {
                         Ok(statistic_data_sender) => {
@@ -829,6 +829,7 @@ impl StreamsHub {
     pub async fn publish(
         &mut self,
         identifier: StreamIdentifier,
+        pub_type: define::PublishType,
         receiver: DataReceiver,
         handler: Arc<dyn TStreamHandler>,
     ) -> Result<StatisticDataSender, StreamHubError> {
@@ -860,7 +861,7 @@ impl StreamsHub {
         self.streams.insert(identifier.clone(), event_sender);
 
         // Always broadcast publish event to listeners (HLS remuxer, publisher manager, etc.)
-        let client_event = BroadcastEvent::Publish { identifier };
+        let client_event = BroadcastEvent::Publish { identifier, pub_type };
         if let Err(err) = self.client_event_sender.send(client_event) {
             tracing::debug!("broadcast Publish event: no receivers ({err})");
         }

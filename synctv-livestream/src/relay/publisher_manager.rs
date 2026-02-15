@@ -93,7 +93,7 @@ impl PublisherManager {
     /// to allow rejecting RTMP connections before they start.
     async fn handle_broadcast_event(&self, event: synctv_xiu::streamhub::define::BroadcastEvent) -> anyhow::Result<()> {
         match event {
-            synctv_xiu::streamhub::define::BroadcastEvent::Publish { identifier } => {
+            synctv_xiu::streamhub::define::BroadcastEvent::Publish { identifier, .. } => {
                 if let Err(e) = self.handle_publish(identifier.clone()).await {
                     // Log detailed error for monitoring
                     error!(

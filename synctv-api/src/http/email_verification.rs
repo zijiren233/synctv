@@ -2,6 +2,9 @@
 //!
 //! Public endpoints for email verification and password recovery.
 //! Delegates to shared `EmailApiImpl` to avoid duplicating logic with gRPC handlers.
+//!
+//! Uses proto-generated types for request/response to ensure type consistency
+//! with gRPC handlers.
 
 use axum::{
     extract::State,
@@ -9,49 +12,15 @@ use axum::{
     routing::post,
     Router,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::http::{AppState, AppError, AppResult};
 use crate::impls::EmailApiImpl;
-
-/// Email verification request
-#[derive(Debug, Deserialize)]
-pub struct EmailVerificationRequest {
-    pub email: String,
-}
-
-/// Email verification response
-#[derive(Debug, Serialize)]
-pub struct EmailVerificationResponse {
-    pub message: String,
-}
-
-/// Password reset request
-#[derive(Debug, Deserialize)]
-pub struct PasswordResetRequest {
-    pub email: String,
-}
-
-/// Password reset confirmation
-#[derive(Debug, Deserialize)]
-pub struct PasswordResetConfirm {
-    pub email: String,
-    pub token: String,
-    pub new_password: String,
-}
-
-/// Password reset response
-#[derive(Debug, Serialize)]
-pub struct PasswordResetResponse {
-    pub message: String,
-}
-
-/// Email verification confirmation request
-#[derive(Debug, Deserialize)]
-pub struct EmailVerificationConfirm {
-    pub email: String,
-    pub token: String,
-}
+use crate::proto::client::{
+    SendVerificationEmailRequest, SendVerificationEmailResponse,
+    ConfirmEmailRequest, ConfirmEmailResponse,
+    RequestPasswordResetRequest, RequestPasswordResetResponse,
+    ConfirmPasswordResetRequest, ConfirmPasswordResetResponse,
+};
 
 /// Build an `EmailApiImpl` from `AppState`, or return an error if email is not configured.
 fn require_email_api(state: &AppState) -> Result<EmailApiImpl, AppError> {
@@ -89,8 +58,8 @@ pub fn create_email_router() -> Router<AppState> {
 /// Public endpoint - no authentication required
 pub async fn send_verification_email(
     State(state): State<AppState>,
-    Json(req): Json<EmailVerificationRequest>,
-) -> AppResult<Json<EmailVerificationResponse>> {
+    Json(req): Json<SendVerificationEmailRequest>,
+) -> AppResult<Json<SendVerificationEmailResponse>> {
     let email_api = require_email_api(&state)?;
 
     let result = email_api
@@ -98,7 +67,7 @@ pub async fn send_verification_email(
         .await
         .map_err(AppError::internal_server_error)?;
 
-    Ok(Json(EmailVerificationResponse {
+    Ok(Json(SendVerificationEmailResponse {
         message: result.message,
     }))
 }
@@ -109,8 +78,8 @@ pub async fn send_verification_email(
 /// Public endpoint - no authentication required
 pub async fn confirm_email(
     State(state): State<AppState>,
-    Json(req): Json<EmailVerificationConfirm>,
-) -> AppResult<Json<serde_json::Value>> {
+    Json(req): Json<ConfirmEmailRequest>,
+) -> AppResult<Json<ConfirmEmailResponse>> {
     let email_api = require_email_api(&state)?;
 
     let result = email_api
@@ -118,9 +87,10 @@ pub async fn confirm_email(
         .await
         .map_err(AppError::bad_request)?;
 
-    Ok(Json(serde_json::json!({
-        "message": result.message,
-    })))
+    Ok(Json(ConfirmEmailResponse {
+        message: result.message,
+        user_id: result.user_id,
+    }))
 }
 
 /// Request password reset
@@ -129,8 +99,8 @@ pub async fn confirm_email(
 /// Public endpoint - no authentication required
 pub async fn request_password_reset(
     State(state): State<AppState>,
-    Json(req): Json<PasswordResetRequest>,
-) -> AppResult<Json<PasswordResetResponse>> {
+    Json(req): Json<RequestPasswordResetRequest>,
+) -> AppResult<Json<RequestPasswordResetResponse>> {
     let email_api = require_email_api(&state)?;
 
     let result = email_api
@@ -138,7 +108,7 @@ pub async fn request_password_reset(
         .await
         .map_err(AppError::internal_server_error)?;
 
-    Ok(Json(PasswordResetResponse {
+    Ok(Json(RequestPasswordResetResponse {
         message: result.message,
     }))
 }
@@ -149,8 +119,8 @@ pub async fn request_password_reset(
 /// Public endpoint - no authentication required
 pub async fn confirm_password_reset(
     State(state): State<AppState>,
-    Json(req): Json<PasswordResetConfirm>,
-) -> AppResult<Json<serde_json::Value>> {
+    Json(req): Json<ConfirmPasswordResetRequest>,
+) -> AppResult<Json<ConfirmPasswordResetResponse>> {
     let email_api = require_email_api(&state)?;
 
     let result = email_api
@@ -158,7 +128,8 @@ pub async fn confirm_password_reset(
         .await
         .map_err(AppError::bad_request)?;
 
-    Ok(Json(serde_json::json!({
-        "message": result.message,
-    })))
+    Ok(Json(ConfirmPasswordResetResponse {
+        message: result.message,
+        user_id: result.user_id,
+    }))
 }

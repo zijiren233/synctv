@@ -1,7 +1,5 @@
 //! Alist Provider HTTP Routes
 
-use std::collections::HashMap;
-
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -11,11 +9,10 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::http::{AppState, error::AppResult, middleware::AuthUser, provider_common::{InstanceQuery, error_response, parse_provider_error}};
+use crate::http::{AppState, error::AppResult, middleware::AuthUser, provider_common::{InstanceQuery, error_response, parse_provider_error, resolve_provider_playback_url}};
 
 use crate::impls::providers::get_provider_binds;
 use synctv_core::models::{MediaId, RoomId};
-use synctv_core::provider::{MediaProvider, ProviderContext};
 
 /// Build Alist HTTP routes
 pub fn alist_routes() -> Router<AppState> {
@@ -37,52 +34,6 @@ pub fn alist_routes() -> Router<AppState> {
 // Proxy handlers
 // ------------------------------------------------------------------
 
-/// Resolve playback URL from Alist provider for a media item.
-async fn resolve_alist_playback(
-    auth: &AuthUser,
-    room_id: &RoomId,
-    media_id: &MediaId,
-    state: &AppState,
-) -> Result<(String, HashMap<String, String>), crate::http::AppError> {
-    // Verify user is a member of this room
-    state.room_service.check_membership(room_id, &auth.user_id).await
-        .map_err(|_| crate::http::AppError::forbidden("Not a member of this room"))?;
-
-    let playlist = state
-        .room_service
-        .get_playlist(room_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to get playlist: {e}"))?;
-
-    let media = playlist
-        .iter()
-        .find(|m| m.id == *media_id)
-        .ok_or_else(|| anyhow::anyhow!("Media not found in playlist"))?;
-
-    let ctx = ProviderContext::new("synctv")
-        .with_user_id(auth.user_id.as_str())
-        .with_room_id(room_id.as_str());
-
-    let playback_result = state
-        .alist_provider
-        .generate_playback(&ctx, &media.source_config)
-        .await
-        .map_err(|e| anyhow::anyhow!("Alist generate_playback failed: {e}"))?;
-
-    let default_mode = &playback_result.default_mode;
-    let playback_info = playback_result
-        .playback_infos
-        .get(default_mode)
-        .ok_or_else(|| anyhow::anyhow!("Default playback mode not found"))?;
-
-    let url = playback_info
-        .urls
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("No URLs in playback info"))?;
-
-    Ok((url.clone(), playback_info.headers.clone()))
-}
-
 /// GET /`proxy/:room_id/:media_id` - Proxy Alist video stream
 async fn proxy_stream(
     auth: AuthUser,
@@ -94,7 +45,7 @@ async fn proxy_stream(
     let media_id = MediaId::from_string(media_id);
 
     let (url, provider_headers) =
-        resolve_alist_playback(&auth, &room_id, &media_id, &state).await?;
+        resolve_provider_playback_url(&auth, &room_id, &media_id, &state, state.alist_provider.as_ref()).await?;
 
     tracing::debug!("Proxying Alist media: {}", url);
 
@@ -119,7 +70,7 @@ async fn proxy_m3u8(
     let media_id_parsed = MediaId::from_string(media_id.clone());
 
     let (url, provider_headers) =
-        resolve_alist_playback(&auth, &room_id_parsed, &media_id_parsed, &state).await?;
+        resolve_provider_playback_url(&auth, &room_id_parsed, &media_id_parsed, &state, state.alist_provider.as_ref()).await?;
 
     let proxy_base = format!("/api/providers/alist/proxy/{room_id}/{media_id}");
 

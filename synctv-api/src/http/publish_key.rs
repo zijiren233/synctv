@@ -2,6 +2,9 @@
 //!
 //! HTTP endpoints for generating RTMP publish keys for live streaming.
 //! Streaming is scoped to individual media items, not rooms.
+//!
+//! Uses proto-generated types for response to ensure type consistency
+//! with gRPC handlers.
 
 use axum::{
     extract::{Path, State},
@@ -9,28 +12,9 @@ use axum::{
     routing::post,
     Router,
 };
-use serde::Serialize;
 
 use crate::http::{AppState, AppError, AppResult, middleware::AuthUser};
-
-/// Publish key response
-#[derive(Debug, Serialize)]
-pub struct PublishKeyResponse {
-    /// JWT token for RTMP authentication
-    pub token: String,
-    /// Room ID
-    pub room_id: String,
-    /// Media/Stream ID
-    pub media_id: String,
-    /// User ID who requested the key
-    pub user_id: String,
-    /// Expiration timestamp (Unix)
-    pub expires_at: i64,
-    /// RTMP URL with stream key
-    pub rtmp_url: String,
-    /// Stream key
-    pub stream_key: String,
-}
+use crate::proto::client::CreatePublishKeyResponse;
 
 /// Create publish key routes
 pub fn create_publish_key_router() -> Router<AppState> {
@@ -57,7 +41,7 @@ pub async fn generate_publish_key(
     State(state): State<AppState>,
     Path((room_id, media_id)): Path<(String, String)>,
     auth_user: AuthUser,
-) -> AppResult<Json<PublishKeyResponse>> {
+) -> AppResult<Json<CreatePublishKeyResponse>> {
     let user_id_str = auth_user.user_id.to_string();
 
     // Delegate to shared ClientApiImpl (handles permission check, key generation, RTMP URL)
@@ -78,13 +62,5 @@ pub async fn generate_publish_key(
             }
         })?;
 
-    Ok(Json(PublishKeyResponse {
-        token: resp.publish_key.clone(),
-        room_id,
-        media_id: String::new(), // Media ID is embedded in the stream key
-        user_id: user_id_str,
-        expires_at: resp.expires_at,
-        rtmp_url: resp.rtmp_url,
-        stream_key: resp.stream_key,
-    }))
+    Ok(Json(resp))
 }

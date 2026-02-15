@@ -6,7 +6,7 @@ use {
     super::stream::StreamIdentifier,
     super::utils::Uuid,
     async_trait::async_trait,
-    bytes::{Bytes, BytesMut},
+    bytes::Bytes,
     serde::ser::SerializeStruct,
     serde::Serialize,
     serde::Serializer,
@@ -113,11 +113,12 @@ pub enum FrameData {
     MediaInfo { media_info: MediaInfo },
 }
 
-//Used to pass rtp raw data.
+/// Used to pass RTP raw data.
+/// Uses `Bytes` (immutable, O(1) clone) since packets are never mutated after creation.
 #[derive(Clone)]
 pub enum PacketData {
-    Video { timestamp: u32, data: BytesMut },
-    Audio { timestamp: u32, data: BytesMut },
+    Video { timestamp: u32, data: Bytes },
+    Audio { timestamp: u32, data: Bytes },
 }
 
 //used to transfer a/v frame between different protocols(rtmp/rtsp/webrtc/http-flv/hls)
@@ -262,6 +263,7 @@ impl fmt::Display for TransceiverEvent {
 pub enum BroadcastEvent {
     Publish {
         identifier: StreamIdentifier,
+        pub_type: PublishType,
     },
     UnPublish {
         identifier: StreamIdentifier,

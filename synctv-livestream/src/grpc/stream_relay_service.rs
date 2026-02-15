@@ -12,8 +12,14 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
-use super::proto::{RtmpPacket, stream_relay_service_server, PullRtmpStreamRequest, FrameType};
+use super::proto::{
+    RtmpPacket, stream_relay_service_server, PullRtmpStreamRequest, FrameType,
+    GetHlsPlaylistRequest, GetHlsPlaylistResponse,
+    GetHlsSegmentRequest, GetHlsSegmentResponse,
+};
 use crate::relay::StreamRegistry;
+use crate::protocols::hls::StreamRegistry as HlsStreamRegistry;
+use crate::livestream::segment_manager::SegmentManager;
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<RtmpPacket, Status>> + Send>>;
 
@@ -22,6 +28,7 @@ const AUTH_SECRET_METADATA_KEY: &str = "x-cluster-secret";
 
 /// `StreamRelayService` implementation
 /// Publisher nodes use this to serve RTMP packets to Puller nodes via subscription
+/// and HLS playlists/segments to non-publisher nodes via proxy.
 ///
 /// GOP cache is handled by xiu's `StreamHub` internally — when a new subscriber
 /// joins, `StreamHub` automatically sends cached GOP frames via `send_prior_data`.
@@ -33,6 +40,10 @@ pub struct StreamRelayServiceImpl {
     cluster_secret: Option<Vec<u8>>,
     /// Cancellation token for graceful shutdown of forwarding tasks
     cancel_token: CancellationToken,
+    /// HLS segment manager for reading TS segments (optional, only on HLS-enabled nodes)
+    segment_manager: Option<Arc<SegmentManager>>,
+    /// HLS stream registry for M3U8 generation (optional, only on HLS-enabled nodes)
+    hls_stream_registry: Option<HlsStreamRegistry>,
 }
 
 impl StreamRelayServiceImpl {
@@ -49,6 +60,8 @@ impl StreamRelayServiceImpl {
             stream_hub_event_sender,
             cluster_secret: None,
             cancel_token,
+            segment_manager: None,
+            hls_stream_registry: None,
         }
     }
 
@@ -57,6 +70,20 @@ impl StreamRelayServiceImpl {
     #[must_use]
     pub fn with_cluster_secret(mut self, secret: impl Into<Vec<u8>>) -> Self {
         self.cluster_secret = Some(secret.into());
+        self
+    }
+
+    /// Set the HLS segment manager for serving TS segments via gRPC proxy.
+    #[must_use]
+    pub fn with_segment_manager(mut self, segment_manager: Arc<SegmentManager>) -> Self {
+        self.segment_manager = Some(segment_manager);
+        self
+    }
+
+    /// Set the HLS stream registry for generating M3U8 playlists via gRPC proxy.
+    #[must_use]
+    pub fn with_hls_stream_registry(mut self, hls_stream_registry: HlsStreamRegistry) -> Self {
+        self.hls_stream_registry = Some(hls_stream_registry);
         self
     }
 
@@ -225,6 +252,84 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         Ok(Response::new(
             Box::pin(output_stream) as Self::PullRtmpStreamStream
         ))
+    }
+
+    /// Get HLS M3U8 playlist from this (publisher) node.
+    /// Non-publisher nodes proxy HLS playlist requests here via gRPC.
+    async fn get_hls_playlist(
+        &self,
+        request: Request<GetHlsPlaylistRequest>,
+    ) -> Result<Response<GetHlsPlaylistResponse>, Status> {
+        self.authenticate(&request)?;
+
+        let req = request.into_inner();
+        tracing::debug!(
+            room_id = req.room_id,
+            media_id = req.media_id,
+            "GetHlsPlaylist request"
+        );
+
+        let hls_registry = self.hls_stream_registry.as_ref()
+            .ok_or_else(|| Status::unavailable("HLS not enabled on this node"))?;
+
+        // Registry key format matches the HLS remuxer: "live/room_id:media_id"
+        let stream_key = format!("live/{}:{}", req.room_id, req.media_id);
+
+        let response = match hls_registry.get(&stream_key) {
+            Some(stream_state) => {
+                let state = stream_state.read();
+                let segment_url_base = req.segment_url_base;
+                let playlist = state.generate_m3u8(|ts_name| {
+                    format!("{segment_url_base}{ts_name}.ts")
+                });
+                GetHlsPlaylistResponse {
+                    playlist,
+                    found: true,
+                }
+            }
+            None => GetHlsPlaylistResponse {
+                playlist: String::new(),
+                found: false,
+            },
+        };
+
+        Ok(Response::new(response))
+    }
+
+    /// Get HLS TS segment from this (publisher) node.
+    /// Non-publisher nodes proxy HLS segment requests here via gRPC.
+    async fn get_hls_segment(
+        &self,
+        request: Request<GetHlsSegmentRequest>,
+    ) -> Result<Response<GetHlsSegmentResponse>, Status> {
+        self.authenticate(&request)?;
+
+        let req = request.into_inner();
+        tracing::debug!(
+            room_id = req.room_id,
+            media_id = req.media_id,
+            segment_name = req.segment_name,
+            "GetHlsSegment request"
+        );
+
+        let segment_manager = self.segment_manager.as_ref()
+            .ok_or_else(|| Status::unavailable("HLS not enabled on this node"))?;
+
+        // Build storage key: app_name-stream_name-ts_name
+        // stream_name format is "room_id:media_id", replace : with - for flat key
+        let stream_name = format!("{}:{}", req.room_id, req.media_id);
+        let storage_key = format!("live-{}-{}", stream_name.replace(':', "-"), req.segment_name);
+
+        match segment_manager.storage().read(&storage_key).await {
+            Ok(data) => Ok(Response::new(GetHlsSegmentResponse {
+                data: data.to_vec(),
+                found: true,
+            })),
+            Err(_) => Ok(Response::new(GetHlsSegmentResponse {
+                data: Vec::new(),
+                found: false,
+            })),
+        }
     }
 }
 

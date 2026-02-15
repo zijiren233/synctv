@@ -2,13 +2,17 @@
 //!
 //! Shared functionality across all provider routes
 
+use std::collections::HashMap;
+
 use axum::{extract::{Path, State}, routing::get, Json, Router, response::IntoResponse};
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
-use synctv_core::provider::ProviderError;
+use synctv_core::models::{Media, MediaId, RoomId};
+use synctv_core::provider::{MediaProvider, PlaybackResult as ProviderPlaybackResult, ProviderContext, ProviderError};
 
 use super::AppState;
+use super::error::AppError;
 use super::middleware::AuthUser;
 
 /// Register common provider routes
@@ -97,8 +101,105 @@ pub struct InstanceQuery {
 }
 
 impl InstanceQuery {
-    #[must_use] 
+    #[must_use]
     pub fn as_deref(&self) -> Option<&str> {
         self.instance_name.as_deref()
     }
+}
+
+// ------------------------------------------------------------------
+// Shared playback resolution helpers
+// ------------------------------------------------------------------
+
+/// Verify room membership, fetch the playlist, and find a specific media item.
+///
+/// This is the common first phase shared by all provider proxy handlers.
+pub async fn resolve_media_from_playlist(
+    auth: &AuthUser,
+    room_id: &RoomId,
+    media_id: &MediaId,
+    state: &AppState,
+) -> Result<Media, AppError> {
+    state
+        .room_service
+        .check_membership(room_id, &auth.user_id)
+        .await
+        .map_err(|_| AppError::forbidden("Not a member of this room"))?;
+
+    let playlist = state
+        .room_service
+        .get_playlist(room_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get playlist: {e}"))?;
+
+    let media = playlist
+        .into_iter()
+        .find(|m| m.id == *media_id)
+        .ok_or_else(|| anyhow::anyhow!("Media not found in playlist"))?;
+
+    Ok(media)
+}
+
+/// Resolve a playback URL and headers from a `MediaProvider`.
+///
+/// Performs the full flow: membership check -> playlist lookup -> find media ->
+/// `generate_playback` -> extract first URL + headers from the default mode.
+///
+/// Used by alist and emby proxy handlers.
+pub async fn resolve_provider_playback_url(
+    auth: &AuthUser,
+    room_id: &RoomId,
+    media_id: &MediaId,
+    state: &AppState,
+    provider: &dyn MediaProvider,
+) -> Result<(String, HashMap<String, String>), AppError> {
+    let media = resolve_media_from_playlist(auth, room_id, media_id, state).await?;
+
+    let ctx = ProviderContext::new("synctv")
+        .with_user_id(auth.user_id.as_str())
+        .with_room_id(room_id.as_str());
+
+    let playback_result = provider
+        .generate_playback(&ctx, &media.source_config)
+        .await
+        .map_err(|e| anyhow::anyhow!("{} generate_playback failed: {e}", provider.name()))?;
+
+    let default_mode = &playback_result.default_mode;
+    let playback_info = playback_result
+        .playback_infos
+        .get(default_mode)
+        .ok_or_else(|| anyhow::anyhow!("Default playback mode not found"))?;
+
+    let url = playback_info
+        .urls
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("No URLs in playback info"))?;
+
+    Ok((url.clone(), playback_info.headers.clone()))
+}
+
+/// Resolve the full `PlaybackResult` from a `MediaProvider`.
+///
+/// Performs the full flow: membership check -> playlist lookup -> find media ->
+/// `generate_playback`.
+///
+/// Used by bilibili proxy handlers that need access to the complete result
+/// (DASH data, multiple modes, subtitles).
+pub async fn resolve_provider_playback_result(
+    auth: &AuthUser,
+    room_id: &RoomId,
+    media_id: &MediaId,
+    state: &AppState,
+    provider: &dyn MediaProvider,
+) -> Result<ProviderPlaybackResult, AppError> {
+    let media = resolve_media_from_playlist(auth, room_id, media_id, state).await?;
+
+    let ctx = ProviderContext::new("synctv")
+        .with_user_id(auth.user_id.as_str())
+        .with_room_id(room_id.as_str());
+
+    provider
+        .generate_playback(&ctx, &media.source_config)
+        .await
+        .map_err(|e| anyhow::anyhow!("{} generate_playback failed: {e}", provider.name()).into())
 }

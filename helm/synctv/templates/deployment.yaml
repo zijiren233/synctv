@@ -48,6 +48,11 @@ spec:
             - name: rtmp
               containerPort: {{ .Values.config.livestream.rtmpPort }}
               protocol: TCP
+            {{- if .Values.config.webrtc.enableBuiltinStun }}
+            - name: stun
+              containerPort: {{ .Values.config.webrtc.stunPort }}
+              protocol: UDP
+            {{- end }}
           env:
             - name: SYNCTV_CONFIG_PATH
               value: "/config/config.yaml"

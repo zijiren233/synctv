@@ -37,6 +37,12 @@ spec:
       {{- if and (or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer")) .Values.service.nodePorts.rtmp }}
       nodePort: {{ .Values.service.nodePorts.rtmp }}
       {{- end }}
+    {{- if .Values.config.webrtc.enableBuiltinStun }}
+    - port: {{ .Values.config.webrtc.stunPort }}
+      targetPort: stun
+      protocol: UDP
+      name: stun
+    {{- end }}
   selector:
     {{- include "synctv.selectorLabels" . | nindent 4 }}
   {{- if .Values.service.sessionAffinity }}

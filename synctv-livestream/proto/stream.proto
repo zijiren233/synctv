@@ -2,13 +2,19 @@ syntax = "proto3";
 
 package synctv.stream;
 
-// Stream relay service for cross-node RTMP streaming
+// Stream relay service for cross-node RTMP streaming and HLS proxy
 // Only contains cross-node gRPC calls. Other operations (register/unregister/query)
 // are handled directly via Redis.
 service StreamRelayService {
     // Pull RTMP stream from publisher node (server streaming)
     // This is the only cross-node RPC - used by Puller to pull stream from Publisher
     rpc PullRtmpStream(PullRtmpStreamRequest) returns (stream RtmpPacket);
+
+    // Get HLS M3U8 playlist from publisher node (proxy for non-publisher nodes)
+    rpc GetHlsPlaylist(GetHlsPlaylistRequest) returns (GetHlsPlaylistResponse);
+
+    // Get HLS TS segment from publisher node (proxy for non-publisher nodes)
+    rpc GetHlsSegment(GetHlsSegmentRequest) returns (GetHlsSegmentResponse);
 }
 
 // Pull RTMP stream from publisher node
@@ -30,5 +36,29 @@ enum FrameType {
     FRAME_TYPE_VIDEO = 1;
     FRAME_TYPE_AUDIO = 2;
     FRAME_TYPE_METADATA = 3;
+}
+
+// HLS proxy messages for cross-node HLS streaming
+
+message GetHlsPlaylistRequest {
+    string room_id = 1;
+    string media_id = 2;
+    string segment_url_base = 3; // base URL for segment links in the M3U8
+}
+
+message GetHlsPlaylistResponse {
+    string playlist = 1;
+    bool found = 2;
+}
+
+message GetHlsSegmentRequest {
+    string room_id = 1;
+    string media_id = 2;
+    string segment_name = 3;
+}
+
+message GetHlsSegmentResponse {
+    bytes data = 1;
+    bool found = 2;
 }
 

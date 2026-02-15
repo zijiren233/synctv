@@ -189,7 +189,15 @@ impl CustomHlsRemuxer {
                 }
             };
             match val {
-                BroadcastEvent::Publish { identifier } => {
+                BroadcastEvent::Publish { identifier, pub_type } => {
+                    // Only process locally published RTMP streams (RtmpPush).
+                    // Skip relayed streams (RtmpRelay) — in cluster mode,
+                    // only the publisher node generates HLS segments.
+                    if pub_type == crate::streamhub::define::PublishType::RtmpRelay {
+                        tracing::debug!("HLS remuxer: skipping relayed stream (RtmpRelay)");
+                        continue;
+                    }
+
                     if let StreamIdentifier::Rtmp {
                         app_name,
                         stream_name,

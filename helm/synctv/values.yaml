@@ -174,7 +174,6 @@ config:
   ## LivestreamConfig
   livestream:
     rtmpPort: 1935
-    hlsPort: 8081
     maxStreams: 50
     gopCacheSize: 2
     streamTimeoutSeconds: 300
