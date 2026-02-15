@@ -6,66 +6,65 @@
 //! Configuration priority: Environment variables > Config file > Defaults
 //!
 //! Usage:
-//! 1. Save this configuration as config/oauth2.toml
+//! 1. Save this configuration in config.yaml under the oauth2 section
 //! 2. Or set environment variables (SYNCTV_OAUTH2_PROVIDERS__<INSTANCE_ID>__*)
 
 // ============================================================
-// Method 1: TOML Configuration File Example (config/oauth2.toml)
+// Method 1: YAML Configuration File Example (config.yaml)
 // ============================================================
 
 /*
-[oauth2]
+oauth2:
+  # GitHub instance (using default endpoints)
+  github:
+    type: "github"
+    client_id: "your_github_client_id"
+    client_secret: "your_github_client_secret"
 
-# GitHub instance (using default endpoints)
-[oauth2.github]
-type = "github"
-client_id = "your_github_client_id"
-client_secret = "your_github_client_secret"
+  # Google instance
+  google:
+    type: "google"
+    client_id: "your_google_client_id"
+    client_secret: "your_google_client_secret"
 
-# Google instance
-[oauth2.google]
-type = "google"
-client_id = "your_google_client_id"
-client_secret = "your_google_client_secret"
+  # Logto instance 1 (custom endpoint)
+  logto1:
+    type: "oidc"
+    issuer: "https://logto1.your-domain.com"
+    client_id: "logto1_client_id"
+    client_secret: "logto1_client_secret"
+    # scopes: ["openid", "profile", "email"]  # Optional, defaults to provider type's default scopes
 
-# Logto instance 1 (custom endpoint)
-[oauth2.logto1]
-type = "oidc"
-issuer = "https://logto1.your-domain.com"
-client_id = "logto1_client_id"
-client_secret = "logto1_client_secret"
-# scopes = ["openid", "profile", "email"]  # Optional, defaults to provider type's default scopes
+  # Logto instance 2 (different Logto server)
+  logto2:
+    type: "oidc"
+    issuer: "https://logto2.your-domain.com"
+    client_id: "logto2_client_id"
+    client_secret: "logto2_client_secret"
 
-# Logto instance 2 (different Logto server)
-[oauth2.logto2]
-type = "oidc"
-issuer = "https://logto2.your-domain.com"
-client_id = "logto2_client_id"
-client_secret = "logto2_client_secret"
+  # Casdoor instance
+  casdoor_prod:
+    type: "casdoor"
+    endpoint: "https://casdoor.your-domain.com"
+    client_id: "casdoor_client_id"
+    client_secret: "casdoor_client_secret"
 
-# Casdoor instance
-[oauth2.casdoor_prod]
-type = "casdoor"
-endpoint = "https://casdoor.your-domain.com"
-client_id = "casdoor_client_id"
-client_secret = "casdoor_client_secret"
+  # QQ instance
+  qq:
+    type: "qq"
+    client_id: "qq_client_id"
+    client_secret: "qq_client_secret"
+    app_id: "your_qq_app_id"
 
-# QQ instance
-[oauth2.qq]
-type = "qq"
-client_id = "qq_client_id"
-client_secret = "qq_client_secret"
-app_id = "your_qq_app_id"
-
-# Custom OIDC provider (OIDC server without .well-known support)
-[oauth2.custom_oidc]
-type = "oidc"
-issuer = "https://custom.oidc.provider.com"
-auth_url = "https://custom.oidc.provider.com/authorize"
-token_url = "https://custom.oidc.provider.com/token"
-userinfo_url = "https://custom.oidc.provider.com/userinfo"
-client_id = "custom_client_id"
-client_secret = "custom_client_secret"
+  # Custom OIDC provider (OIDC server without .well-known support)
+  custom_oidc:
+    type: "oidc"
+    issuer: "https://custom.oidc.provider.com"
+    auth_url: "https://custom.oidc.provider.com/authorize"
+    token_url: "https://custom.oidc.provider.com/token"
+    userinfo_url: "https://custom.oidc.provider.com/userinfo"
+    client_id: "custom_client_id"
+    client_secret: "custom_client_secret"
 */
 
 // ============================================================
@@ -157,10 +156,12 @@ Old configuration (not recommended):
   SYNCTV_OAUTH2_GITHUB__CLIENT_SECRET=yyy
 
 New configuration (recommended):
-  [oauth2.github]
-  type = "github"
-  client_id = "xxx"
-  client_secret = "yyy"
+  # In config.yaml:
+  oauth2:
+    github:
+      type: "github"
+      client_id: "xxx"
+      client_secret: "yyy"
 
 Or using environment variables:
   SYNCTV_OAUTH2_GITHUB__TYPE=github

@@ -321,8 +321,8 @@ async fn list_users(
     };
     let resp = api
         .list_users(admin::ListUsersRequest {
-            page: q.page.unwrap_or(1).max(1),
-            page_size: q.page_size.unwrap_or(20).clamp(1, 100),
+            page: q.page.unwrap_or(1),
+            page_size: q.page_size.unwrap_or(20),
             status: status_i32,
             role: role_i32,
             search: q.search.unwrap_or_default(),
@@ -508,8 +508,8 @@ async fn list_rooms(
     let api = require_admin_api(&state)?;
     let resp = api
         .list_rooms(admin::ListRoomsRequest {
-            page: q.page.unwrap_or(1).max(1),
-            page_size: q.page_size.unwrap_or(20).clamp(1, 100),
+            page: q.page.unwrap_or(1),
+            page_size: q.page_size.unwrap_or(20),
             status: q.status.unwrap_or_default(),
             search: q.search.unwrap_or_default(),
             creator_id: q.creator_id.unwrap_or_default(),
@@ -573,7 +573,7 @@ async fn get_room_members(
     let resp = api
         .get_room_members(admin::GetRoomMembersRequest {
             room_id,
-            page: q.page.unwrap_or(1).max(1),
+            page: q.page.unwrap_or(1),
             page_size: q.page_size.unwrap_or(100).clamp(1, 500),
         })
         .await
@@ -656,13 +656,13 @@ async fn set_room_settings(
 }
 
 async fn reset_room_settings(
-    _auth: AuthAdmin,
+    auth: AuthAdmin,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<Json<admin::ResetRoomSettingsResponse>> {
     let api = require_admin_api(&state)?;
     let resp = api
-        .reset_room_settings(admin::ResetRoomSettingsRequest { room_id })
+        .reset_room_settings(admin::ResetRoomSettingsRequest { room_id }, &auth.user_id)
         .await
         .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))

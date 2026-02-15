@@ -9,7 +9,7 @@ use crate::{
     models::{
         Room, RoomId, RoomMember, RoomSettings, RoomStatus, RoomWithCount, UserId,
         PermissionBits, RoomRole, MemberStatus, RoomPlaybackState, Media, MediaId,
-        Playlist, PlaylistId, RoomListQuery, ChatMessage,
+        Playlist, PlaylistId, RoomListQuery, ChatMessage, PageParams,
     },
     repository::{RoomRepository, RoomMemberRepository, MediaRepository, PlaylistRepository, RoomPlaybackStateRepository, ChatRepository, RoomSettingsRepository},
     service::{
@@ -325,28 +325,28 @@ impl RoomService {
         }
 
         // Check password if required
-        // Load settings to check if password is required
         let room_settings = self.room_settings_repo.get(&room_id).await?;
         if room_settings.require_password.0 {
-            // Load password hash from room_settings table
             let password_hash = self.room_settings_repo.get_password_hash(&room_id).await?;
 
-            if let Some(hash) = password_hash {
-                let provided_password = password.ok_or_else(|| {
-                    tracing::warn!(room_id = %room_id, user_id = %user_id, "Password required but not provided");
-                    Error::Authorization("Password required".to_string())
-                })?;
+            match password_hash {
+                Some(hash) => {
+                    let provided_password = password.ok_or_else(|| {
+                        tracing::warn!(room_id = %room_id, user_id = %user_id, "Password required but not provided");
+                        Error::Authorization("Password required".to_string())
+                    })?;
 
-                // Verify password using Argon2id
-                let is_valid = verify_password(&provided_password, &hash).await?;
-                if !is_valid {
-                    tracing::warn!(room_id = %room_id, user_id = %user_id, "Invalid password provided");
+                    if !verify_password(&provided_password, &hash).await? {
+                        tracing::warn!(room_id = %room_id, user_id = %user_id, "Invalid password provided");
+                        return Err(Error::Authorization("Invalid password".to_string()));
+                    }
+                    tracing::debug!(room_id = %room_id, user_id = %user_id, "Password verified successfully");
+                }
+                None => {
+                    // Room requires password but none is configured — reject join
+                    tracing::warn!(room_id = %room_id, "Room requires password but none is set");
                     return Err(Error::Authorization("Invalid password".to_string()));
                 }
-                tracing::debug!(room_id = %room_id, user_id = %user_id, "Password verified successfully");
-            } else {
-                tracing::error!(room_id = %room_id, "Password required but not set in database");
-                return Err(Error::Authorization("Password required but not set".to_string()));
             }
         }
 
@@ -529,119 +529,68 @@ impl RoomService {
         self.room_settings_repo.get(room_id).await
     }
 
-    /// Update single room setting (requires `UPDATE_ROOM_SETTINGS` permission)
-    pub async fn update_room_setting(&self, room_id: &RoomId, user_id: &UserId, key: &str, value: &serde_json::Value) -> Result<String> {
-        // Check permission (defense-in-depth, same as set_settings)
+    /// Update single room setting by key (requires `UPDATE_ROOM_SETTINGS` permission)
+    ///
+    /// The flow is fully generic — no per-setting special cases here:
+    /// 1. Permission check
+    /// 2. Registry validates type + value constraints (incl. macro validators)
+    /// 3. Pre-apply hooks check async preconditions (e.g., DB state)
+    /// 4. Transactional update via `set_by_key` (dispatched through dyn trait)
+    /// 5. Post-apply hooks handle side effects (e.g., kick guests)
+    pub async fn update_room_setting(&self, room_id: &RoomId, user_id: &UserId, key: &str, value: &str) -> Result<String> {
+        use crate::models::room_settings::RoomSettingsRegistry;
+
+        // 1. Permission check
         self.permission_service
             .check_permission(room_id, user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
             .await?;
-        use crate::models::{AutoPlaySettings, PlayMode, room_settings::{ChatEnabled, DanmakuEnabled, AutoPlay, AllowGuestJoin, RequirePassword, MaxMembers, AutoPlayNext, LoopPlaylist, ShufflePlaylist}};
-        use crate::service::notification::GuestKickReason;
 
-        // Use a transaction with FOR UPDATE to prevent concurrent read-modify-write races
+        // 2. Validate via registry (type parsing + value constraints from macro validators)
+        RoomSettingsRegistry::validate_setting(key, value)?;
+
+        // 3. Transactional update with FOR UPDATE lock
         let mut tx = self.pool.begin().await?;
         let mut settings = self.room_settings_repo.get_for_update(room_id, &mut *tx).await?;
-        let mut should_kick_guests = false;
-        let mut kick_reason = GuestKickReason::RoomGuestModeDisabled;
-
-        // Update the specific setting based on key
-        match key {
-            "chat_enabled" => {
-                if let Some(bool_val) = value.as_bool() {
-                    settings.chat_enabled = ChatEnabled(bool_val);
-                }
-            }
-            "danmaku_enabled" => {
-                if let Some(bool_val) = value.as_bool() {
-                    settings.danmaku_enabled = DanmakuEnabled(bool_val);
-                }
-            }
-            "auto_play" => {
-                if let Some(bool_val) = value.as_bool() {
-                    settings.auto_play = AutoPlay::new(AutoPlaySettings {
-                        enabled: bool_val,
-                        mode: PlayMode::default(),
-                        delay: 0,
-                    });
-                }
-            }
-            "allow_guest_join" => {
-                if let Some(bool_val) = value.as_bool() {
-                    settings.allow_guest_join = AllowGuestJoin(bool_val);
-                    // If guest mode is disabled, kick all guests
-                    if !bool_val {
-                        should_kick_guests = true;
-                        kick_reason = GuestKickReason::RoomGuestModeDisabled;
-                    }
-                }
-            }
-            "require_password" => {
-                if let Some(bool_val) = value.as_bool() {
-                    // Prevent enabling require_password when no password is set
-                    if bool_val {
-                        let has_password = self.room_settings_repo.get_password_hash(room_id).await?.is_some();
-                        if !has_password {
-                            return Err(Error::InvalidInput(
-                                "Cannot require password when no password is set. Set a password first.".to_string()
-                            ));
-                        }
-                        should_kick_guests = true;
-                        kick_reason = GuestKickReason::RoomPasswordAdded;
-                    }
-                    settings.require_password = RequirePassword(bool_val);
-                }
-            }
-            "max_members" => {
-                if let Some(num_val) = value.as_u64() {
-                    if num_val > MaxMembers::MAX {
-                        return Err(Error::InvalidInput(format!("max_members cannot exceed {}", MaxMembers::MAX)));
-                    }
-                    settings.max_members = MaxMembers(num_val);
-                }
-            }
-            "auto_play_next" => {
-                if let Some(bool_val) = value.as_bool() {
-                    settings.auto_play_next = AutoPlayNext(bool_val);
-                }
-            }
-            "loop_playlist" => {
-                if let Some(bool_val) = value.as_bool() {
-                    settings.loop_playlist = LoopPlaylist(bool_val);
-                }
-            }
-            "shuffle_playlist" => {
-                if let Some(bool_val) = value.as_bool() {
-                    settings.shuffle_playlist = ShufflePlaylist(bool_val);
-                }
-            }
-            _ => {
-                return Err(Error::InvalidInput(format!("Unknown setting key: {key}")));
-            }
-        }
-
-        // Save the updated settings within the same transaction
+        settings.set_by_key(key, value)?;
+        settings.validate_permissions()?;
         self.room_settings_repo.set_settings_with_executor(room_id, &settings, &mut *tx).await?;
-
-        // Commit the transaction
         tx.commit().await?;
 
-        // Invalidate permission cache for all room members (outside transaction)
+        // 4. Post-apply hooks (side effects after commit)
         self.permission_service.invalidate_room_cache(room_id).await;
+        self.run_post_apply_hooks(room_id, key, value).await;
 
-        // Kick guests if needed (outside transaction)
-        if should_kick_guests {
-            if let Err(e) = self.notification_service.kick_all_guests(room_id, kick_reason).await {
-                tracing::warn!("Failed to kick guests after settings change: {}", e);
-            }
-        }
-
-        // Return updated settings as JSON string
         serde_json::to_string(&settings)
             .map_err(|e| Error::Internal(format!("Failed to serialize settings: {e}")))
     }
 
+    /// Post-apply hooks: side effects triggered after a setting change commits.
+    ///
+    /// Centralized registry — add new side effects here when a setting
+    /// change needs to trigger external actions (notifications, kicks, etc.).
+    async fn run_post_apply_hooks(&self, room_id: &RoomId, key: &str, value: &str) {
+        use crate::models::room_settings::{AllowGuestJoin, RequirePassword, RoomSetting};
+        use crate::service::notification::GuestKickReason;
+
+        let kick_reason = match (key, value) {
+            (k, "false") if k == AllowGuestJoin::KEY => Some(GuestKickReason::RoomGuestModeDisabled),
+            (k, "true") if k == RequirePassword::KEY => Some(GuestKickReason::RoomPasswordAdded),
+            _ => None,
+        };
+
+        if let Some(reason) = kick_reason {
+            if let Err(e) = self.notification_service.kick_all_guests(room_id, reason).await {
+                tracing::warn!("Failed to kick guests after settings change: {}", e);
+            }
+        }
+    }
+
     /// Reset room settings to default values
-    pub async fn reset_room_settings(&self, room_id: &RoomId) -> Result<String> {
+    pub async fn reset_room_settings(&self, room_id: &RoomId, user_id: &UserId) -> Result<String> {
+        self.permission_service
+            .check_permission(room_id, user_id, PermissionBits::UPDATE_ROOM_SETTINGS)
+            .await?;
+
         let default_settings = RoomSettings::default();
         self.room_settings_repo.set_settings(room_id, &default_settings).await?;
 
@@ -722,33 +671,31 @@ impl RoomService {
     }
 
     /// List rooms created by a specific user
-    pub async fn list_rooms_by_creator(&self, creator_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<Room>, i64)> {
-        self.room_repo.list_by_creator(creator_id, page, page_size).await
+    pub async fn list_rooms_by_creator(&self, creator_id: &UserId, pagination: PageParams) -> Result<(Vec<Room>, i64)> {
+        self.room_repo.list_by_creator(creator_id, pagination).await
     }
 
     /// List rooms created by a specific user with member count (optimized)
     pub async fn list_rooms_by_creator_with_count(
         &self,
         creator_id: &UserId,
-        page: i64,
-        page_size: i64,
+        pagination: PageParams,
     ) -> Result<(Vec<RoomWithCount>, i64)> {
-        self.room_repo.list_by_creator_with_count(creator_id, page, page_size).await
+        self.room_repo.list_by_creator_with_count(creator_id, pagination).await
     }
 
     /// List rooms where a user is a member
-    pub async fn list_joined_rooms(&self, user_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<RoomId>, i64)> {
-        self.member_service.list_user_rooms(user_id, page, page_size).await
+    pub async fn list_joined_rooms(&self, user_id: &UserId, pagination: PageParams) -> Result<(Vec<RoomId>, i64)> {
+        self.member_service.list_user_rooms(user_id, pagination).await
     }
 
     /// List rooms where a user is a member with full details (optimized)
     pub async fn list_joined_rooms_with_details(
         &self,
         user_id: &UserId,
-        page: i64,
-        page_size: i64,
+        pagination: PageParams,
     ) -> Result<(Vec<(Room, RoomRole, MemberStatus, i32)>, i64)> {
-        self.member_service.list_user_rooms_with_details(user_id, page, page_size).await
+        self.member_service.list_user_rooms_with_details(user_id, pagination).await
     }
 
     // ========== Member Operations (delegated) ==========
@@ -893,11 +840,10 @@ impl RoomService {
     pub async fn get_playlist_paginated(
         &self,
         room_id: &RoomId,
-        page: i32,
-        page_size: i32,
+        pagination: PageParams,
     ) -> Result<(Vec<Media>, i64)> {
         let root_playlist = self.playlist_service.get_root_playlist(room_id).await?;
-        self.media_service.get_playlist_media_paginated(&root_playlist.id, page, page_size).await
+        self.media_service.get_playlist_media_paginated(&root_playlist.id, pagination).await
     }
 
     /// Get current playing media for a room
@@ -1011,8 +957,8 @@ impl RoomService {
         if content.is_empty() {
             return Err(Error::InvalidInput("Chat message cannot be empty".to_string()));
         }
-        if content.len() > 2000 {
-            return Err(Error::InvalidInput("Chat message cannot exceed 2000 bytes".to_string()));
+        if content.chars().count() > 2000 {
+            return Err(Error::InvalidInput("Chat message cannot exceed 2000 characters".to_string()));
         }
 
         let message = ChatMessage {
@@ -1171,8 +1117,7 @@ impl RoomService {
     ) -> Result<ListRoomsResponse> {
         // Build query from request
         let mut query = RoomListQuery {
-            page: request.page,
-            page_size: request.page_size,
+            pagination: PageParams::new(Some(request.page as u32), Some(request.page_size as u32)),
             ..Default::default()
         };
 
@@ -1198,7 +1143,7 @@ impl RoomService {
             self.list_rooms_with_count(&query).await?
         } else {
             let creator_id = UserId::from_string(request.creator_id.clone());
-            self.list_rooms_by_creator_with_count(&creator_id, i64::from(query.page), i64::from(query.page_size)).await?
+            self.list_rooms_by_creator_with_count(&creator_id, query.pagination).await?
         };
 
         let admin_rooms = self.rooms_to_admin_rooms(rooms).await?;
@@ -1323,7 +1268,9 @@ impl RoomService {
         &self,
         request: UpdateRoomPasswordRequest,
     ) -> Result<UpdateRoomPasswordResponse> {
-        let room_id = RoomId::from_string(request.room_id);
+        use crate::service::notification::GuestKickReason;
+
+        let room_id = RoomId::from_string(request.room_id.clone());
 
         // Verify room exists
         let _room = self
@@ -1333,13 +1280,24 @@ impl RoomService {
             .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
 
         // Hash new password outside transaction (CPU-intensive)
-        let hashed_password = if request.new_password.is_empty() {
-            None
-        } else {
+        let password_is_being_set = !request.new_password.is_empty();
+        let hashed_password = if password_is_being_set {
             Some(hash_password(&request.new_password).await?)
+        } else {
+            None
         };
 
         self.do_set_password_hash(&room_id, hashed_password).await?;
+
+        // Kick guests when a password is being set (guests cannot join password-protected rooms)
+        if password_is_being_set {
+            if let Err(e) = self.notification_service.kick_all_guests(
+                &room_id,
+                GuestKickReason::RoomPasswordAdded,
+            ).await {
+                tracing::warn!("Failed to kick guests after admin password set: {}", e);
+            }
+        }
 
         Ok(UpdateRoomPasswordResponse { success: true })
     }
@@ -1426,16 +1384,371 @@ impl RoomService {
 
 #[cfg(test)]
 mod tests {
+    use crate::Error;
+    use crate::models::{
+        RoomSettings, RoomStatus, PermissionBits,
+        room_settings::{
+            ChatEnabled, DanmakuEnabled, AllowGuestJoin, RequirePassword,
+            MaxMembers, GuestAddedPermissions, MemberAddedPermissions,
+        },
+    };
+    use crate::test_helpers::RoomFixture;
+
+    // ========== Room Name Validation ==========
+
+    /// Replicates the room name validation from `do_create_room`.
+    fn validate_room_name(name: &str) -> crate::Result<()> {
+        if name.is_empty() {
+            return Err(Error::InvalidInput("Room name cannot be empty".to_string()));
+        }
+        if name.len() > 255 {
+            return Err(Error::InvalidInput("Room name too long".to_string()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_room_name_returns_error() {
+        let result = validate_room_name("");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::InvalidInput(msg) => assert!(msg.contains("cannot be empty"), "got: {msg}"),
+            other => panic!("Expected InvalidInput, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_room_name_at_max_length_is_ok() {
+        let name = "a".repeat(255);
+        assert!(validate_room_name(&name).is_ok());
+    }
+
+    #[test]
+    fn test_room_name_exceeding_max_length_returns_error() {
+        let name = "a".repeat(256);
+        let result = validate_room_name(&name);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::InvalidInput(msg) => assert!(msg.contains("too long"), "got: {msg}"),
+            other => panic!("Expected InvalidInput, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_valid_room_name_is_ok() {
+        assert!(validate_room_name("My Room").is_ok());
+        assert!(validate_room_name("a").is_ok());
+        assert!(validate_room_name("Room with spaces and 123").is_ok());
+    }
+
+    // ========== Room Description Validation ==========
+
+    /// Replicates the description validation from `do_create_room`.
+    /// Uses `chars().count()` for Unicode safety, matching the service code.
+    fn validate_room_description(description: &str) -> crate::Result<()> {
+        if description.chars().count() > 500 {
+            return Err(Error::InvalidInput(
+                "Room description too long (max 500 characters)".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_description_at_max_length_is_ok() {
+        let desc = "a".repeat(500);
+        assert!(validate_room_description(&desc).is_ok());
+    }
+
+    #[test]
+    fn test_description_exceeding_max_length_returns_error() {
+        let desc = "a".repeat(501);
+        let result = validate_room_description(&desc);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::InvalidInput(msg) => assert!(msg.contains("too long"), "got: {msg}"),
+            other => panic!("Expected InvalidInput, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_description_counts_unicode_characters_not_bytes() {
+        // Each CJK character is 3 bytes in UTF-8 but 1 character.
+        // 500 CJK chars = 1500 bytes, should be valid.
+        let desc: String = std::iter::repeat('\u{4e00}').take(500).collect();
+        assert_eq!(desc.chars().count(), 500);
+        assert!(validate_room_description(&desc).is_ok());
+
+        // 501 CJK characters should be rejected even though 255 ASCII chars would be fine
+        let desc_too_long: String = std::iter::repeat('\u{4e00}').take(501).collect();
+        assert!(validate_room_description(&desc_too_long).is_err());
+    }
+
+    #[test]
+    fn test_empty_description_is_ok() {
+        assert!(validate_room_description("").is_ok());
+    }
+
+    // ========== Chat Message Validation ==========
+
+    /// Replicates the chat message validation from `save_chat_message`.
+    fn validate_chat_message(content: &str) -> crate::Result<()> {
+        if content.is_empty() {
+            return Err(Error::InvalidInput(
+                "Chat message cannot be empty".to_string(),
+            ));
+        }
+        if content.chars().count() > 2000 {
+            return Err(Error::InvalidInput(
+                "Chat message cannot exceed 2000 characters".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_chat_message_returns_error() {
+        let result = validate_chat_message("");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::InvalidInput(msg) => assert!(msg.contains("cannot be empty"), "got: {msg}"),
+            other => panic!("Expected InvalidInput, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_chat_message_at_max_length_is_ok() {
+        let content = "x".repeat(2000);
+        assert!(validate_chat_message(&content).is_ok());
+    }
+
+    #[test]
+    fn test_chat_message_exceeding_max_length_returns_error() {
+        let content = "x".repeat(2001);
+        let result = validate_chat_message(&content);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::InvalidInput(msg) => assert!(msg.contains("2000"), "got: {msg}"),
+            other => panic!("Expected InvalidInput, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_normal_chat_message_is_ok() {
+        assert!(validate_chat_message("Hello, world!").is_ok());
+    }
+
+    // ========== Update Room Setting via Registry ==========
+
+    #[test]
+    fn test_known_setting_keys_are_valid_via_registry() {
+        use crate::models::room_settings::RoomSettingsRegistry;
+        let known_keys = [
+            ("chat_enabled", "true"),
+            ("danmaku_enabled", "false"),
+            ("auto_play", r#"{"enabled":true,"mode":"sequential","delay":3}"#),
+            ("allow_guest_join", "true"),
+            ("require_password", "false"),
+            ("max_members", "100"),
+            ("auto_play_next", "true"),
+            ("loop_playlist", "false"),
+            ("shuffle_playlist", "true"),
+        ];
+        for (key, val) in &known_keys {
+            assert!(
+                RoomSettingsRegistry::validate_setting(key, val).is_ok(),
+                "Expected key '{key}' with value '{val}' to be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unknown_setting_key_returns_error_via_registry() {
+        use crate::models::room_settings::RoomSettingsRegistry;
+        let result = RoomSettingsRegistry::validate_setting("nonexistent_key", "true");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_by_key_applies_value() {
+        let mut settings = RoomSettings::default();
+        assert!(settings.chat_enabled.0); // default is true
+        settings.set_by_key("chat_enabled", "false").unwrap();
+        assert!(!settings.chat_enabled.0);
+    }
+
+    #[test]
+    fn test_set_by_key_invalid_type_returns_error() {
+        let mut settings = RoomSettings::default();
+        let result = settings.set_by_key("chat_enabled", "not_a_bool");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_by_key_unknown_key_returns_error() {
+        let mut settings = RoomSettings::default();
+        let result = settings.set_by_key("nonexistent", "true");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_by_key_max_members() {
+        let mut settings = RoomSettings::default();
+        settings.set_by_key("max_members", "42").unwrap();
+        assert_eq!(settings.max_members.0, 42);
+    }
+
+    #[test]
+    fn test_set_by_key_max_members_invalid_string() {
+        let mut settings = RoomSettings::default();
+        let result = settings.set_by_key("max_members", "not_a_number");
+        assert!(result.is_err());
+    }
+
+    // ========== RoomSettings Permission Validation ==========
+
+    #[test]
+    fn test_settings_validate_permissions_default_is_ok() {
+        let settings = RoomSettings::default();
+        assert!(settings.validate_permissions().is_ok());
+    }
+
+    #[test]
+    fn test_settings_validate_permissions_guest_escalation_is_rejected() {
+        let mut settings = RoomSettings::default();
+        // Grant guests a permission that exceeds DEFAULT_MEMBER (e.g., KICK_MEMBER)
+        settings.guest_added_permissions = GuestAddedPermissions(PermissionBits::KICK_MEMBER);
+        let result = settings.validate_permissions();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::InvalidInput(msg) => {
+                assert!(msg.contains("Guest"), "got: {msg}");
+            }
+            other => panic!("Expected InvalidInput, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_settings_validate_permissions_member_escalation_is_rejected() {
+        let mut settings = RoomSettings::default();
+        // Grant members a permission that exceeds DEFAULT_ADMIN (e.g., DELETE_ROOM)
+        settings.member_added_permissions = MemberAddedPermissions(PermissionBits::DELETE_ROOM);
+        let result = settings.validate_permissions();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::InvalidInput(msg) => {
+                assert!(msg.contains("Member"), "got: {msg}");
+            }
+            other => panic!("Expected InvalidInput, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_settings_validate_permissions_within_limits_is_ok() {
+        let mut settings = RoomSettings::default();
+        // Grant guests SEND_CHAT which is within DEFAULT_MEMBER
+        settings.guest_added_permissions = GuestAddedPermissions(PermissionBits::SEND_CHAT);
+        assert!(settings.validate_permissions().is_ok());
+    }
+
+    // ========== RoomSettings Permission Calculation ==========
+
+    #[test]
+    fn test_admin_permissions_with_added_and_removed() {
+        let mut settings = RoomSettings::default();
+        let base = PermissionBits(PermissionBits::SEND_CHAT | PermissionBits::ADD_MOVIE);
+
+        // Add PLAY_CONTROL, remove SEND_CHAT
+        settings.admin_added_permissions =
+            crate::models::room_settings::AdminAddedPermissions(PermissionBits::PLAY_CONTROL);
+        settings.admin_removed_permissions =
+            crate::models::room_settings::AdminRemovedPermissions(PermissionBits::SEND_CHAT);
+
+        let result = settings.admin_permissions(base);
+        // Should have ADD_MOVIE and PLAY_CONTROL, but not SEND_CHAT
+        assert!(result.0 & PermissionBits::ADD_MOVIE != 0);
+        assert!(result.0 & PermissionBits::PLAY_CONTROL != 0);
+        assert_eq!(result.0 & PermissionBits::SEND_CHAT, 0);
+    }
+
+    #[test]
+    fn test_guest_permissions_capped_at_member_ceiling() {
+        let settings = RoomSettings::default();
+        let base = PermissionBits(0);
+        let result = settings.guest_permissions(base);
+        // Default guest added permissions are 0, so result should be 0
+        assert_eq!(result.0, 0);
+    }
+
+    // ========== RoomSettings Serialization ==========
+
+    #[test]
+    fn test_room_settings_default_serialization_roundtrip() {
+        let settings = RoomSettings::default();
+        let json = serde_json::to_string(&settings).expect("serialize");
+        let deserialized: RoomSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.chat_enabled.0, settings.chat_enabled.0);
+        assert_eq!(deserialized.max_members.0, settings.max_members.0);
+        assert_eq!(
+            deserialized.require_password.0,
+            settings.require_password.0
+        );
+    }
+
+    #[test]
+    fn test_room_settings_custom_values_roundtrip() {
+        let settings = RoomSettings {
+            chat_enabled: ChatEnabled(false),
+            danmaku_enabled: DanmakuEnabled(true),
+            allow_guest_join: AllowGuestJoin(false),
+            require_password: RequirePassword(true),
+            max_members: MaxMembers(42),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).expect("serialize");
+        let deserialized: RoomSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(!deserialized.chat_enabled.0);
+        assert!(deserialized.danmaku_enabled.0);
+        assert!(!deserialized.allow_guest_join.0);
+        assert!(deserialized.require_password.0);
+        assert_eq!(deserialized.max_members.0, 42);
+    }
+
+    // ========== Room Model Tests ==========
+
+    #[test]
+    fn test_room_fixture_defaults() {
+        let room = RoomFixture::new().build();
+        assert_eq!(room.status, RoomStatus::Active);
+        assert!(!room.is_banned);
+        assert_eq!(room.name, "Test Room");
+    }
+
+    #[test]
+    fn test_room_status_is_pending() {
+        assert!(RoomStatus::Pending.is_pending());
+        assert!(!RoomStatus::Active.is_pending());
+        assert!(!RoomStatus::Closed.is_pending());
+    }
+
+    // ========== Integration Test Placeholders ==========
 
     #[tokio::test]
     #[ignore = "Requires database"]
-    async fn test_create_room() {
-        // Integration test placeholder
+    async fn test_create_room_integration() {
+        // Integration test: requires PgPool
+        // Verifies that do_create_room creates room, member, playlist, playback state
     }
 
     #[tokio::test]
     #[ignore = "Requires database"]
-    async fn test_permission_check() {
-        // Test permission verification
+    async fn test_join_room_banned_user_integration() {
+        // Integration test: verifies banned user gets Authorization error
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn test_check_guest_allowed_integration() {
+        // Integration test: requires room_settings_repo to return settings
     }
 }

@@ -366,8 +366,11 @@ pub struct WebRTCConfig {
     pub stun_port: u16,
     /// STUN server bind host
     pub stun_host: String,
-    /// External STUN server URLs (fallback/backup for ICE)
-    pub external_stun_servers: Vec<String>,
+    /// STUN server external address for reflexive candidates.
+    /// In K8s/NAT environments, set this to the routable address
+    /// (e.g., pod IP or service IP). If empty, falls back to
+    /// advertise_host:stun_port.
+    pub stun_external_addr: String,
 
     // SFU Configuration (for large rooms)
     /// Room size threshold to switch to SFU mode (only for Hybrid mode)
@@ -431,10 +434,7 @@ impl Default for WebRTCConfig {
             enable_builtin_stun: true,
             stun_port: 3478,
             stun_host: "0.0.0.0".to_string(),
-            external_stun_servers: vec![
-                "stun:stun.l.google.com:19302".to_string(),
-                "stun:stun1.l.google.com:19302".to_string(),
-            ],
+            stun_external_addr: String::new(),
 
             // SFU configuration
             sfu_threshold: 5, // Switch to SFU for 5+ participants
@@ -503,7 +503,7 @@ impl Config {
         // Load config file if provided
         if let Some(path) = config_file {
             if Path::new(path).exists() {
-                builder = builder.add_source(File::with_name(path));
+                builder = builder.add_source(File::new(path, config::FileFormat::Yaml));
             }
         }
 
@@ -816,6 +816,12 @@ pub struct ClusterChannelConfig {
     /// (e.g., during a prolonged Redis outage).
     /// Default: 10000
     pub publish_channel_capacity: usize,
+
+    /// Discovery mode for cluster node registration.
+    /// - "redis": Use Redis-based node registry (default, works everywhere)
+    /// - "k8s_dns": Use Kubernetes headless service DNS for peer discovery
+    ///   (requires HEADLESS_SERVICE_NAME and POD_NAMESPACE env vars)
+    pub discovery_mode: String,
 }
 
 impl Default for ClusterChannelConfig {
@@ -823,6 +829,7 @@ impl Default for ClusterChannelConfig {
         Self {
             critical_channel_capacity: 1000,
             publish_channel_capacity: 10_000,
+            discovery_mode: "redis".to_string(),
         }
     }
 }

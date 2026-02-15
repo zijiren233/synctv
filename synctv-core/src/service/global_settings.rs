@@ -27,6 +27,7 @@
 //! ```
 
 use std::sync::Arc;
+use std::fmt;
 use serde::{Deserialize, Serialize};
 use crate::models::room_settings::MaxMembers;
 use crate::service::{SettingsService, settings_vars::{Setting, SettingsStorage}};
@@ -34,6 +35,111 @@ use crate::setting;
 
 /// Maximum allowed value for `max_chat_messages` setting (0 = unlimited)
 const MAX_CHAT_MESSAGES_LIMIT: u64 = 10_000;
+
+// ---------------------------------------------------------------------------
+// WebRTC dynamic setting types
+// ---------------------------------------------------------------------------
+
+/// A single TURN server entry.
+///
+/// ```json
+/// {"urls": ["turn:turn.example.com:3478"], "username": "u", "credential": "p"}
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TurnServer {
+    pub urls: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+/// A list of TURN servers, stored as a JSON array in the settings database.
+///
+/// Implements `Display` (→ JSON) and `FromStr` (← JSON) so it can be used
+/// directly with `Setting<TurnServerList>`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct TurnServerList(pub Vec<TurnServer>);
+
+impl TurnServerList {
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl Default for TurnServerList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for TurnServerList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Serialize to JSON; unwrap is safe because the type is always serializable
+        let json = serde_json::to_string(&self.0)
+            .unwrap_or_else(|_| "[]".to_string());
+        f.write_str(&json)
+    }
+}
+
+impl std::str::FromStr for TurnServerList {
+    type Err = serde_json::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Ok(Self::new());
+        }
+        let servers: Vec<TurnServer> = serde_json::from_str(s)?;
+        Ok(Self(servers))
+    }
+}
+
+/// A list of external STUN server URLs, stored as a JSON array in the settings
+/// database.
+///
+/// Each entry is a STUN URL string, e.g. `"stun:stun.l.google.com:19302"`.
+///
+/// Implements `Display` (→ JSON) and `FromStr` (← JSON) so it can be used
+/// directly with `Setting<StunServerList>`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct StunServerList(pub Vec<String>);
+
+impl StunServerList {
+    pub fn new() -> Self {
+        Self(vec![
+            "stun:stun.l.google.com:19302".to_string(),
+            "stun:stun1.l.google.com:19302".to_string(),
+        ])
+    }
+}
+
+impl Default for StunServerList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for StunServerList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let json = serde_json::to_string(&self.0)
+            .unwrap_or_else(|_| "[]".to_string());
+        f.write_str(&json)
+    }
+}
+
+impl std::str::FromStr for StunServerList {
+    type Err = serde_json::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Ok(Self(Vec::new()));
+        }
+        let urls: Vec<String> = serde_json::from_str(s)?;
+        Ok(Self(urls))
+    }
+}
 
 /// A snapshot of all client-visible settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +244,12 @@ pub struct SettingsRegistry {
     // Email settings
     pub email_whitelist_enabled: Setting<bool>,
     pub email_whitelist: Setting<String>,
+
+    // WebRTC settings
+    /// External STUN server URLs
+    pub external_stun_servers: Setting<StunServerList>,
+    /// TURN servers (dynamic, managed via settings API)
+    pub turn_servers: Setting<TurnServerList>,
 }
 
 impl std::fmt::Debug for SettingsRegistry {
@@ -230,7 +342,11 @@ impl SettingsRegistry {
 
             // Email settings
             email_whitelist_enabled: setting!(bool, "email.whitelist_enabled", storage.clone(), false),
-            email_whitelist: setting!(String, "email.whitelist", storage, String::new()),
+            email_whitelist: setting!(String, "email.whitelist", storage.clone(), String::new()),
+
+            // WebRTC settings
+            external_stun_servers: setting!(StunServerList, "webrtc.external_stun_servers", storage.clone(), StunServerList::new()),
+            turn_servers: setting!(TurnServerList, "webrtc.turn_servers", storage, TurnServerList::new()),
         }
     }
 

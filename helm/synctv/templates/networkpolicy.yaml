@@ -37,6 +37,15 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.config.livestream.rtmpPort }}
+    # Allow STUN traffic (WebRTC NAT traversal, UDP)
+    {{- if .Values.config.webrtc.enableBuiltinStun }}
+    - from:
+        - namespaceSelector: {}
+        - podSelector: {}
+      ports:
+        - protocol: UDP
+          port: {{ .Values.config.webrtc.stunPort }}
+    {{- end }}
     # Allow Prometheus scraping
     {{- if .Values.metrics.enabled }}
     - from:
@@ -50,13 +59,15 @@ spec:
   {{- end }}
   {{- if has "Egress" .Values.networkPolicy.policyTypes }}
   egress:
-    # Allow DNS
+    # Allow DNS (TCP and UDP)
     - to:
         - namespaceSelector:
             matchLabels:
               name: kube-system
       ports:
         - protocol: UDP
+          port: 53
+        - protocol: TCP
           port: 53
     # Allow PostgreSQL
     - to:

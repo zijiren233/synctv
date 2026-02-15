@@ -6,7 +6,12 @@ use super::ClientApiImpl;
 use super::convert::network_stats_to_proto;
 
 impl ClientApiImpl {
-    /// Get ICE servers configuration for WebRTC (STUN only, no TURN)
+    /// Get ICE servers configuration for WebRTC.
+    ///
+    /// Combines:
+    /// 1. Built-in STUN server (from static config)
+    /// 2. External STUN servers (dynamic setting: `webrtc.external_stun_servers`)
+    /// 3. TURN servers (dynamic setting: `webrtc.turn_servers`)
     pub async fn get_ice_servers(
         &self,
         room_id: &RoomId,
@@ -21,7 +26,7 @@ impl ClientApiImpl {
         let webrtc_config = &self.config.webrtc;
         let mut servers = Vec::new();
 
-        // Add built-in STUN server if enabled
+        // 1. Built-in STUN server (static config)
         if webrtc_config.enable_builtin_stun {
             let stun_url = format!(
                 "stun:{}:{}",
@@ -35,13 +40,29 @@ impl ClientApiImpl {
             });
         }
 
-        // Add external STUN servers
-        for url in &webrtc_config.external_stun_servers {
-            servers.push(IceServer {
-                urls: vec![url.clone()],
-                username: None,
-                credential: None,
-            });
+        // 2 & 3. Dynamic settings (external STUN + TURN servers)
+        if let Some(registry) = &self.settings_registry {
+            // External STUN servers
+            if let Ok(stun_list) = registry.external_stun_servers.get() {
+                for url in &stun_list.0 {
+                    servers.push(IceServer {
+                        urls: vec![url.clone()],
+                        username: None,
+                        credential: None,
+                    });
+                }
+            }
+
+            // TURN servers
+            if let Ok(turn_list) = registry.turn_servers.get() {
+                for ts in &turn_list.0 {
+                    servers.push(IceServer {
+                        urls: ts.urls.clone(),
+                        username: ts.username.clone(),
+                        credential: ts.credential.clone(),
+                    });
+                }
+            }
         }
 
         Ok(GetIceServersResponse { servers })

@@ -336,8 +336,8 @@ pub async fn list_rooms(
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<ListRoomsResponse>> {
-    let page: i32 = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
-    let page_size: i32 = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(50).clamp(1, 100);
+    let page: i32 = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
+    let page_size: i32 = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(50);
     let search = params.get("search").cloned().unwrap_or_default();
 
     let proto_req = ListRoomsRequest {

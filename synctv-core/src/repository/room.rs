@@ -1,7 +1,7 @@
 use sqlx::{PgPool, postgres::PgRow, Row};
 
 use crate::{
-    models::{Room, RoomId, RoomStatus, UserId, RoomListQuery},
+    models::{Room, RoomId, RoomStatus, UserId, RoomListQuery, PageParams},
     Error, Result,
 };
 
@@ -132,7 +132,8 @@ impl RoomRepository {
 
     /// List rooms with pagination and filters
     pub async fn list(&self, query: &RoomListQuery) -> Result<(Vec<Room>, i64)> {
-        let offset = (query.page - 1) * query.page_size;
+        let limit = query.pagination.limit() as i64;
+        let offset = query.pagination.offset() as i64;
 
         // Build WHERE conditions - use $1 for search in count query, $3 in list query
         let mut base_conditions = vec!["r.deleted_at IS NULL"];
@@ -191,14 +192,14 @@ impl RoomRepository {
         let rows = if let Some(ref search) = query.search {
             let search_pattern = format!("%{search}%");
             sqlx::query(&list_query)
-                .bind(query.page_size)
+                .bind(limit)
                 .bind(offset)
                 .bind(&search_pattern)
                 .fetch_all(&self.pool)
                 .await?
         } else {
             sqlx::query(&list_query)
-                .bind(query.page_size)
+                .bind(limit)
                 .bind(offset)
                 .fetch_all(&self.pool)
                 .await?
@@ -211,7 +212,8 @@ impl RoomRepository {
 
     /// List rooms with member count (optimized with JOIN)
     pub async fn list_with_count(&self, query: &RoomListQuery) -> Result<(Vec<crate::models::RoomWithCount>, i64)> {
-        let offset = (query.page - 1) * query.page_size;
+        let limit = query.pagination.limit() as i64;
+        let offset = query.pagination.offset() as i64;
 
         // Build WHERE conditions
         let mut base_conditions = vec!["r.deleted_at IS NULL"];
@@ -279,14 +281,14 @@ impl RoomRepository {
         let rows = if let Some(ref search) = query.search {
             let search_pattern = format!("%{search}%");
             sqlx::query(&list_query)
-                .bind(query.page_size)
+                .bind(limit)
                 .bind(offset)
                 .bind(&search_pattern)
                 .fetch_all(&self.pool)
                 .await?
         } else {
             sqlx::query(&list_query)
-                .bind(query.page_size)
+                .bind(limit)
                 .bind(offset)
                 .fetch_all(&self.pool)
                 .await?
@@ -336,8 +338,9 @@ impl RoomRepository {
     }
 
     /// Get rooms created by a specific user
-    pub async fn list_by_creator(&self, creator_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<Room>, i64)> {
-        let offset = (page - 1) * page_size;
+    pub async fn list_by_creator(&self, creator_id: &UserId, pagination: PageParams) -> Result<(Vec<Room>, i64)> {
+        let limit = pagination.limit() as i64;
+        let offset = pagination.offset() as i64;
 
         // Get total count
         let count: i64 = sqlx::query_scalar(
@@ -358,7 +361,7 @@ impl RoomRepository {
              LIMIT $2 OFFSET $3"
         )
         .bind(creator_id.as_str())
-        .bind(page_size)
+        .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
         .await?;
@@ -372,10 +375,10 @@ impl RoomRepository {
     pub async fn list_by_creator_with_count(
         &self,
         creator_id: &UserId,
-        page: i64,
-        page_size: i64,
+        pagination: PageParams,
     ) -> Result<(Vec<crate::models::RoomWithCount>, i64)> {
-        let offset = (page - 1) * page_size;
+        let limit = pagination.limit() as i64;
+        let offset = pagination.offset() as i64;
 
         // Get total count
         let count: i64 = sqlx::query_scalar(
@@ -403,7 +406,7 @@ impl RoomRepository {
             "
         )
         .bind(creator_id.as_str())
-        .bind(page_size)
+        .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
         .await?;

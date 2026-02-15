@@ -228,6 +228,17 @@ impl SyncTvServer {
             }
         }
 
+        // 1.5. Deregister this node from the cluster registry so other nodes
+        // discover the departure immediately instead of waiting for heartbeat timeout.
+        if let Some(ref registry) = self.services.node_registry {
+            info!("Deregistering node from cluster registry...");
+            if let Err(e) = registry.unregister().await {
+                warn!("Failed to deregister node from cluster registry: {}", e);
+            } else {
+                info!("Node deregistered from cluster registry");
+            }
+        }
+
         // 2. Shutdown SFU manager (close all SFU rooms)
         if let Some(ref sfu) = self.services.sfu_manager {
             info!("Shutting down SFU manager...");

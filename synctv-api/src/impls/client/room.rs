@@ -26,8 +26,7 @@ impl ClientApiImpl {
         req: crate::proto::client::ListRoomsRequest,
     ) -> Result<crate::proto::client::ListRoomsResponse, String> {
         let mut query = synctv_core::models::RoomListQuery {
-            page: req.page,
-            page_size: req.page_size,
+            pagination: synctv_core::models::PageParams::new(Some(req.page as u32), Some(req.page_size as u32)),
             ..Default::default()
         };
         if !req.search.is_empty() {
@@ -61,7 +60,8 @@ impl ClientApiImpl {
         page_size: i32,
     ) -> Result<crate::proto::client::ListParticipatedRoomsResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
-        let (rooms, total) = self.room_service.list_joined_rooms_with_details(&uid, page.into(), page_size.into()).await
+        let pagination = synctv_core::models::PageParams::new(Some(page as u32), Some(page_size as u32));
+        let (rooms, total) = self.room_service.list_joined_rooms_with_details(&uid, pagination).await
             .map_err(|e| e.to_string())?;
 
         let room_list: Vec<_> = rooms.into_iter().map(|(room, role, _status, _member_count)| {
@@ -334,14 +334,8 @@ impl ClientApiImpl {
         let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
 
-        // Check permission
-        self.room_service
-            .check_permission(&rid, &uid, synctv_core::models::PermissionBits::UPDATE_ROOM_SETTINGS)
-            .await
-            .map_err(|e| e.to_string())?;
-
         let settings_json = self.room_service
-            .reset_room_settings(&rid)
+            .reset_room_settings(&rid, &uid)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -358,11 +352,13 @@ impl ClientApiImpl {
     ) -> Result<crate::proto::client::ListCreatedRoomsResponse, String> {
         let uid = UserId::from_string(user_id.to_string());
 
-        let page = if req.page == 0 { 1 } else { i64::from(req.page) };
-        let page_size = if req.page_size == 0 || req.page_size > 50 { 10 } else { i64::from(req.page_size) };
+        let pagination = synctv_core::models::PageParams::new(
+            Some(if req.page == 0 { 1 } else { req.page as u32 }),
+            Some(if req.page_size == 0 || req.page_size > 50 { 10 } else { req.page_size as u32 }),
+        );
 
         let (rooms_with_count, total) = self.room_service
-            .list_rooms_by_creator_with_count(&uid, page, page_size)
+            .list_rooms_by_creator_with_count(&uid, pagination)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -449,8 +445,7 @@ impl ClientApiImpl {
 
         // Query for active, non-banned rooms
         let query = synctv_core::models::RoomListQuery {
-            page: 1,
-            page_size: 100,
+            pagination: synctv_core::models::PageParams::new(Some(1), Some(100)),
             search: None,
             status: Some(synctv_core::models::RoomStatus::Active),
             is_banned: Some(false),

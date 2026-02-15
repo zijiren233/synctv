@@ -538,8 +538,13 @@ impl AdminService for AdminServiceImpl {
         request: Request<ResetRoomSettingsRequest>,
     ) -> Result<Response<ResetRoomSettingsResponse>, Status> {
         self.check_admin(&request).await?;
+        let user_context = request
+            .extensions()
+            .get::<super::interceptors::UserContext>()
+            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
+        let admin_user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
         let req = request.into_inner();
-        let resp = self.admin_api.reset_room_settings(req).await.map_err(api_err)?;
+        let resp = self.admin_api.reset_room_settings(req, &admin_user_id).await.map_err(api_err)?;
         Ok(Response::new(resp))
     }
 

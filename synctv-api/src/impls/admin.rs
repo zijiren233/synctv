@@ -139,8 +139,7 @@ impl AdminApiImpl {
         };
 
         let query = synctv_core::models::RoomListQuery {
-            page,
-            page_size,
+            pagination: synctv_core::models::PageParams::new(Some(page as u32), Some(page_size as u32)),
             status,
             search: if req.search.is_empty() { None } else { Some(req.search) },
             is_banned: req.is_banned,
@@ -267,8 +266,7 @@ impl AdminApiImpl {
         let search = if req.search.is_empty() { None } else { Some(req.search) };
 
         let query = synctv_core::models::UserListQuery {
-            page,
-            page_size,
+            pagination: synctv_core::models::PageParams::new(Some(page as u32), Some(page_size as u32)),
             search,
             status,
             role,
@@ -840,13 +838,13 @@ impl AdminApiImpl {
 
         // Get rooms created by user
         let (created_rooms, _) = self.room_service
-            .list_rooms_by_creator(&uid, 1, 100)
+            .list_rooms_by_creator(&uid, synctv_core::models::PageParams::new(Some(1), Some(100)))
             .await
             .map_err(|e| e.to_string())?;
 
         // Get rooms where user is a member
         let (joined_room_ids, _) = self.room_service
-            .list_joined_rooms(&uid, 1, 100)
+            .list_joined_rooms(&uid, synctv_core::models::PageParams::new(Some(1), Some(100)))
             .await
             .map_err(|e| e.to_string())?;
 
@@ -980,9 +978,10 @@ impl AdminApiImpl {
     pub async fn reset_room_settings(
         &self,
         req: crate::proto::admin::ResetRoomSettingsRequest,
+        admin_user_id: &UserId,
     ) -> Result<crate::proto::admin::ResetRoomSettingsResponse, String> {
         let rid = RoomId::from_string(req.room_id);
-        self.room_service.reset_room_settings(&rid).await.map_err(|e| e.to_string())?;
+        self.room_service.reset_room_settings(&rid, admin_user_id).await.map_err(|e| e.to_string())?;
 
         let room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
         let settings = self.room_service.get_room_settings(&rid).await.unwrap_or_default();
@@ -1043,8 +1042,7 @@ impl AdminApiImpl {
         // The DB query filters by role="admin" which returns admin and root users.
         // No additional client-side filtering needed.
         let query = synctv_core::models::UserListQuery {
-            page: 1,
-            page_size: 100,
+            pagination: synctv_core::models::PageParams::new(Some(1), Some(100)),
             role: Some("admin".to_string()),
             ..Default::default()
         };
@@ -1066,25 +1064,26 @@ impl AdminApiImpl {
         _req: crate::proto::admin::GetSystemStatsRequest,
     ) -> Result<crate::proto::admin::GetSystemStatsResponse, String> {
         // M-4: Run all 7 independent DB queries in parallel
-        let query_all = synctv_core::models::UserListQuery { page: 1, page_size: 1, ..Default::default() };
+        let stats_pagination = synctv_core::models::PageParams::new(Some(1), Some(1));
+        let query_all = synctv_core::models::UserListQuery { pagination: stats_pagination, ..Default::default() };
         let query_active = synctv_core::models::UserListQuery {
-            page: 1, page_size: 1,
+            pagination: stats_pagination,
             status: Some("active".to_string()),
             ..Default::default()
         };
         let query_banned = synctv_core::models::UserListQuery {
-            page: 1, page_size: 1,
+            pagination: stats_pagination,
             status: Some("banned".to_string()),
             ..Default::default()
         };
-        let room_query_all = synctv_core::models::RoomListQuery { page: 1, page_size: 1, ..Default::default() };
+        let room_query_all = synctv_core::models::RoomListQuery { pagination: stats_pagination, ..Default::default() };
         let room_query_active = synctv_core::models::RoomListQuery {
-            page: 1, page_size: 1,
+            pagination: stats_pagination,
             status: Some(synctv_core::models::RoomStatus::Active),
             ..Default::default()
         };
         let room_query_banned = synctv_core::models::RoomListQuery {
-            page: 1, page_size: 1,
+            pagination: stats_pagination,
             is_banned: Some(true),
             ..Default::default()
         };

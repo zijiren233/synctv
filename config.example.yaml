@@ -1,0 +1,184 @@
+# SyncTV Configuration Example
+#
+# Copy this file to config.yaml and modify as needed
+#
+# Configuration priority: defaults < config file < environment variables
+#
+# Environment variables use SYNCTV_ prefix with underscore separator:
+#   SYNCTV_SERVER_HOST=0.0.0.0
+#   SYNCTV_DATABASE_URL=postgresql://...
+#   SYNCTV_OAUTH2_GITHUB_CLIENT_ID=xxx
+
+server:
+  host: "0.0.0.0"
+  grpc_port: 50051
+  http_port: 8080
+  enable_reflection: true
+
+database:
+  url: "postgresql://synctv:synctv@localhost:5432/synctv"
+  max_connections: 20
+  min_connections: 5
+  connect_timeout_seconds: 10
+  idle_timeout_seconds: 600
+
+redis:
+  url: "redis://localhost:6379"
+  pool_size: 10
+  connect_timeout_seconds: 5
+  key_prefix: "synctv:"
+
+jwt:
+  secret: ""  # Set via SYNCTV_JWT_SECRET env var (min 32 chars)
+  access_token_duration_hours: 1
+  refresh_token_duration_days: 30
+
+logging:
+  level: "info"
+  format: "pretty"
+  # file_path: "/var/log/synctv/app.log"
+
+livestream:
+  rtmp_port: 1935
+  max_streams: 50
+  gop_cache_size: 2
+  stream_timeout_seconds: 300
+
+# ============================================================================
+# OAuth2/OIDC Configuration
+# ============================================================================
+#
+# Providers are configured as a YAML string that is parsed separately
+# to support dynamic provider-specific fields.
+#
+# Supported Providers:
+#   - github:  GitHub OAuth2
+#   - google:  Google OAuth2
+#   - oidc:    Generic OIDC provider with .well-known discovery
+#              Supports issuer, auth_url, token_url, userinfo_url fields
+#   - qq, gitee, feishu, wechat: Chinese OAuth2 Providers (not yet implemented)
+#   - Any OIDC-compliant provider (Casdoor, Keycloak, Authelia, etc.)
+#     requires 'type: oidc' field
+#
+# Common fields (all providers):
+#   client_id: OAuth2 client ID
+#   client_secret: OAuth2 client secret
+#   redirect_url: (optional, auto-generated if not provided)
+#
+# Provider-specific fields:
+#   logto:
+#     endpoint: Logto server URL (e.g., "https://logto.example.com")
+#   oidc:
+#     issuer: Issuer URL for .well-known discovery
+#     auth_url: (optional) Custom authorization endpoint
+#     token_url: (optional) Custom token endpoint
+#     userinfo_url: (optional) Custom userinfo endpoint
+#
+# Multiple Provider Instances:
+#   Use different instance names (e.g., logto1, logto2) and add 'type' field
+#   to specify the provider type.
+#
+# Callback URLs are automatically generated based on instance name:
+#   http://<server.host>/api/oauth2/<instance_name>/callback
+#   Examples:
+#     http://localhost:8080/api/oauth2/github/callback
+#     http://localhost:8080/api/oauth2/logto1/callback
+#
+# Security Notes:
+#   - OAuth2 tokens are only used temporarily during login and then discarded
+#   - Only provider-user mappings are stored (for future logins)
+#   - Always use HTTPS in production for OAuth2 callbacks
+
+oauth2:
+  # Example configuration (uncomment and modify):
+  # providers: |
+  #   # Standard OAuth2 Providers
+  #   github:
+  #     client_id: "your_github_client_id"
+  #     client_secret: "your_github_client_secret"
+  #
+  #   google:
+  #     client_id: "your_google_client_id"
+  #     client_secret: "your_google_client_secret"
+  #
+  #   # Multiple instances of same provider (requires 'type' field)
+  #   logto1:
+  #     type: logto
+  #     client_id: "logto1_client_id"
+  #     client_secret: "logto1_client_secret"
+  #     endpoint: "https://logto1.example.com"
+  #
+  #   logto2:
+  #     type: logto
+  #     client_id: "logto2_client_id"
+  #     client_secret: "logto2_client_secret"
+  #     endpoint: "https://logto2.example.com"
+  #
+  #   # Generic OIDC provider
+  #   custom_oidc:
+  #     type: oidc
+  #     client_id: "custom_client_id"
+  #     client_secret: "custom_client_secret"
+  #     issuer: "https://custom.oidc.provider.com"
+  providers: ""
+
+# Environment Variables for OAuth2:
+#   Format: SYNCTV_OAUTH2_<INSTANCE_NAME>_<FIELD>
+#   Examples:
+#     SYNCTV_OAUTH2_GITHUB_CLIENT_ID=xxx
+#     SYNCTV_OAUTH2_GITHUB_CLIENT_SECRET=yyy
+#     SYNCTV_OAUTH2_LOGTO1_TYPE=logto
+#     SYNCTV_OAUTH2_LOGTO1_CLIENT_ID=xxx
+#     SYNCTV_OAUTH2_LOGTO1_ENDPOINT=https://logto1.example.com
+
+# ============================================================================
+# WebRTC Configuration
+# ============================================================================
+#
+# WebRTC supports 4 operation modes:
+#   - signaling_only: Pure signaling relay (zero cost, ~70% success rate)
+#   - peer_to_peer:   P2P with STUN/TURN (recommended, ~99% success rate)
+#   - hybrid:         P2P for small rooms, SFU for large rooms (default)
+#   - sfu:            All rooms use SFU (enterprise grade)
+
+webrtc:
+  mode: "hybrid"
+
+  # --- Built-in STUN Server ---
+  enable_builtin_stun: true
+  stun_port: 3478
+  stun_host: "0.0.0.0"
+  # External address for STUN reflexive candidates. In K8s/NAT, set to
+  # the pod IP or service IP (e.g., via SYNCTV_WEBRTC_STUN_EXTERNAL_ADDR).
+  # If empty, falls back to advertise_host:stun_port.
+  # stun_external_addr: ""
+
+  # --- External STUN & TURN Servers ---
+  # Configured dynamically via the settings API (no restart required):
+  #   "webrtc.external_stun_servers" - JSON array of STUN URLs, e.g.:
+  #       ["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]
+  #   "webrtc.turn_servers" - JSON array of TURN server objects, e.g.:
+  #       [{"urls":["turn:turn.example.com:3478"],"username":"user","credential":"pass"}]
+
+  # --- SFU Configuration (for hybrid/sfu modes) ---
+  sfu_threshold: 5           # Switch to SFU when room has >= N participants
+  enable_simulcast: true     # Multiple quality layers (High/Medium/Low)
+  max_sfu_rooms: 0           # 0 = unlimited
+  max_peers_per_sfu_room: 50
+
+# ============================================================================
+# Dynamic ICE Servers Configuration
+# ============================================================================
+#
+# External STUN and TURN servers are managed via the settings API at runtime.
+#
+# Setting key: "webrtc.external_stun_servers"
+# Value: JSON array of STUN URL strings
+#   Default: ["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]
+#
+# Setting key: "webrtc.turn_servers"
+# Value: JSON array of TURN server objects
+#   [{"urls":["turn:turn.example.com:3478"],"username":"user","credential":"pass"}]
+#   Default: [] (no TURN servers)
+#
+# Changes take effect immediately without restarting the server.

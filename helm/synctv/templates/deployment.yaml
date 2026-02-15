@@ -73,6 +73,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
+            {{- if eq ((.Values.config.cluster).discoveryMode | default "redis") "k8s_dns" }}
+            - name: HEADLESS_SERVICE_NAME
+              value: {{ include "synctv.fullname" . }}-headless
+            {{- end }}
             # Secrets injected via env vars (SYNCTV_ prefix matches Config::load)
             - name: SYNCTV_DATABASE_URL
               valueFrom:

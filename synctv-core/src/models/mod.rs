@@ -3,6 +3,7 @@ pub mod id;
 pub mod media;
 pub mod notification;
 pub mod oauth2_client;
+pub mod pagination;
 pub mod permission;
 pub mod playback;
 pub mod playlist;
@@ -43,6 +44,7 @@ pub use settings::{
     default_email_settings, default_oauth_settings, default_server_settings, get_default_settings,
     SettingsGroup, SettingsError,
 };
+pub use pagination::{PageParams, Page, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE};
 pub use user::{
     CreateUserRequest, SignupMethod, UpdateUserRequest, User, UserListQuery,
     UserRole, UserStatus,

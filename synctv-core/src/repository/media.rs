@@ -5,7 +5,7 @@
 use sqlx::{postgres::PgRow, PgPool, Row};
 
 use crate::{
-    models::{Media, MediaId, PlaylistId, RoomId},
+    models::{Media, MediaId, PageParams, PlaylistId, RoomId},
     Result,
 };
 
@@ -247,10 +247,10 @@ impl MediaRepository {
     pub async fn get_playlist_paginated(
         &self,
         playlist_id: &PlaylistId,
-        page: i32,
-        page_size: i32,
+        pagination: PageParams,
     ) -> Result<(Vec<Media>, i64)> {
-        let offset = (page - 1) * page_size;
+        let limit = pagination.limit() as i64;
+        let offset = pagination.offset() as i64;
 
         // Get total count
         let total: i64 = sqlx::query_scalar(
@@ -275,8 +275,8 @@ impl MediaRepository {
             "
         )
         .bind(playlist_id.as_str())
-        .bind(i64::from(page_size))
-        .bind(i64::from(offset))
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await?;
 

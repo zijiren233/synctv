@@ -117,34 +117,33 @@ grpcurl -plaintext -d '{
 
 Configuration can be provided via:
 1. Environment variables (highest priority): `SYNCTV_SECTION_KEY`
-2. Config file: `config.toml` or `config.yaml`
+2. Config file: `config.yaml` (YAML only)
 3. Defaults (lowest priority)
 
-Example `config.toml`:
+Example `config.yaml`:
 
-```toml
-[server]
-host = "0.0.0.0"
-grpc_port = 50051
-http_port = 8080
-enable_reflection = true
+```yaml
+server:
+  host: "0.0.0.0"
+  grpc_port: 50051
+  http_port: 8080
+  enable_reflection: true
 
-[database]
-url = "postgresql://synctv:synctv@localhost:5432/synctv"
-max_connections = 20
-min_connections = 5
+database:
+  url: "postgresql://synctv:synctv@localhost:5432/synctv"
+  max_connections: 20
+  min_connections: 5
 
-[redis]
-url = "redis://localhost:6379"
-key_prefix = "synctv:"
+redis:
+  url: "redis://localhost:6379"
+  key_prefix: "synctv:"
 
-[jwt]
-private_key_path = "./keys/jwt_private.pem"
-public_key_path = "./keys/jwt_public.pem"
+jwt:
+  secret: ""  # Set via SYNCTV_JWT_SECRET env var
 
-[logging]
-level = "info"
-format = "pretty"  # or "json"
+logging:
+  level: "info"
+  format: "pretty"  # or "json"
 ```
 
 ## Security

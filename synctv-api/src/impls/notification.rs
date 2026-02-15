@@ -84,8 +84,10 @@ impl NotificationApiImpl {
         notification_type: Option<CoreNotificationType>,
     ) -> Result<ListNotificationsResult, String> {
         let query = NotificationListQuery {
-            page: page.map(|p| p.max(1)),
-            page_size: page_size.map(|s| s.clamp(1, 100)),
+            pagination: synctv_core::models::PageParams::new(
+                page.map(|p| p as u32),
+                page_size.map(|s| s as u32),
+            ),
             is_read,
             notification_type,
         };

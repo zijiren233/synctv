@@ -367,8 +367,7 @@ pub struct UpdateUserRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserListQuery {
-    pub page: i32,
-    pub page_size: i32,
+    pub pagination: super::pagination::PageParams,
     pub search: Option<String>,
     pub status: Option<String>, // "active", "banned", etc.
     pub role: Option<String>,   // "user", "admin", "root"
@@ -377,8 +376,7 @@ pub struct UserListQuery {
 impl Default for UserListQuery {
     fn default() -> Self {
         Self {
-            page: 1,
-            page_size: 20,
+            pagination: super::pagination::PageParams::default(),
             search: None,
             status: None,
             role: None,

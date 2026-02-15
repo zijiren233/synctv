@@ -4,7 +4,7 @@
 //! and role management with Allow/Deny permission pattern.
 
 use crate::{
-    models::{Room, RoomId, RoomMember, RoomMemberWithUser, UserId, PermissionBits, RoomRole, MemberStatus, RoomSettings},
+    models::{Room, RoomId, RoomMember, RoomMemberWithUser, UserId, PermissionBits, RoomRole, MemberStatus, RoomSettings, PageParams},
     repository::{RoomMemberRepository, RoomRepository, RoomSettingsRepository},
     service::permission::PermissionService,
     Error, Result,
@@ -455,21 +455,19 @@ impl MemberService {
     pub async fn list_user_rooms(
         &self,
         user_id: &UserId,
-        page: i64,
-        page_size: i64,
+        pagination: PageParams,
     ) -> Result<(Vec<RoomId>, i64)> {
-        self.member_repo.list_by_user(user_id, page, page_size).await
+        self.member_repo.list_by_user(user_id, pagination).await
     }
 
     /// List all rooms a user is a member of with full details
     pub async fn list_user_rooms_with_details(
         &self,
         user_id: &UserId,
-        page: i64,
-        page_size: i64,
+        pagination: PageParams,
     ) -> Result<(Vec<(Room, RoomRole, MemberStatus, i32)>, i64)> {
         self.member_repo
-            .list_by_user_with_details(user_id, page, page_size)
+            .list_by_user_with_details(user_id, pagination)
             .await
     }
 

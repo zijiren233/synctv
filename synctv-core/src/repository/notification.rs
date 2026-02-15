@@ -79,9 +79,8 @@ impl NotificationRepository {
         user_id: &UserId,
         query: &NotificationListQuery,
     ) -> Result<(Vec<Notification>, i64)> {
-        let page = query.page.unwrap_or(1).max(1);
-        let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
-        let offset = (page - 1) * page_size;
+        let limit = query.pagination.limit() as i64;
+        let offset = query.pagination.offset() as i64;
 
         let mut qb: sqlx::QueryBuilder<sqlx::Postgres> = sqlx::QueryBuilder::new(
             "SELECT id, user_id, type, title, content, data, is_read, created_at, updated_at, \
@@ -100,9 +99,9 @@ impl NotificationRepository {
         }
 
         qb.push(" ORDER BY created_at DESC LIMIT ");
-        qb.push_bind(page_size);
+        qb.push_bind(limit);
         qb.push(" OFFSET ");
-        qb.push_bind(i64::from(offset));
+        qb.push_bind(offset);
 
         let rows = qb.build().fetch_all(&self.pool).await?;
 

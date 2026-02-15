@@ -224,7 +224,8 @@ impl UserRepository {
 
     /// List users with pagination
     pub async fn list(&self, query: &UserListQuery) -> Result<(Vec<User>, i64)> {
-        let offset = (query.page - 1) * query.page_size;
+        let limit = query.pagination.limit() as i64;
+        let offset = query.pagination.offset() as i64;
 
         // Build dynamic filter conditions and params
         // We build conditions with sequential $N parameters
@@ -297,7 +298,7 @@ impl UserRepository {
         );
 
         let mut list_qb = sqlx::query(&list_sql)
-            .bind(query.page_size)
+            .bind(limit)
             .bind(offset);
         if let Some(ref search) = search_param {
             list_qb = list_qb.bind(search.clone());

@@ -59,18 +59,13 @@ data:
     cluster:
       critical_channel_capacity: {{ .Values.config.cluster.criticalChannelCapacity }}
       publish_channel_capacity: {{ .Values.config.cluster.publishChannelCapacity }}
+      discovery_mode: {{ .Values.config.cluster.discoveryMode | default "redis" | quote }}
 
     webrtc:
       mode: {{ .Values.config.webrtc.mode | default "hybrid" | quote }}
       enable_builtin_stun: {{ .Values.config.webrtc.enableBuiltinStun | default true }}
       stun_port: {{ .Values.config.webrtc.stunPort | default 3478 }}
       stun_host: {{ .Values.config.webrtc.stunHost | default "0.0.0.0" | quote }}
-      {{- if .Values.config.webrtc.externalStunServers }}
-      external_stun_servers:
-        {{- range .Values.config.webrtc.externalStunServers }}
-        - {{ . | quote }}
-        {{- end }}
-      {{- end }}
       sfu_threshold: {{ .Values.config.webrtc.sfuThreshold | default 5 }}
       enable_simulcast: {{ .Values.config.webrtc.enableSimulcast | default true }}
       max_sfu_rooms: {{ .Values.config.webrtc.maxSfuRooms | default 0 }}

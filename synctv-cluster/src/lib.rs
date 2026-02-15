@@ -4,7 +4,7 @@ pub mod grpc;
 pub mod error;
 
 pub use error::{Error, Result};
-pub use discovery::{HeartbeatResult, NodeInfo, NodeRegistry, HealthMonitor, NodeHealth, LoadBalancer, LoadBalancingStrategy};
+pub use discovery::{HeartbeatResult, NodeInfo, NodeRegistry, HealthMonitor, NodeHealth, LoadBalancer, LoadBalancingStrategy, K8sDnsDiscovery};
 pub use sync::{
     ConnectionManager, PublishRequest, RoomMessageHub,
     ClusterManager, ClusterConfig, ClusterMetrics, BroadcastResult,

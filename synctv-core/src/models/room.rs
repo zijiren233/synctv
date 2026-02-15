@@ -258,8 +258,7 @@ pub struct RoomWithSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomListQuery {
-    pub page: i32,
-    pub page_size: i32,
+    pub pagination: super::pagination::PageParams,
     pub status: Option<RoomStatus>,
     pub search: Option<String>,
     /// Filter by ban status (None = don't filter, Some(true) = banned only, Some(false) = not banned)
@@ -272,8 +271,7 @@ pub struct RoomListQuery {
 impl Default for RoomListQuery {
     fn default() -> Self {
         Self {
-            page: 1,
-            page_size: 20,
+            pagination: super::pagination::PageParams::default(),
             status: Some(RoomStatus::Active),
             search: None,
             is_banned: Some(false), // By default, exclude banned rooms

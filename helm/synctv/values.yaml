@@ -205,6 +205,9 @@ config:
   cluster:
     criticalChannelCapacity: 1000
     publishChannelCapacity: 10000
+    ## Discovery mode: "redis" (default) or "k8s_dns" (uses headless service DNS)
+    ## In K8s deployments, "k8s_dns" is recommended as it uses native DNS discovery
+    discoveryMode: "k8s_dns"
 
   ## WebRTCConfig
   webrtc:
@@ -212,9 +215,6 @@ config:
     enableBuiltinStun: true
     stunPort: 3478
     stunHost: "0.0.0.0"
-    externalStunServers:
-      - "stun:stun.l.google.com:19302"
-      - "stun:stun1.l.google.com:19302"
     sfuThreshold: 5
     enableSimulcast: true
     maxSfuRooms: 0

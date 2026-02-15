@@ -83,7 +83,7 @@ impl StunServer {
     }
 
     /// Get the local bind address.
-    #[must_use] 
+    #[must_use]
     pub const fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }

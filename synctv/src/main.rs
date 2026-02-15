@@ -1,3 +1,4 @@
+mod migrations;
 mod rtmp_auth;
 mod server;
 
@@ -11,7 +12,7 @@ use synctv_core::{
     provider::{AlistProvider, BilibiliProvider, EmbyProvider},
 };
 use synctv_cluster::sync::{ConnectionManager, ClusterManager, ClusterConfig};
-use synctv_cluster::discovery::{NodeRegistry, HealthMonitor, LoadBalancer, LoadBalancingStrategy};
+use synctv_cluster::discovery::{NodeRegistry, HealthMonitor, LoadBalancer, LoadBalancingStrategy, K8sDnsDiscovery};
 
 use server::{SyncTvServer, Services};
 
@@ -66,100 +67,7 @@ async fn main() -> Result<()> {
     let pool = init_database(&config).await?;
 
     // 4. Run migrations (with distributed lock if Redis is available)
-    info!("Running database migrations...");
-    if !config.redis.url.is_empty() {
-        // Multi-replica: use Redis distributed lock to ensure only one node runs migrations
-        let redis_client = redis::Client::open(config.redis.url.clone())
-            .map_err(|e| anyhow::anyhow!("Failed to open Redis for migration lock: {e}"))?;
-        let redis_conn = redis_client
-            .get_connection_manager()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to Redis for migration lock: {e}"))?;
-        let lock = synctv_core::service::DistributedLock::new(redis_conn);
-        // 300s TTL: migrations can be slow on large databases
-        match lock.acquire("synctv:migration", 300).await {
-            Ok(Some(lock_value)) => {
-                info!("Acquired migration lock, running migrations");
-                let migrate_result = sqlx::migrate!("../migrations")
-                    .run(&pool)
-                    .await;
-                // Always release lock, even if migration failed
-                if let Err(e) = lock.release("synctv:migration", &lock_value).await {
-                    warn!("Failed to release migration lock: {}", e);
-                }
-                migrate_result.map_err(|e| {
-                    error!("Failed to run migrations: {}", e);
-                    anyhow::anyhow!("Migration failed: {e}")
-                })?;
-            }
-            Ok(None) => {
-                info!("Another node is running migrations, waiting...");
-                // Poll until the lock is released (migration completed by another node)
-                let mut attempts = 0;
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    attempts += 1;
-                    match lock.acquire("synctv:migration", 300).await {
-                        Ok(Some(lock_value)) => {
-                            info!("Migration lock acquired after waiting, running migrations");
-                            let migrate_result = sqlx::migrate!("../migrations")
-                                .run(&pool)
-                                .await;
-                            if let Err(e) = lock.release("synctv:migration", &lock_value).await {
-                                warn!("Failed to release migration lock: {}", e);
-                            }
-                            migrate_result.map_err(|e| {
-                                error!("Failed to run migrations: {}", e);
-                                anyhow::anyhow!("Migration failed: {e}")
-                            })?;
-                            break;
-                        }
-                        Ok(None) if attempts < 150 => {
-                            // Still locked, keep waiting (up to 300s = 150 * 2s)
-                            continue;
-                        }
-                        Ok(None) => {
-                            return Err(anyhow::anyhow!(
-                                "Timed out waiting for migration lock after {}s",
-                                attempts * 2
-                            ));
-                        }
-                        Err(e) => {
-                            warn!("Redis error while waiting for migration lock: {}, running migrations directly", e);
-                            sqlx::migrate!("../migrations")
-                                .run(&pool)
-                                .await
-                                .map_err(|e| {
-                                    error!("Failed to run migrations: {}", e);
-                                    anyhow::anyhow!("Migration failed: {e}")
-                                })?;
-                            break;
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Failed to acquire migration lock (Redis error): {}, running migrations directly", e);
-                sqlx::migrate!("../migrations")
-                    .run(&pool)
-                    .await
-                    .map_err(|e| {
-                        error!("Failed to run migrations: {}", e);
-                        anyhow::anyhow!("Migration failed: {e}")
-                    })?;
-            }
-        }
-    } else {
-        // Single-node: run migrations directly
-        sqlx::migrate!("../migrations")
-            .run(&pool)
-            .await
-            .map_err(|e| {
-                error!("Failed to run migrations: {}", e);
-                anyhow::anyhow!("Migration failed: {e}")
-            })?;
-    }
-    info!("Migrations completed");
+    migrations::run_migrations(&pool, &config.redis.url).await?;
 
     // 4.3. Bootstrap root user (if enabled and no root user exists)
     info!("Checking root user bootstrap...");
@@ -251,76 +159,171 @@ async fn main() -> Result<()> {
     };
 
     // 7.5. Initialize cluster discovery infrastructure (NodeRegistry + HeartbeatLoop + HealthMonitor + LoadBalancer)
+    // Supports two discovery modes:
+    //   "redis"   - Redis-based node registry (default)
+    //   "k8s_dns" - Kubernetes headless service DNS discovery
+    let discovery_mode = config.cluster.discovery_mode.as_str();
     let (node_registry, health_monitor, load_balancer) = if let Some(ref cm) = cluster_manager {
-        if !config.redis.url.is_empty() {
-            let node_id = cm.node_id().to_string();
-            let heartbeat_timeout_secs: i64 = 30;
-
-            match NodeRegistry::new(Some(config.redis.url.clone()), node_id.clone(), heartbeat_timeout_secs) {
-                Ok(registry) => {
-                    let registry = Arc::new(registry);
-
-                    // Use advertise addresses for registration so other nodes
-                    // can connect (bind address 0.0.0.0 is not routable).
-                    let advertise_grpc = config.advertise_grpc_address();
-                    let advertise_http = config.advertise_http_address();
-
-                    // Register this node in Redis
-                    if let Err(e) = registry.register(
-                        advertise_grpc.clone(),
-                        advertise_http.clone(),
-                    ).await {
-                        error!("Failed to register node in Redis: {}", e);
-                        (None, None, None)
-                    } else {
-                        info!(
-                            node_id = %node_id,
-                            advertise_grpc = %advertise_grpc,
-                            advertise_http = %advertise_http,
-                            "Node registered in cluster"
-                        );
-
-                        // Start heartbeat loop (sends heartbeat every heartbeat_timeout/2 seconds)
-                        // Pass connection count callback so LeastConnections LB can read it
-                        let conn_mgr_for_hb = connection_manager.clone();
-                        cm.start_heartbeat_loop(
-                            registry.clone(),
-                            advertise_grpc,
-                            advertise_http,
-                            Some(move || conn_mgr_for_hb.connection_count()),
-                        ).await;
-
-                        // Start health monitor (checks node health every 15 seconds)
-                        let health_monitor = Arc::new(HealthMonitor::new(registry.clone(), 15));
-                        match health_monitor.start().await {
-                            Ok(hm_handle) => {
-                                info!("Health monitor started");
-                                // Store the JoinHandle so we can detect panics during shutdown
-                                health_monitor.set_join_handle(hm_handle);
-                            }
-                            Err(e) => {
-                                warn!("Failed to start health monitor: {}", e);
-                            }
+        match discovery_mode {
+            "k8s_dns" => {
+                info!("Using K8s DNS discovery mode");
+                match K8sDnsDiscovery::from_env(config.server.grpc_port, config.server.http_port) {
+                    Ok(k8s_discovery) => {
+                        // Perform initial DNS resolution
+                        if let Err(e) = k8s_discovery.refresh().await {
+                            warn!("Initial K8s DNS resolution failed (will retry): {}", e);
                         }
-
-                        // Create load balancer with LeastConnections strategy
-                        let lb = Arc::new(
-                            LoadBalancer::new(registry.clone(), LoadBalancingStrategy::LeastConnections)
-                                .with_health_monitor(health_monitor.clone())
+                        let peers = k8s_discovery.get_peers().await;
+                        info!(
+                            dns_name = %k8s_discovery.dns_name(),
+                            peer_count = peers.len(),
+                            "K8s DNS discovery initialized"
                         );
-                        info!("Load balancer initialized with LeastConnections strategy");
 
-                        (Some(registry), Some(health_monitor), Some(lb))
+                        // Start background refresh loop (re-resolve every 10 seconds)
+                        let _dns_refresh_handle = k8s_discovery.start_refresh_loop(10).await;
+
+                        // Still use Redis-based NodeRegistry for health monitoring if Redis is available.
+                        // The DNS discovery finds peers; Redis registry tracks heartbeats and health.
+                        if !config.redis.url.is_empty() {
+                            let node_id = cm.node_id().to_string();
+                            let heartbeat_timeout_secs: i64 = 30;
+
+                            match NodeRegistry::new(Some(config.redis.url.clone()), node_id.clone(), heartbeat_timeout_secs) {
+                                Ok(registry) => {
+                                    let registry = Arc::new(registry);
+                                    let advertise_grpc = config.advertise_grpc_address();
+                                    let advertise_http = config.advertise_http_address();
+
+                                    if let Err(e) = registry.register(
+                                        advertise_grpc.clone(),
+                                        advertise_http.clone(),
+                                    ).await {
+                                        warn!("Failed to register node in Redis (K8s DNS mode, non-fatal): {}", e);
+                                    } else {
+                                        info!(
+                                            node_id = %node_id,
+                                            "Node registered in Redis (K8s DNS primary, Redis supplementary)"
+                                        );
+
+                                        let conn_mgr_for_hb = connection_manager.clone();
+                                        cm.start_heartbeat_loop(
+                                            registry.clone(),
+                                            advertise_grpc,
+                                            advertise_http,
+                                            Some(move || conn_mgr_for_hb.connection_count()),
+                                        ).await;
+                                    }
+
+                                    let health_monitor = Arc::new(HealthMonitor::new(registry.clone(), 15));
+                                    match health_monitor.start().await {
+                                        Ok(hm_handle) => {
+                                            info!("Health monitor started (K8s DNS mode)");
+                                            health_monitor.set_join_handle(hm_handle);
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to start health monitor: {}", e);
+                                        }
+                                    }
+
+                                    let lb = Arc::new(
+                                        LoadBalancer::new(registry.clone(), LoadBalancingStrategy::LeastConnections)
+                                            .with_health_monitor(health_monitor.clone())
+                                    );
+                                    info!("Load balancer initialized (K8s DNS mode)");
+
+                                    (Some(registry), Some(health_monitor), Some(lb))
+                                }
+                                Err(e) => {
+                                    warn!("Failed to create NodeRegistry in K8s DNS mode: {}", e);
+                                    (None, None, None)
+                                }
+                            }
+                        } else {
+                            // K8s DNS mode without Redis: discovery works, but no health monitoring or LB
+                            info!("K8s DNS discovery active without Redis (no health monitor or load balancer)");
+                            (None, None, None)
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to initialize K8s DNS discovery: {}", e);
+                        error!("Ensure HEADLESS_SERVICE_NAME and POD_NAMESPACE env vars are set");
+                        (None, None, None)
                     }
                 }
-                Err(e) => {
-                    error!("Failed to create NodeRegistry: {}", e);
+            }
+            _ => {
+                // Default: Redis-based discovery
+                if discovery_mode != "redis" {
+                    warn!(
+                        discovery_mode = %discovery_mode,
+                        "Unknown discovery mode, falling back to 'redis'"
+                    );
+                }
+
+                if !config.redis.url.is_empty() {
+                    let node_id = cm.node_id().to_string();
+                    let heartbeat_timeout_secs: i64 = 30;
+
+                    match NodeRegistry::new(Some(config.redis.url.clone()), node_id.clone(), heartbeat_timeout_secs) {
+                        Ok(registry) => {
+                            let registry = Arc::new(registry);
+
+                            let advertise_grpc = config.advertise_grpc_address();
+                            let advertise_http = config.advertise_http_address();
+
+                            if let Err(e) = registry.register(
+                                advertise_grpc.clone(),
+                                advertise_http.clone(),
+                            ).await {
+                                error!("Failed to register node in Redis: {}", e);
+                                (None, None, None)
+                            } else {
+                                info!(
+                                    node_id = %node_id,
+                                    advertise_grpc = %advertise_grpc,
+                                    advertise_http = %advertise_http,
+                                    "Node registered in cluster"
+                                );
+
+                                let conn_mgr_for_hb = connection_manager.clone();
+                                cm.start_heartbeat_loop(
+                                    registry.clone(),
+                                    advertise_grpc,
+                                    advertise_http,
+                                    Some(move || conn_mgr_for_hb.connection_count()),
+                                ).await;
+
+                                let health_monitor = Arc::new(HealthMonitor::new(registry.clone(), 15));
+                                match health_monitor.start().await {
+                                    Ok(hm_handle) => {
+                                        info!("Health monitor started");
+                                        health_monitor.set_join_handle(hm_handle);
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to start health monitor: {}", e);
+                                    }
+                                }
+
+                                let lb = Arc::new(
+                                    LoadBalancer::new(registry.clone(), LoadBalancingStrategy::LeastConnections)
+                                        .with_health_monitor(health_monitor.clone())
+                                );
+                                info!("Load balancer initialized with LeastConnections strategy");
+
+                                (Some(registry), Some(health_monitor), Some(lb))
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to create NodeRegistry: {}", e);
+                            (None, None, None)
+                        }
+                    }
+                } else {
+                    info!("Redis not configured, cluster discovery disabled");
                     (None, None, None)
                 }
             }
-        } else {
-            info!("Redis not configured, cluster discovery disabled");
-            (None, None, None)
         }
     } else {
         (None, None, None)
@@ -434,9 +437,16 @@ async fn main() -> Result<()> {
     let stun_server = if config.webrtc.enable_builtin_stun {
         info!("Starting built-in STUN server (turn-rs)...");
         let bind_addr = format!("{}:{}", config.webrtc.stun_host, config.webrtc.stun_port);
+        let external_addr = if config.webrtc.stun_external_addr.is_empty() {
+            // Fall back to advertise_host:stun_port so other nodes/clients
+            // get a routable address instead of 0.0.0.0.
+            format!("{}:{}", config.advertise_host(), config.webrtc.stun_port)
+        } else {
+            config.webrtc.stun_external_addr.clone()
+        };
         let stun_config = synctv_core::service::StunServerConfig {
-            bind_addr: bind_addr.clone(),
-            external_addr: bind_addr,
+            bind_addr,
+            external_addr,
         };
         match synctv_core::service::StunServer::start(stun_config).await {
             Ok(server) => {

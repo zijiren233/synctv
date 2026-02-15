@@ -2,7 +2,7 @@ use sqlx::{PgPool, postgres::PgRow, Row};
 
 use crate::{
     models::{
-        RoomMember, RoomMemberWithUser, RoomId, UserId, RoomRole, MemberStatus,
+        RoomMember, RoomMemberWithUser, RoomId, UserId, RoomRole, MemberStatus, PageParams,
     },
     service::AddMemberOptions,
     Error, Result,
@@ -663,8 +663,9 @@ impl RoomMemberRepository {
     }
 
     /// Get rooms where a user is a member
-    pub async fn list_by_user(&self, user_id: &UserId, page: i64, page_size: i64) -> Result<(Vec<RoomId>, i64)> {
-        let offset = (page - 1) * page_size;
+    pub async fn list_by_user(&self, user_id: &UserId, pagination: PageParams) -> Result<(Vec<RoomId>, i64)> {
+        let limit = pagination.limit() as i64;
+        let offset = pagination.offset() as i64;
 
         // Get total count
         let count: i64 = sqlx::query_scalar(
@@ -687,7 +688,7 @@ impl RoomMemberRepository {
              LIMIT $2 OFFSET $3"
         )
         .bind(user_id.as_str())
-        .bind(page_size)
+        .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
         .await?;
@@ -702,10 +703,10 @@ impl RoomMemberRepository {
     pub async fn list_by_user_with_details(
         &self,
         user_id: &UserId,
-        page: i64,
-        page_size: i64,
+        pagination: PageParams,
     ) -> Result<(Vec<(crate::models::Room, RoomRole, MemberStatus, i32)>, i64)> {
-        let offset = (page - 1) * page_size;
+        let limit = pagination.limit() as i64;
+        let offset = pagination.offset() as i64;
 
         // Get total count
         let count: i64 = sqlx::query_scalar(
@@ -740,7 +741,7 @@ impl RoomMemberRepository {
             "
         )
         .bind(user_id.as_str())
-        .bind(page_size)
+        .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
         .await?;

@@ -126,8 +126,8 @@ pub async fn get_joined_rooms(
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<ListParticipatedRoomsResponse>> {
-    let page = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1i32).max(1);
-    let page_size = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(20i32).clamp(1, 100);
+    let page = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1i32);
+    let page_size = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(20i32);
 
     let response = state
         .client_api
@@ -162,8 +162,8 @@ pub async fn list_created_rooms(
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<ListCreatedRoomsResponse>> {
-    let page = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1i32).max(1);
-    let page_size = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(10i32).clamp(1, 50);
+    let page = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1i32);
+    let page_size = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(10i32);
 
     let req = crate::proto::client::ListCreatedRoomsRequest { page, page_size };
     let response = state

@@ -82,8 +82,7 @@ fn default_empty_data() -> serde_json::Value {
 /// List notifications query parameters
 #[derive(Debug, Deserialize)]
 pub struct NotificationListQuery {
-    pub page: Option<i32>,
-    pub page_size: Option<i32>,
+    pub pagination: super::pagination::PageParams,
     pub is_read: Option<bool>,
     pub notification_type: Option<NotificationType>,
 }

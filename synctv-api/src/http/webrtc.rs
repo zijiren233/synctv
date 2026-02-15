@@ -1,10 +1,8 @@
 //! WebRTC HTTP REST API endpoints
 //!
 //! Provides HTTP/JSON API for WebRTC configuration and control:
-//! - `/api/rooms/{room_id}/webrtc/ice-servers` - Get ICE servers configuration (STUN/TURN)
+//! - `/api/rooms/{room_id}/webrtc/ice-servers` - Get ICE servers (built-in STUN + dynamic STUN/TURN)
 //! - `/api/rooms/{room_id}/webrtc/network-quality` - Get network quality stats
-//! - Includes TURN credential generation for authenticated users
-//! - Supports all WebRTC modes (`SignalingOnly`, `PeerToPeer`, Hybrid, SFU)
 
 use axum::{
     extract::{Path, State},

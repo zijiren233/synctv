@@ -355,10 +355,9 @@ impl MediaService {
     pub async fn get_playlist_media_paginated(
         &self,
         playlist_id: &PlaylistId,
-        page: i32,
-        page_size: i32,
+        pagination: crate::models::PageParams,
     ) -> Result<(Vec<Media>, i64)> {
-        self.media_repo.get_playlist_paginated(playlist_id, page, page_size).await
+        self.media_repo.get_playlist_paginated(playlist_id, pagination).await
     }
 
     /// Swap positions of two media items
