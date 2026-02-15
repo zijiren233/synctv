@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::http::{AppState, error::AppResult, middleware::AuthUser, provider_common::{InstanceQuery, error_response, parse_provider_error}};
-use crate::impls::BilibiliApiImpl;
+
 use synctv_core::models::{MediaId, RoomId};
 use synctv_core::provider::{MediaProvider, PlaybackResult, ProviderContext};
 
@@ -420,7 +420,7 @@ async fn parse(
 ) -> impl IntoResponse {
     tracing::info!("Bilibili parse request");
 
-    let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
+    let api = &state.bilibili_api;
 
     match api.parse(req, query.as_deref()).await {
         Ok(resp) => {
@@ -442,7 +442,7 @@ async fn login_qr(
 ) -> impl IntoResponse {
     tracing::info!("Bilibili login QR request");
 
-    let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
+    let api = &state.bilibili_api;
 
     match api.login_qr(req, query.as_deref()).await {
         Ok(resp) => {
@@ -464,7 +464,7 @@ async fn qr_check(
 ) -> impl IntoResponse {
     tracing::info!("Bilibili QR check");
 
-    let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
+    let api = &state.bilibili_api;
 
     match api.check_qr(req, query.as_deref()).await {
         Ok(resp) => {
@@ -486,7 +486,7 @@ async fn new_captcha(
 ) -> impl IntoResponse {
     tracing::info!("Bilibili new captcha request");
 
-    let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
+    let api = &state.bilibili_api;
 
     match api.get_captcha(req, query.as_deref()).await {
         Ok(resp) => {
@@ -508,7 +508,7 @@ async fn sms_send(
 ) -> impl IntoResponse {
     tracing::info!("Bilibili SMS send request");
 
-    let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
+    let api = &state.bilibili_api;
 
     match api.send_sms(req, query.as_deref()).await {
         Ok(resp) => {
@@ -530,7 +530,7 @@ async fn sms_login(
 ) -> impl IntoResponse {
     tracing::info!("Bilibili SMS login request");
 
-    let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
+    let api = &state.bilibili_api;
 
     match api.login_sms(req, query.as_deref()).await {
         Ok(resp) => {
@@ -552,7 +552,7 @@ async fn user_info(
 ) -> impl IntoResponse {
     tracing::info!("Bilibili user info request");
 
-    let api = BilibiliApiImpl::new(state.bilibili_provider.clone());
+    let api = &state.bilibili_api;
 
     match api.get_user_info(req, query.as_deref()).await {
         Ok(resp) => {

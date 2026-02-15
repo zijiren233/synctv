@@ -12,7 +12,7 @@ use axum::{
 use serde_json::json;
 
 use crate::http::{AppState, error::AppResult, middleware::AuthUser, provider_common::{InstanceQuery, error_response, parse_provider_error}};
-use crate::impls::AlistApiImpl;
+
 use crate::impls::providers::get_provider_binds;
 use synctv_core::models::{MediaId, RoomId};
 use synctv_core::provider::{MediaProvider, ProviderContext};
@@ -96,7 +96,7 @@ async fn proxy_stream(
     let (url, provider_headers) =
         resolve_alist_playback(&auth, &room_id, &media_id, &state).await?;
 
-    tracing::info!("Proxying Alist media: {}", url);
+    tracing::debug!("Proxying Alist media: {}", url);
 
     let cfg = synctv_proxy::ProxyConfig {
         url: &url,
@@ -141,7 +141,7 @@ async fn login(
 ) -> impl IntoResponse {
     tracing::info!("Alist login request");
 
-    let api = AlistApiImpl::new(state.alist_provider.clone());
+    let api = &state.alist_api;
 
     match api.login(req, query.as_deref()).await {
         Ok(resp) => {
@@ -164,7 +164,7 @@ async fn list(
 ) -> impl IntoResponse {
     tracing::info!("Alist list request");
 
-    let api = AlistApiImpl::new(state.alist_provider.clone());
+    let api = &state.alist_api;
 
     match api.list(req, query.as_deref()).await {
         Ok(resp) => {
@@ -186,7 +186,7 @@ async fn me(
 ) -> impl IntoResponse {
     tracing::info!("Alist me request");
 
-    let api = AlistApiImpl::new(state.alist_provider.clone());
+    let api = &state.alist_api;
 
     match api.get_me(req, query.as_deref()).await {
         Ok(resp) => {

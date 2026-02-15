@@ -1,5 +1,6 @@
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use synctv_core::models::id::{RoomId, UserId};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -13,15 +14,31 @@ pub type ConnectionId = String;
 /// Messages are dropped with a warning when a subscriber is too slow.
 const SUBSCRIBER_CHANNEL_CAPACITY: usize = 256;
 
+/// Number of consecutive drops before automatically disconnecting a slow subscriber.
+const MAX_CONSECUTIVE_DROPS: u32 = 10;
+
 /// Message sender for a client connection
 pub type MessageSender = mpsc::Sender<ClusterEvent>;
 
 /// Subscriber information
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Subscriber {
     pub connection_id: ConnectionId,
     pub user_id: UserId,
     pub sender: MessageSender,
+    /// Consecutive message drops due to a full channel
+    consecutive_drops: Arc<AtomicU32>,
+}
+
+impl Clone for Subscriber {
+    fn clone(&self) -> Self {
+        Self {
+            connection_id: self.connection_id.clone(),
+            user_id: self.user_id.clone(),
+            sender: self.sender.clone(),
+            consecutive_drops: self.consecutive_drops.clone(),
+        }
+    }
 }
 
 /// In-memory hub for routing messages to connected clients in rooms
@@ -59,6 +76,7 @@ impl RoomMessageHub {
             connection_id: connection_id.clone(),
             user_id: user_id.clone(),
             sender: tx,
+            consecutive_drops: Arc::new(AtomicU32::new(0)),
         };
 
         // Add to room subscribers
@@ -110,7 +128,11 @@ impl RoomMessageHub {
         }
     }
 
-    /// Broadcast an event to all subscribers in a room
+    /// Broadcast an event to all subscribers in a room.
+    ///
+    /// Subscribers that fail to receive messages for `MAX_CONSECUTIVE_DROPS`
+    /// consecutive broadcasts are automatically disconnected to prevent
+    /// unbounded backpressure from a single slow client.
     pub fn broadcast(&self, room_id: &RoomId, event: ClusterEvent) -> usize {
         let mut sent_count = 0;
         let mut failed_connections = Vec::new();
@@ -119,6 +141,8 @@ impl RoomMessageHub {
             for subscriber in subscribers.iter() {
                 match subscriber.sender.try_send(event.clone()) {
                     Ok(()) => {
+                        // Reset consecutive drop counter on successful send
+                        subscriber.consecutive_drops.store(0, Ordering::Relaxed);
                         sent_count += 1;
                         debug!(
                             room_id = %room_id.as_str(),
@@ -129,13 +153,27 @@ impl RoomMessageHub {
                         );
                     }
                     Err(mpsc::error::TrySendError::Full(_)) => {
-                        warn!(
-                            room_id = %room_id.as_str(),
-                            user_id = %subscriber.user_id.as_str(),
-                            connection_id = %subscriber.connection_id,
-                            event_type = %event.event_type(),
-                            "Subscriber channel full, dropping event for slow consumer"
-                        );
+                        let drops = subscriber.consecutive_drops.fetch_add(1, Ordering::Relaxed) + 1;
+                        if drops >= MAX_CONSECUTIVE_DROPS {
+                            warn!(
+                                room_id = %room_id.as_str(),
+                                user_id = %subscriber.user_id.as_str(),
+                                connection_id = %subscriber.connection_id,
+                                consecutive_drops = drops,
+                                "Disconnecting persistently slow subscriber after {} consecutive drops",
+                                MAX_CONSECUTIVE_DROPS
+                            );
+                            failed_connections.push(subscriber.connection_id.clone());
+                        } else {
+                            warn!(
+                                room_id = %room_id.as_str(),
+                                user_id = %subscriber.user_id.as_str(),
+                                connection_id = %subscriber.connection_id,
+                                event_type = %event.event_type(),
+                                consecutive_drops = drops,
+                                "Subscriber channel full, dropping event for slow consumer"
+                            );
+                        }
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         warn!(
@@ -150,7 +188,7 @@ impl RoomMessageHub {
             }
         }
 
-        // Clean up failed connections
+        // Clean up failed/slow connections (drop the read guard first)
         for conn_id in failed_connections {
             self.unsubscribe(&conn_id);
         }

@@ -15,10 +15,14 @@ package synctv.cluster;
 // - Heartbeat: UNUSED - kept for potential future node-to-node gRPC discovery
 // - GetNodes: ACTIVE - returns all known nodes from Redis registry
 // - DeregisterNode: ACTIVE - handles graceful shutdown with epoch validation
-// - SyncRoomState: DEPRECATED - returns UNIMPLEMENTED; use Redis Pub/Sub instead
-// - BroadcastEvent: DEPRECATED - returns UNIMPLEMENTED; use ClusterManager instead
 // - GetUserOnlineStatus: ACTIVE - fan-out query for user presence
 // - GetRoomConnections: ACTIVE - fan-out query for room participants
+//
+// NOTE on event encoding:
+// Cluster events are NOT transmitted via protobuf messages. They are serialized
+// as JSON via serde (ClusterEvent in synctv-cluster/src/sync/events.rs) and
+// published/consumed through Redis Pub/Sub via ClusterManager. The ClusterEvent
+// message definition below is kept only as a schema reference.
 service ClusterService {
     // Node registration and health
     // NOTE: RegisterNode and Heartbeat are currently unused - nodes use Redis directly
@@ -26,12 +30,6 @@ service ClusterService {
     rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
     rpc GetNodes(GetNodesRequest) returns (GetNodesResponse);
     rpc DeregisterNode(DeregisterNodeRequest) returns (DeregisterNodeResponse);
-
-    // State synchronization
-    // NOTE: These are DEPRECATED - use Redis Pub/Sub via ClusterManager instead
-    // Both endpoints return UNIMPLEMENTED status
-    rpc SyncRoomState(SyncRoomStateRequest) returns (SyncRoomStateResponse);
-    rpc BroadcastEvent(BroadcastEventRequest) returns (BroadcastEventResponse);
 
     // User connection tracking - ACTIVE endpoints for fan-out queries
     rpc GetUserOnlineStatus(GetUserOnlineStatusRequest) returns (GetUserOnlineStatusResponse);
@@ -105,43 +103,12 @@ message DeregisterNodeResponse {
     bool success = 1;
 }
 
-// State synchronization
-message SyncRoomStateRequest {
-    string room_id = 1;
-}
-
-message SyncRoomStateResponse {
-    RoomState state = 1;
-}
-
-message RoomState {
-    string room_id = 1;
-    PlaybackState playback = 2;
-    repeated string online_users = 3;
-    bytes settings = 4; // JSON settings
-    int32 version = 5;
-}
-
-message PlaybackState {
-    string playing_media_id = 1;
-    double current_time = 2; // playback position in seconds
-    double speed = 3;
-    bool is_playing = 4;
-    int64 updated_at = 5;
-    string playing_playlist_id = 6; // Currently playing playlist
-    string relative_path = 7; // Relative path within dynamic folder
-}
-
-// Event broadcasting
-message BroadcastEventRequest {
-    ClusterEvent event = 1;
-}
-
-message BroadcastEventResponse {
-    bool success = 1;
-    int32 nodes_reached = 2;
-}
-
+// ClusterEvent schema reference
+//
+// These event types are NOT transmitted via protobuf. They are serialized as
+// JSON via serde (synctv_cluster::sync::events::ClusterEvent) and published
+// through Redis Pub/Sub. This protobuf definition exists solely as a schema
+// reference for documentation purposes.
 message ClusterEvent {
     string event_id = 1; // UUID for deduplication
     string node_id = 2; // Origin node
@@ -165,6 +132,16 @@ message ClusterEvent {
         KickUserEvent kick_user = 18;
         PermissionChangedEvent permission_changed = 19;
     }
+}
+
+message PlaybackState {
+    string playing_media_id = 1;
+    double current_time = 2; // playback position in seconds
+    double speed = 3;
+    bool is_playing = 4;
+    int64 updated_at = 5;
+    string playing_playlist_id = 6; // Currently playing playlist
+    string relative_path = 7; // Relative path within dynamic folder
 }
 
 message PlaybackStateChangedEvent {

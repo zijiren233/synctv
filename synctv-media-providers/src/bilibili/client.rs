@@ -878,7 +878,8 @@ impl BilibiliClient {
                                             .filter_map(|item| {
                                                 let host = item["host"].as_str()?;
                                                 let path = codec["base_url"].as_str()?;
-                                                Some(format!("{host}{path}"))
+                                                let extra = item["extra"].as_str().unwrap_or("");
+                                                Some(format!("{host}{path}{extra}"))
                                             })
                                             .collect()
                                     })

@@ -28,11 +28,11 @@ pub struct LivestreamState {
 
 /// Container for shared services
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct Services {
     pub user_service: Arc<UserService>,
     pub room_service: Arc<RoomService>,
     pub jwt_service: synctv_core::service::JwtService,
-    pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
     pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     pub redis_publish_tx: Option<tokio::sync::mpsc::Sender<synctv_cluster::sync::PublishRequest>>,
     pub rate_limiter: synctv_core::service::RateLimiter,
@@ -71,12 +71,7 @@ pub struct SyncTvServer {
     http_handle: Option<JoinHandle<()>>,
 }
 
-impl Services {
-    /// Get the message hub for HTTP server use
-    pub fn message_hub(&self) -> Arc<synctv_cluster::sync::RoomMessageHub> {
-        self.message_hub.clone()
-    }
-}
+impl Services {}
 
 impl SyncTvServer {
     /// Create a new server instance
@@ -253,10 +248,10 @@ impl SyncTvServer {
             info!("Livestream infrastructure shut down");
         }
 
-        // 4.5. Shut down health monitor
+        // 4.5. Shut down health monitor (await the monitoring task)
         if let Some(ref health_monitor) = self.services.health_monitor {
             info!("Shutting down health monitor...");
-            health_monitor.shutdown();
+            health_monitor.shutdown().await;
             info!("Health monitor shut down");
         }
 
@@ -361,7 +356,6 @@ impl SyncTvServer {
         let room_service = self.services.room_service.clone();
         let provider_instance_manager = self.services.provider_instance_manager.clone();
         let user_provider_credential_repository = self.services.user_provider_credential_repository.clone();
-        let message_hub = self.services.message_hub();
         let cluster_manager = self.services.cluster_manager.clone();
         let jwt_service = self.services.jwt_service.clone();
         let redis_publish_tx = self.services.redis_publish_tx.clone();
@@ -412,7 +406,6 @@ impl SyncTvServer {
                 alist_provider: self.services.alist_provider.clone(),
                 bilibili_provider: self.services.bilibili_provider.clone(),
                 emby_provider: self.services.emby_provider.clone(),
-                message_hub,
                 cluster_manager,
                 connection_manager: Arc::new(connection_manager),
                 jwt_service,

@@ -160,7 +160,6 @@ mod tests {
     use super::*;
     use std::time::Duration;
     use timeout::TimeoutConfig;
-    use failsafe::CircuitBreaker;
 
     #[test]
     fn test_timeout_config() {

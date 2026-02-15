@@ -485,19 +485,54 @@ impl SfuRoom {
         Ok(())
     }
 
-    /// Switch to SFU mode - start forwarding all tracks
+    /// Switch to SFU mode - start forwarding all tracks.
+    ///
+    /// If any track fails to start forwarding, all previously started tasks
+    /// for this switch are rolled back (aborted) to avoid inconsistent state.
     pub(crate) async fn switch_to_sfu(&self) -> Result<()> {
-        for entry in &self.published_tracks {
-            let track_id = entry.key().clone();
-            let (publisher_peer_id, track) = entry.value().clone();
+        // Collect all tracks to forward first (avoid holding DashMap refs across await)
+        let tracks_to_forward: Vec<(TrackId, PeerId, Arc<MediaTrack>)> = self
+            .published_tracks
+            .iter()
+            .map(|entry| {
+                let track_id = entry.key().clone();
+                let (publisher_peer_id, track) = entry.value().clone();
+                (track_id, publisher_peer_id, track)
+            })
+            .collect();
 
-            self.start_track_forwarding(track_id, track, publisher_peer_id)
-                .await?;
+        let mut started_track_ids: Vec<TrackId> = Vec::with_capacity(tracks_to_forward.len());
+
+        for (track_id, publisher_peer_id, track) in tracks_to_forward {
+            match self
+                .start_track_forwarding(track_id.clone(), track, publisher_peer_id)
+                .await
+            {
+                Ok(()) => {
+                    started_track_ids.push(track_id);
+                }
+                Err(e) => {
+                    // Rollback: abort all previously started forwarding tasks
+                    error!(
+                        room_id = %self.id,
+                        failed_track = %track_id,
+                        error = %e,
+                        started_count = started_track_ids.len(),
+                        "Failed to start track forwarding, rolling back"
+                    );
+                    for rollback_id in &started_track_ids {
+                        if let Some((_, task)) = self.forwarding_tasks.remove(rollback_id) {
+                            task.abort();
+                        }
+                    }
+                    return Err(e);
+                }
+            }
         }
 
         info!(
             room_id = %self.id,
-            track_count = self.published_tracks.len(),
+            track_count = started_track_ids.len(),
             "Started forwarding for all tracks"
         );
 

@@ -72,12 +72,24 @@ impl LoadBalancer {
         Ok(healthy)
     }
 
-    /// Select a node for the next request
+    /// Select a node for the next request.
+    ///
+    /// If all nodes are unhealthy, falls back to selecting a random node from
+    /// the full set (regardless of health status) rather than returning an error.
     pub async fn select_node(&self) -> Result<String> {
-        let nodes = self.get_healthy_nodes().await?;
+        let mut nodes = self.get_healthy_nodes().await?;
 
         if nodes.is_empty() {
-            return Err(Error::NotFound("No available healthy nodes".to_string()));
+            // Fallback: when all nodes are unhealthy, pick a random one from the full set
+            let all_nodes = self.node_registry.get_all_nodes().await?;
+            if all_nodes.is_empty() {
+                return Err(Error::NotFound("No nodes registered in the cluster".to_string()));
+            }
+            tracing::warn!(
+                node_count = all_nodes.len(),
+                "All cluster nodes are unhealthy, falling back to random selection from full set"
+            );
+            nodes = all_nodes;
         }
 
         let selected_node = match self.strategy {

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use super::synctv::cluster::cluster_service_server::ClusterService;
-use super::synctv::cluster::{NodeInfo, RegisterNodeRequest, RegisterNodeResponse, HeartbeatRequest, HeartbeatResponse, GetNodesRequest, GetNodesResponse, DeregisterNodeRequest, DeregisterNodeResponse, SyncRoomStateRequest, SyncRoomStateResponse, BroadcastEventRequest, BroadcastEventResponse, GetUserOnlineStatusRequest, GetUserOnlineStatusResponse, UserOnlineStatus, GetRoomConnectionsRequest, GetRoomConnectionsResponse, RoomConnection};
+use super::synctv::cluster::{NodeInfo, RegisterNodeRequest, RegisterNodeResponse, HeartbeatRequest, HeartbeatResponse, GetNodesRequest, GetNodesResponse, DeregisterNodeRequest, DeregisterNodeResponse, GetUserOnlineStatusRequest, GetUserOnlineStatusResponse, UserOnlineStatus, GetRoomConnectionsRequest, GetRoomConnectionsResponse, RoomConnection};
 use crate::discovery::{NodeInfo as DiscoveryNodeInfo, NodeRegistry};
 use crate::sync::connection_manager::ConnectionManager;
 
@@ -29,8 +29,6 @@ use crate::sync::connection_manager::ConnectionManager;
 /// | `Heartbeat` | UNUSED | Kept for potential future node-to-node gRPC discovery |
 /// | `GetNodes` | ACTIVE | Returns all known nodes from Redis registry |
 /// | `DeregisterNode` | ACTIVE | Handles graceful shutdown with epoch validation |
-/// | `SyncRoomState` | DEPRECATED | Returns `UNIMPLEMENTED`; use Redis Pub/Sub instead |
-/// | `BroadcastEvent` | DEPRECATED | Returns `UNIMPLEMENTED`; use `ClusterManager` instead |
 /// | `GetUserOnlineStatus` | ACTIVE | Fan-out query for user presence across nodes |
 /// | `GetRoomConnections` | ACTIVE | Fan-out query for room participants across nodes |
 ///
@@ -302,31 +300,6 @@ impl ClusterService for ClusterServer {
         );
 
         Ok(Response::new(DeregisterNodeResponse { success: true }))
-    }
-
-    /// Synchronize room state between nodes
-    ///
-    /// Not implemented - room state synchronization is handled via Redis Pub/Sub
-    /// in the sync module.
-    async fn sync_room_state(
-        &self,
-        _request: Request<SyncRoomStateRequest>,
-    ) -> std::result::Result<Response<SyncRoomStateResponse>, Status> {
-        Err(Status::unimplemented(
-            "sync_room_state is not implemented; use Redis Pub/Sub for real-time sync",
-        ))
-    }
-
-    /// Broadcast an event to all nodes
-    ///
-    /// Not implemented - events are broadcast via Redis Pub/Sub through `ClusterManager`.
-    async fn broadcast_event(
-        &self,
-        _request: Request<BroadcastEventRequest>,
-    ) -> std::result::Result<Response<BroadcastEventResponse>, Status> {
-        Err(Status::unimplemented(
-            "broadcast_event is not implemented; use ClusterManager for event broadcasting",
-        ))
     }
 
     /// Get online status of users on this node

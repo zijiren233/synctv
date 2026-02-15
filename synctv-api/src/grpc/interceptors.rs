@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use sha2::{Sha256, Digest};
 use subtle::ConstantTimeEq;
 use synctv_core::service::auth::{JwtService, JwtValidator};
 use tonic::{Request, Status};
@@ -207,38 +208,6 @@ impl Debug for ValidationInterceptor {
     }
 }
 
-/// Timeout/deadline enforcement interceptor
-///
-/// Ensures requests have appropriate timeout deadlines.
-#[derive(Clone)]
-pub struct TimeoutInterceptor {
-    default_timeout_secs: u64,
-}
-
-impl TimeoutInterceptor {
-    #[must_use] 
-    pub const fn new(default_timeout_secs: u64) -> Self {
-        Self {
-            default_timeout_secs,
-        }
-    }
-
-    /// Ensure request has a deadline
-    pub const fn enforce_timeout<T>(&self, _request: &mut Request<T>) {
-        // Note: tonic deadlines should be set by the client using gRPC timeout headers
-        // This interceptor is a placeholder for future timeout enforcement
-        // For now, we rely on the client to set appropriate timeouts
-    }
-}
-
-impl Debug for TimeoutInterceptor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TimeoutInterceptor")
-            .field("default_timeout_secs", &self.default_timeout_secs)
-            .finish()
-    }
-}
-
 /// Shared-secret interceptor for cluster gRPC endpoints.
 ///
 /// Validates that incoming inter-node requests carry the correct shared secret
@@ -333,8 +302,11 @@ impl GrpcRateLimitInterceptor {
             .and_then(|v| v.to_str().ok())
             .and_then(|s| {
                 if s.len() > 7 && (s.starts_with("Bearer ") || s.starts_with("bearer ")) {
-                    // Use a hash of the token to identify the user without parsing JWT
-                    Some(format!("user:{}", &s[7..s.len().min(23)]))
+                    // M-9: Use SHA-256 hash of full token for stable client identity.
+                    // Previous approach used first 16 chars which could collide (same JWT header).
+                    let token = &s[7..];
+                    let hash = Sha256::digest(token.as_bytes());
+                    Some(format!("user:{:x}", hash))
                 } else {
                     None
                 }

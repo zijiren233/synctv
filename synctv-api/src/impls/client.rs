@@ -2218,7 +2218,7 @@ mod tests {
     use super::*;
     use synctv_core::models::{
         RoomId, UserId, MediaId, PlaylistId, UserRole, UserStatus, RoomStatus,
-        RoomRole, MemberStatus, PermissionBits,
+        RoomRole, MemberStatus,
     };
 
     // === Password Validation Tests ===

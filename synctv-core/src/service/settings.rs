@@ -6,7 +6,9 @@
 //! Design reference: /Volumes/workspace/rust/synctv-rs-design/19-配置管理系统.md §6.3
 
 use std::sync::Arc;
+use dashmap::DashMap;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn, error};
 use sqlx::PgPool;
 
@@ -22,8 +24,8 @@ pub type SettingsChangeListener = Arc<dyn Fn(&str, &serde_json::Value) + Send + 
 pub struct SettingsService {
     repository: SettingsRepository,
     pool: PgPool,
-    // In-memory cache for fast reads
-    cache: Arc<RwLock<std::collections::HashMap<String, SettingsGroup>>>,
+    // M-02: Lock-free cache using DashMap for concurrent reads
+    cache: Arc<DashMap<String, SettingsGroup>>,
     // Change listeners
     listeners: Arc<RwLock<Vec<SettingsChangeListener>>>,
 }
@@ -43,7 +45,7 @@ impl SettingsService {
         Self {
             repository,
             pool,
-            cache: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            cache: Arc::new(DashMap::new()),
             listeners: Arc::new(RwLock::new(Vec::new())),
         }
     }
@@ -56,28 +58,26 @@ impl SettingsService {
             Error::Internal(format!("Failed to load settings: {e}"))
         })?;
 
-        let mut cache = self.cache.write().await;
-        cache.clear();
+        self.cache.clear();
 
         for setting in settings {
             debug!(
                 "Loaded setting '{}.{}' = '{}'",
                 setting.group, setting.key, setting.value
             );
-            cache.insert(setting.key.clone(), setting);
+            self.cache.insert(setting.key.clone(), setting);
         }
 
         info!(
             "Settings service initialized with {} settings",
-            cache.len()
+            self.cache.len()
         );
         Ok(())
     }
 
     /// Get all settings groups
     pub async fn get_all(&self) -> Result<Vec<SettingsGroup>, Error> {
-        let cache = self.cache.read().await;
-        let mut groups: Vec<_> = cache.values().cloned().collect();
+        let mut groups: Vec<_> = self.cache.iter().map(|entry| entry.value().clone()).collect();
         groups.sort_by(|a, b| a.group.cmp(&b.group));
         Ok(groups)
     }
@@ -96,12 +96,9 @@ impl SettingsService {
 
     /// Get a specific setting by key
     pub async fn get(&self, key: &str) -> Result<SettingsGroup, Error> {
-        // Try cache first
-        {
-            let cache = self.cache.read().await;
-            if let Some(setting) = cache.get(key) {
-                return Ok(setting.clone());
-            }
+        // Try cache first (lock-free read via DashMap)
+        if let Some(setting) = self.cache.get(key) {
+            return Ok(setting.value().clone());
         }
 
         // Not in cache, load from database
@@ -117,10 +114,7 @@ impl SettingsService {
             .map_err(|e| Error::Internal(format!("Failed to get setting: {e}")))?;
 
         // Update cache
-        {
-            let mut cache = self.cache.write().await;
-            cache.insert(setting.key.clone(), setting.clone());
-        }
+        self.cache.insert(setting.key.clone(), setting.clone());
 
         Ok(setting)
     }
@@ -141,10 +135,7 @@ impl SettingsService {
             .map_err(|e| Error::Internal(format!("Failed to update setting: {e}")))?;
 
         // Update cache
-        {
-            let mut cache = self.cache.write().await;
-            cache.insert(setting.key.clone(), setting.clone());
-        }
+        self.cache.insert(setting.key.clone(), setting.clone());
 
         // Notify listeners
         let json_value: serde_json::Value = value.parse().unwrap_or_else(|_| serde_json::json!(value));
@@ -201,10 +192,11 @@ impl SettingsService {
     /// ```ignore
     /// let settings_service = SettingsService::new(repo, pool);
     /// settings_service.initialize().await?;
-    /// let _listen_task = settings_service.start_listen_task();
+    /// let cancel = tokio_util::sync::CancellationToken::new();
+    /// let _listen_task = settings_service.start_listen_task(cancel);
     /// ```
-    #[must_use] 
-    pub fn start_listen_task(&self) -> tokio::task::JoinHandle<()> {
+    #[must_use]
+    pub fn start_listen_task(&self, cancel: CancellationToken) -> tokio::task::JoinHandle<()> {
         let service = self.clone();
         let pool = self.pool.clone();
 
@@ -212,12 +204,23 @@ impl SettingsService {
             info!("Starting PostgreSQL LISTEN for settings hot reload");
 
             loop {
+                if cancel.is_cancelled() {
+                    info!("Settings listen task cancelled, shutting down");
+                    return;
+                }
+
                 // Create listener connection
                 let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {
                     Ok(listener) => listener,
                     Err(e) => {
                         error!("Failed to create PgListener: {}", e);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        tokio::select! {
+                            () = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {}
+                            () = cancel.cancelled() => {
+                                info!("Settings listen task cancelled during reconnect backoff");
+                                return;
+                            }
+                        }
                         continue;
                     }
                 };
@@ -225,44 +228,64 @@ impl SettingsService {
                 // Listen to 'settings_changed' channel
                 if let Err(e) = listener.listen("settings_changed").await {
                     error!("Failed to LISTEN on settings_changed: {}", e);
-                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    tokio::select! {
+                        () = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {}
+                        () = cancel.cancelled() => {
+                            info!("Settings listen task cancelled during listen backoff");
+                            return;
+                        }
+                    }
                     continue;
                 }
 
                 info!("PostgreSQL LISTEN started for settings_changed channel");
 
-                // Process notifications using blocking recv (no busy-poll)
+                // Process notifications using blocking recv with cancellation
                 loop {
-                    match listener.recv().await {
-                        Ok(notification) => {
-                            let changed_key = notification.payload();
-                            info!("Received settings change notification: {}", changed_key);
+                    tokio::select! {
+                        result = listener.recv() => {
+                            match result {
+                                Ok(notification) => {
+                                    let changed_key = notification.payload();
+                                    info!("Received settings change notification: {}", changed_key);
 
-                            // Reload the changed setting from database
-                            match service.reload_setting(changed_key).await {
-                                Ok(()) => {
-                                    debug!("Successfully reloaded setting: {}", changed_key);
+                                    // Reload the changed setting from database
+                                    match service.reload_setting(changed_key).await {
+                                        Ok(()) => {
+                                            debug!("Successfully reloaded setting: {}", changed_key);
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "Failed to reload setting '{}': {}",
+                                                changed_key, e
+                                            );
+                                        }
+                                    }
                                 }
                                 Err(e) => {
-                                    warn!(
-                                        "Failed to reload setting '{}': {}",
-                                        changed_key, e
-                                    );
+                                    error!("Error receiving notification: {}", e);
+                                    // Connection lost, break inner loop to reconnect
+                                    break;
                                 }
                             }
                         }
-                        Err(e) => {
-                            error!("Error receiving notification: {}", e);
-                            // Connection lost, break inner loop to reconnect
-                            break;
+                        () = cancel.cancelled() => {
+                            info!("Settings listen task cancelled");
+                            return;
                         }
                     }
                 }
 
                 warn!("PostgreSQL LISTEN connection lost, reconnecting in 5 seconds...");
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                tokio::select! {
+                    () = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {}
+                    () = cancel.cancelled() => {
+                        info!("Settings listen task cancelled during reconnect backoff");
+                        return;
+                    }
+                }
 
-                // Fix 5: Refresh cache after reconnection to catch missed notifications
+                // Refresh cache after reconnection to catch missed notifications
                 if let Err(e) = service.initialize().await {
                     error!("Failed to refresh settings cache after reconnection: {}", e);
                 }
@@ -279,14 +302,12 @@ impl SettingsService {
         // Try to fetch from database
         match self.repository.get(key).await {
             Ok(setting) => {
-                // Update cache
-                let mut cache = self.cache.write().await;
-                cache.insert(setting.key.clone(), setting.clone());
+                // Update cache (lock-free via DashMap)
+                self.cache.insert(setting.key.clone(), setting.clone());
 
                 // Notify local listeners
                 let json_value: serde_json::Value = setting.value.parse()
                     .unwrap_or_else(|_| serde_json::json!(setting.value));
-                drop(cache); // Release lock before calling listeners
                 self.notify_listeners(key, &json_value).await;
 
                 info!("Setting '{}' reloaded from database", key);
@@ -298,11 +319,9 @@ impl SettingsService {
                     "Setting '{}' not found in database (may have been deleted): {}",
                     key, e
                 );
-                let mut cache = self.cache.write().await;
-                cache.remove(key);
+                self.cache.remove(key);
 
                 // Notify listeners about removal
-                drop(cache);
                 self.notify_listeners(key, &serde_json::json!(null)).await;
 
                 Ok(())

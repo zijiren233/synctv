@@ -6,7 +6,7 @@ use {
     super::stream::StreamIdentifier,
     super::utils::Uuid,
     async_trait::async_trait,
-    bytes::BytesMut,
+    bytes::{Bytes, BytesMut},
     serde::ser::SerializeStruct,
     serde::Serialize,
     serde::Serializer,
@@ -102,11 +102,14 @@ pub struct MediaInfo {
     pub vcodec: VideoCodecType,
 }
 
+/// Frame data using `Bytes` for zero-copy fan-out.
+/// `Bytes::clone()` is O(1) -- only bumps Arc reference count, no data copy.
+/// Publishers create `BytesMut` and call `.freeze()` before wrapping in `FrameData`.
 #[derive(Clone)]
 pub enum FrameData {
-    Video { timestamp: u32, data: BytesMut },
-    Audio { timestamp: u32, data: BytesMut },
-    MetaData { timestamp: u32, data: BytesMut },
+    Video { timestamp: u32, data: Bytes },
+    Audio { timestamp: u32, data: Bytes },
+    MetaData { timestamp: u32, data: Bytes },
     MediaInfo { media_info: MediaInfo },
 }
 

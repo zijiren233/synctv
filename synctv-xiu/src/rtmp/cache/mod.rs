@@ -52,7 +52,7 @@ impl Cache {
         self.metadata_timestamp = timestamp;
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn get_metadata(&self) -> Option<FrameData> {
         let data = self.metadata.get_chunk_body();
         if data.is_empty() {
@@ -60,7 +60,7 @@ impl Cache {
         } else {
             Some(FrameData::MetaData {
                 timestamp: self.metadata_timestamp,
-                data,
+                data: data.freeze(),
             })
         }
     }
@@ -72,7 +72,7 @@ impl Cache {
     ) -> Result<(), CacheError> {
         let channel_data = FrameData::Audio {
             timestamp,
-            data: chunk_body.clone(),
+            data: bytes::Bytes::copy_from_slice(chunk_body),
         };
         self.gops.save_frame_data(channel_data, false);
 
@@ -122,23 +122,23 @@ impl Cache {
         Ok(())
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn get_audio_seq(&self) -> Option<FrameData> {
         if !self.audio_seq.is_empty() {
             return Some(FrameData::Audio {
                 timestamp: self.audio_timestamp,
-                data: self.audio_seq.clone(),
+                data: bytes::Bytes::copy_from_slice(&self.audio_seq),
             });
         }
         None
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn get_video_seq(&self) -> Option<FrameData> {
         if !self.video_seq.is_empty() {
             return Some(FrameData::Video {
                 timestamp: self.video_timestamp,
-                data: self.video_seq.clone(),
+                data: bytes::Bytes::copy_from_slice(&self.video_seq),
             });
         }
         None
@@ -151,7 +151,7 @@ impl Cache {
     ) -> Result<(), CacheError> {
         let channel_data = FrameData::Video {
             timestamp,
-            data: chunk_body.clone(),
+            data: bytes::Bytes::copy_from_slice(chunk_body),
         };
 
         let mut reader = BytesReader::new(chunk_body.clone());

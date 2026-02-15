@@ -229,13 +229,21 @@ impl ClusterManager {
     /// If the heartbeat indicates re-registration is needed (key expired or
     /// epoch mismatch), the node automatically re-registers.
     ///
+    /// The optional `connection_count_fn` callback is invoked before each heartbeat
+    /// to publish the current connection count to Redis metadata, enabling the
+    /// `LeastConnections` load balancing strategy.
+    ///
     /// Must be called after `register()` on the `NodeRegistry`.
-    pub async fn start_heartbeat_loop(
+    pub async fn start_heartbeat_loop<F>(
         &self,
         node_registry: Arc<NodeRegistry>,
         grpc_address: String,
         http_address: String,
-    ) {
+        connection_count_fn: Option<F>,
+    )
+    where
+        F: Fn() -> usize + Send + Sync + 'static,
+    {
         let cancel_token = self.cancel_token.clone();
         let interval_secs = (node_registry.heartbeat_timeout_secs / 2).max(1) as u64;
 
@@ -253,6 +261,12 @@ impl ClusterManager {
                         return;
                     }
                     _ = ticker.tick() => {
+                        // Publish connection count to Redis metadata before heartbeat
+                        if let Some(ref count_fn) = connection_count_fn {
+                            let count = count_fn();
+                            node_registry.update_local_metadata("connections", count.to_string()).await;
+                        }
+
                         match node_registry.heartbeat().await {
                             Ok(HeartbeatResult::Ok) => {
                                 debug!("Heartbeat sent successfully");
@@ -416,6 +430,9 @@ impl ClusterManager {
                     redis_sent = 1;
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
+                    synctv_core::metrics::cluster::CLUSTER_EVENTS_DROPPED
+                        .with_label_values(&["channel_full"])
+                        .inc();
                     warn!(
                         "Redis publish channel full (capacity {}), dropping event",
                         self.publish_channel_capacity
@@ -426,6 +443,11 @@ impl ClusterManager {
                 }
             }
         }
+
+        // Record cluster metrics
+        synctv_core::metrics::cluster::CLUSTER_EVENTS_PUBLISHED
+            .with_label_values(&[event_type])
+            .inc();
 
         debug!(
             event_type = %event_type,

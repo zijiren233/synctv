@@ -8,10 +8,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::sync::LazyLock;
-use std::sync::Arc;
 use synctv_core::{
     models::{id::UserId, UserStatus},
-    service::auth::JwtValidator,
     service::rate_limit::RateLimitError,
 };
 
@@ -46,10 +44,6 @@ pub struct AuthUser {
     pub user_id: UserId,
 }
 
-/// Extension to hold JWT validator in request extensions
-#[derive(Clone)]
-struct JwtValidatorExt(Arc<JwtValidator>);
-
 #[async_trait]
 impl<S> FromRequestParts<S> for AuthUser
 where
@@ -62,12 +56,8 @@ where
         // Get AppState from state
         let app_state = AppState::from_ref(state);
 
-        // Create or extract JWT validator
-        let validator = parts
-            .extensions
-            .get::<JwtValidatorExt>().map_or_else(|| {
-                Arc::new(JwtValidator::new(Arc::new(app_state.jwt_service.clone())))
-            }, |v| v.0.clone());
+        // Use shared JWT validator from AppState (created once at startup)
+        let validator = app_state.jwt_validator.clone();
 
         // Extract Authorization header
         let auth_header = parts
@@ -246,9 +236,9 @@ pub async fn rate_limit_middleware(
         }
     });
 
-    // Get rate limiter from app state
+    // Get rate limiter and config from app state (config is shared, not per-request)
     let rate_limiter = state.rate_limiter.clone();
-    let config = RateLimitConfig::default();
+    let config = &state.rate_limit_config;
 
     // Determine rate limit parameters based on category
     let (max_requests, window_seconds, category_name) = match category {
@@ -307,8 +297,8 @@ fn extract_user_id_from_header(request: &Request, state: &AppState) -> Option<St
     let auth_header = request.headers().get(axum::http::header::AUTHORIZATION)?;
     let auth_str = auth_header.to_str().ok()?;
 
-    let validator = Arc::new(JwtValidator::new(Arc::new(state.jwt_service.clone())));
-    let user_id = validator.validate_http_extract_user_id(auth_str).ok()?;
+    // Use shared JwtValidator from AppState (not per-request creation)
+    let user_id = state.jwt_validator.validate_http_extract_user_id(auth_str).ok()?;
 
     Some(user_id.to_string())
 }

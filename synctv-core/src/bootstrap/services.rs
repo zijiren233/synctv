@@ -167,8 +167,9 @@ pub async fn init_services(
         settings_service.get_all().await.map_or(0, |g| g.len())
     });
 
-    // Start PostgreSQL LISTEN for hot reload
-    let _settings_listen_task = settings_service.start_listen_task();
+    // Start PostgreSQL LISTEN for hot reload (with CancellationToken for graceful shutdown)
+    let settings_cancel = tokio_util::sync::CancellationToken::new();
+    let _settings_listen_task = settings_service.start_listen_task(settings_cancel);
     info!("Settings hot reload (PostgreSQL LISTEN) started");
 
     // Wrap settings_service in Arc before creating registry

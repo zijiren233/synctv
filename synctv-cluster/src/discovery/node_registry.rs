@@ -127,6 +127,9 @@ pub struct NodeRegistry {
     current_epoch: Arc<AtomicU64>,
     /// Circuit breaker for Redis operations (failsafe crate)
     circuit_breaker: RedisCircuitBreaker,
+    /// Short-lived cache for get_all_nodes() to avoid hammering Redis on every
+    /// health check / load balancer query. TTL of 5 seconds.
+    nodes_cache: moka::future::Cache<(), Vec<NodeInfo>>,
 }
 
 impl NodeRegistry {
@@ -143,6 +146,11 @@ impl NodeRegistry {
             None
         };
 
+        let nodes_cache = moka::future::Cache::builder()
+            .time_to_live(std::time::Duration::from_secs(5))
+            .max_capacity(1)
+            .build();
+
         Ok(Self {
             redis_client,
             cached_conn: tokio::sync::Mutex::new(None),
@@ -152,6 +160,7 @@ impl NodeRegistry {
             local_nodes: Arc::new(RwLock::new(HashMap::new())),
             current_epoch: Arc::new(AtomicU64::new(1)),
             circuit_breaker: create_redis_circuit_breaker(),
+            nodes_cache,
         })
     }
 
@@ -741,8 +750,20 @@ impl NodeRegistry {
         Ok(())
     }
 
-    /// Get all active nodes
+    /// Get all active nodes (cached for 5 seconds to avoid hammering Redis).
     pub async fn get_all_nodes(&self) -> Result<Vec<NodeInfo>> {
+        // Check the short-lived cache first
+        if let Some(cached) = self.nodes_cache.get(&()).await {
+            return Ok(cached);
+        }
+
+        let result = self.get_all_nodes_uncached().await?;
+        self.nodes_cache.insert((), result.clone()).await;
+        Ok(result)
+    }
+
+    /// Uncached implementation of get_all_nodes for internal use.
+    async fn get_all_nodes_uncached(&self) -> Result<Vec<NodeInfo>> {
         if let Some(ref client) = self.redis_client {
             let mut conn = self.get_conn_with_breaker(client).await?;
 

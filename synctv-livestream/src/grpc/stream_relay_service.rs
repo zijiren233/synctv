@@ -206,7 +206,7 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
                 };
 
                 let packet = RtmpPacket {
-                    data: data.to_vec(),
+                    data: data.to_vec(),  // Bytes::to_vec() for protobuf serialization
                     timestamp,
                     frame_type,
                 };

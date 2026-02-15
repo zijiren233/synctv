@@ -69,6 +69,8 @@ pub struct HealthMonitor {
     probe_config: HealthProbeConfig,
     /// Probe state per node
     probe_states: Arc<RwLock<std::collections::HashMap<String, ProbeState>>>,
+    /// JoinHandle for the monitoring task, stored so it can be awaited during shutdown
+    join_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl HealthMonitor {
@@ -82,6 +84,7 @@ impl HealthMonitor {
             cancel_token: CancellationToken::new(),
             probe_config: HealthProbeConfig::default(),
             probe_states: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            join_handle: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -95,6 +98,15 @@ impl HealthMonitor {
             cancel_token: CancellationToken::new(),
             probe_config,
             probe_states: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            join_handle: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Store the JoinHandle from `start()` so it can be awaited during shutdown.
+    pub fn set_join_handle(&self, handle: tokio::task::JoinHandle<()>) {
+        // Use try_lock since this is called once during startup (no contention)
+        if let Ok(mut guard) = self.join_handle.try_lock() {
+            *guard = Some(handle);
         }
     }
 
@@ -303,9 +315,19 @@ impl HealthMonitor {
         }
     }
 
-    /// Gracefully shut down the health monitoring loop
-    pub fn shutdown(&self) {
+    /// Gracefully shut down the health monitoring loop.
+    ///
+    /// Cancels the monitoring task and awaits its completion (with a timeout).
+    pub async fn shutdown(&self) {
         self.cancel_token.cancel();
+        let handle = self.join_handle.lock().await.take();
+        if let Some(handle) = handle {
+            match tokio::time::timeout(Duration::from_secs(5), handle).await {
+                Ok(Ok(())) => tracing::info!("Health monitor task completed"),
+                Ok(Err(e)) => tracing::warn!("Health monitor task panicked: {}", e),
+                Err(_) => tracing::warn!("Health monitor task did not finish within 5s timeout"),
+            }
+        }
     }
 
     /// Get health status of all nodes

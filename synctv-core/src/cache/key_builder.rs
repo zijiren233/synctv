@@ -164,6 +164,59 @@ impl KeyBuilder {
         format!("{}:ratelimit:{}:{}", self.prefix, identifier, window)
     }
 
+    // ==================== OAuth2 State ====================
+
+    /// OAuth2 state token (for CSRF protection during authorization flow)
+    ///
+    /// Type: String + TTL (300s)
+    /// Value: JSON with OAuth2State
+    #[must_use]
+    pub fn oauth2_state(&self, state_token: &str) -> String {
+        format!("{}:oauth2:state:{}", self.prefix, state_token)
+    }
+
+    // ==================== Email Verification ====================
+
+    /// Email verification code
+    ///
+    /// Type: String + TTL (configurable)
+    /// Value: JSON with code + attempts
+    #[must_use]
+    pub fn email_code(&self, email: &str) -> String {
+        format!("{}:email:code:{}", self.prefix, email)
+    }
+
+    // ==================== Token Blacklist ====================
+
+    /// Token blacklist entry
+    ///
+    /// Type: String + TTL (token remaining lifetime)
+    /// Value: "1" (presence indicates blacklisted)
+    #[must_use]
+    pub fn token_blacklist(&self, token_hash: &str) -> String {
+        format!("{}:token:blacklist:{}", self.prefix, token_hash)
+    }
+
+    /// User token invalidation timestamp
+    ///
+    /// Type: String + TTL
+    /// Value: timestamp (all tokens before this are invalid)
+    #[must_use]
+    pub fn token_blacklist_user(&self, user_id: &str) -> String {
+        format!("{}:token:blacklist:user:{}", self.prefix, user_id)
+    }
+
+    // ==================== WebSocket Ticket ====================
+
+    /// WebSocket ticket (one-time use)
+    ///
+    /// Type: String + TTL (30s)
+    /// Value: JSON with ticket data
+    #[must_use]
+    pub fn ws_ticket(&self, ticket: &str) -> String {
+        format!("{}:ws_ticket:{}", self.prefix, ticket)
+    }
+
     // ==================== Cache Invalidation ====================
 
     /// Cache invalidation pub/sub channel
@@ -246,6 +299,46 @@ mod tests {
         assert_eq!(
             builder.rate_limit("192.168.1.1", "1s"),
             "synctv:ratelimit:192.168.1.1:1s"
+        );
+    }
+
+    #[test]
+    fn test_oauth2_state_key() {
+        let builder = KeyBuilder::default();
+        assert_eq!(
+            builder.oauth2_state("abc123token"),
+            "synctv:oauth2:state:abc123token"
+        );
+    }
+
+    #[test]
+    fn test_email_code_key() {
+        let builder = KeyBuilder::default();
+        assert_eq!(
+            builder.email_code("user@example.com"),
+            "synctv:email:code:user@example.com"
+        );
+    }
+
+    #[test]
+    fn test_token_blacklist_key() {
+        let builder = KeyBuilder::default();
+        assert_eq!(
+            builder.token_blacklist("sha256hash"),
+            "synctv:token:blacklist:sha256hash"
+        );
+        assert_eq!(
+            builder.token_blacklist_user("user_123"),
+            "synctv:token:blacklist:user:user_123"
+        );
+    }
+
+    #[test]
+    fn test_ws_ticket_key() {
+        let builder = KeyBuilder::default();
+        assert_eq!(
+            builder.ws_ticket("ticket_abc"),
+            "synctv:ws_ticket:ticket_abc"
         );
     }
 }

@@ -1020,43 +1020,55 @@ impl AdminApiImpl {
         &self,
         _req: crate::proto::admin::GetSystemStatsRequest,
     ) -> Result<crate::proto::admin::GetSystemStatsResponse, String> {
+        // M-4: Run all 7 independent DB queries in parallel
         let query_all = synctv_core::models::UserListQuery { page: 1, page_size: 1, ..Default::default() };
-        let (_, total_users) = self.user_service.list_users(&query_all).await.unwrap_or((vec![], 0));
-
         let query_active = synctv_core::models::UserListQuery {
             page: 1, page_size: 1,
             status: Some("active".to_string()),
             ..Default::default()
         };
-        let (_, active_users) = self.user_service.list_users(&query_active).await.unwrap_or((vec![], 0));
-
         let query_banned = synctv_core::models::UserListQuery {
             page: 1, page_size: 1,
             status: Some("banned".to_string()),
             ..Default::default()
         };
-        let (_, banned_users) = self.user_service.list_users(&query_banned).await.unwrap_or((vec![], 0));
-
         let room_query_all = synctv_core::models::RoomListQuery { page: 1, page_size: 1, ..Default::default() };
-        let (_, total_rooms) = self.room_service.list_rooms(&room_query_all).await.unwrap_or((vec![], 0));
-
         let room_query_active = synctv_core::models::RoomListQuery {
             page: 1, page_size: 1,
             status: Some(synctv_core::models::RoomStatus::Active),
             ..Default::default()
         };
-        let (_, active_rooms) = self.room_service.list_rooms(&room_query_active).await.unwrap_or((vec![], 0));
-
         let room_query_banned = synctv_core::models::RoomListQuery {
             page: 1, page_size: 1,
             is_banned: Some(true),
             ..Default::default()
         };
-        let (_, banned_rooms) = self.room_service.list_rooms(&room_query_banned).await.unwrap_or((vec![], 0));
 
-        let provider_count = self.provider_instance_manager
-            .get_all_instances().await
-            .map_or(0, |i| i.len() as i32);
+        let (
+            total_users_res,
+            active_users_res,
+            banned_users_res,
+            total_rooms_res,
+            active_rooms_res,
+            banned_rooms_res,
+            provider_count_res,
+        ) = tokio::join!(
+            self.user_service.list_users(&query_all),
+            self.user_service.list_users(&query_active),
+            self.user_service.list_users(&query_banned),
+            self.room_service.list_rooms(&room_query_all),
+            self.room_service.list_rooms(&room_query_active),
+            self.room_service.list_rooms(&room_query_banned),
+            self.provider_instance_manager.get_all_instances(),
+        );
+
+        let (_, total_users) = total_users_res.unwrap_or((vec![], 0));
+        let (_, active_users) = active_users_res.unwrap_or((vec![], 0));
+        let (_, banned_users) = banned_users_res.unwrap_or((vec![], 0));
+        let (_, total_rooms) = total_rooms_res.unwrap_or((vec![], 0));
+        let (_, active_rooms) = active_rooms_res.unwrap_or((vec![], 0));
+        let (_, banned_rooms) = banned_rooms_res.unwrap_or((vec![], 0));
+        let provider_count = provider_count_res.map_or(0, |i| i.len() as i32);
 
         Ok(crate::proto::admin::GetSystemStatsResponse {
             total_users: total_users as i32,

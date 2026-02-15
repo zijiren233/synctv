@@ -200,15 +200,20 @@ impl ExternalStreamPuller {
                 }
             };
 
+            let connect_start = std::time::Instant::now();
             let result = match self.source_type {
                 ExternalSourceType::Rtmp => self.connect_and_stream_rtmp(&data_sender).await,
                 ExternalSourceType::HttpFlv => self.connect_and_stream_flv(&data_sender).await,
             };
+            let stream_duration = connect_start.elapsed();
 
             // Always clean up local StreamHub before retry or exit
             if let Err(e) = self.unpublish_from_local_stream_hub().await {
                 warn!("Failed to unpublish from local StreamHub: {e}");
             }
+
+            /// Minimum connection duration to consider "successful" for retry reset
+            const MIN_SUCCESSFUL_DURATION: std::time::Duration = std::time::Duration::from_secs(60);
 
             match result {
                 Ok(()) => {
@@ -220,6 +225,16 @@ impl ExternalStreamPuller {
                     return Ok(());
                 }
                 Err(e) => {
+                    // Reset retry counter if the connection was up for a meaningful duration
+                    if stream_duration > MIN_SUCCESSFUL_DURATION {
+                        info!(
+                            room_id = %self.room_id,
+                            duration_secs = stream_duration.as_secs(),
+                            "Resetting retry counter after successful long connection"
+                        );
+                        attempt = 0;
+                    }
+
                     if attempt >= MAX_RETRIES {
                         error!(
                             room_id = %self.room_id,
@@ -356,9 +371,10 @@ impl ExternalStreamPuller {
             "Connecting to HTTP-FLV source"
         );
 
+        // No total .timeout() -- live streams run indefinitely.
+        // Use only connect_timeout and per-chunk read timeout below.
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {e}"))?;
 
@@ -376,11 +392,20 @@ impl ExternalStreamPuller {
         let mut header_parsed = false;
         let mut dropped_frames: u64 = 0;
         const DROP_LOG_INTERVAL: u64 = 100;
+        /// Per-chunk read timeout: if no data arrives for 30s, the stream is dead.
+        const CHUNK_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-        // Read response body in chunks and parse FLV tags
-        while let Some(chunk) = response.chunk().await
-            .map_err(|e| anyhow::anyhow!("Failed to read HTTP chunk: {e}"))?
-        {
+        // Read response body in chunks and parse FLV tags.
+        // Use per-chunk timeout instead of total request timeout so live streams
+        // can run indefinitely as long as data keeps flowing.
+        loop {
+            let chunk = match tokio::time::timeout(CHUNK_READ_TIMEOUT, response.chunk()).await {
+                Ok(Ok(Some(c))) => c,
+                Ok(Ok(None)) => break, // Stream ended normally
+                Ok(Err(e)) => return Err(anyhow::anyhow!("Failed to read HTTP chunk: {e}")),
+                Err(_) => return Err(anyhow::anyhow!("No data received for {}s, stream appears dead", CHUNK_READ_TIMEOUT.as_secs())),
+            };
+
             if buffer.len() + chunk.len() > MAX_FLV_BUFFER_SIZE {
                 return Err(anyhow::anyhow!(
                     "FLV buffer exceeded {} MB limit — likely a slow consumer or malformed stream",
@@ -451,8 +476,8 @@ impl ExternalStreamPuller {
                     | (u32::from(buffer[5]) << 8)
                     | u32::from(buffer[6]);
 
-                // Extract tag body data (bytes after the 11-byte header)
-                let tag_data = BytesMut::from(
+                // Extract tag body data (bytes after the 11-byte header) and freeze for zero-copy
+                let tag_data = bytes::Bytes::copy_from_slice(
                     &buffer[FLV_TAG_HEADER_SIZE..FLV_TAG_HEADER_SIZE + data_size],
                 );
 
@@ -485,7 +510,6 @@ impl ExternalStreamPuller {
                 }
             }
         }
-
         info!("HTTP-FLV stream ended");
         Ok(())
     }

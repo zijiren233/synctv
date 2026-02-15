@@ -9,6 +9,7 @@ pub mod admin;
 pub mod client;
 pub mod email;
 pub mod messaging;
+pub mod notification;
 pub mod providers;
 
 // Re-export for convenience
@@ -16,6 +17,7 @@ pub use admin::AdminApiImpl;
 pub use client::ClientApiImpl;
 pub use email::EmailApiImpl;
 pub use messaging::{StreamMessageHandler, MessageSender, ProtoCodec};
+pub use notification::NotificationApiImpl;
 pub use providers::{AlistApiImpl, BilibiliApiImpl, EmbyApiImpl};
 
 /// Shared error classification for impls-layer `String` errors.

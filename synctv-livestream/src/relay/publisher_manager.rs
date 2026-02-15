@@ -46,9 +46,9 @@ impl PublisherManager {
     pub async fn start(self: Arc<Self>, mut event_receiver: BroadcastEventReceiver) {
         info!("Publisher manager started");
 
-        // Start heartbeat maintenance task
+        // Start heartbeat maintenance task and track its handle
         let heartbeat_manager = Arc::clone(&self);
-        tokio::spawn(async move {
+        let heartbeat_handle = tokio::spawn(async move {
             heartbeat_manager.maintain_heartbeats().await;
         });
 
@@ -77,6 +77,9 @@ impl PublisherManager {
             }
         }
 
+        // Abort heartbeat task on exit to prevent leaked background work
+        heartbeat_handle.abort();
+        let _ = heartbeat_handle.await;
         warn!("Publisher manager stopped");
     }
 

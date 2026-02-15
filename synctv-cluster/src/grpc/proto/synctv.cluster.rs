@@ -93,64 +93,12 @@ pub struct DeregisterNodeResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
 }
-/// State synchronization
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SyncRoomStateRequest {
-    #[prost(string, tag = "1")]
-    pub room_id: ::prost::alloc::string::String,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SyncRoomStateResponse {
-    #[prost(message, optional, tag = "1")]
-    pub state: ::core::option::Option<RoomState>,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RoomState {
-    #[prost(string, tag = "1")]
-    pub room_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
-    pub playback: ::core::option::Option<PlaybackState>,
-    #[prost(string, repeated, tag = "3")]
-    pub online_users: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// JSON settings
-    #[prost(bytes = "vec", tag = "4")]
-    pub settings: ::prost::alloc::vec::Vec<u8>,
-    #[prost(int32, tag = "5")]
-    pub version: i32,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct PlaybackState {
-    #[prost(string, tag = "1")]
-    pub playing_media_id: ::prost::alloc::string::String,
-    /// playback position in seconds
-    #[prost(double, tag = "2")]
-    pub current_time: f64,
-    #[prost(double, tag = "3")]
-    pub speed: f64,
-    #[prost(bool, tag = "4")]
-    pub is_playing: bool,
-    #[prost(int64, tag = "5")]
-    pub updated_at: i64,
-    /// Currently playing playlist
-    #[prost(string, tag = "6")]
-    pub playing_playlist_id: ::prost::alloc::string::String,
-    /// Relative path within dynamic folder
-    #[prost(string, tag = "7")]
-    pub relative_path: ::prost::alloc::string::String,
-}
-/// Event broadcasting
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct BroadcastEventRequest {
-    #[prost(message, optional, tag = "1")]
-    pub event: ::core::option::Option<ClusterEvent>,
-}
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct BroadcastEventResponse {
-    #[prost(bool, tag = "1")]
-    pub success: bool,
-    #[prost(int32, tag = "2")]
-    pub nodes_reached: i32,
-}
+/// ClusterEvent schema reference
+///
+/// These event types are NOT transmitted via protobuf. They are serialized as
+/// JSON via serde (synctv_cluster::sync::events::ClusterEvent) and published
+/// through Redis Pub/Sub. This protobuf definition exists solely as a schema
+/// reference for documentation purposes.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClusterEvent {
     /// UUID for deduplication
@@ -205,6 +153,26 @@ pub mod cluster_event {
         #[prost(message, tag = "19")]
         PermissionChanged(super::PermissionChangedEvent),
     }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PlaybackState {
+    #[prost(string, tag = "1")]
+    pub playing_media_id: ::prost::alloc::string::String,
+    /// playback position in seconds
+    #[prost(double, tag = "2")]
+    pub current_time: f64,
+    #[prost(double, tag = "3")]
+    pub speed: f64,
+    #[prost(bool, tag = "4")]
+    pub is_playing: bool,
+    #[prost(int64, tag = "5")]
+    pub updated_at: i64,
+    /// Currently playing playlist
+    #[prost(string, tag = "6")]
+    pub playing_playlist_id: ::prost::alloc::string::String,
+    /// Relative path within dynamic folder
+    #[prost(string, tag = "7")]
+    pub relative_path: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PlaybackStateChangedEvent {
@@ -471,10 +439,14 @@ pub mod cluster_service_client {
     /// - Heartbeat: UNUSED - kept for potential future node-to-node gRPC discovery
     /// - GetNodes: ACTIVE - returns all known nodes from Redis registry
     /// - DeregisterNode: ACTIVE - handles graceful shutdown with epoch validation
-    /// - SyncRoomState: DEPRECATED - returns UNIMPLEMENTED; use Redis Pub/Sub instead
-    /// - BroadcastEvent: DEPRECATED - returns UNIMPLEMENTED; use ClusterManager instead
     /// - GetUserOnlineStatus: ACTIVE - fan-out query for user presence
     /// - GetRoomConnections: ACTIVE - fan-out query for room participants
+    ///
+    /// NOTE on event encoding:
+    /// Cluster events are NOT transmitted via protobuf messages. They are serialized
+    /// as JSON via serde (ClusterEvent in synctv-cluster/src/sync/events.rs) and
+    /// published/consumed through Redis Pub/Sub via ClusterManager. The ClusterEvent
+    /// message definition below is kept only as a schema reference.
     #[derive(Debug, Clone)]
     pub struct ClusterServiceClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -657,61 +629,6 @@ pub mod cluster_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
-        /// State synchronization
-        /// NOTE: These are DEPRECATED - use Redis Pub/Sub via ClusterManager instead
-        /// Both endpoints return UNIMPLEMENTED status
-        pub async fn sync_room_state(
-            &mut self,
-            request: impl tonic::IntoRequest<super::SyncRoomStateRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::SyncRoomStateResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/synctv.cluster.ClusterService/SyncRoomState",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("synctv.cluster.ClusterService", "SyncRoomState"),
-                );
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn broadcast_event(
-            &mut self,
-            request: impl tonic::IntoRequest<super::BroadcastEventRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::BroadcastEventResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/synctv.cluster.ClusterService/BroadcastEvent",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("synctv.cluster.ClusterService", "BroadcastEvent"),
-                );
-            self.inner.unary(req, path, codec).await
-        }
         /// User connection tracking - ACTIVE endpoints for fan-out queries
         pub async fn get_user_online_status(
             &mut self,
@@ -816,23 +733,6 @@ pub mod cluster_service_server {
             tonic::Response<super::DeregisterNodeResponse>,
             tonic::Status,
         >;
-        /// State synchronization
-        /// NOTE: These are DEPRECATED - use Redis Pub/Sub via ClusterManager instead
-        /// Both endpoints return UNIMPLEMENTED status
-        async fn sync_room_state(
-            &self,
-            request: tonic::Request<super::SyncRoomStateRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::SyncRoomStateResponse>,
-            tonic::Status,
-        >;
-        async fn broadcast_event(
-            &self,
-            request: tonic::Request<super::BroadcastEventRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::BroadcastEventResponse>,
-            tonic::Status,
-        >;
         /// User connection tracking - ACTIVE endpoints for fan-out queries
         async fn get_user_online_status(
             &self,
@@ -862,10 +762,14 @@ pub mod cluster_service_server {
     /// - Heartbeat: UNUSED - kept for potential future node-to-node gRPC discovery
     /// - GetNodes: ACTIVE - returns all known nodes from Redis registry
     /// - DeregisterNode: ACTIVE - handles graceful shutdown with epoch validation
-    /// - SyncRoomState: DEPRECATED - returns UNIMPLEMENTED; use Redis Pub/Sub instead
-    /// - BroadcastEvent: DEPRECATED - returns UNIMPLEMENTED; use ClusterManager instead
     /// - GetUserOnlineStatus: ACTIVE - fan-out query for user presence
     /// - GetRoomConnections: ACTIVE - fan-out query for room participants
+    ///
+    /// NOTE on event encoding:
+    /// Cluster events are NOT transmitted via protobuf messages. They are serialized
+    /// as JSON via serde (ClusterEvent in synctv-cluster/src/sync/events.rs) and
+    /// published/consumed through Redis Pub/Sub via ClusterManager. The ClusterEvent
+    /// message definition below is kept only as a schema reference.
     #[derive(Debug)]
     pub struct ClusterServiceServer<T> {
         inner: Arc<T>,
@@ -1108,98 +1012,6 @@ pub mod cluster_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DeregisterNodeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/synctv.cluster.ClusterService/SyncRoomState" => {
-                    #[allow(non_camel_case_types)]
-                    struct SyncRoomStateSvc<T: ClusterService>(pub Arc<T>);
-                    impl<
-                        T: ClusterService,
-                    > tonic::server::UnaryService<super::SyncRoomStateRequest>
-                    for SyncRoomStateSvc<T> {
-                        type Response = super::SyncRoomStateResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::SyncRoomStateRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ClusterService>::sync_room_state(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = SyncRoomStateSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/synctv.cluster.ClusterService/BroadcastEvent" => {
-                    #[allow(non_camel_case_types)]
-                    struct BroadcastEventSvc<T: ClusterService>(pub Arc<T>);
-                    impl<
-                        T: ClusterService,
-                    > tonic::server::UnaryService<super::BroadcastEventRequest>
-                    for BroadcastEventSvc<T> {
-                        type Response = super::BroadcastEventResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::BroadcastEventRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ClusterService>::broadcast_event(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = BroadcastEventSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

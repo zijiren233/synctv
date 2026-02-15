@@ -35,7 +35,10 @@ impl From<webrtc::rtp_transceiver::rtp_codec::RTPCodecType> for TrackKind {
         match codec_type {
             webrtc::rtp_transceiver::rtp_codec::RTPCodecType::Audio => Self::Audio,
             webrtc::rtp_transceiver::rtp_codec::RTPCodecType::Video => Self::Video,
-            _ => Self::Video, // Default to video
+            _ => {
+                tracing::warn!(codec_type = ?codec_type, "Unknown codec type, defaulting to Video");
+                Self::Video
+            }
         }
     }
 }

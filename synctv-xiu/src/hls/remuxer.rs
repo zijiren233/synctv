@@ -220,6 +220,52 @@ impl CustomHlsRemuxer {
     }
 }
 
+/// Drop guard that sends UnSubscribe to StreamHub on drop.
+/// Ensures cleanup even if the handler panics or returns early.
+struct UnsubscribeGuard {
+    event_producer: StreamHubEventSender,
+    subscriber_id: Uuid,
+    app_name: String,
+    stream_name: String,
+    active: bool,
+}
+
+impl Drop for UnsubscribeGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        let sub_info = SubscriberInfo {
+            id: self.subscriber_id,
+            sub_type: SubscribeType::RtmpRemux2Hls,
+            sub_data_type: crate::streamhub::define::SubDataType::Frame,
+            notify_info: NotifyInfo {
+                request_url: String::new(),
+                remote_addr: String::new(),
+            },
+        };
+        let identifier = StreamIdentifier::Rtmp {
+            app_name: self.app_name.clone(),
+            stream_name: self.stream_name.clone(),
+        };
+        let event = StreamHubEvent::UnSubscribe {
+            identifier,
+            info: sub_info,
+        };
+        if let Err(e) = self.event_producer.try_send(event) {
+            tracing::warn!(
+                subscriber_id = %self.subscriber_id,
+                "UnsubscribeGuard: failed to send unsubscribe on drop: {e}"
+            );
+        } else {
+            tracing::info!(
+                subscriber_id = %self.subscriber_id,
+                "UnsubscribeGuard: sent unsubscribe on drop"
+            );
+        }
+    }
+}
+
 /// Handler for a single HLS stream
 struct StreamHandler {
     app_name: String,
@@ -257,6 +303,15 @@ impl StreamHandler {
         // Subscribe to stream
         self.subscribe_from_stream_hub().await?;
 
+        // Install drop guard to ensure unsubscribe on panic or early return
+        let mut unsub_guard = UnsubscribeGuard {
+            event_producer: self.event_producer.clone(),
+            subscriber_id: self.subscriber_id,
+            app_name: self.app_name.clone(),
+            stream_name: self.stream_name.clone(),
+            active: true,
+        };
+
         // Create registry key
         let registry_key = format!("{}/{}", self.app_name, self.stream_name);
 
@@ -278,6 +333,9 @@ impl StreamHandler {
         )?;
 
         processor.process_stream(&mut self.data_consumer).await?;
+
+        // Deactivate drop guard - we'll unsubscribe explicitly
+        unsub_guard.active = false;
 
         // Unsubscribe when done
         self.unsubscribe_from_stream_hub().await?;
@@ -379,40 +437,29 @@ async fn write_with_retry(
     key: &str,
     data: Bytes,
 ) -> std::io::Result<()> {
-    use backon::{ExponentialBuilder, BackoffBuilder};
+    use backon::{ExponentialBuilder, Retryable};
 
-    let backoff = ExponentialBuilder::default()
-        .with_min_delay(Duration::from_millis(100))
-        .with_max_delay(Duration::from_secs(2))
-        .with_max_times(3)
-        .with_jitter()
-        .build();
+    let storage = Arc::clone(storage);
+    let key = key.to_owned();
 
-    let mut last_err = None;
-    for delay in std::iter::once(Duration::ZERO).chain(backoff) {
-        if delay > Duration::ZERO {
-            tokio::time::sleep(delay).await;
-        }
-
-        match storage.write(key, data.clone()).await {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                if !is_transient_error(&e) {
-                    return Err(e);
-                }
-                tracing::warn!(
-                    "HLS storage write failed: {} - retrying in {:?}",
-                    e,
-                    delay
-                );
-                last_err = Some(e);
-            }
-        }
-    }
-
-    Err(last_err.unwrap_or_else(|| {
-        std::io::Error::other("Retry exhausted")
-    }))
+    (|| {
+        let storage = storage.clone();
+        let key = key.clone();
+        let data = data.clone();
+        async move { storage.write(&key, data).await }
+    })
+    .retry(
+        ExponentialBuilder::default()
+            .with_min_delay(Duration::from_millis(100))
+            .with_max_delay(Duration::from_secs(2))
+            .with_max_times(3)
+            .with_jitter(),
+    )
+    .when(is_transient_error)
+    .notify(|e, dur| {
+        tracing::warn!("HLS storage write failed: {e} - retrying in {dur:?}");
+    })
+    .await
 }
 
 /// Check if an I/O error is transient and worth retrying
@@ -507,8 +554,8 @@ impl StreamProcessor {
             ).await {
                 Ok(Some(frame_data)) => {
                     let flv_data = match frame_data {
-                        FrameData::Audio { timestamp, data } => FlvData::Audio { timestamp, data },
-                        FrameData::Video { timestamp, data } => FlvData::Video { timestamp, data },
+                        FrameData::Audio { timestamp, data } => FlvData::Audio { timestamp, data: BytesMut::from(&data[..]) },
+                        FrameData::Video { timestamp, data } => FlvData::Video { timestamp, data: BytesMut::from(&data[..]) },
                         _ => continue,
                     };
                     self.process_flv_data(flv_data).await?;

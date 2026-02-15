@@ -509,6 +509,11 @@ impl RedisPubSub {
             return;
         }
 
+        // Record received metric
+        synctv_core::metrics::cluster::CLUSTER_EVENTS_RECEIVED
+            .with_label_values(&[event.event_type()])
+            .inc();
+
         debug!(
             channel = %channel,
             event_type = %event.event_type(),

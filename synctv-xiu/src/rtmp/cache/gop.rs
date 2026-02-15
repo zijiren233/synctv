@@ -46,7 +46,7 @@ impl Gop {
     }
 
     /// Estimate the memory size of a FrameData in bytes.
-    fn frame_memory_size(data: &FrameData) -> usize {
+    pub(crate) fn frame_memory_size(data: &FrameData) -> usize {
         match data {
             FrameData::Video { data, .. } => data.len(),
             FrameData::Audio { data, .. } => data.len(),
@@ -123,10 +123,19 @@ impl Gop {
     }
 }
 
+/// Default maximum total bytes across all GOPs per stream (50 MB).
+/// When exceeded, the oldest GOP is dropped even if `gop_num` hasn't been reached.
+/// Prevents OOM under high-bitrate multi-stream scenarios (e.g., 4K at 50 Mbps).
+const DEFAULT_MAX_TOTAL_BYTES: usize = 50 * 1024 * 1024;
+
 #[derive(Clone)]
 pub struct Gops {
     gops: VecDeque<Gop>,
     size: usize,
+    /// Maximum total bytes across all GOPs. When exceeded, oldest GOP is evicted.
+    max_total_bytes: usize,
+    /// Current total bytes across all GOPs.
+    current_total_bytes: usize,
 }
 
 impl Default for Gops {
@@ -141,6 +150,8 @@ impl Gops {
         Self {
             gops: VecDeque::from([Gop::new()]),
             size,
+            max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
+            current_total_bytes: 0,
         }
     }
 
@@ -156,13 +167,33 @@ impl Gops {
                 back.freeze();
             }
             if self.gops.len() == self.size {
-                self.gops.pop_front();
+                if let Some(evicted) = self.gops.pop_front() {
+                    self.current_total_bytes = self.current_total_bytes.saturating_sub(evicted.memory_bytes());
+                }
             }
             self.gops.push_back(Gop::new());
         }
 
+        // Evict oldest GOPs if total memory exceeds limit (keep at least the active GOP)
+        while self.current_total_bytes > self.max_total_bytes && self.gops.len() > 1 {
+            if let Some(evicted) = self.gops.pop_front() {
+                let evicted_bytes = evicted.memory_bytes();
+                self.current_total_bytes = self.current_total_bytes.saturating_sub(evicted_bytes);
+                tracing::warn!(
+                    evicted_bytes,
+                    remaining_gops = self.gops.len(),
+                    total_bytes = self.current_total_bytes,
+                    max_total_bytes = self.max_total_bytes,
+                    "GOP evicted due to total memory limit"
+                );
+            }
+        }
+
+        // Track memory of the new frame
+        let frame_bytes = Gop::frame_memory_size(&data);
         if let Some(gop) = self.gops.back_mut() {
             gop.save_frame_data(data);
+            self.current_total_bytes += frame_bytes;
         } else {
             tracing::error!("should not be here!");
         }

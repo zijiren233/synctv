@@ -7,16 +7,16 @@ To learn more about the release, try:
   $ helm status {{ .Release.Name }} -n {{ .Release.Namespace }}
   $ helm get all {{ .Release.Name }} -n {{ .Release.Namespace }}
 
-📺 SyncTV is starting up with {{ .Values.replicaCount }} replicas
+SyncTV is starting up with {{ .Values.replicaCount }} replicas.
 
-🚀 Services:
+Services:
   - HTTP API: {{ .Values.config.server.httpPort }}
   - gRPC API: {{ .Values.config.server.grpcPort }}
   - RTMP Ingest: {{ .Values.config.livestream.rtmpPort }}
 
 {{- if .Values.ingress.enabled }}
 
-🌐 Ingress:
+Ingress:
 {{- range .Values.ingress.hosts }}
   - https://{{ .host }}
 {{- end }}
@@ -24,18 +24,8 @@ To learn more about the release, try:
 
 {{- if .Values.autoscaling.enabled }}
 
-📈 Autoscaling: Enabled (min: {{ .Values.autoscaling.minReplicas }}, max: {{ .Values.autoscaling.maxReplicas }})
+Autoscaling: Enabled (min: {{ .Values.autoscaling.minReplicas }}, max: {{ .Values.autoscaling.maxReplicas }})
 {{- end }}
 
-{{- if .Values.config.cluster.enabled }}
-
-🔗 Cluster Mode: Enabled
-  - Node Registry: {{ .Values.config.cluster.nodeRegistry.enabled }}
-  - Load Balancer: {{ .Values.config.cluster.loadBalancer.strategy }}
-{{- end }}
-
-📖 Documentation: https://github.com/synctv-org/synctv
-🐛 Issues: https://github.com/synctv-org/synctv/issues
-
-⚠️  IMPORTANT: Remember to update the secrets in production!
-    Run: helm get values {{ .Release.Name }} -n {{ .Release.Namespace }}
+IMPORTANT: Remember to update the secrets in production!
+  Run: helm get values {{ .Release.Name }} -n {{ .Release.Namespace }}

@@ -260,6 +260,57 @@ pub mod grpc {
     });
 }
 
+/// Cluster operations
+pub mod cluster {
+    use super::{REGISTRY, IntGauge, IntCounterVec};
+    use prometheus::{Opts, register_int_gauge_with_registry, register_int_counter_vec_with_registry};
+
+    /// Current number of active connections on this cluster node.
+    pub static CLUSTER_CONNECTIONS: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "synctv_cluster_connections_total",
+            "Current number of active connections on this cluster node",
+            REGISTRY.clone()
+        ).expect("Failed to register CLUSTER_CONNECTIONS")
+    });
+
+    /// Current number of active rooms on this cluster node.
+    pub static CLUSTER_ROOMS: std::sync::LazyLock<IntGauge> = std::sync::LazyLock::new(|| {
+        register_int_gauge_with_registry!(
+            "synctv_cluster_rooms_total",
+            "Current number of active rooms on this cluster node",
+            REGISTRY.clone()
+        ).expect("Failed to register CLUSTER_ROOMS")
+    });
+
+    /// Total cluster events published, labeled by event type.
+    pub static CLUSTER_EVENTS_PUBLISHED: std::sync::LazyLock<IntCounterVec> = std::sync::LazyLock::new(|| {
+        register_int_counter_vec_with_registry!(
+            Opts::new("synctv_cluster_events_published_total", "Total cluster events published"),
+            &["event_type"],
+            REGISTRY.clone()
+        ).expect("Failed to register CLUSTER_EVENTS_PUBLISHED")
+    });
+
+    /// Total cluster events received from other nodes, labeled by event type.
+    pub static CLUSTER_EVENTS_RECEIVED: std::sync::LazyLock<IntCounterVec> = std::sync::LazyLock::new(|| {
+        register_int_counter_vec_with_registry!(
+            Opts::new("synctv_cluster_events_received_total", "Total cluster events received from other nodes"),
+            &["event_type"],
+            REGISTRY.clone()
+        ).expect("Failed to register CLUSTER_EVENTS_RECEIVED")
+    });
+
+    /// Total cluster events dropped (channel full or subscriber disconnected).
+    pub static CLUSTER_EVENTS_DROPPED: std::sync::LazyLock<IntCounterVec> = std::sync::LazyLock::new(|| {
+        register_int_counter_vec_with_registry!(
+            Opts::new("synctv_cluster_events_dropped_total", "Total cluster events dropped"),
+            &["reason"],
+            REGISTRY.clone()
+        ).expect("Failed to register CLUSTER_EVENTS_DROPPED")
+    });
+}
+
 /// Stream operations
 pub mod stream {
     use super::{register_histogram_vec_with_registry, register_int_gauge_with_registry, register_counter_vec_with_registry, HistogramVec, REGISTRY, IntGauge, CounterVec};
@@ -370,7 +421,7 @@ pub fn normalize_path(path: &str) -> String {
 
         // Replace segments that look like IDs (after known resource paths)
         let prev = if i > 0 { segments.get(i - 1) } else { None };
-        let is_id = matches!(prev, Some(&"rooms" | &"media" | &"chat" | &"playlists"));
+        let is_id = matches!(prev, Some(&"rooms" | &"media" | &"chat" | &"playlists" | &"users" | &"notifications" | &"settings" | &"members"));
 
         if is_id {
             result.push(":id");
@@ -417,5 +468,28 @@ mod tests {
         encoder.encode(&metric_families, &mut buffer).unwrap();
         let output = String::from_utf8(buffer).unwrap();
         assert!(output.contains("http_request_duration_seconds"));
+    }
+
+    #[test]
+    fn test_normalize_path_existing_resources() {
+        assert_eq!(normalize_path("/api/rooms/abc123/media"), "/api/rooms/:id/media");
+        assert_eq!(normalize_path("/api/media/xyz789"), "/api/media/:id");
+        assert_eq!(normalize_path("/api/chat/msg001"), "/api/chat/:id");
+        assert_eq!(normalize_path("/api/playlists/pl123"), "/api/playlists/:id");
+    }
+
+    #[test]
+    fn test_normalize_path_extended_resources() {
+        assert_eq!(normalize_path("/api/users/u123"), "/api/users/:id");
+        assert_eq!(normalize_path("/api/notifications/n456"), "/api/notifications/:id");
+        assert_eq!(normalize_path("/api/settings/s789"), "/api/settings/:id");
+        assert_eq!(normalize_path("/api/members/m012"), "/api/members/:id");
+    }
+
+    #[test]
+    fn test_normalize_path_no_id_segments() {
+        assert_eq!(normalize_path("/api/rooms"), "/api/rooms");
+        assert_eq!(normalize_path("/api/health"), "/api/health");
+        assert_eq!(normalize_path("/metrics"), "/metrics");
     }
 }

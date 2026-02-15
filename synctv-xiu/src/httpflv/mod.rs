@@ -154,15 +154,15 @@ impl HttpFlvSession {
 
     fn write_flv_tag(&mut self, frame_data: FrameData) -> anyhow::Result<()> {
         let (data, timestamp, tag_type) = match frame_data {
-            FrameData::Audio { timestamp, data } => (data, timestamp, 8), // AUDIO
-            FrameData::Video { timestamp, data } => (data, timestamp, 9), // VIDEO
+            FrameData::Audio { timestamp, data } => (BytesMut::from(&data[..]), timestamp, 8), // AUDIO
+            FrameData::Video { timestamp, data } => (BytesMut::from(&data[..]), timestamp, 9), // VIDEO
             FrameData::MetaData { timestamp, data } => {
                 // Remove @setDataFrame from RTMP's metadata
                 let mut amf_writer = Amf0Writer::new();
                 amf_writer
                     .write_string(&String::from("@setDataFrame"))
                     .map_err(|e| anyhow::anyhow!("Failed to write AMF string: {e:?}"))?;
-                let (_, right) = data.split_at(amf_writer.len());
+                let right = &data[amf_writer.len()..];
                 (BytesMut::from(right), timestamp, 18) // SCRIPT_DATA_AMF
             }
             _ => return Ok(()),

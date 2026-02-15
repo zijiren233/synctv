@@ -234,17 +234,19 @@ pub async fn proxy_m3u8_and_rewrite(
         }
     }
 
-    let m3u8_text = tokio::time::timeout(BODY_READ_TIMEOUT, proxy_response.text())
+    let m3u8_bytes = tokio::time::timeout(BODY_READ_TIMEOUT, proxy_response.bytes())
         .await
         .map_err(|_| anyhow::anyhow!("M3U8 body read timed out after {}s", BODY_READ_TIMEOUT.as_secs()))?
         .map_err(|e| anyhow::anyhow!("Failed to read M3U8 body: {e}"))?;
 
-    if m3u8_text.len() > MAX_MANIFEST_SIZE {
+    if m3u8_bytes.len() > MAX_MANIFEST_SIZE {
         return Err(anyhow::anyhow!(
             "M3U8 too large ({} bytes, max {MAX_MANIFEST_SIZE})",
-            m3u8_text.len()
+            m3u8_bytes.len()
         ));
     }
+
+    let m3u8_text = String::from_utf8_lossy(&m3u8_bytes).to_string();
 
     let rewritten = rewrite_m3u8(&m3u8_text, url, proxy_base);
 

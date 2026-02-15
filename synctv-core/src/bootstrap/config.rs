@@ -7,25 +7,48 @@ use crate::Config;
 
 /// Load configuration from config file or environment variables
 ///
-/// Tries to load from config.yaml first, then falls back to environment variables
+/// Config file search order:
+/// 1. SYNCTV_CONFIG_PATH environment variable (explicit path)
+/// 2. ./config.yaml (current working directory)
+/// 3. /config/config.yaml (Kubernetes mount path)
+/// 4. Fall back to environment variables only
 pub fn load_config() -> Result<Config> {
-    // Try to load from config file first
-    let config = if std::path::Path::new("config.yaml").exists() {
-        eprintln!("Loading config from config.yaml");
-        match Config::from_file("config.yaml") {
+    // Determine config file path: env var > CWD > /config/ mount
+    let config_path = std::env::var("SYNCTV_CONFIG_PATH")
+        .ok()
+        .filter(|p| std::path::Path::new(p).exists())
+        .or_else(|| {
+            let cwd = "config.yaml";
+            if std::path::Path::new(cwd).exists() {
+                Some(cwd.to_string())
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            let k8s = "/config/config.yaml";
+            if std::path::Path::new(k8s).exists() {
+                Some(k8s.to_string())
+            } else {
+                None
+            }
+        });
+
+    let config = if let Some(path) = config_path {
+        eprintln!("Loading config from {path}");
+        match Config::from_file(&path) {
             Ok(cfg) => {
-                eprintln!("Successfully loaded config.yaml");
+                eprintln!("Successfully loaded {path}");
                 cfg
             }
             Err(e) => {
-                eprintln!("Failed to load config.yaml: {e}");
+                eprintln!("Failed to load {path}: {e}");
                 eprintln!("Falling back to environment variables");
                 Config::from_env().unwrap_or_default()
             }
         }
     } else {
-        eprintln!("config.yaml not found, using environment variables");
-        // Fall back to environment variables
+        eprintln!("No config file found, using environment variables");
         Config::from_env().unwrap_or_else(|e| {
             eprintln!("Failed to load config: {e}");
             eprintln!("Using default configuration");

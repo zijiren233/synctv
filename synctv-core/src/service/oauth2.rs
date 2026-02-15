@@ -48,6 +48,12 @@ pub struct OAuth2UserInfo {
     pub avatar: Option<String>,
 }
 
+/// An OAuth2 provider entry combining the provider instance and its type
+struct OAuth2ProviderEntry {
+    provider: Box<dyn OAuth2ProviderTrait>,
+    provider_type: OAuth2Provider,
+}
+
 /// `OAuth2` authentication service
 ///
 /// Handles OAuth2/OIDC login flow:
@@ -61,10 +67,9 @@ pub struct OAuth2UserInfo {
 #[derive(Clone)]
 pub struct OAuth2Service {
     repository: UserOAuthProviderRepository,
-    /// Map of instance name -> provider instance (e.g., "github", "logto1", "logto2")
-    providers: Arc<RwLock<HashMap<String, Box<dyn OAuth2ProviderTrait>>>>,
-    /// Map of instance name -> provider enum type
-    provider_types: Arc<RwLock<HashMap<String, OAuth2Provider>>>,
+    /// Map of instance name -> (provider instance, provider enum type)
+    /// M-03: Consolidated from separate providers + provider_types maps to prevent lock ordering issues
+    providers: Arc<RwLock<HashMap<String, OAuth2ProviderEntry>>>,
     /// In-memory state storage with TTL (fallback when Redis is not available)
     local_states: Arc<moka::future::Cache<String, OAuth2State>>,
     /// Optional Redis client for distributed state storage
@@ -92,7 +97,6 @@ impl OAuth2Service {
         Self {
             repository,
             providers: Arc::new(RwLock::new(HashMap::new())),
-            provider_types: Arc::new(RwLock::new(HashMap::new())),
             local_states: Arc::new(local_states),
             redis: None,
             allowed_redirect_domains: Arc::new(Vec::new()),
@@ -109,7 +113,6 @@ impl OAuth2Service {
         Self {
             repository,
             providers: Arc::new(RwLock::new(HashMap::new())),
-            provider_types: Arc::new(RwLock::new(HashMap::new())),
             local_states: Arc::new(local_states),
             redis: Some(redis),
             allowed_redirect_domains: Arc::new(Vec::new()),
@@ -198,12 +201,9 @@ impl OAuth2Service {
         provider: Box<dyn OAuth2ProviderTrait>,
     ) {
         let mut providers = self.providers.write().await;
-        let mut provider_types = self.provider_types.write().await;
-
-        providers.insert(instance_name.clone(), provider);
-        provider_types.insert(instance_name.clone(), provider_type.clone());
 
         info!("Registered OAuth2 provider: {} (type: {})", instance_name, provider_type.as_str());
+        providers.insert(instance_name, OAuth2ProviderEntry { provider, provider_type });
     }
 
     /// Generate authorization URL
@@ -218,14 +218,14 @@ impl OAuth2Service {
         }
 
         let providers = self.providers.read().await;
-        let provider = providers.get(instance_name)
+        let entry = providers.get(instance_name)
             .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {instance_name}")))?;
 
         // Generate state token
         let state_token = nanoid::nanoid!(32);
 
         // Generate authorization URL using provider
-        let auth_url = provider.new_auth_url(&state_token).await
+        let auth_url = entry.provider.new_auth_url(&state_token).await
             .map_err(|e| Error::Internal(format!("Failed to generate authorization URL: {e}")))?;
 
         // Store state for verification during callback
@@ -259,14 +259,14 @@ impl OAuth2Service {
         }
 
         let providers = self.providers.read().await;
-        let provider = providers.get(instance_name)
+        let entry = providers.get(instance_name)
             .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {instance_name}")))?;
 
         // Generate state token
         let state_token = nanoid::nanoid!(32);
 
         // Generate authorization URL using provider
-        let auth_url = provider.new_auth_url(&state_token).await
+        let auth_url = entry.provider.new_auth_url(&state_token).await
             .map_err(|e| Error::Internal(format!("Failed to generate authorization URL: {e}")))?;
 
         // Store state with user_id for bind flow
@@ -355,31 +355,28 @@ impl OAuth2Service {
         instance_name: &str,
         code: &str,
     ) -> Result<(OAuth2UserInfo, OAuth2Provider)> {
+        // M-03: Single lock acquisition instead of two separate locks
         let providers = self.providers.read().await;
-        let provider_types = self.provider_types.read().await;
 
-        let provider = providers.get(instance_name)
+        let entry = providers.get(instance_name)
             .ok_or_else(|| Error::InvalidInput(format!("OAuth2 provider instance not found: {instance_name}")))?;
-
-        let provider_type = provider_types.get(instance_name)
-            .ok_or_else(|| Error::InvalidInput(format!("Provider type not found: {instance_name}")))?;
 
         debug!("Exchanging code for user info from {}", instance_name);
 
         // Use provider to get user info
-        let user_info = provider.get_user_info(code).await
+        let user_info = entry.provider.get_user_info(code).await
             .map_err(|e| Error::Internal(format!("Failed to get user info: {e}")))?;
 
         // Convert provider user info to service user info
         let service_user_info = OAuth2UserInfo {
-            provider: provider_type.clone(),
+            provider: entry.provider_type.clone(),
             provider_user_id: user_info.provider_user_id,
             username: user_info.username,
             email: user_info.email,
             avatar: user_info.avatar,
         };
 
-        Ok((service_user_info, provider_type.clone()))
+        Ok((service_user_info, entry.provider_type.clone()))
     }
 
     /// Create or update user-OAuth2 provider mapping
@@ -435,10 +432,10 @@ impl OAuth2Service {
     /// This is used by the HTTP API to tell clients which `OAuth2` login options are available.
     /// Returns an empty vector if no providers are configured. Order is not guaranteed.
     pub async fn list_available_instances(&self) -> Vec<(String, OAuth2Provider)> {
-        let provider_types = self.provider_types.read().await;
-        provider_types
+        let providers = self.providers.read().await;
+        providers
             .iter()
-            .map(|(name, provider_type)| (name.clone(), provider_type.clone()))
+            .map(|(name, entry)| (name.clone(), entry.provider_type.clone()))
             .collect()
     }
 

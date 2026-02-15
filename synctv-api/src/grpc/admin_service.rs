@@ -53,12 +53,6 @@ fn api_err(err: String) -> Status {
     }
 }
 
-/// Convert an anyhow error into a gRPC Status.
-fn anyhow_err(err: anyhow::Error) -> Status {
-    tracing::error!("Admin API error: {err}");
-    Status::internal("Internal error")
-}
-
 /// `AdminService` gRPC implementation.
 ///
 /// Thin wrapper that delegates all business logic to [`AdminApiImpl`],
@@ -578,7 +572,8 @@ impl AdminService for AdminServiceImpl {
         self.check_admin(&request).await?;
         let req = request.into_inner();
         let room_id = if req.room_id.is_empty() { None } else { Some(req.room_id.as_str()) };
-        let streams = self.admin_api.list_active_streams(room_id).await.map_err(anyhow_err)?;
+        let streams = self.admin_api.list_active_streams(room_id).await
+            .map_err(|e| api_err(e.to_string()))?;
         Ok(Response::new(ListActiveStreamsResponse { streams }))
     }
 
@@ -596,7 +591,7 @@ impl AdminService for AdminServiceImpl {
         self.admin_api
             .kick_stream(&req.room_id, &req.media_id, &req.reason)
             .await
-            .map_err(anyhow_err)?;
+            .map_err(|e| api_err(e.to_string()))?;
 
         Ok(Response::new(KickStreamResponse {}))
     }

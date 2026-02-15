@@ -17,7 +17,7 @@ pub use admin_service::AdminServiceImpl;
 pub use client_service::ClientServiceImpl;
 pub use notification_service::NotificationServiceImpl;
 pub use interceptors::{
-    AuthInterceptor, ClusterAuthInterceptor, LoggingInterceptor, TimeoutInterceptor,
+    AuthInterceptor, ClusterAuthInterceptor, LoggingInterceptor,
     ValidationInterceptor,
 };
 
@@ -122,8 +122,7 @@ pub async fn serve(
     let room_service_clone =
         Arc::try_unwrap(room_service_for_client).unwrap_or_else(|arc| (*arc).clone());
 
-    // Extract message_hub and node_id references before moving cluster_manager
-    let message_hub_from_cluster = cluster_manager.message_hub().clone();
+    // Extract node_id reference before moving cluster_manager
     let cluster_node_id = cluster_manager.node_id().to_string();
 
     // Clone connection_manager for later use
@@ -278,7 +277,8 @@ pub async fn serve(
     if let Some(notif_svc) = notification_service {
         let notification_interceptor = auth_interceptor.clone();
         let rl_notif = grpc_rate_limiter.clone();
-        let notif_impl = NotificationServiceImpl::new(notif_svc);
+        let notification_api = Arc::new(crate::impls::NotificationApiImpl::new(notif_svc));
+        let notif_impl = NotificationServiceImpl::new(notification_api);
         router = router.add_service(NotificationServiceServer::with_interceptor(
             notif_impl,
             move |req| {
@@ -305,18 +305,20 @@ pub async fn serve(
             provider_instance_manager_for_provider,
         ));
 
+        let provider_jwt_validator = Arc::new(synctv_core::service::auth::JwtValidator::new(
+            Arc::new(jwt_service_for_provider.clone()),
+        ));
         let app_state = Arc::new(crate::http::AppState {
             config: Arc::new(config.clone()),
             user_service: user_service_for_provider.clone(),
             room_service: room_service_for_provider.clone(),
             provider_instance_manager: _providers_mgr.instance_manager().clone(),
             user_provider_credential_repository: user_provider_credential_repository.clone(),
-            alist_provider,
-            bilibili_provider,
-            emby_provider,
+            alist_provider: alist_provider.clone(),
+            bilibili_provider: bilibili_provider.clone(),
+            emby_provider: emby_provider.clone(),
             cluster_manager: None, // gRPC doesn't expose cluster_manager to HTTP
             connection_manager: Arc::new(connection_manager_for_provider.clone()),
-            message_hub: message_hub_from_cluster,
             jwt_service: jwt_service_for_provider.clone(),
             redis_publish_tx: redis_publish_tx.clone(),
             oauth2_service: None,
@@ -327,6 +329,8 @@ pub async fn serve(
             notification_service: None,
             live_streaming_infrastructure: None,
             rate_limiter: rate_limiter_for_provider,
+            rate_limit_config: Arc::new(crate::http::middleware::RateLimitConfig::default()),
+            jwt_validator: provider_jwt_validator,
             ws_ticket_service: None, // WebSocket ticket is HTTP-only
             client_api: Arc::new(crate::impls::ClientApiImpl::new(
                 user_service_for_provider,
@@ -341,6 +345,10 @@ pub async fn serve(
                 None, // No settings_registry for provider gRPC
             ).with_redis_publish_tx(redis_publish_tx.clone())),
             admin_api: None,
+            notification_api: None,
+            bilibili_api: Arc::new(crate::impls::BilibiliApiImpl::new(bilibili_provider.clone())),
+            alist_api: Arc::new(crate::impls::AlistApiImpl::new(alist_provider.clone())),
+            emby_api: Arc::new(crate::impls::EmbyApiImpl::new(emby_provider.clone())),
         });
 
         // Register provider gRPC services with auth interceptor

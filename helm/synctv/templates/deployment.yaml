@@ -38,9 +38,6 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: {{ include "synctv.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["/synctv"]
-          args:
-            - "--config=/config/config.yaml"
           ports:
             - name: http
               containerPort: {{ .Values.config.server.httpPort }}
@@ -52,6 +49,8 @@ spec:
               containerPort: {{ .Values.config.livestream.rtmpPort }}
               protocol: TCP
           env:
+            - name: SYNCTV_CONFIG_PATH
+              value: "/config/config.yaml"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -60,51 +59,55 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: DATABASE_USERNAME
+            # Secrets injected via env vars (SYNCTV_ prefix matches Config::load)
+            - name: SYNCTV_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "synctv.secretName" . }}
-                  key: DATABASE_USERNAME
-            - name: DATABASE_PASSWORD
+                  key: SYNCTV_DATABASE_URL
+            - name: SYNCTV_REDIS_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "synctv.secretName" . }}
-                  key: DATABASE_PASSWORD
-            - name: REDIS_PASSWORD
+                  key: SYNCTV_REDIS_URL
+            - name: SYNCTV_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "synctv.secretName" . }}
-                  key: REDIS_PASSWORD
-            - name: JWT_SECRET
+                  key: SYNCTV_JWT_SECRET
+            - name: SYNCTV_SERVER_CLUSTER_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "synctv.secretName" . }}
-                  key: JWT_SECRET
-            - name: CLUSTER_GRPC_SECRET
+                  key: SYNCTV_SERVER_CLUSTER_SECRET
+            {{- if .Values.config.email.smtpHost }}
+            - name: SYNCTV_EMAIL_SMTP_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: {{ include "synctv.secretName" . }}
-                  key: CLUSTER_GRPC_SECRET
-            - name: PROVIDER_AUTH_SECRET
+                  key: SYNCTV_EMAIL_SMTP_USERNAME
+            - name: SYNCTV_EMAIL_SMTP_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "synctv.secretName" . }}
-                  key: PROVIDER_AUTH_SECRET
-            {{- if .Values.config.email.enabled }}
-            - name: EMAIL_USERNAME
+                  key: SYNCTV_EMAIL_SMTP_PASSWORD
+            {{- end }}
+            {{- if .Values.secrets.bootstrap }}
+            {{- if .Values.secrets.bootstrap.rootPassword }}
+            - name: SYNCTV_BOOTSTRAP_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "synctv.secretName" . }}
-                  key: EMAIL_USERNAME
-            - name: EMAIL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "synctv.secretName" . }}
-                  key: EMAIL_PASSWORD
+                  key: SYNCTV_BOOTSTRAP_ROOT_PASSWORD
+            {{- end }}
             {{- end }}
             {{- with .Values.extraEnvVars }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- if .Values.startupProbe }}
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          {{- end }}
           {{- if .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}

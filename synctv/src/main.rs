@@ -10,7 +10,7 @@ use synctv_core::{
     bootstrap::{load_config, init_database, init_services, bootstrap_root_user},
     provider::{AlistProvider, BilibiliProvider, EmbyProvider},
 };
-use synctv_cluster::sync::{RoomMessageHub, ConnectionManager, ClusterManager, ClusterConfig};
+use synctv_cluster::sync::{ConnectionManager, ClusterManager, ClusterConfig};
 use synctv_cluster::discovery::{NodeRegistry, HealthMonitor, LoadBalancer, LoadBalancingStrategy};
 
 use server::{SyncTvServer, Services};
@@ -38,21 +38,11 @@ fn generate_node_id() -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 1. Load configuration
+    // 1. Load configuration (load_config already calls validate())
     let config = load_config()?;
 
-    // 1.5. Validate configuration (fail fast on misconfigurations)
-    if let Err(errors) = config.validate() {
-        for e in &errors {
-            eprintln!("Config validation error: {e}");
-        }
-        if !errors.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Configuration validation failed with {} error(s)",
-                errors.len()
-            ));
-        }
-    }
+    // 1.5. Generate node_id once for the entire process
+    let node_id = generate_node_id();
 
     // 2. Initialize logging
     // Hold the guard so buffered log entries are flushed on shutdown
@@ -102,9 +92,23 @@ async fn main() -> Result<()> {
     // 5. Initialize services
     let synctv_services = init_services(pool.clone(), &config).await?;
 
-    // 6. Initialize RoomMessageHub
-    let message_hub = Arc::new(RoomMessageHub::new());
-    info!("RoomMessageHub initialized");
+    // 6. Initialize connection manager with configurable limits (needed early for heartbeat loop)
+    use synctv_cluster::sync::ConnectionLimits;
+    use std::time::Duration;
+    let connection_limits = ConnectionLimits {
+        max_per_user: config.connection_limits.max_per_user,
+        max_per_room: config.connection_limits.max_per_room,
+        max_total: config.connection_limits.max_total,
+        idle_timeout: Duration::from_secs(config.connection_limits.idle_timeout_seconds),
+        max_duration: Duration::from_secs(config.connection_limits.max_duration_seconds),
+    };
+    let connection_manager = ConnectionManager::new(connection_limits);
+    info!(
+        max_per_user = config.connection_limits.max_per_user,
+        max_per_room = config.connection_limits.max_per_room,
+        max_total = config.connection_limits.max_total,
+        "Connection manager initialized with configurable limits"
+    );
 
     // 7. Initialize ClusterManager (unified cluster management)
     // Extract permission service for cross-replica cache invalidation
@@ -115,7 +119,7 @@ async fn main() -> Result<()> {
         // Create a single-node ClusterManager (no Redis)
         let cluster_config = ClusterConfig {
             redis_url: String::new(),
-            node_id: generate_node_id(),
+            node_id: node_id.clone(),
             dedup_window: std::time::Duration::from_secs(5),
             cleanup_interval: std::time::Duration::from_secs(30),
             critical_channel_capacity: config.cluster.critical_channel_capacity,
@@ -131,7 +135,7 @@ async fn main() -> Result<()> {
     } else {
         let cluster_config = ClusterConfig {
             redis_url: config.redis.url.clone(),
-            node_id: generate_node_id(),
+            node_id: node_id.clone(),
             dedup_window: std::time::Duration::from_secs(5),
             cleanup_interval: std::time::Duration::from_secs(30),
             critical_channel_capacity: config.cluster.critical_channel_capacity,
@@ -176,17 +180,22 @@ async fn main() -> Result<()> {
                         );
 
                         // Start heartbeat loop (sends heartbeat every heartbeat_timeout/2 seconds)
+                        // Pass connection count callback so LeastConnections LB can read it
+                        let conn_mgr_for_hb = connection_manager.clone();
                         cm.start_heartbeat_loop(
                             registry.clone(),
                             config.grpc_address(),
                             config.http_address(),
+                            Some(move || conn_mgr_for_hb.connection_count()),
                         ).await;
 
                         // Start health monitor (checks node health every 15 seconds)
                         let health_monitor = Arc::new(HealthMonitor::new(registry.clone(), 15));
                         match health_monitor.start().await {
-                            Ok(_handle) => {
+                            Ok(hm_handle) => {
                                 info!("Health monitor started");
+                                // Store the JoinHandle so we can detect panics during shutdown
+                                health_monitor.set_join_handle(hm_handle);
                             }
                             Err(e) => {
                                 warn!("Failed to start health monitor: {}", e);
@@ -215,24 +224,6 @@ async fn main() -> Result<()> {
     } else {
         (None, None, None)
     };
-
-    // 8. Initialize connection manager with configurable limits
-    use synctv_cluster::sync::ConnectionLimits;
-    use std::time::Duration;
-    let connection_limits = ConnectionLimits {
-        max_per_user: config.connection_limits.max_per_user,
-        max_per_room: config.connection_limits.max_per_room,
-        max_total: config.connection_limits.max_total,
-        idle_timeout: Duration::from_secs(config.connection_limits.idle_timeout_seconds),
-        max_duration: Duration::from_secs(config.connection_limits.max_duration_seconds),
-    };
-    let connection_manager = ConnectionManager::new(connection_limits);
-    info!(
-        max_per_user = config.connection_limits.max_per_user,
-        max_per_room = config.connection_limits.max_per_room,
-        max_total = config.connection_limits.max_total,
-        "Connection manager initialized with configurable limits"
-    );
 
     // Note: Redis Pub/Sub is now handled by ClusterManager
     // We get the publish_tx from cluster_manager for backward compatibility
@@ -286,7 +277,6 @@ async fn main() -> Result<()> {
                         });
 
                         // RTMP auth callback (needs synctv-core services)
-                        let node_id = generate_node_id();
                         let rtmp_auth: Arc<dyn synctv_livestream::AuthCallback> =
                             Arc::new(rtmp_auth::SyncTvRtmpAuth::new(
                                 synctv_services.room_service.clone(),
@@ -304,7 +294,7 @@ async fn main() -> Result<()> {
                             synctv_livestream::LivestreamConfig {
                                 rtmp_address: rtmp_listen_addr,
                                 gop_cache_size: config.livestream.gop_cache_size as usize,
-                                node_id,
+                                node_id: node_id.clone(),
                                 cleanup_check_interval_seconds: config.livestream.cleanup_check_interval_seconds,
                                 stream_timeout_seconds: config.livestream.stream_timeout_seconds,
                             },
@@ -395,7 +385,6 @@ async fn main() -> Result<()> {
         user_service: synctv_services.user_service.clone(),
         room_service: synctv_services.room_service.clone(),
         jwt_service: synctv_services.jwt_service.clone(),
-        message_hub,
         cluster_manager,
         redis_publish_tx,
         rate_limiter: synctv_services.rate_limiter.clone(),

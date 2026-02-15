@@ -91,12 +91,16 @@ impl MessageDeduplicator {
         Self { cache }
     }
 
-    /// Create with default settings (5 second window)
+    /// Create with default settings (35 second window)
+    ///
+    /// The 35-second window accounts for the maximum backoff of 30 seconds
+    /// plus a 5-second buffer, ensuring that retried events within the full
+    /// retry window are properly deduplicated.
     #[must_use]
     pub fn with_defaults() -> Self {
         Self::new(
-            Duration::from_secs(5),
-            Duration::from_secs(30),
+            Duration::from_secs(35),
+            Duration::from_secs(60),
         )
     }
 

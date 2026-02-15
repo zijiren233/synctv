@@ -30,9 +30,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Stage 2: Runtime image
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
+# Install runtime dependencies (curl needed for healthcheck)
 RUN apt-get update && apt-get install -y \
-    ca-certificates && rm -rf /var/lib/apt/lists/*
+    ca-certificates \
+    curl && rm -rf /var/lib/apt/lists/*
 
 # Create synctv for running the application
 RUN useradd -m -u 1000 synctv

@@ -1,6 +1,7 @@
 //! User notification HTTP endpoints
 //!
-//! REST API for managing user notifications
+//! REST API for managing user notifications.
+//! Delegates to NotificationApiImpl for shared business logic.
 
 use axum::{
     extract::{Path, Query, State},
@@ -13,14 +14,11 @@ use uuid::Uuid;
 use crate::http::error::AppResult;
 use crate::http::middleware::AuthUser;
 use crate::http::AppState;
-use synctv_core::models::notification::{
-    Notification, NotificationListQuery,
-};
 
 /// List notifications response
 #[derive(Debug, Serialize)]
 pub struct ListNotificationsResponse {
-    pub notifications: Vec<Notification>,
+    pub notifications: Vec<synctv_core::models::notification::Notification>,
     pub total: i64,
     pub unread_count: i64,
 }
@@ -46,42 +44,42 @@ pub struct ListNotificationsQuery {
     pub notification_type: Option<String>,
 }
 
+fn get_notification_api(state: &AppState) -> Result<&crate::impls::NotificationApiImpl, crate::http::AppError> {
+    state.notification_api.as_ref()
+        .map(|arc| arc.as_ref())
+        .ok_or_else(|| crate::http::AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Notification service not available",
+        ))
+}
+
 /// GET /api/notifications - List user's notifications
 pub async fn list_notifications(
     auth: AuthUser,
     Query(query): Query<ListNotificationsQuery>,
     State(state): State<AppState>,
 ) -> AppResult<Json<ListNotificationsResponse>> {
-    // Parse notification type from string if provided
+    let api = get_notification_api(&state)?;
+
     let notification_type = query
         .notification_type
         .and_then(|t| t.parse().ok());
 
-    let query = NotificationListQuery {
-        page: query.page.map(|p| p.max(1)),
-        page_size: query.page_size.map(|s| s.clamp(1, 100)),
-        is_read: query.is_read,
-        notification_type,
-    };
-
-    let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| crate::http::AppError::new(
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "Notification service not available",
-        ))?;
-
-    let (notifications, total) = notification_service
-        .list(&auth.user_id, query)
-        .await?;
-
-    let unread_count = notification_service
-        .get_unread_count(&auth.user_id)
-        .await?;
+    let result = api
+        .list_notifications(
+            &auth.user_id,
+            query.page,
+            query.page_size,
+            query.is_read,
+            notification_type,
+        )
+        .await
+        .map_err(crate::http::AppError::internal)?;
 
     Ok(Json(ListNotificationsResponse {
-        notifications,
-        total,
-        unread_count,
+        notifications: result.notifications,
+        total: result.total,
+        unread_count: result.unread_count,
     }))
 }
 
@@ -90,16 +88,13 @@ pub async fn get_notification(
     auth: AuthUser,
     Path(notification_id): Path<Uuid>,
     State(state): State<AppState>,
-) -> AppResult<Json<Notification>> {
-    let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| crate::http::AppError::new(
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "Notification service not available",
-        ))?;
+) -> AppResult<Json<synctv_core::models::notification::Notification>> {
+    let api = get_notification_api(&state)?;
 
-    let notification = notification_service
-        .get(&auth.user_id, notification_id)
-        .await?;
+    let notification = api
+        .get_notification(&auth.user_id, notification_id)
+        .await
+        .map_err(crate::http::AppError::internal)?;
 
     Ok(Json(notification))
 }
@@ -110,17 +105,11 @@ pub async fn mark_as_read(
     State(state): State<AppState>,
     Json(req): Json<MarkAsReadRequest>,
 ) -> AppResult<StatusCode> {
-    let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| crate::http::AppError::new(
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "Notification service not available",
-        ))?;
+    let api = get_notification_api(&state)?;
 
-    notification_service
-        .mark_as_read(&auth.user_id, synctv_core::models::notification::MarkAsReadRequest {
-            notification_ids: req.notification_ids,
-        })
-        .await?;
+    api.mark_as_read(&auth.user_id, req.notification_ids)
+        .await
+        .map_err(crate::http::AppError::internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -131,19 +120,13 @@ pub async fn mark_all_as_read(
     State(state): State<AppState>,
     req: Option<Json<MarkAllAsReadRequest>>,
 ) -> AppResult<StatusCode> {
-    let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| crate::http::AppError::new(
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "Notification service not available",
-        ))?;
+    let api = get_notification_api(&state)?;
 
     let before = req.and_then(|r| r.before);
 
-    notification_service
-        .mark_all_as_read(&auth.user_id, synctv_core::models::notification::MarkAllAsReadRequest {
-            before,
-        })
-        .await?;
+    api.mark_all_as_read(&auth.user_id, before)
+        .await
+        .map_err(crate::http::AppError::internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -154,15 +137,11 @@ pub async fn delete_notification(
     Path(notification_id): Path<Uuid>,
     State(state): State<AppState>,
 ) -> AppResult<StatusCode> {
-    let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| crate::http::AppError::new(
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "Notification service not available",
-        ))?;
+    let api = get_notification_api(&state)?;
 
-    notification_service
-        .delete(&auth.user_id, notification_id)
-        .await?;
+    api.delete_notification(&auth.user_id, notification_id)
+        .await
+        .map_err(crate::http::AppError::internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -172,20 +151,16 @@ pub async fn delete_all_read(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> AppResult<StatusCode> {
-    let notification_service = state.notification_service.as_ref()
-        .ok_or_else(|| crate::http::AppError::new(
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "Notification service not available",
-        ))?;
+    let api = get_notification_api(&state)?;
 
-    notification_service
-        .delete_all_read(&auth.user_id)
-        .await?;
+    api.delete_all_read(&auth.user_id)
+        .await
+        .map_err(crate::http::AppError::internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Create the notification read router (GET endpoints — under read rate limit)
+/// Create the notification read router (GET endpoints -- under read rate limit)
 pub fn create_notification_read_router() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/api/notifications", axum::routing::get(list_notifications))
@@ -195,7 +170,7 @@ pub fn create_notification_read_router() -> axum::Router<AppState> {
         )
 }
 
-/// Create the notification write router (POST/DELETE endpoints — under write rate limit)
+/// Create the notification write router (POST/DELETE endpoints -- under write rate limit)
 pub fn create_notification_write_router() -> axum::Router<AppState> {
     axum::Router::new()
         .route(

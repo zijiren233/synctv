@@ -59,7 +59,6 @@ pub struct RouterConfig {
     pub alist_provider: Arc<AlistProvider>,
     pub bilibili_provider: Arc<BilibiliProvider>,
     pub emby_provider: Arc<EmbyProvider>,
-    pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
     pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     pub connection_manager: Arc<synctv_cluster::sync::ConnectionManager>,
     pub jwt_service: synctv_core::service::JwtService,
@@ -88,7 +87,6 @@ pub struct AppState {
     pub alist_provider: Arc<AlistProvider>,
     pub bilibili_provider: Arc<BilibiliProvider>,
     pub emby_provider: Arc<EmbyProvider>,
-    pub message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
     pub cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
     pub connection_manager: Arc<synctv_cluster::sync::ConnectionManager>,
     pub jwt_service: synctv_core::service::JwtService,
@@ -101,11 +99,20 @@ pub struct AppState {
     pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
     pub live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
     pub rate_limiter: synctv_core::service::rate_limit::RateLimiter,
+    /// Shared rate limit config (created once at startup, not per-request)
+    pub rate_limit_config: Arc<middleware::RateLimitConfig>,
+    /// Shared JWT validator (created once at startup, not per-request)
+    pub jwt_validator: Arc<synctv_core::service::auth::JwtValidator>,
     /// WebSocket ticket service for secure WebSocket authentication (HTTP only)
     pub ws_ticket_service: Option<Arc<synctv_core::service::WsTicketService>>,
     // Unified API implementation layer
     pub client_api: Arc<crate::impls::ClientApiImpl>,
     pub admin_api: Option<Arc<crate::impls::AdminApiImpl>>,
+    pub notification_api: Option<Arc<crate::impls::NotificationApiImpl>>,
+    // H-2: Provider ApiImpls stored once in AppState (not created per-request)
+    pub bilibili_api: Arc<crate::impls::BilibiliApiImpl>,
+    pub alist_api: Arc<crate::impls::AlistApiImpl>,
+    pub emby_api: Arc<crate::impls::EmbyApiImpl>,
 }
 
 /// Create the HTTP router from configuration struct
@@ -148,6 +155,24 @@ fn build_app_state(config: RouterConfig) -> AppState {
         ))
     });
 
+    // C-1: Create shared NotificationApiImpl (matches HTTP and gRPC)
+    let notification_api = config.notification_service.as_ref().map(|notif_svc| {
+        Arc::new(crate::impls::NotificationApiImpl::new(notif_svc.clone()))
+    });
+
+    // H-3: Create shared RateLimitConfig once at startup (not per-request)
+    let rate_limit_config = Arc::new(middleware::RateLimitConfig::default());
+
+    // H-5: Create shared JwtValidator once at startup (not per-request)
+    let jwt_validator = Arc::new(synctv_core::service::auth::JwtValidator::new(
+        Arc::new(config.jwt_service.clone()),
+    ));
+
+    // H-2: Create shared provider ApiImpls once at startup (not per-request)
+    let bilibili_api = Arc::new(crate::impls::BilibiliApiImpl::new(config.bilibili_provider.clone()));
+    let alist_api = Arc::new(crate::impls::AlistApiImpl::new(config.alist_provider.clone()));
+    let emby_api = Arc::new(crate::impls::EmbyApiImpl::new(config.emby_provider.clone()));
+
     AppState {
         config: config.config,
         user_service: config.user_service,
@@ -157,7 +182,6 @@ fn build_app_state(config: RouterConfig) -> AppState {
         alist_provider: config.alist_provider,
         bilibili_provider: config.bilibili_provider,
         emby_provider: config.emby_provider,
-        message_hub: config.message_hub,
         cluster_manager: config.cluster_manager,
         connection_manager: config.connection_manager,
         jwt_service: config.jwt_service,
@@ -170,9 +194,15 @@ fn build_app_state(config: RouterConfig) -> AppState {
         notification_service: config.notification_service,
         live_streaming_infrastructure: config.live_streaming_infrastructure,
         rate_limiter: config.rate_limiter,
+        rate_limit_config,
+        jwt_validator,
         ws_ticket_service: config.ws_ticket_service,
         client_api,
         admin_api,
+        notification_api,
+        bilibili_api,
+        alist_api,
+        emby_api,
     }
 }
 

@@ -1,6 +1,6 @@
 //! gRPC NotificationService implementation
 //!
-//! Thin wrapper that delegates to `UserNotificationService` from synctv-core,
+//! Thin wrapper that delegates to `NotificationApiImpl` from the shared impls layer,
 //! converting between proto types and domain types.
 
 use std::sync::Arc;
@@ -8,11 +8,9 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use synctv_core::models::id::UserId;
-use synctv_core::models::notification::{
-    NotificationListQuery, NotificationType as CoreNotificationType,
-};
-use synctv_core::service::UserNotificationService;
+use synctv_core::models::notification::NotificationType as CoreNotificationType;
 
+use crate::impls::NotificationApiImpl;
 use crate::proto::client::{
     notification_service_server::NotificationService, DeleteAllReadRequest, DeleteAllReadResponse,
     DeleteNotificationRequest, DeleteNotificationResponse, GetNotificationRequest,
@@ -24,15 +22,13 @@ use crate::proto::client::{
 /// gRPC NotificationService implementation
 #[derive(Clone)]
 pub struct NotificationServiceImpl {
-    notification_service: Arc<UserNotificationService>,
+    notification_api: Arc<NotificationApiImpl>,
 }
 
 impl NotificationServiceImpl {
     #[must_use]
-    pub fn new(notification_service: Arc<UserNotificationService>) -> Self {
-        Self {
-            notification_service,
-        }
+    pub fn new(notification_api: Arc<NotificationApiImpl>) -> Self {
+        Self { notification_api }
     }
 
     /// Extract user_id from UserContext (injected by inject_user interceptor)
@@ -85,10 +81,20 @@ fn proto_notification_type_to_core(value: i32) -> Option<CoreNotificationType> {
     }
 }
 
-/// Log and return internal error without leaking details
-fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
-    tracing::error!("{context}: {err}");
-    Status::internal(context)
+/// Map NotificationApiImpl string errors to gRPC Status using shared classifier
+fn api_err(err: String) -> Status {
+    use crate::impls::{classify_error, ErrorKind};
+    match classify_error(&err) {
+        ErrorKind::NotFound => Status::not_found(err),
+        ErrorKind::Unauthenticated => Status::unauthenticated(err),
+        ErrorKind::PermissionDenied => Status::permission_denied(err),
+        ErrorKind::AlreadyExists => Status::already_exists(err),
+        ErrorKind::InvalidArgument => Status::invalid_argument(err),
+        ErrorKind::Internal => {
+            tracing::error!("Notification API internal error: {err}");
+            Status::internal("Internal error")
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -101,31 +107,26 @@ impl NotificationService for NotificationServiceImpl {
         let user_id = self.get_user_id(&request)?;
         let req = request.into_inner();
 
-        let query = NotificationListQuery {
-            page: if req.page > 0 { Some(req.page) } else { Some(1) },
-            page_size: Some(req.page_size.clamp(1, 100)),
-            is_read: req.is_read,
-            notification_type: req
-                .notification_type
-                .and_then(proto_notification_type_to_core),
-        };
+        let notification_type = req
+            .notification_type
+            .and_then(proto_notification_type_to_core);
 
-        let (notifications, total) = self
-            .notification_service
-            .list(&user_id, query)
+        let result = self
+            .notification_api
+            .list_notifications(
+                &user_id,
+                Some(if req.page > 0 { req.page } else { 1 }),
+                Some(req.page_size.clamp(1, 100)),
+                req.is_read,
+                notification_type,
+            )
             .await
-            .map_err(|e| internal_err("Failed to list notifications", e))?;
-
-        let unread_count = self
-            .notification_service
-            .get_unread_count(&user_id)
-            .await
-            .map_err(|e| internal_err("Failed to get unread count", e))?;
+            .map_err(api_err)?;
 
         Ok(Response::new(ListNotificationsResponse {
-            notifications: notifications.into_iter().map(notification_to_proto).collect(),
-            total,
-            unread_count,
+            notifications: result.notifications.into_iter().map(notification_to_proto).collect(),
+            total: result.total,
+            unread_count: result.unread_count,
         }))
     }
 
@@ -140,16 +141,10 @@ impl NotificationService for NotificationServiceImpl {
             .map_err(|_| Status::invalid_argument("Invalid notification_id format"))?;
 
         let notification = self
-            .notification_service
-            .get(&user_id, notification_id)
+            .notification_api
+            .get_notification(&user_id, notification_id)
             .await
-            .map_err(|e| {
-                if e.to_string().contains("not found") {
-                    Status::not_found("Notification not found")
-                } else {
-                    internal_err("Failed to get notification", e)
-                }
-            })?;
+            .map_err(api_err)?;
 
         Ok(Response::new(GetNotificationResponse {
             notification: Some(notification_to_proto(notification)),
@@ -172,13 +167,10 @@ impl NotificationService for NotificationServiceImpl {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        self.notification_service
-            .mark_as_read(
-                &user_id,
-                synctv_core::models::notification::MarkAsReadRequest { notification_ids },
-            )
+        self.notification_api
+            .mark_as_read(&user_id, notification_ids)
             .await
-            .map_err(|e| internal_err("Failed to mark notifications as read", e))?;
+            .map_err(api_err)?;
 
         Ok(Response::new(MarkAsReadResponse {}))
     }
@@ -198,13 +190,10 @@ impl NotificationService for NotificationServiceImpl {
             })
             .transpose()?;
 
-        self.notification_service
-            .mark_all_as_read(
-                &user_id,
-                synctv_core::models::notification::MarkAllAsReadRequest { before },
-            )
+        self.notification_api
+            .mark_all_as_read(&user_id, before)
             .await
-            .map_err(|e| internal_err("Failed to mark all notifications as read", e))?;
+            .map_err(api_err)?;
 
         Ok(Response::new(MarkAllAsReadResponse {}))
     }
@@ -219,16 +208,10 @@ impl NotificationService for NotificationServiceImpl {
         let notification_id = Uuid::parse_str(&req.notification_id)
             .map_err(|_| Status::invalid_argument("Invalid notification_id format"))?;
 
-        self.notification_service
-            .delete(&user_id, notification_id)
+        self.notification_api
+            .delete_notification(&user_id, notification_id)
             .await
-            .map_err(|e| {
-                if e.to_string().contains("not found") {
-                    Status::not_found("Notification not found")
-                } else {
-                    internal_err("Failed to delete notification", e)
-                }
-            })?;
+            .map_err(api_err)?;
 
         Ok(Response::new(DeleteNotificationResponse {}))
     }
@@ -239,10 +222,10 @@ impl NotificationService for NotificationServiceImpl {
     ) -> Result<Response<DeleteAllReadResponse>, Status> {
         let user_id = self.get_user_id(&request)?;
 
-        self.notification_service
+        self.notification_api
             .delete_all_read(&user_id)
             .await
-            .map_err(|e| internal_err("Failed to delete all read notifications", e))?;
+            .map_err(api_err)?;
 
         Ok(Response::new(DeleteAllReadResponse {}))
     }

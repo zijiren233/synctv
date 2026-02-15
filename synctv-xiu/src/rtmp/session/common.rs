@@ -90,7 +90,7 @@ impl Common {
                 match data {
                     FrameData::Audio { timestamp, data } => {
                         let data_size = data.len();
-                        self.send_audio(data, timestamp).await?;
+                        self.send_audio(BytesMut::from(&data[..]), timestamp).await?;
 
                         if let Some(sender) = &self.statistic_data_sender {
                             let statistic_audio_data = StatisticData::Audio {
@@ -106,7 +106,7 @@ impl Common {
                     }
                     FrameData::Video { timestamp, data } => {
                         let data_size = data.len();
-                        self.send_video(data, timestamp).await?;
+                        self.send_video(BytesMut::from(&data[..]), timestamp).await?;
 
                         if let Some(sender) = &self.statistic_data_sender {
                             let statistic_video_data = StatisticData::Video {
@@ -122,7 +122,7 @@ impl Common {
                         }
                     }
                     FrameData::MetaData { timestamp, data } => {
-                        self.send_metadata(data, timestamp).await?;
+                        self.send_metadata(BytesMut::from(&data[..]), timestamp).await?;
                     }
                     _ => {}
                 }
@@ -200,7 +200,7 @@ impl Common {
     ) -> Result<(), SessionError> {
         let channel_data = FrameData::Video {
             timestamp: *timestamp,
-            data: data.clone(),
+            data: bytes::Bytes::copy_from_slice(data),
         };
 
         if let Some(sender) = &self.data_sender {
@@ -235,7 +235,7 @@ impl Common {
     ) -> Result<(), SessionError> {
         let channel_data = FrameData::Audio {
             timestamp: *timestamp,
-            data: data.clone(),
+            data: bytes::Bytes::copy_from_slice(data),
         };
 
         if let Some(sender) = &self.data_sender {
@@ -270,7 +270,7 @@ impl Common {
     ) -> Result<(), SessionError> {
         let channel_data = FrameData::MetaData {
             timestamp: *timestamp,
-            data: data.clone(),
+            data: bytes::Bytes::copy_from_slice(data),
         };
 
         if let Some(sender) = &self.data_sender {

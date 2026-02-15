@@ -81,7 +81,7 @@ async fn proxy_stream(
     let (url, provider_headers) =
         resolve_direct_playback(&auth, &room_id, &media_id, &state).await?;
 
-    tracing::info!("Proxying direct URL media: {}", url);
+    tracing::debug!("Proxying direct URL media: {}", url);
 
     let cfg = synctv_proxy::ProxyConfig {
         url: &url,

@@ -12,7 +12,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 ## ============================================================================
-## SyncTV Deployment (Stateless - HTTP/gRPC/RTMP all in one binary)
+## SyncTV Deployment (Single binary: HTTP + gRPC + RTMP in one process)
 ## ============================================================================
 replicaCount: 3
 
@@ -30,7 +30,7 @@ service:
   # type: LoadBalancer
   loadBalancerIP: ""
   loadBalancerSourceRanges: []
-  sessionAffinity: ClientIP
+  sessionAffinity: ""
   nodePorts:
     rtmp: 31935
 
@@ -79,20 +79,29 @@ podDisruptionBudget:
   minAvailable: 2
 
 ## Health Checks
+startupProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 30  # 5 + 30*5 = 155s max startup time (for migrations)
+
 livenessProbe:
   httpGet:
     path: /health
     port: http
-  initialDelaySeconds: 30
+  initialDelaySeconds: 0
   periodSeconds: 10
   timeoutSeconds: 5
   failureThreshold: 3
 
 readinessProbe:
   httpGet:
-    path: /ready
+    path: /health/ready
     port: http
-  initialDelaySeconds: 10
+  initialDelaySeconds: 0
   periodSeconds: 5
   timeoutSeconds: 3
   failureThreshold: 3
@@ -119,106 +128,114 @@ affinity:
 
 ## ============================================================================
 ## Application Configuration
+## All field names match the Rust Config struct in synctv-core/src/config.rs
 ## ============================================================================
 config:
-  ## Server Settings
+  ## ServerConfig
   server:
     host: "0.0.0.0"
     httpPort: 8080
     grpcPort: 50051
+    enableReflection: false
+    # trustedProxies: ["10.0.0.0/8", "172.16.0.0/12"]
+    corsAllowedOrigins:
+      - "https://synctv.example.com"
 
-  ## Database Configuration (PostgreSQL)
+  ## DatabaseConfig (url composed from secrets; these are for connection pool)
   database:
     host: "postgresql.synctv.svc.cluster.local"
     port: 5432
     name: "synctv"
-    username: "synctv"
-    sslMode: "prefer"
     maxConnections: 100
+    minConnections: 5
+    connectTimeoutSeconds: 10
+    idleTimeoutSeconds: 600
 
-  ## Redis Configuration
+  ## RedisConfig (url composed from secrets; these are for pool settings)
   redis:
     host: "redis-master.synctv.svc.cluster.local"
     port: 6379
-    db: 0
+    poolSize: 10
+    connectTimeoutSeconds: 5
+    keyPrefix: "synctv:"
 
-  ## Cluster Configuration
-  cluster:
-    enabled: true
-    nodeRegistry:
-      enabled: true
-      ttl: "30s"
-    healthMonitor:
-      interval: "15s"
-    loadBalancer:
-      strategy: "least_connections"
-      newNodeWarmup: "60s"
-    criticalChannelCapacity: 128
-    publishChannelCapacity: 256
+  ## JwtConfig (secret injected via SYNCTV_JWT_SECRET env var)
+  jwt:
+    accessTokenDurationHours: 1
+    refreshTokenDurationDays: 30
+    guestTokenDurationHours: 4
+    clockSkewLeewaySecs: 60
 
-  ## Livestream Configuration (RTMP/HLS/FLV)
+  ## LoggingConfig
+  logging:
+    level: "info"
+    format: "json"
+
+  ## LivestreamConfig
   livestream:
     rtmpPort: 1935
+    hlsPort: 8081
     maxStreams: 50
     gopCacheSize: 2
     streamTimeoutSeconds: 300
     cleanupCheckIntervalSeconds: 60
 
-  ## WebRTC/TURN Configuration
-  turn:
-    enabled: false
-    publicIP: ""
-    realm: "synctv"
-    minPort: 49152
-    maxPort: 65535
+  ## ClusterChannelConfig (matches code defaults)
+  cluster:
+    criticalChannelCapacity: 1000
+    publishChannelCapacity: 10000
 
-  ## OAuth2 Providers
-  oauth2:
-    redirectScheme: "https"  # or "http" for development
-    providers: []
-    # Example:
-    # providers:
-    #   - name: "google"
-    #     clientId: "your-client-id"
-    #     redirectUrl: "https://synctv.example.com/api/oauth2/google/callback"
+  ## WebRTCConfig
+  webrtc:
+    mode: "hybrid"  # signaling_only, peer_to_peer, hybrid, sfu
+    enableBuiltinStun: true
+    stunPort: 3478
+    stunHost: "0.0.0.0"
+    externalStunServers:
+      - "stun:stun.l.google.com:19302"
+      - "stun:stun1.l.google.com:19302"
+    sfuThreshold: 5
+    enableSimulcast: true
+    maxSfuRooms: 0
+    maxPeersPerSfuRoom: 50
+    maxBitratePerPeer: 0
+    enableBandwidthEstimation: true
 
-  ## Email (SMTP)
+  ## ConnectionLimitsConfig
+  connectionLimits:
+    maxPerUser: 5
+    maxPerRoom: 200
+    maxTotal: 10000
+    idleTimeoutSeconds: 300
+    maxDurationSeconds: 86400
+
+  ## BootstrapConfig
+  bootstrap:
+    createRootUser: false  # disabled by default in production
+    rootUsername: "root"
+
+  ## EmailConfig (only rendered if smtpHost is set)
   email:
-    enabled: false
-    host: "smtp.gmail.com"
-    port: 587
-    from: "noreply@synctv.example.com"
+    smtpHost: ""
+    smtpPort: 587
+    fromEmail: ""
+    fromName: "SyncTV"
+    useTls: true
 
-  ## JWT Configuration
-  jwt:
-    expiresIn: "7d"
-
-  ## Rate Limiting
-  rateLimit:
-    enabled: true
-    defaultLimit: 100
-
-  ## CORS Settings
-  cors:
-    allowedOrigins:
-      - "https://synctv.example.com"
-    allowCredentials: true
-
-  ## Logging
-  logging:
-    level: "info"
-    format: "json"
+  ## OAuth2Config
+  oauth2:
+    redirectScheme: "https"
 
 ## ============================================================================
-## Secrets
+## Secrets (sensitive values injected as env vars with SYNCTV_ prefix)
 ## ============================================================================
 secrets:
-  ## Database Credentials
+  ## Database Credentials (composed into SYNCTV_DATABASE_URL)
   database:
     username: "synctv"
     password: "CHANGE_ME_IN_PRODUCTION"
 
-  ## Redis Password
+  ## Redis Password (composed into SYNCTV_REDIS_URL)
   redis:
     password: "CHANGE_ME_IN_PRODUCTION"
 
@@ -226,23 +243,18 @@ secrets:
   jwt:
     secret: "CHANGE_ME_TO_SECURE_256BIT_RANDOM_STRING"
 
-  ## Email SMTP Credentials
-  email:
-    username: "apikey"
-    password: "CHANGE_ME_IN_PRODUCTION"
-
   ## Cluster gRPC Auth Secret
   cluster:
     grpcSecret: "CHANGE_ME_IN_PRODUCTION"
 
-  ## Provider Service Auth Secret
-  provider:
-    authSecret: "CHANGE_ME_IN_PRODUCTION"
+  ## Email SMTP Credentials (only used when email.smtpHost is set)
+  email:
+    username: ""
+    password: ""
 
-  ## OAuth2 Client Secrets
-  oauth2: {}
-    # google:
-    #   clientSecret: "your-client-secret"
+  ## Bootstrap root password (only used when bootstrap.createRootUser is true)
+  bootstrap:
+    rootPassword: "CHANGE_ME_IN_PRODUCTION"
 
 ## ============================================================================
 ## Additional Settings
@@ -251,6 +263,7 @@ secrets:
 ## Service Account
 serviceAccount:
   create: true
+  automount: false
   annotations: {}
   name: ""
 

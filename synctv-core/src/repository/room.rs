@@ -5,6 +5,8 @@ use crate::{
     Error, Result,
 };
 
+// L-06: tracing for unknown status warning
+
 /// Room repository for database operations
 #[derive(Clone)]
 pub struct RoomRepository {
@@ -505,12 +507,15 @@ impl RoomRepository {
         }
     }
 
-    const fn i16_to_status(&self, val: i16) -> RoomStatus {
+    fn i16_to_status(&self, val: i16) -> RoomStatus {
         match val {
             1 => RoomStatus::Active,
             2 => RoomStatus::Pending,
             3 => RoomStatus::Closed,
-            _ => RoomStatus::Active, // Default to Active for invalid values
+            _ => {
+                tracing::warn!("Unknown room status value: {val}, defaulting to Active");
+                RoomStatus::Active
+            }
         }
     }
 }

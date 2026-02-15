@@ -10,80 +10,96 @@ data:
       host: {{ .Values.config.server.host | quote }}
       http_port: {{ .Values.config.server.httpPort }}
       grpc_port: {{ .Values.config.server.grpcPort }}
-
-    database:
-      host: {{ .Values.config.database.host | quote }}
-      port: {{ .Values.config.database.port }}
-      name: {{ .Values.config.database.name | quote }}
-      ssl_mode: {{ .Values.config.database.sslMode | quote }}
-      max_connections: {{ .Values.config.database.maxConnections }}
-
-    redis:
-      host: {{ .Values.config.redis.host | quote }}
-      port: {{ .Values.config.redis.port }}
-      db: {{ .Values.config.redis.db }}
-
-    cluster:
-      enabled: {{ .Values.config.cluster.enabled }}
-      {{- if .Values.config.cluster.enabled }}
-      node_registry:
-        enabled: {{ .Values.config.cluster.nodeRegistry.enabled }}
-        ttl: {{ .Values.config.cluster.nodeRegistry.ttl | quote }}
-      health_monitor:
-        interval: {{ .Values.config.cluster.healthMonitor.interval | quote }}
-      load_balancer:
-        strategy: {{ .Values.config.cluster.loadBalancer.strategy | quote }}
-        new_node_warmup: {{ .Values.config.cluster.loadBalancer.newNodeWarmup | quote }}
-      {{- end }}
-
-    livestream:
-      rtmp_port: {{ .Values.config.livestream.rtmpPort }}
-      max_streams: {{ .Values.config.livestream.maxStreams }}
-      gop_cache_size: {{ .Values.config.livestream.gopCacheSize }}
-      stream_timeout_seconds: {{ .Values.config.livestream.streamTimeoutSeconds }}
-      cleanup_check_interval_seconds: {{ .Values.config.livestream.cleanupCheckIntervalSeconds }}
-
-    turn:
-      enabled: {{ .Values.config.turn.enabled }}
-      {{- if .Values.config.turn.enabled }}
-      public_ip: {{ .Values.config.turn.publicIP | quote }}
-      realm: {{ .Values.config.turn.realm | quote }}
-      min_port: {{ .Values.config.turn.minPort }}
-      max_port: {{ .Values.config.turn.maxPort }}
-      {{- end }}
-
-    {{- if .Values.config.oauth2.providers }}
-    oauth2:
-      providers:
-        {{- range .Values.config.oauth2.providers }}
-        - name: {{ .name | quote }}
-          client_id: {{ .clientId | quote }}
-          redirect_url: {{ .redirectUrl | quote }}
-        {{- end }}
-    {{- end }}
-
-    {{- if .Values.config.email.enabled }}
-    email:
-      enabled: true
-      host: {{ .Values.config.email.host | quote }}
-      port: {{ .Values.config.email.port }}
-      from: {{ .Values.config.email.from | quote }}
-    {{- end }}
-
-    jwt:
-      expires_in: {{ .Values.config.jwt.expiresIn | quote }}
-
-    rate_limit:
-      enabled: {{ .Values.config.rateLimit.enabled }}
-      default_limit: {{ .Values.config.rateLimit.defaultLimit }}
-
-    cors:
-      allowed_origins:
-        {{- range .Values.config.cors.allowedOrigins }}
+      enable_reflection: {{ .Values.config.server.enableReflection | default false }}
+      development_mode: false
+      {{- if .Values.config.server.trustedProxies }}
+      trusted_proxies:
+        {{- range .Values.config.server.trustedProxies }}
         - {{ . | quote }}
         {{- end }}
-      allow_credentials: {{ .Values.config.cors.allowCredentials }}
+      {{- end }}
+      {{- if .Values.config.server.corsAllowedOrigins }}
+      cors_allowed_origins:
+        {{- range .Values.config.server.corsAllowedOrigins }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+
+    database:
+      max_connections: {{ .Values.config.database.maxConnections | default 20 }}
+      min_connections: {{ .Values.config.database.minConnections | default 5 }}
+      connect_timeout_seconds: {{ .Values.config.database.connectTimeoutSeconds | default 10 }}
+      idle_timeout_seconds: {{ .Values.config.database.idleTimeoutSeconds | default 600 }}
+
+    redis:
+      pool_size: {{ .Values.config.redis.poolSize | default 10 }}
+      connect_timeout_seconds: {{ .Values.config.redis.connectTimeoutSeconds | default 5 }}
+      key_prefix: {{ .Values.config.redis.keyPrefix | default "synctv:" | quote }}
+
+    jwt:
+      access_token_duration_hours: {{ .Values.config.jwt.accessTokenDurationHours | default 1 }}
+      refresh_token_duration_days: {{ .Values.config.jwt.refreshTokenDurationDays | default 30 }}
+      guest_token_duration_hours: {{ .Values.config.jwt.guestTokenDurationHours | default 4 }}
+      clock_skew_leeway_secs: {{ .Values.config.jwt.clockSkewLeewaySecs | default 60 }}
 
     logging:
       level: {{ .Values.config.logging.level | quote }}
       format: {{ .Values.config.logging.format | quote }}
+
+    livestream:
+      rtmp_port: {{ .Values.config.livestream.rtmpPort }}
+      hls_port: {{ .Values.config.livestream.hlsPort | default 8081 }}
+      max_streams: {{ .Values.config.livestream.maxStreams }}
+      gop_cache_size: {{ .Values.config.livestream.gopCacheSize }}
+      stream_timeout_seconds: {{ .Values.config.livestream.streamTimeoutSeconds }}
+      cleanup_check_interval_seconds: {{ .Values.config.livestream.cleanupCheckIntervalSeconds }}
+      pull_max_retries: {{ .Values.config.livestream.pullMaxRetries | default 10 }}
+      pull_initial_backoff_ms: {{ .Values.config.livestream.pullInitialBackoffMs | default 1000 }}
+      pull_max_backoff_ms: {{ .Values.config.livestream.pullMaxBackoffMs | default 30000 }}
+
+    cluster:
+      critical_channel_capacity: {{ .Values.config.cluster.criticalChannelCapacity }}
+      publish_channel_capacity: {{ .Values.config.cluster.publishChannelCapacity }}
+
+    webrtc:
+      mode: {{ .Values.config.webrtc.mode | default "hybrid" | quote }}
+      enable_builtin_stun: {{ .Values.config.webrtc.enableBuiltinStun | default true }}
+      stun_port: {{ .Values.config.webrtc.stunPort | default 3478 }}
+      stun_host: {{ .Values.config.webrtc.stunHost | default "0.0.0.0" | quote }}
+      {{- if .Values.config.webrtc.externalStunServers }}
+      external_stun_servers:
+        {{- range .Values.config.webrtc.externalStunServers }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      sfu_threshold: {{ .Values.config.webrtc.sfuThreshold | default 5 }}
+      enable_simulcast: {{ .Values.config.webrtc.enableSimulcast | default true }}
+      max_sfu_rooms: {{ .Values.config.webrtc.maxSfuRooms | default 0 }}
+      max_peers_per_sfu_room: {{ .Values.config.webrtc.maxPeersPerSfuRoom | default 50 }}
+      max_bitrate_per_peer: {{ .Values.config.webrtc.maxBitratePerPeer | default 0 }}
+      enable_bandwidth_estimation: {{ .Values.config.webrtc.enableBandwidthEstimation | default true }}
+
+    connection_limits:
+      max_per_user: {{ .Values.config.connectionLimits.maxPerUser | default 5 }}
+      max_per_room: {{ .Values.config.connectionLimits.maxPerRoom | default 200 }}
+      max_total: {{ .Values.config.connectionLimits.maxTotal | default 10000 }}
+      idle_timeout_seconds: {{ .Values.config.connectionLimits.idleTimeoutSeconds | default 300 }}
+      max_duration_seconds: {{ .Values.config.connectionLimits.maxDurationSeconds | default 86400 }}
+
+    bootstrap:
+      create_root_user: {{ .Values.config.bootstrap.createRootUser | default false }}
+      root_username: {{ .Values.config.bootstrap.rootUsername | default "root" | quote }}
+
+    {{- if .Values.config.email.smtpHost }}
+    email:
+      smtp_host: {{ .Values.config.email.smtpHost | quote }}
+      smtp_port: {{ .Values.config.email.smtpPort | default 587 }}
+      from_email: {{ .Values.config.email.fromEmail | quote }}
+      from_name: {{ .Values.config.email.fromName | default "SyncTV" | quote }}
+      use_tls: {{ .Values.config.email.useTls | default true }}
+    {{- end }}
+
+    {{- if .Values.config.oauth2 }}
+    oauth2:
+      redirect_scheme: {{ .Values.config.oauth2.redirectScheme | default "https" | quote }}
+    {{- end }}

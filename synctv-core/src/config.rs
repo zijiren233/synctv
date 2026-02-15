@@ -578,6 +578,27 @@ impl Config {
             errors.push("database.url must not be empty".to_string());
         }
 
+        // H-01: Dev mode guard - prevent development_mode on non-localhost addresses
+        if self.server.development_mode {
+            let host = self.server.host.as_str();
+            let is_localhost = matches!(host, "127.0.0.1" | "localhost" | "::1");
+            if !is_localhost {
+                tracing::warn!(
+                    "development_mode=true with non-localhost host '{}'. \
+                     This is dangerous in production! Only bind to 127.0.0.1/localhost/::1 in dev mode.",
+                    host
+                );
+                // 0.0.0.0 is commonly used in containers even for dev, so warn but don't error
+                if host != "0.0.0.0" && host != "::" {
+                    errors.push(format!(
+                        "development_mode=true with non-localhost host '{}'. \
+                         Set host to 127.0.0.1/localhost/::1 or disable development_mode",
+                        host
+                    ));
+                }
+            }
+        }
+
         // Validate JWT secret (warn if using default)
         if self.jwt.secret.is_empty() {
             errors.push("JWT secret is empty".to_string());
@@ -599,8 +620,19 @@ impl Config {
                 if self.bootstrap.root_username.len() < 3 {
                     errors.push("Root username must be at least 3 characters".to_string());
                 }
-                if self.bootstrap.root_password.len() < 6 {
-                    errors.push("Root password must be at least 6 characters".to_string());
+                // H-02: Enforce 12-char minimum and complexity for root password in production
+                let pwd = &self.bootstrap.root_password;
+                if pwd.len() < 12 {
+                    errors.push("Root password must be at least 12 characters in production mode".to_string());
+                }
+                if !pwd.chars().any(char::is_uppercase) {
+                    errors.push("Root password must contain at least one uppercase letter".to_string());
+                }
+                if !pwd.chars().any(char::is_lowercase) {
+                    errors.push("Root password must contain at least one lowercase letter".to_string());
+                }
+                if !pwd.chars().any(|c| c.is_ascii_digit()) {
+                    errors.push("Root password must contain at least one digit".to_string());
                 }
             }
 
@@ -813,5 +845,249 @@ mod tests {
 
         assert_eq!(config.grpc_address(), "127.0.0.1:50051");
         assert_eq!(config.http_address(), "127.0.0.1:8080");
+    }
+
+    /// Helper to create a valid production config for validation tests
+    fn valid_prod_config() -> Config {
+        Config {
+            server: ServerConfig {
+                host: "0.0.0.0".to_string(),
+                grpc_port: 50051,
+                http_port: 8080,
+                development_mode: false,
+                enable_reflection: false,
+                trusted_proxies: Vec::new(),
+                cors_allowed_origins: Vec::new(),
+                cluster_secret: String::new(),
+            },
+            database: DatabaseConfig::default(),
+            redis: RedisConfig::default(),
+            jwt: JwtConfig {
+                secret: "my-very-secret-production-key-that-is-long-enough".to_string(),
+                ..JwtConfig::default()
+            },
+            logging: LoggingConfig::default(),
+            livestream: LivestreamConfig::default(),
+            oauth2: OAuth2Config::default(),
+            email: EmailConfig::default(),
+            media_providers: MediaProvidersConfig::default(),
+            webrtc: WebRTCConfig::default(),
+            connection_limits: ConnectionLimitsConfig::default(),
+            bootstrap: BootstrapConfig {
+                create_root_user: true,
+                root_username: "admin".to_string(),
+                root_password: "StrongPwd12345!".to_string(),
+            },
+            cluster: ClusterChannelConfig::default(),
+        }
+    }
+
+    #[test]
+    fn test_validate_valid_production_config() {
+        let config = valid_prod_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_port_conflict_grpc_http() {
+        let mut config = valid_prod_config();
+        config.server.grpc_port = 8080;
+        config.server.http_port = 8080;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("grpc_port") && e.contains("http_port")));
+    }
+
+    #[test]
+    fn test_validate_port_conflict_rtmp_http() {
+        let mut config = valid_prod_config();
+        config.livestream.rtmp_port = 8080;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("rtmp_port") && e.contains("http_port")));
+    }
+
+    #[test]
+    fn test_validate_port_conflict_rtmp_grpc() {
+        let mut config = valid_prod_config();
+        config.livestream.rtmp_port = 50051;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("rtmp_port") && e.contains("grpc_port")));
+    }
+
+    #[test]
+    fn test_validate_zero_port() {
+        let mut config = valid_prod_config();
+        config.server.http_port = 0;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("http_port") && e.contains("0")));
+    }
+
+    #[test]
+    fn test_validate_default_jwt_secret_production() {
+        let mut config = valid_prod_config();
+        config.jwt.secret = "change-me-in-production".to_string();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("JWT secret")));
+    }
+
+    #[test]
+    fn test_validate_empty_jwt_secret() {
+        let mut config = valid_prod_config();
+        config.jwt.secret = String::new();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("JWT secret is empty")));
+    }
+
+    #[test]
+    fn test_validate_default_jwt_secret_dev_mode_ok() {
+        let mut config = valid_prod_config();
+        config.server.development_mode = true;
+        config.server.host = "127.0.0.1".to_string();
+        config.jwt.secret = "change-me-in-production".to_string();
+        // dev mode relaxes root password requirements, so use default
+        config.bootstrap.create_root_user = false;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_default_root_password_production() {
+        let mut config = valid_prod_config();
+        config.bootstrap.root_password = "root".to_string();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("Root password") && e.contains("default")));
+    }
+
+    #[test]
+    fn test_validate_root_password_too_short() {
+        let mut config = valid_prod_config();
+        config.bootstrap.root_password = "Short1aA".to_string(); // 8 chars, < 12
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("12 characters")));
+    }
+
+    #[test]
+    fn test_validate_root_password_no_uppercase() {
+        let mut config = valid_prod_config();
+        config.bootstrap.root_password = "allowercase123".to_string();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("uppercase")));
+    }
+
+    #[test]
+    fn test_validate_root_password_no_lowercase() {
+        let mut config = valid_prod_config();
+        config.bootstrap.root_password = "ALLUPPERCASE123".to_string();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("lowercase")));
+    }
+
+    #[test]
+    fn test_validate_root_password_no_digit() {
+        let mut config = valid_prod_config();
+        config.bootstrap.root_password = "NoDigitsHereABC".to_string();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("digit")));
+    }
+
+    #[test]
+    fn test_validate_root_username_too_short() {
+        let mut config = valid_prod_config();
+        config.bootstrap.root_username = "ab".to_string();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("Root username") && e.contains("3")));
+    }
+
+    #[test]
+    fn test_validate_db_pool_min_exceeds_max() {
+        let mut config = valid_prod_config();
+        config.database.min_connections = 30;
+        config.database.max_connections = 10;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("min_connections") && e.contains("max_connections")));
+    }
+
+    #[test]
+    fn test_validate_db_pool_max_zero() {
+        let mut config = valid_prod_config();
+        config.database.max_connections = 0;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("max_connections") && e.contains("greater than 0")));
+    }
+
+    #[test]
+    fn test_validate_connection_limits_zero() {
+        let mut config = valid_prod_config();
+        config.connection_limits.max_per_user = 0;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("max_per_user")));
+
+        let mut config = valid_prod_config();
+        config.connection_limits.max_per_room = 0;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("max_per_room")));
+
+        let mut config = valid_prod_config();
+        config.connection_limits.max_total = 0;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("max_total")));
+    }
+
+    #[test]
+    fn test_validate_email_config_partial() {
+        let mut config = valid_prod_config();
+        config.email.smtp_host = "smtp.example.com".to_string();
+        config.email.smtp_port = 0;
+        config.email.from_email = String::new();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("smtp_port")));
+        assert!(errors.iter().any(|e| e.contains("from_email")));
+    }
+
+    #[test]
+    fn test_validate_email_invalid_from_email() {
+        let mut config = valid_prod_config();
+        config.email.smtp_host = "smtp.example.com".to_string();
+        config.email.from_email = "@invalid".to_string();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("from_email") && e.contains("not a valid")));
+    }
+
+    #[test]
+    fn test_validate_dev_mode_non_localhost_host() {
+        let mut config = valid_prod_config();
+        config.server.development_mode = true;
+        config.server.host = "192.168.1.100".to_string();
+        config.bootstrap.create_root_user = false;
+        config.jwt.secret = "change-me-in-production".to_string();
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("development_mode") && e.contains("non-localhost")));
+    }
+
+    #[test]
+    fn test_validate_dev_mode_0000_warns_but_no_error() {
+        let mut config = valid_prod_config();
+        config.server.development_mode = true;
+        config.server.host = "0.0.0.0".to_string();
+        config.bootstrap.create_root_user = false;
+        config.jwt.secret = "change-me-in-production".to_string();
+        // 0.0.0.0 should warn but NOT error (common in containers)
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_dev_mode_localhost_ok() {
+        let mut config = valid_prod_config();
+        config.server.development_mode = true;
+        config.server.host = "127.0.0.1".to_string();
+        config.bootstrap.create_root_user = false;
+        config.jwt.secret = "change-me-in-production".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_livestream_zero_timeout() {
+        let mut config = valid_prod_config();
+        config.livestream.stream_timeout_seconds = 0;
+        let errors = config.validate().unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("stream_timeout_seconds")));
     }
 }

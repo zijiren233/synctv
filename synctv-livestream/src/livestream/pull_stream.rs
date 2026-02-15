@@ -11,6 +11,7 @@ use crate::{
 };
 use synctv_xiu::streamhub::define::{StreamHubEvent, StreamHubEventSender};
 use synctv_xiu::streamhub::stream::StreamIdentifier;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 
@@ -30,6 +31,8 @@ pub struct PullStream {
     /// Fencing token (epoch) from when the stream was created.
     /// Used to detect split-brain when publisher changes during network partition.
     epoch: u64,
+    /// Cancellation token for graceful shutdown propagation.
+    cancel_token: CancellationToken,
 }
 
 impl ManagedStream for PullStream {
@@ -61,6 +64,7 @@ impl PullStream {
             stream_hub_event_sender,
             lifecycle: StreamLifecycle::new(),
             epoch,
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -116,9 +120,17 @@ impl PullStream {
             self.registry.clone(),
         );
 
+        let child_token = self.cancel_token.child_token();
         let handle = tokio::spawn(async move {
             info!("gRPC puller task started for {} / {}", room_id, media_id);
-            let result = grpc_puller.run().await;
+            // Race the puller against cancellation for graceful shutdown
+            let result = tokio::select! {
+                r = grpc_puller.run() => r,
+                _ = child_token.cancelled() => {
+                    info!("gRPC puller task cancelled for {} / {}", room_id, media_id);
+                    Ok(())
+                }
+            };
             if let Err(ref e) = result {
                 error!("gRPC puller task failed for {} / {}: {}", room_id, media_id, e);
                 // Mark is_running as false so is_healthy() returns false
@@ -140,6 +152,9 @@ impl PullStream {
     /// because the puller's own cleanup path won't run on abort.
     pub async fn stop(&self) -> StreamResult<()> {
         self.lifecycle.mark_stopping();
+
+        // Cancel the puller task gracefully first
+        self.cancel_token.cancel();
 
         let stream_name = format!("{}/{}", self.room_id, self.media_id);
         let identifier = StreamIdentifier::Rtmp {

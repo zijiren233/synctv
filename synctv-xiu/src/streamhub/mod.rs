@@ -54,6 +54,11 @@ pub struct StreamDataTransceiver {
     id_to_frame_sender: Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
     //used for sending audio/video packet data to players/subscribers (with drop counters)
     id_to_packet_sender: Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
+    /// Generation counter for frame subscriber set. Bumped on subscribe/unsubscribe.
+    /// Fan-out loop caches the snapshot and only rebuilds when generation changes.
+    frame_generation: Arc<AtomicU64>,
+    /// Generation counter for packet subscriber set.
+    packet_generation: Arc<AtomicU64>,
     //publisher and subscribers use this sender to submit statistical data
     statistic_data_sender: StatisticDataSender,
     //used for receiving statistical data from publishers and subscribers
@@ -82,6 +87,8 @@ impl StreamDataTransceiver {
             statistic_data_receiver,
             id_to_frame_sender: Arc::new(Mutex::new(HashMap::new())),
             id_to_packet_sender: Arc::new(Mutex::new(HashMap::new())),
+            frame_generation: Arc::new(AtomicU64::new(0)),
+            packet_generation: Arc::new(AtomicU64::new(0)),
             stream_handler: h,
             statistic_data: Arc::new(Mutex::new(StatisticsStream::new(identifier))),
         }
@@ -90,6 +97,7 @@ impl StreamDataTransceiver {
     /// Snapshot the frame senders map and fan out to all subscribers without holding the lock.
     /// Collects closed/failed subscriber IDs and removes them in a separate lock acquisition.
     /// Drop counters are snapshotted as Arc<AtomicU64> so no lock is needed during fan-out.
+    /// `FrameData` uses `Bytes` internally so clone is O(1) reference count bump.
     fn fan_out_frame(
         snapshot: &[(Uuid, FrameDataSender, Arc<AtomicU64>)],
         data: FrameData,
@@ -142,37 +150,47 @@ impl StreamDataTransceiver {
         closed_ids
     }
 
-    /// Snapshot senders and drop counters (Arc<AtomicU64>) under lock, then fan out lock-free.
+    /// Fan out frame data using a cached snapshot. Only rebuilds the snapshot when
+    /// the generation counter indicates subscribers have changed (subscribe/unsubscribe).
+    /// This avoids acquiring the lock on every frame in the hot path.
     async fn receive_frame_data(
         data: Option<FrameData>,
         frame_senders: &Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
+        generation: &Arc<AtomicU64>,
+        cached_snapshot: &mut Vec<(Uuid, FrameDataSender, Arc<AtomicU64>)>,
+        cached_gen: &mut u64,
     ) {
         if let Some(val) = data {
-            // Snapshot senders AND drop counters under lock, then release immediately.
-            // Drop counters are Arc<AtomicU64>, so cloning the Arc is cheap and allows
-            // lock-free atomic increments during fan-out.
-            let snapshot: Vec<(Uuid, FrameDataSender, Arc<AtomicU64>)> = {
+            // Only rebuild snapshot when subscriber set has changed
+            let current_gen = generation.load(Ordering::Acquire);
+            if current_gen != *cached_gen {
                 let guard = frame_senders.lock().await;
-                guard
+                *cached_snapshot = guard
                     .iter()
                     .map(|(id, sc)| (*id, sc.sender.clone(), Arc::clone(&sc.drop_count)))
-                    .collect()
-            };
+                    .collect();
+                *cached_gen = current_gen;
+            }
 
-            if snapshot.is_empty() {
+            if cached_snapshot.is_empty() {
                 return;
             }
 
-            // Fan out to all subscribers without holding any lock
-            let closed_ids = Self::fan_out_frame(&snapshot, val);
+            // Fan out to all subscribers without holding any lock.
+            // FrameData uses Bytes internally so clone is O(1) Arc reference bump.
+            let closed_ids = Self::fan_out_frame(cached_snapshot, val);
 
-            // Remove closed subscribers
+            // Remove closed subscribers and bump generation
             if !closed_ids.is_empty() {
                 let mut guard = frame_senders.lock().await;
-                for id in closed_ids {
-                    guard.remove(&id);
+                for id in &closed_ids {
+                    guard.remove(id);
                     tracing::debug!("Removed closed frame subscriber: {}", id);
                 }
+                // Bump generation so next call rebuilds snapshot
+                generation.fetch_add(1, Ordering::Release);
+                // Invalidate cached snapshot immediately
+                *cached_gen = cached_gen.wrapping_add(u64::MAX); // Force mismatch
             }
         }
     }
@@ -181,9 +199,14 @@ impl StreamDataTransceiver {
         mut exit: broadcast::Receiver<()>,
         mut receiver: FrameDataReceiver,
         frame_senders: Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
+        generation: Arc<AtomicU64>,
         event_sender: Option<mpsc::Sender<TransceiverEvent>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
+            // Cached snapshot: only rebuilt when generation counter changes
+            let mut cached_snapshot: Vec<(Uuid, FrameDataSender, Arc<AtomicU64>)> = Vec::new();
+            let mut cached_gen: u64 = u64::MAX; // Force initial rebuild
+
             loop {
                 tokio::select! {
                     data = receiver.recv() => {
@@ -198,7 +221,13 @@ impl StreamDataTransceiver {
                             }
                             break;
                         }
-                        Self::receive_frame_data(data, &frame_senders).await;
+                        Self::receive_frame_data(
+                            data,
+                            &frame_senders,
+                            &generation,
+                            &mut cached_snapshot,
+                            &mut cached_gen,
+                        ).await;
                     }
                     _ = exit.recv()=>{
                         break;
@@ -208,32 +237,39 @@ impl StreamDataTransceiver {
         })
     }
 
-    /// Snapshot senders and drop counters (Arc<AtomicU64>) under lock, then fan out lock-free.
+    /// Fan out packet data using a cached snapshot, same generation-counter approach as frames.
     async fn receive_packet_data(
         data: Option<PacketData>,
         packet_senders: &Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
+        generation: &Arc<AtomicU64>,
+        cached_snapshot: &mut Vec<(Uuid, PacketDataSender, Arc<AtomicU64>)>,
+        cached_gen: &mut u64,
     ) {
         if let Some(val) = data {
-            let snapshot: Vec<(Uuid, PacketDataSender, Arc<AtomicU64>)> = {
+            let current_gen = generation.load(Ordering::Acquire);
+            if current_gen != *cached_gen {
                 let guard = packet_senders.lock().await;
-                guard
+                *cached_snapshot = guard
                     .iter()
                     .map(|(id, sc)| (*id, sc.sender.clone(), Arc::clone(&sc.drop_count)))
-                    .collect()
-            };
+                    .collect();
+                *cached_gen = current_gen;
+            }
 
-            if snapshot.is_empty() {
+            if cached_snapshot.is_empty() {
                 return;
             }
 
-            let closed_ids = Self::fan_out_packet(&snapshot, val);
+            let closed_ids = Self::fan_out_packet(cached_snapshot, val);
 
             if !closed_ids.is_empty() {
                 let mut guard = packet_senders.lock().await;
-                for id in closed_ids {
-                    guard.remove(&id);
+                for id in &closed_ids {
+                    guard.remove(id);
                     tracing::debug!("Removed closed packet subscriber: {}", id);
                 }
+                generation.fetch_add(1, Ordering::Release);
+                *cached_gen = cached_gen.wrapping_add(u64::MAX);
             }
         }
     }
@@ -242,9 +278,13 @@ impl StreamDataTransceiver {
         mut exit: broadcast::Receiver<()>,
         mut receiver: PacketDataReceiver,
         packet_senders: Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
+        generation: Arc<AtomicU64>,
         event_sender: Option<mpsc::Sender<TransceiverEvent>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
+            let mut cached_snapshot: Vec<(Uuid, PacketDataSender, Arc<AtomicU64>)> = Vec::new();
+            let mut cached_gen: u64 = u64::MAX;
+
             loop {
                 tokio::select! {
                     data = receiver.recv() => {
@@ -258,7 +298,13 @@ impl StreamDataTransceiver {
                             }
                             break;
                         }
-                        Self::receive_packet_data(data, &packet_senders).await;
+                        Self::receive_packet_data(
+                            data,
+                            &packet_senders,
+                            &generation,
+                            &mut cached_snapshot,
+                            &mut cached_gen,
+                        ).await;
                     }
                     _ = exit.recv()=>{
                         break;
@@ -414,12 +460,15 @@ impl StreamDataTransceiver {
         })
     }
 
+    #[allow(clippy::too_many_arguments)] // Internal plumbing for transceiver event loop
     fn receive_event_loop(
         stream_handler: Arc<dyn TStreamHandler>,
         exit: broadcast::Sender<()>,
         mut receiver: TransceiverEventReceiver,
         packet_senders: Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
         frame_senders: Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
+        frame_generation: Arc<AtomicU64>,
+        packet_generation: Arc<AtomicU64>,
         statistic_sender: StatisticDataSender,
         statistics_data: Arc<Mutex<StatisticsStream>>,
     ) -> tokio::task::JoinHandle<()> {
@@ -447,6 +496,8 @@ impl StreamDataTransceiver {
                                         sender: frame_sender,
                                         drop_count: Arc::new(AtomicU64::new(0)),
                                     });
+                                    // Bump generation so fan-out loop rebuilds snapshot
+                                    frame_generation.fetch_add(1, Ordering::Release);
                                 }
                                 DataSender::Packet {
                                     sender: packet_sender,
@@ -455,6 +506,7 @@ impl StreamDataTransceiver {
                                         sender: packet_sender,
                                         drop_count: Arc::new(AtomicU64::new(0)),
                                     });
+                                    packet_generation.fetch_add(1, Ordering::Release);
                                 }
                             }
 
@@ -469,7 +521,9 @@ impl StreamDataTransceiver {
                         }
                         TransceiverEvent::UnSubscribe { info } => {
                             frame_senders.lock().await.remove(&info.id);
+                            frame_generation.fetch_add(1, Ordering::Release);
                             packet_senders.lock().await.remove(&info.id);
+                            packet_generation.fetch_add(1, Ordering::Release);
                             let mut statistics_data = statistics_data.lock().await;
                             let subscribers = &mut statistics_data.subscribers;
                             subscribers.remove(&info.id);
@@ -497,6 +551,7 @@ impl StreamDataTransceiver {
                 tx.subscribe(),
                 receiver,
                 self.id_to_frame_sender.clone(),
+                Arc::clone(&self.frame_generation),
                 Some(event_sender.clone()),
             );
             tasks.spawn(async move { handle.await.ok(); });
@@ -507,6 +562,7 @@ impl StreamDataTransceiver {
                 tx.subscribe(),
                 receiver,
                 self.id_to_packet_sender.clone(),
+                Arc::clone(&self.packet_generation),
                 Some(event_sender.clone()),
             );
             tasks.spawn(async move { handle.await.ok(); });
@@ -526,6 +582,8 @@ impl StreamDataTransceiver {
             self.event_receiver,
             self.id_to_packet_sender,
             self.id_to_frame_sender,
+            self.frame_generation,
+            self.packet_generation,
             self.statistic_data_sender,
             self.statistic_data.clone(),
         );

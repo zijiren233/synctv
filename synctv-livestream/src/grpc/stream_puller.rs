@@ -1,5 +1,6 @@
-use bytes::BytesMut;
+use bytes::Bytes;
 use std::sync::Arc;
+use std::time::Instant;
 use synctv_xiu::rtmp::session::common::RtmpStreamHandler;
 use synctv_xiu::streamhub::{
     define::{
@@ -23,6 +24,8 @@ pub struct GrpcStreamPuller {
     media_id: String,
     publisher_node_addr: String,
     stream_hub_event_sender: StreamHubEventSender,
+    /// Cluster authentication secret (attached as x-cluster-secret metadata)
+    cluster_secret: Option<String>,
 }
 
 impl GrpcStreamPuller {
@@ -39,7 +42,15 @@ impl GrpcStreamPuller {
             media_id,
             publisher_node_addr,
             stream_hub_event_sender,
+            cluster_secret: None,
         }
+    }
+
+    /// Set the cluster authentication secret for inter-node gRPC requests.
+    #[must_use]
+    pub fn with_cluster_secret(mut self, secret: Option<String>) -> Self {
+        self.cluster_secret = secret;
+        self
     }
 
     /// Run the puller with retry logic: connect to remote, pull stream, publish to local `StreamHub`.
@@ -60,6 +71,8 @@ impl GrpcStreamPuller {
         );
 
         let mut attempt: u32 = 0;
+        /// Minimum connection duration to consider "successful" for retry reset
+        const MIN_SUCCESSFUL_DURATION: std::time::Duration = std::time::Duration::from_secs(60);
 
         loop {
             attempt += 1;
@@ -83,7 +96,9 @@ impl GrpcStreamPuller {
                 }
             };
 
+            let connect_start = Instant::now();
             let result = self.connect_and_stream(&data_sender).await;
+            let stream_duration = connect_start.elapsed();
 
             // Always clean up local StreamHub before retry or exit
             if let Err(e) = self.unpublish_from_local_stream_hub().await {
@@ -100,6 +115,17 @@ impl GrpcStreamPuller {
                     return Ok(());
                 }
                 Err(e) => {
+                    // Reset retry counter if the connection was up for a meaningful duration.
+                    // This prevents long-running streams from exhausting retries over transient blips.
+                    if stream_duration > MIN_SUCCESSFUL_DURATION {
+                        info!(
+                            room_id = %self.room_id,
+                            duration_secs = stream_duration.as_secs(),
+                            "Resetting retry counter after successful long connection"
+                        );
+                        attempt = 0;
+                    }
+
                     if attempt >= MAX_RETRIES {
                         error!(
                             room_id = %self.room_id,
@@ -149,10 +175,18 @@ impl GrpcStreamPuller {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to connect to publisher: {e}"))?;
 
-        let request = Request::new(PullRtmpStreamRequest {
+        let mut request = Request::new(PullRtmpStreamRequest {
             room_id: self.room_id.clone(),
             media_id: self.media_id.clone(),
         });
+
+        // Attach cluster authentication secret if configured
+        if let Some(secret) = &self.cluster_secret {
+            request.metadata_mut().insert(
+                "x-cluster-secret",
+                secret.parse().map_err(|_| anyhow::anyhow!("Invalid cluster secret format"))?,
+            );
+        }
 
         let mut stream = client
             .pull_rtmp_stream(request)
@@ -171,15 +205,15 @@ impl GrpcStreamPuller {
             let frame_data = match packet.frame_type {
                 1 => FrameData::Video {
                     timestamp: packet.timestamp,
-                    data: BytesMut::from(&packet.data[..]),
+                    data: Bytes::from(packet.data),
                 },
                 2 => FrameData::Audio {
                     timestamp: packet.timestamp,
-                    data: BytesMut::from(&packet.data[..]),
+                    data: Bytes::from(packet.data),
                 },
                 3 => FrameData::MetaData {
                     timestamp: packet.timestamp,
-                    data: BytesMut::from(&packet.data[..]),
+                    data: Bytes::from(packet.data),
                 },
                 _ => {
                     warn!("Unknown frame type: {}", packet.frame_type);
