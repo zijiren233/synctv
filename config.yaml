@@ -20,8 +20,8 @@ redis:
   key_prefix: "synctv:"
 
 jwt:
-  # SECURITY: JWT secret must be provided via environment variable SYNCTV__JWT__SECRET
-  # Example: SYNCTV__JWT__SECRET="your-secure-random-string-at-least-32-chars"
+  # SECURITY: JWT secret must be provided via environment variable SYNCTV_JWT_SECRET
+  # Example: SYNCTV_JWT_SECRET="your-secure-random-string-at-least-32-chars"
   # The secret will be validated at startup - default empty value will cause startup failure
   secret: ""
   access_token_duration_hours: 1

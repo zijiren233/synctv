@@ -112,8 +112,10 @@ impl SyncTvServer {
         }
 
         // Start background connection cleanup (every 60 seconds)
+        let cleanup_cancel = tokio_util::sync::CancellationToken::new();
         let _conn_cleanup = self.services.connection_manager.spawn_cleanup_task(
             Duration::from_mins(1),
+            cleanup_cancel.clone(),
         );
 
         // Start gRPC server
@@ -188,6 +190,7 @@ impl SyncTvServer {
 
         // Signal all components to shut down
         let _ = shutdown_tx.send(true);
+        cleanup_cancel.cancel();
 
         // Run graceful shutdown
         self.shutdown().await;

@@ -326,18 +326,25 @@ impl ChatService {
     ///
     /// # Returns
     /// `JoinHandle` for the background task
-    #[must_use] 
+    #[must_use]
     pub fn start_cleanup_task(
         self,
         settings_registry: Arc<crate::service::SettingsRegistry>,
         interval_seconds: u64,
         activity_window_minutes: i32,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_seconds));
 
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        info!("Chat cleanup task shutting down");
+                        return;
+                    }
+                    _ = interval.tick() => {}
+                }
 
                 // Get current max_chat_messages setting
                 let max_messages = settings_registry.max_chat_messages.get().unwrap_or(500);

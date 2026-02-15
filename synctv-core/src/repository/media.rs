@@ -16,9 +16,15 @@ pub struct MediaRepository {
 }
 
 impl MediaRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Get a reference to the connection pool
+    #[must_use]
+    pub const fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
     /// Add media to playlist
@@ -144,6 +150,14 @@ impl MediaRepository {
 
     /// Get multiple media items by IDs in a single query
     pub async fn get_by_ids(&self, media_ids: &[MediaId]) -> Result<Vec<Media>> {
+        self.get_by_ids_with_executor(media_ids, &self.pool).await
+    }
+
+    /// Get multiple media items by IDs using a specific executor (for transaction support)
+    pub async fn get_by_ids_with_executor<'e, E>(&self, media_ids: &[MediaId], executor: E) -> Result<Vec<Media>>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         if media_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -159,7 +173,7 @@ impl MediaRepository {
             "
         )
         .bind(&id_strs)
-        .fetch_all(&self.pool)
+        .fetch_all(executor)
         .await?;
 
         rows.into_iter().map(|row| self.row_to_media(row)).collect()
@@ -281,6 +295,14 @@ impl MediaRepository {
 
     /// Bulk delete media items by IDs
     pub async fn delete_batch(&self, media_ids: &[MediaId]) -> Result<usize> {
+        self.delete_batch_with_executor(media_ids, &self.pool).await
+    }
+
+    /// Bulk delete media items by IDs using a specific executor (for transaction support)
+    pub async fn delete_batch_with_executor<'e, E>(&self, media_ids: &[MediaId], executor: E) -> Result<usize>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         if media_ids.is_empty() {
             return Ok(0);
         }
@@ -288,7 +310,6 @@ impl MediaRepository {
         let id_strs: Vec<&str> = media_ids.iter().map(super::super::models::id::MediaId::as_str).collect();
         let now = chrono::Utc::now();
 
-        // Build query with ANY array parameter
         let result = sqlx::query(
             r"
             UPDATE media
@@ -298,7 +319,7 @@ impl MediaRepository {
         )
         .bind(&id_strs)
         .bind(now)
-        .execute(&self.pool)
+        .execute(executor)
         .await?;
 
         Ok(result.rows_affected() as usize)

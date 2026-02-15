@@ -141,12 +141,12 @@ impl LoadBalancer {
                                     );
                                     penalty
                                 } else {
-                                    // Past warmup but still no connection data - use moderate value
+                                    // Past warmup with no connection data - treat as empty
                                     tracing::debug!(
                                         node_id = %n.node_id,
-                                        "Node has no connection metadata, using default"
+                                        "Node has no connection metadata after warmup, treating as empty"
                                     );
-                                    500 // Moderate default
+                                    0
                                 }
                             }
                         }

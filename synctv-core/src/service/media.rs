@@ -418,8 +418,11 @@ impl MediaService {
             return Ok(0);
         }
 
-        // Batch-load all media in a single query
-        let media_items = self.media_repo.get_by_ids(&media_ids).await?;
+        // Use explicit transaction to prevent TOCTOU between read and delete
+        let mut tx = self.media_repo.pool().begin().await?;
+
+        // Batch-load all media in a single query within the transaction
+        let media_items = self.media_repo.get_by_ids_with_executor(&media_ids, &mut *tx).await?;
 
         if media_items.len() != media_ids.len() {
             return Err(Error::NotFound("One or more media items not found".to_string()));
@@ -446,8 +449,10 @@ impl MediaService {
             .check_permission(&room_id, &user_id, required_permission)
             .await?;
 
-        // Bulk delete
-        let deleted_count = self.media_repo.delete_batch(&media_ids).await?;
+        // Bulk delete within the same transaction
+        let deleted_count = self.media_repo.delete_batch_with_executor(&media_ids, &mut *tx).await?;
+
+        tx.commit().await?;
 
         tracing::info!(
             room_id = %room_id.as_str(),

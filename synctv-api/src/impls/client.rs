@@ -106,7 +106,6 @@ impl ClientApiImpl {
         // 2. Cluster-wide via Redis
         if let Some(tx) = &self.redis_publish_tx {
             if tx.try_send(PublishRequest {
-                room_id: Some(Rid::from_string(room_id.to_string())),
                 event: ClusterEvent::KickPublisher {
                     event_id: nanoid::nanoid!(16),
                     room_id: Rid::from_string(room_id.to_string()),
@@ -129,7 +128,6 @@ impl ClientApiImpl {
     ) {
         if let Some(ref tx) = self.redis_publish_tx {
             let _ = tx.try_send(synctv_cluster::sync::PublishRequest {
-                room_id: Some(room_id.clone()),
                 event: synctv_cluster::sync::ClusterEvent::PermissionChanged {
                     event_id: nanoid::nanoid!(16),
                     room_id: room_id.clone(),
@@ -208,17 +206,27 @@ impl ClientApiImpl {
         })
     }
 
-    pub async fn logout(
+    /// Logout: blacklist the given JWT token server-side.
+    ///
+    /// Best-effort: logs failures but always returns success. This ensures
+    /// consistent behavior between HTTP and gRPC transports -- a failed
+    /// blacklist just means the old token remains valid until expiry.
+    pub async fn logout(&self, token: &str) -> crate::proto::client::LogoutResponse {
+        if let Err(e) = self.user_service.logout(token).await {
+            tracing::warn!(error = %e, "Failed to blacklist token during logout");
+        }
+        crate::proto::client::LogoutResponse { success: true }
+    }
+
+    /// Get the currently playing media for a room.
+    pub async fn get_playing_media(
         &self,
-        _req: crate::proto::client::LogoutRequest,
-    ) -> Result<crate::proto::client::LogoutResponse, String> {
-        // Token invalidation is transport-specific:
-        // - gRPC: Extracts token from metadata and calls user_service.logout(token)
-        //   directly in ClientServiceImpl::logout (server-side blacklist).
-        // - HTTP: Relies on client-side token deletion (no server-side blacklist
-        //   needed because short-lived JWTs expire naturally).
-        // This method handles the common response; gRPC adds blacklisting on top.
-        Ok(crate::proto::client::LogoutResponse { success: true })
+        room_id: &str,
+    ) -> Result<Option<crate::proto::client::Media>, String> {
+        let rid = RoomId::from_string(room_id.to_string());
+        let media = self.room_service.get_playing_media(&rid).await
+            .map_err(|e| e.to_string())?;
+        Ok(media.map(|m| media_to_proto(&m)))
     }
 
     pub async fn get_profile(

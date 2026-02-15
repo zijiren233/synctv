@@ -75,6 +75,7 @@ impl HlsServer {
         let stream_hub_clone = Arc::clone(&self.stream_hub);
         let segment_manager_clone = Arc::clone(&self.segment_manager);
         let stream_registry_clone = self.stream_registry;
+        let remuxer_cancel = self.shutdown_token.clone();
         tokio::spawn(async move {
             let (client_event_consumer, hub_event_sender) = {
                 let mut hub = stream_hub_clone.lock().await;
@@ -86,6 +87,7 @@ impl HlsServer {
                 hub_event_sender,
                 segment_manager_clone,
                 stream_registry_clone,
+                remuxer_cancel,
             );
 
             if let Err(e) = remuxer.run().await {

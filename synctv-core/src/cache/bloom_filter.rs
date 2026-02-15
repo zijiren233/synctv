@@ -5,7 +5,6 @@
 
 use growable_bloom_filter::GrowableBloom;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -201,11 +200,12 @@ pub struct BloomFilterStats {
 pub struct ProtectedCache {
     /// Bloom filter for quick existence checks
     bloom_filter: Arc<BloomFilter>,
-    /// Cache for null values (keys that don't exist)
-    null_cache: Arc<RwLock<HashSet<String>>>,
-    /// Maximum number of null keys to cache
-    max_null_keys: usize,
+    /// Cache for null values (keys that don't exist) with TTL-based eviction
+    null_cache: Arc<moka::sync::Cache<String, ()>>,
 }
+
+/// Default null cache TTL (5 minutes)
+const NULL_CACHE_TTL_SECS: u64 = 300;
 
 impl ProtectedCache {
     /// Create a new protected cache
@@ -213,17 +213,20 @@ impl ProtectedCache {
     /// # Arguments
     /// * `expected_elements` - Expected number of elements in the filter
     /// * `max_null_keys` - Maximum null keys to cache (default: 10000)
-    #[must_use] 
+    #[must_use]
     pub fn new(expected_elements: u64, max_null_keys: usize) -> Self {
+        let null_cache = moka::sync::Cache::builder()
+            .max_capacity(max_null_keys as u64)
+            .time_to_live(std::time::Duration::from_secs(NULL_CACHE_TTL_SECS))
+            .build();
         Self {
             bloom_filter: Arc::new(BloomFilter::with_capacity(expected_elements)),
-            null_cache: Arc::new(RwLock::new(HashSet::new())),
-            max_null_keys,
+            null_cache: Arc::new(null_cache),
         }
     }
 
     /// Create with default configuration (1M elements, 10K null keys)
-    #[must_use] 
+    #[must_use]
     pub fn with_defaults() -> Self {
         Self::new(1_000_000, 10_000)
     }
@@ -233,23 +236,12 @@ impl ProtectedCache {
         self.bloom_filter.insert(key).await;
 
         // Remove from null cache if it was there
-        let mut null_cache = self.null_cache.write().await;
-        null_cache.remove(key);
+        self.null_cache.invalidate(&key.to_string());
     }
 
     /// Mark a key as non-existing (cache the negative result)
     pub async fn mark_not_exists(&self, key: &str) {
-        let mut null_cache = self.null_cache.write().await;
-
-        // Evict oldest null keys if at capacity
-        if null_cache.len() >= self.max_null_keys {
-            // Remove a random element (simple eviction strategy)
-            if let Some(key_to_remove) = null_cache.iter().next().cloned() {
-                null_cache.remove(&key_to_remove);
-            }
-        }
-
-        null_cache.insert(key.to_string());
+        self.null_cache.insert(key.to_string(), ());
     }
 
     /// Check if a key definitely doesn't exist
@@ -259,11 +251,8 @@ impl ProtectedCache {
     /// - None if uncertain (might exist, need to check database)
     pub async fn check_exists(&self, key: &str) -> Option<bool> {
         // First check null cache (definitely doesn't exist)
-        {
-            let null_cache = self.null_cache.read().await;
-            if null_cache.contains(key) {
-                return Some(false);
-            }
+        if self.null_cache.contains_key(&key.to_string()) {
+            return Some(false);
         }
 
         // Check bloom filter
@@ -289,17 +278,17 @@ impl ProtectedCache {
         self.bloom_filter.insert_many(keys).await;
 
         // Remove from null cache
-        let mut null_cache = self.null_cache.write().await;
         for key in keys {
-            null_cache.remove(&key.to_string());
+            self.null_cache.invalidate(&key.to_string());
         }
     }
 
     /// Get statistics about the protected cache
     pub async fn stats(&self) -> ProtectedCacheStats {
-        let null_cache = self.null_cache.read().await;
+        // Flush pending operations to get accurate counts
+        self.null_cache.run_pending_tasks();
         ProtectedCacheStats {
-            null_cache_count: null_cache.len(),
+            null_cache_count: self.null_cache.entry_count() as usize,
             bloom_filter_size_bytes: self.bloom_filter.size_bytes().await,
             false_positive_rate: self.bloom_filter.false_positive_rate(),
         }
@@ -308,12 +297,12 @@ impl ProtectedCache {
     /// Clear all cached data
     pub async fn clear(&self) {
         self.bloom_filter.clear().await;
-        let mut null_cache = self.null_cache.write().await;
-        null_cache.clear();
+        self.null_cache.invalidate_all();
+        self.null_cache.run_pending_tasks();
     }
 
     /// Get the bloom filter reference
-    #[must_use] 
+    #[must_use]
     pub fn bloom_filter(&self) -> &BloomFilter {
         &self.bloom_filter
     }

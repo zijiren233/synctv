@@ -27,20 +27,21 @@ spec:
 
         # Environment variables (configure via ConfigMap/Secret)
         env:
-        - name: DATABASE_URL
+        - name: SYNCTV_DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: synctv-secrets
               key: database-url
-        - name: REDIS_URL
+        - name: SYNCTV_REDIS_URL
           valueFrom:
             secretKeyRef:
               name: synctv-secrets
               key: redis-url
-        - name: JWT_PRIVATE_KEY_PATH
-          value: "/etc/synctv/keys/jwt_private.pem"
-        - name: JWT_PUBLIC_KEY_PATH
-          value: "/etc/synctv/keys/jwt_public.pem"
+        - name: SYNCTV_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: synctv-secrets
+              key: jwt-secret
 
         # Liveness probe - determines if pod needs restart
         # Checks if the application process is running
@@ -87,17 +88,6 @@ spec:
             memory: "512Mi"
             cpu: "500m"
 
-        # Volume mounts for JWT keys
-        volumeMounts:
-        - name: jwt-keys
-          mountPath: /etc/synctv/keys
-          readOnly: true
-
-      # Volumes
-      volumes:
-      - name: jwt-keys
-        secret:
-          secretName: synctv-jwt-keys
 
 ---
 apiVersion: v1

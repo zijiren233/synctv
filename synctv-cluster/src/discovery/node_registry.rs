@@ -303,7 +303,9 @@ impl NodeRegistry {
 
     /// Check the circuit breaker and get a Redis connection.
     /// Returns `Err` if the circuit breaker is open. Records connection
-    /// failures in the circuit breaker.
+    /// failure in the circuit breaker, but does NOT record success --
+    /// callers must call `record_operation_result()` after the full
+    /// operation (connection + command) completes.
     async fn get_conn_with_breaker(&self, client: &redis::Client) -> Result<redis::aio::MultiplexedConnection> {
         if !self.circuit_breaker.allow_request() {
             return Err(Error::Database(
@@ -311,12 +313,20 @@ impl NodeRegistry {
             ));
         }
         let result = self.get_conn(client).await;
-        if result.is_ok() { self.circuit_breaker.record_success() } else {
-            // Invalidate cached connection so the next attempt creates a fresh one
+        if result.is_err() {
             *self.cached_conn.lock().await = None;
             self.circuit_breaker.record_failure();
         }
         result
+    }
+
+    /// Record the result of a complete Redis operation (connection + command).
+    fn record_operation_result<T>(&self, result: &std::result::Result<T, impl std::fmt::Debug>) {
+        if result.is_ok() {
+            self.circuit_breaker.record_success();
+        } else {
+            self.circuit_breaker.record_failure();
+        }
     }
 
     /// Get the current fencing token for this node
@@ -393,7 +403,7 @@ impl NodeRegistry {
             );
 
             let now_rfc3339 = Utc::now().to_rfc3339();
-            let new_epoch: u64 = timeout(
+            let op_result: std::result::Result<u64, Error> = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 script
                     .key(&key)
@@ -405,8 +415,10 @@ impl NodeRegistry {
                     .invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis register script timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis register script failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis register script timed out".to_string()))
+            .and_then(|r| r.map_err(|e| Error::Database(format!("Redis register script failed: {e}"))));
+            self.record_operation_result(&op_result);
+            let new_epoch = op_result?;
 
             // Update local epoch
             self.current_epoch.store(new_epoch, Ordering::SeqCst);
@@ -496,7 +508,7 @@ impl NodeRegistry {
                 ",
             );
 
-            let result: i64 = timeout(
+            let op_result: std::result::Result<i64, Error> = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 script
                     .key(&key)
@@ -507,8 +519,10 @@ impl NodeRegistry {
                     .invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis heartbeat script timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis heartbeat script failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis heartbeat script timed out".to_string()))
+            .and_then(|r| r.map_err(|e| Error::Database(format!("Redis heartbeat script failed: {e}"))));
+            self.record_operation_result(&op_result);
+            let result = op_result?;
 
             if result == -1 {
                 tracing::warn!(
@@ -577,7 +591,7 @@ impl NodeRegistry {
                 ",
             );
 
-            let result: i64 = timeout(
+            let op_result: std::result::Result<i64, Error> = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 script
                     .key(&key)
@@ -585,8 +599,10 @@ impl NodeRegistry {
                     .invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis unregister script timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis unregister script failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis unregister script timed out".to_string()))
+            .and_then(|r| r.map_err(|e| Error::Database(format!("Redis unregister script failed: {e}"))));
+            self.record_operation_result(&op_result);
+            let result = op_result?;
 
             if result == 0 {
                 tracing::warn!(
@@ -640,7 +656,7 @@ impl NodeRegistry {
                 ",
             );
 
-            let result: i64 = timeout(
+            let op_result: std::result::Result<i64, Error> = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 script
                     .key(&key)
@@ -650,8 +666,10 @@ impl NodeRegistry {
                     .invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis register_remote script timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis register_remote script failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis register_remote script timed out".to_string()))
+            .and_then(|r| r.map_err(|e| Error::Database(format!("Redis register_remote script failed: {e}"))));
+            self.record_operation_result(&op_result);
+            let result = op_result?;
 
             if result == 0 {
                 tracing::warn!(
@@ -691,13 +709,15 @@ impl NodeRegistry {
                 ",
             );
 
-            let result: Option<String> = timeout(
+            let op_result: std::result::Result<Option<String>, Error> = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 script.key(&key).arg(&now).arg(ttl).invoke_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis heartbeat script timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis heartbeat script failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis heartbeat script timed out".to_string()))
+            .and_then(|r| r.map_err(|e| Error::Database(format!("Redis heartbeat script failed: {e}"))));
+            self.record_operation_result(&op_result);
+            let result = op_result?;
 
             // Update local cache from the returned value
             if let Some(updated_json) = result {
@@ -753,7 +773,7 @@ impl NodeRegistry {
                     ",
                 );
 
-                let result: i64 = timeout(
+                let op_result: std::result::Result<i64, Error> = timeout(
                     Duration::from_secs(REDIS_TIMEOUT_SECS),
                     script
                         .key(&key)
@@ -761,8 +781,10 @@ impl NodeRegistry {
                         .invoke_async(&mut conn),
                 )
                 .await
-                .map_err(|_| Error::Timeout("Redis unregister_remote script timed out".to_string()))?
-                .map_err(|e| Error::Database(format!("Redis unregister_remote script failed: {e}")))?;
+                .map_err(|_| Error::Timeout("Redis unregister_remote script timed out".to_string()))
+                .and_then(|r| r.map_err(|e| Error::Database(format!("Redis unregister_remote script failed: {e}"))));
+                self.record_operation_result(&op_result);
+                let result = op_result?;
 
                 if result == 0 {
                     tracing::warn!(
@@ -774,15 +796,17 @@ impl NodeRegistry {
                 }
             } else {
                 // No epoch provided: best-effort delete (backwards compat)
-                timeout(
+                let op_result: std::result::Result<(), Error> = timeout(
                     Duration::from_secs(REDIS_TIMEOUT_SECS),
                     redis::cmd("DEL")
                         .arg(&key)
                         .query_async::<()>(&mut conn),
                 )
                 .await
-                .map_err(|_| Error::Timeout("Redis DEL timed out".to_string()))?
-                .map_err(|e| Error::Database(format!("Redis DEL failed: {e}")))?;
+                .map_err(|_| Error::Timeout("Redis DEL timed out".to_string()))
+                .and_then(|r| r.map_err(|e| Error::Database(format!("Redis DEL failed: {e}"))));
+                self.record_operation_result(&op_result);
+                op_result?;
             }
         }
 
@@ -804,7 +828,7 @@ impl NodeRegistry {
             let mut cursor: u64 = 0;
 
             loop {
-                let scan_result: (u64, Vec<String>) = timeout(
+                let op_result: std::result::Result<(u64, Vec<String>), Error> = timeout(
                     Duration::from_secs(REDIS_TIMEOUT_SECS),
                     redis::cmd("SCAN")
                         .arg(cursor)
@@ -815,8 +839,10 @@ impl NodeRegistry {
                         .query_async(&mut conn),
                 )
                 .await
-                .map_err(|_| Error::Timeout("Redis SCAN timed out".to_string()))?
-                .map_err(|e| Error::Database(format!("Redis SCAN failed: {e}")))?;
+                .map_err(|_| Error::Timeout("Redis SCAN timed out".to_string()))
+                .and_then(|r| r.map_err(|e| Error::Database(format!("Redis SCAN failed: {e}"))));
+                self.record_operation_result(&op_result);
+                let scan_result = op_result?;
 
                 cursor = scan_result.0;
                 keys.extend(scan_result.1);
@@ -834,13 +860,15 @@ impl NodeRegistry {
                 for key in &keys {
                     cmd.arg(key);
                 }
-                let values: Vec<Option<String>> = timeout(
+                let mget_result: std::result::Result<Vec<Option<String>>, Error> = timeout(
                     Duration::from_secs(REDIS_TIMEOUT_SECS),
                     cmd.query_async(&mut conn),
                 )
                 .await
-                .map_err(|_| Error::Timeout("Redis MGET timed out".to_string()))?
-                .map_err(|e| Error::Database(format!("Redis MGET failed: {e}")))?;
+                .map_err(|_| Error::Timeout("Redis MGET timed out".to_string()))
+                .and_then(|r| r.map_err(|e| Error::Database(format!("Redis MGET failed: {e}"))));
+                self.record_operation_result(&mget_result);
+                let values = mget_result?;
 
                 for value in values.into_iter().flatten() {
                     if let Ok(node_info) = serde_json::from_str::<NodeInfo>(&value) {
@@ -872,9 +900,13 @@ impl NodeRegistry {
 
             Ok(nodes)
         } else {
-            // Local mode: return cached nodes
+            // Local mode: return cached nodes, filtering out stale ones
+            let timeout = self.heartbeat_timeout_secs;
             let nodes = self.local_nodes.read().await;
-            Ok(nodes.values().cloned().collect())
+            Ok(nodes.values()
+                .filter(|n| !n.is_stale(timeout))
+                .cloned()
+                .collect())
         }
     }
 
@@ -884,15 +916,17 @@ impl NodeRegistry {
             let mut conn = self.get_conn_with_breaker(client).await?;
 
             let key = Self::node_key(node_id);
-            let value: Option<String> = timeout(
+            let op_result: std::result::Result<Option<String>, Error> = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 redis::cmd("GET")
                     .arg(&key)
                     .query_async(&mut conn),
             )
             .await
-            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))?
-            .map_err(|e| Error::Database(format!("Redis GET failed: {e}")))?;
+            .map_err(|_| Error::Timeout("Redis GET timed out".to_string()))
+            .and_then(|r| r.map_err(|e| Error::Database(format!("Redis GET failed: {e}"))));
+            self.record_operation_result(&op_result);
+            let value = op_result?;
 
             if let Some(value) = value {
                 let node_info: NodeInfo = serde_json::from_str(&value)

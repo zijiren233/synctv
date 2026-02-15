@@ -24,18 +24,18 @@ if ! docker-compose ps postgres 2>/dev/null | grep -q "Up"; then
 fi
 
 # Ensure JWT secret is set
-if [ -z "$SYNCTV__JWT__SECRET" ]; then
-    export SYNCTV__JWT__SECRET="dev-secret-$(hostname)-$$"
+if [ -z "$SYNCTV_JWT_SECRET" ]; then
+    export SYNCTV_JWT_SECRET="dev-secret-$(hostname)-$$"
     echo "⚠️  Using development JWT secret (do NOT use in production)"
 fi
 
 # Enable development mode for relaxed security checks
-export SYNCTV__SERVER__DEVELOPMENT_MODE=true
+export SYNCTV_SERVER_DEVELOPMENT_MODE=true
 
 echo "Starting synctv server..."
-echo "  HTTP: http://localhost:${SYNCTV__SERVER__HTTP_PORT:-8080}"
-echo "  gRPC: localhost:${SYNCTV__SERVER__GRPC_PORT:-50051}"
-echo "  RTMP: rtmp://localhost:${SYNCTV__LIVESTREAM__RTMP_PORT:-1935}"
+echo "  HTTP: http://localhost:${SYNCTV_SERVER_HTTP_PORT:-8080}"
+echo "  gRPC: localhost:${SYNCTV_SERVER_GRPC_PORT:-50051}"
+echo "  RTMP: rtmp://localhost:${SYNCTV_LIVESTREAM_RTMP_PORT:-1935}"
 echo ""
 echo "Press Ctrl+C to stop"
 echo ""

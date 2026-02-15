@@ -22,6 +22,7 @@ use crate::streamhub::{
     utils::Uuid,
 };
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use crate::flv::{
     define::{frame_type, FlvData},
     demuxer::{FlvAudioTagDemuxer, FlvVideoTagDemuxer},
@@ -125,21 +126,25 @@ pub struct CustomHlsRemuxer {
     segment_manager: Arc<SegmentManager>,
     /// Stream registry for M3U8 generation
     stream_registry: StreamRegistry,
+    /// Cancellation token for graceful shutdown
+    cancel_token: CancellationToken,
 }
 
 impl CustomHlsRemuxer {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         consumer: BroadcastEventReceiver,
         event_producer: StreamHubEventSender,
         segment_manager: Arc<SegmentManager>,
         stream_registry: StreamRegistry,
+        cancel_token: CancellationToken,
     ) -> Self {
         Self {
             client_event_consumer: consumer,
             event_producer,
             segment_manager,
             stream_registry,
+            cancel_token,
         }
     }
 
@@ -147,18 +152,26 @@ impl CustomHlsRemuxer {
         tracing::info!("Custom HLS remuxer started");
 
         loop {
-            let val = match self.client_event_consumer.recv().await {
-                Ok(event) => event,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(
-                        "HLS remuxer lagged behind by {n} broadcast events; some publish/unpublish events may have been missed"
-                    );
-                    continue;
+            let val = tokio::select! {
+                _ = self.cancel_token.cancelled() => {
+                    tracing::info!("HLS remuxer cancelled (shutdown)");
+                    return Ok(());
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    return Err(HlsRemuxerError::ReceiveError(
-                        tokio::sync::broadcast::error::RecvError::Closed,
-                    ));
+                result = self.client_event_consumer.recv() => {
+                    match result {
+                        Ok(event) => event,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(
+                                "HLS remuxer lagged behind by {n} broadcast events; some publish/unpublish events may have been missed"
+                            );
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            return Err(HlsRemuxerError::ReceiveError(
+                                tokio::sync::broadcast::error::RecvError::Closed,
+                            ));
+                        }
+                    }
                 }
             };
             match val {

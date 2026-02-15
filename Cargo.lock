@@ -4983,6 +4983,7 @@ dependencies = [
  "synctv-livestream",
  "synctv-sfu",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -5052,6 +5053,7 @@ dependencies = [
  "dashmap",
  "futures",
  "mockall",
+ "moka",
  "nanoid",
  "parking_lot",
  "prost",

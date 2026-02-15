@@ -86,18 +86,21 @@ impl SfuManager {
             "SFU Manager initialized"
         );
 
-        // Start background tasks with cancellation support
+        // Start background tasks with Weak references to avoid Arc cycle.
+        // Tasks will exit gracefully when the manager is dropped.
         let cleanup_handle = {
-            let manager_clone = Arc::clone(&manager);
+            let weak = Arc::downgrade(&manager);
+            let cancel = manager.cancel_token.clone();
             tokio::spawn(async move {
-                manager_clone.cleanup_task().await;
+                Self::cleanup_task_weak(weak, cancel).await;
             })
         };
 
         let stats_handle = {
-            let manager_clone = Arc::clone(&manager);
+            let weak = Arc::downgrade(&manager);
+            let cancel = manager.cancel_token.clone();
             tokio::spawn(async move {
-                manager_clone.stats_collection_task().await;
+                Self::stats_collection_task_weak(weak, cancel).await;
             })
         };
 
@@ -328,38 +331,50 @@ impl SfuManager {
         }
     }
 
-    /// Background task for periodic cleanup (cancelled on shutdown)
-    async fn cleanup_task(self: Arc<Self>) {
+    /// Background task for periodic cleanup using Weak reference.
+    /// Exits when the manager is dropped or the cancel token is triggered.
+    async fn cleanup_task_weak(weak: std::sync::Weak<Self>, cancel: CancellationToken) {
         let mut ticker = interval(Duration::from_mins(1));
         info!("Starting cleanup task (interval: 60s)");
 
         loop {
             tokio::select! {
-                () = self.cancel_token.cancelled() => {
+                () = cancel.cancelled() => {
                     info!("Cleanup task cancelled");
                     break;
                 }
                 _ = ticker.tick() => {
-                    self.cleanup_empty_rooms().await;
+                    if let Some(manager) = weak.upgrade() {
+                        manager.cleanup_empty_rooms().await;
+                    } else {
+                        info!("Cleanup task exiting: manager dropped");
+                        break;
+                    }
                 }
             }
         }
     }
 
-    /// Background task for statistics collection (cancelled on shutdown)
-    async fn stats_collection_task(self: Arc<Self>) {
+    /// Background task for statistics collection using Weak reference.
+    /// Exits when the manager is dropped or the cancel token is triggered.
+    async fn stats_collection_task_weak(weak: std::sync::Weak<Self>, cancel: CancellationToken) {
         let mut ticker = interval(Duration::from_secs(5));
         info!("Starting statistics collection task (interval: 5s)");
 
         loop {
             tokio::select! {
-                () = self.cancel_token.cancelled() => {
+                () = cancel.cancelled() => {
                     info!("Stats collection task cancelled");
                     break;
                 }
                 _ = ticker.tick() => {
-                    if let Err(e) = self.update_global_stats().await {
-                        error!(error = %e, "Failed to update global statistics");
+                    if let Some(manager) = weak.upgrade() {
+                        if let Err(e) = manager.update_global_stats().await {
+                            error!(error = %e, "Failed to update global statistics");
+                        }
+                    } else {
+                        info!("Stats collection task exiting: manager dropped");
+                        break;
                     }
                 }
             }

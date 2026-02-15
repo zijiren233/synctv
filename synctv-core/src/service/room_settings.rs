@@ -90,15 +90,21 @@ impl RoomSettingsService {
     const PUBSUB_CHANNEL: &'static str = "room_settings_updates";
 
     /// Create a new room settings service
-    #[must_use] 
+    #[must_use]
     pub fn new(
         repo: RoomSettingsRepository,
         invalidation: Option<Arc<dyn CacheInvalidation>>,
         notification_service: Arc<NotificationService>,
+        cache_ttl_secs: Option<u64>,
+        cache_max_capacity: Option<u64>,
+        cancel: Option<tokio_util::sync::CancellationToken>,
     ) -> Self {
+        let ttl = cache_ttl_secs.unwrap_or(Self::CACHE_TTL_SECS);
+        let capacity = cache_max_capacity.unwrap_or(Self::CACHE_MAX_CAPACITY);
+
         let cache = Arc::new(
-            moka::future::CacheBuilder::new(Self::CACHE_MAX_CAPACITY)
-                .time_to_live(Duration::from_secs(Self::CACHE_TTL_SECS))
+            moka::future::CacheBuilder::new(capacity)
+                .time_to_live(Duration::from_secs(ttl))
                 .build(),
         );
 
@@ -113,9 +119,17 @@ impl RoomSettingsService {
         // Start Pub/Sub listener if invalidation backend is available
         if service.invalidation.is_some() {
             let service_clone = service.clone();
+            let cancel = cancel.unwrap_or_default();
             tokio::spawn(async move {
-                if let Err(e) = service_clone.listen_for_updates().await {
-                    tracing::error!("Room settings Pub/Sub listener error: {}", e);
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        tracing::info!("Room settings Pub/Sub listener shutting down");
+                    }
+                    result = service_clone.listen_for_updates() => {
+                        if let Err(e) = result {
+                            tracing::error!("Room settings Pub/Sub listener error: {}", e);
+                        }
+                    }
                 }
             });
         }

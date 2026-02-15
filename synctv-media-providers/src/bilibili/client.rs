@@ -57,12 +57,17 @@ impl BilibiliClient {
         })
     }
 
-    /// Add cookies to request
+    /// Add cookies to request.
+    /// Cookie values are sanitized to prevent header injection via \r\n.
     fn add_cookies(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if let Some(cookies) = &self.cookies {
             let cookie_str = cookies
                 .iter()
-                .map(|(k, v)| format!("{k}={v}"))
+                .map(|(k, v)| {
+                    let safe_k: String = k.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+                    let safe_v: String = v.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+                    format!("{safe_k}={safe_v}")
+                })
                 .collect::<Vec<_>>()
                 .join("; ");
             req.header("Cookie", cookie_str)
@@ -95,7 +100,7 @@ impl BilibiliClient {
         let json: QrCodeResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data.ok_or_else(|| BilibiliError::Parse("Missing QR code data".to_string()))?;
@@ -141,7 +146,7 @@ impl BilibiliClient {
         let json: LoginResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data.ok_or_else(|| BilibiliError::Parse("Missing login data".to_string()))?;
@@ -184,7 +189,7 @@ impl BilibiliClient {
         let json: CaptchaResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data.ok_or_else(|| BilibiliError::Parse("Missing captcha data".to_string()))?;
@@ -218,7 +223,7 @@ impl BilibiliClient {
         let json: SpiResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data.ok_or_else(|| BilibiliError::Parse("Missing BUVID data".to_string()))?;
@@ -283,7 +288,7 @@ impl BilibiliClient {
         let json: SmsResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data.ok_or_else(|| BilibiliError::Parse("Missing SMS data".to_string()))?;
@@ -343,7 +348,7 @@ impl BilibiliClient {
         let json: LoginSmsResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         if cookies.is_empty() {
@@ -376,6 +381,7 @@ impl BilibiliClient {
     ///
     /// The shared client has `redirect(Policy::none())`, so we manually follow
     /// the `Location` header from b23.tv to get the resolved URL.
+    /// The resolved URL is validated against SSRF rules before returning.
     pub async fn resolve_short_link(&self, url: &str) -> Result<String, BilibiliError> {
         let response = self.client.get(url).send().await?;
         let status = response.status();
@@ -386,6 +392,9 @@ impl BilibiliClient {
                 let resolved = location.to_str().map_err(|e| {
                     BilibiliError::Parse(format!("Invalid Location header: {e}"))
                 })?;
+                // Validate resolved URL against SSRF rules before returning
+                crate::grpc::validation::validate_host(resolved)
+                    .map_err(|e| BilibiliError::InvalidConfig(format!("Resolved URL blocked by SSRF check: {e}")))?;
                 return Ok(resolved.to_string());
             }
         }
@@ -400,14 +409,17 @@ impl BilibiliClient {
 
     /// Get video information by BVID
     pub async fn get_video_info(&self, bvid: &str) -> Result<VideoInfo, BilibiliError> {
-        let url = format!("https://api.bilibili.com/x/web-interface/view?bvid={bvid}");
-        let response = check_response(self.client.get(&url).send().await?)?;
+        let response = check_response(
+            self.client.get("https://api.bilibili.com/x/web-interface/view")
+                .query(&[("bvid", bvid)])
+                .send().await?
+        )?;
 
         let json: serde_json::Value = json_with_limit(response).await?;
 
         if json["code"].as_i64() != Some(0) {
             return Err(BilibiliError::Api {
-                    code: 0,
+                    code: json["code"].as_i64().unwrap_or(0) as u64,
                     message: json["message"].as_str().unwrap_or("Unknown error").to_string(),
                 });
         }
@@ -431,17 +443,18 @@ impl BilibiliClient {
         cid: u64,
         quality: Quality,
     ) -> Result<PlayUrlInfo, BilibiliError> {
-        let url = format!(
-            "https://api.bilibili.com/x/player/playurl?bvid={}&cid={}&qn={}",
-            bvid, cid, quality.to_qn()
-        );
-
-        let response = check_response(self.client.get(&url).send().await?)?;
+        let cid_str = cid.to_string();
+        let qn_str = quality.to_qn().to_string();
+        let response = check_response(
+            self.client.get("https://api.bilibili.com/x/player/playurl")
+                .query(&[("bvid", bvid), ("cid", &cid_str), ("qn", &qn_str)])
+                .send().await?
+        )?;
         let json: serde_json::Value = json_with_limit(response).await?;
 
         if json["code"].as_i64() != Some(0) {
             return Err(BilibiliError::Api {
-                    code: 0,
+                    code: json["code"].as_i64().unwrap_or(0) as u64,
                     message: json["message"].as_str().unwrap_or("Unknown error").to_string(),
                 });
         }
@@ -462,13 +475,16 @@ impl BilibiliClient {
 
     /// Get anime information by EPID
     pub async fn get_anime_info(&self, epid: &str) -> Result<AnimeInfo, BilibiliError> {
-        let url = format!("https://api.bilibili.com/pgc/view/web/season?ep_id={epid}");
-        let response = check_response(self.client.get(&url).send().await?)?;
+        let response = check_response(
+            self.client.get("https://api.bilibili.com/pgc/view/web/season")
+                .query(&[("ep_id", epid)])
+                .send().await?
+        )?;
         let json: serde_json::Value = json_with_limit(response).await?;
 
         if json["code"].as_i64() != Some(0) {
             return Err(BilibiliError::Api {
-                    code: 0,
+                    code: json["code"].as_i64().unwrap_or(0) as u64,
                     message: json["message"].as_str().unwrap_or("Unknown error").to_string(),
                 });
         }
@@ -489,18 +505,19 @@ impl BilibiliClient {
 
     /// Parse video page to get video information
     pub async fn parse_video_page(&self, aid: u64, bvid: &str) -> Result<VideoPageInfo, BilibiliError> {
-        let url = if bvid.is_empty() {
-            format!("https://api.bilibili.com/x/web-interface/view?aid={aid}")
+        let mut req = self.client.get("https://api.bilibili.com/x/web-interface/view");
+        if bvid.is_empty() {
+            req = req.query(&[("aid", &aid.to_string())]);
         } else {
-            format!("https://api.bilibili.com/x/web-interface/view?bvid={bvid}")
-        };
+            req = req.query(&[("bvid", &bvid.to_string())]);
+        }
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: types::VideoPageInfoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data;
@@ -529,18 +546,21 @@ impl BilibiliClient {
     /// Get video playback URL (normal video, not DASH)
     pub async fn get_video_url(&self, aid: u64, bvid: &str, cid: u64, quality: Option<u32>) -> Result<VideoUrlInfo, BilibiliError> {
         let qn = quality.unwrap_or(80); // Default to 1080P
-        let url = if bvid.is_empty() {
-            format!("https://api.bilibili.com/x/player/playurl?aid={aid}&cid={cid}&qn={qn}")
+        let cid_str = cid.to_string();
+        let qn_str = qn.to_string();
+        let mut req = self.client.get("https://api.bilibili.com/x/player/playurl");
+        if bvid.is_empty() {
+            req = req.query(&[("aid", &aid.to_string()), ("cid", &cid_str), ("qn", &qn_str)]);
         } else {
-            format!("https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&qn={qn}")
-        };
+            req = req.query(&[("bvid", &bvid.to_string()), ("cid", &cid_str), ("qn", &qn_str)]);
+        }
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: types::VideoUrlResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data;
@@ -561,18 +581,20 @@ impl BilibiliClient {
 
     /// Get DASH video URL - returns structured DASH data for upper layer to generate MPD
     pub async fn get_dash_video_url(&self, aid: u64, bvid: &str, cid: u64) -> Result<(DashData, DashData), BilibiliError> {
-        let url = if bvid.is_empty() {
-            format!("https://api.bilibili.com/x/player/wbi/playurl?aid={aid}&cid={cid}&fnval=4048")
+        let cid_str = cid.to_string();
+        let mut req = self.client.get("https://api.bilibili.com/x/player/wbi/playurl");
+        if bvid.is_empty() {
+            req = req.query(&[("aid", &aid.to_string()), ("cid", &cid_str), ("fnval", &"4048".to_string())]);
         } else {
-            format!("https://api.bilibili.com/x/player/wbi/playurl?bvid={bvid}&cid={cid}&fnval=4048")
-        };
+            req = req.query(&[("bvid", &bvid.to_string()), ("cid", &cid_str), ("fnval", &"4048".to_string())]);
+        }
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: types::DashVideoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         // Parse DASH data into structured format
@@ -584,18 +606,20 @@ impl BilibiliClient {
 
     /// Get subtitles for a video
     pub async fn get_subtitles(&self, aid: u64, bvid: &str, cid: u64) -> Result<HashMap<String, String>, BilibiliError> {
-        let url = if bvid.is_empty() {
-            format!("https://api.bilibili.com/x/player/v2?aid={aid}&cid={cid}")
+        let cid_str = cid.to_string();
+        let mut req = self.client.get("https://api.bilibili.com/x/player/v2");
+        if bvid.is_empty() {
+            req = req.query(&[("aid", &aid.to_string()), ("cid", &cid_str)]);
         } else {
-            format!("https://api.bilibili.com/x/player/v2?bvid={bvid}&cid={cid}")
-        };
+            req = req.query(&[("bvid", &bvid.to_string()), ("cid", &cid_str)]);
+        }
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: types::PlayerV2InfoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let mut subtitles = HashMap::new();
@@ -622,7 +646,7 @@ impl BilibiliClient {
         let json: types::NavResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data;
@@ -636,18 +660,19 @@ impl BilibiliClient {
 
     /// Parse PGC (anime/bangumi) page
     pub async fn parse_pgc_page(&self, epid: u64, ssid: u64) -> Result<VideoPageInfo, BilibiliError> {
-        let url = if epid != 0 {
-            format!("https://api.bilibili.com/pgc/view/web/season?ep_id={epid}")
+        let mut req = self.client.get("https://api.bilibili.com/pgc/view/web/season");
+        if epid != 0 {
+            req = req.query(&[("ep_id", epid)]);
         } else {
-            format!("https://api.bilibili.com/pgc/view/web/season?season_id={ssid}")
-        };
+            req = req.query(&[("season_id", ssid)]);
+        }
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: types::SeasonInfoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let result = json.result;
@@ -681,16 +706,15 @@ impl BilibiliClient {
     /// Get PGC playback URL
     pub async fn get_pgc_url(&self, epid: u64, cid: u64, quality: Option<u32>) -> Result<VideoUrlInfo, BilibiliError> {
         let qn = quality.unwrap_or(80);
-        let url = format!(
-            "https://api.bilibili.com/pgc/player/web/playurl?ep_id={epid}&cid={cid}&qn={qn}"
-        );
+        let req = self.client.get("https://api.bilibili.com/pgc/player/web/playurl")
+            .query(&[("ep_id", epid), ("cid", cid), ("qn", qn as u64)]);
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: types::PgcUrlResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let result = json.result;
@@ -711,16 +735,15 @@ impl BilibiliClient {
 
     /// Get DASH PGC URL - returns structured DASH data for upper layer to generate MPD
     pub async fn get_dash_pgc_url(&self, epid: u64, cid: u64) -> Result<(DashData, DashData), BilibiliError> {
-        let url = format!(
-            "https://api.bilibili.com/pgc/player/web/playurl?ep_id={epid}&cid={cid}&fnval=4048"
-        );
+        let req = self.client.get("https://api.bilibili.com/pgc/player/web/playurl")
+            .query(&[("ep_id", epid), ("cid", cid), ("fnval", 4048u64)]);
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: types::DashPgcResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         // Parse DASH data into structured format
@@ -765,14 +788,15 @@ impl BilibiliClient {
 
     /// Parse live page
     pub async fn parse_live_page(&self, room_id: u64) -> Result<VideoPageInfo, BilibiliError> {
-        let url = format!("https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}");
+        let req = self.client.get("https://api.live.bilibili.com/room/v1/Room/get_info")
+            .query(&[("room_id", room_id)]);
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: types::ParseLivePageResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data;
@@ -800,17 +824,24 @@ impl BilibiliClient {
     /// Get live streams
     pub async fn get_live_streams(&self, room_id: u64, _hls: bool) -> Result<Vec<LiveStream>, BilibiliError> {
         // Note: `hls` parameter is currently unused; the API always requests both protocols (0,1).
-        let url = format!(
-            "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id={room_id}&protocol=0,1&format=0,1,2&codec=0,1&qn=10000&platform=web&ptype=8"
-        );
+        let req = self.client.get("https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo")
+            .query(&[
+                ("room_id", &room_id.to_string() as &str),
+                ("protocol", "0,1"),
+                ("format", "0,1,2"),
+                ("codec", "0,1"),
+                ("qn", "10000"),
+                ("platform", "web"),
+                ("ptype", "8"),
+            ]);
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: serde_json::Value = json_with_limit(resp).await?;
 
         if json["code"].as_i64() != Some(0) {
             return Err(BilibiliError::Api {
-                    code: 0,
+                    code: json["code"].as_i64().unwrap_or(0) as u64,
                     message: json["message"].as_str().unwrap_or("Unknown error").to_string(),
                 });
         }
@@ -859,14 +890,15 @@ impl BilibiliClient {
 
     /// Get live danmaku server info
     pub async fn get_live_danmu_info(&self, room_id: u64) -> Result<LiveDanmuInfo, BilibiliError> {
-        let url = format!("https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id={room_id}");
+        let req = self.client.get("https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo")
+            .query(&[("id", room_id)]);
 
-        let req = self.add_cookies(self.client.get(&url).header("Referer", REFERER));
+        let req = self.add_cookies(req.header("Referer", REFERER));
         let resp = check_response(req.send().await?)?;
         let json: types::GetLiveDanmuInfoResp = json_with_limit(resp).await?;
 
         if json.code != 0 {
-            return Err(BilibiliError::Api { code: 0, message: json.message });
+            return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
         }
 
         let data = json.data;

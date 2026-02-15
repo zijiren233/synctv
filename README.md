@@ -28,44 +28,35 @@ A production-grade real-time synchronized video watching platform built in Rust.
 - Redis 7+
 - OpenSSL
 
-### 1. Generate JWT Keys
-
-```bash
-./scripts/generate-jwt-keys.sh
-```
-
-This creates `keys/jwt_private.pem` and `keys/jwt_public.pem`.
-
-### 2. Set Environment Variables
+### 1. Set Environment Variables
 
 ```bash
 # Database
-export SYNCTV__DATABASE__URL="postgresql://synctv:synctv@localhost:5432/synctv"
+export SYNCTV_DATABASE_URL="postgresql://synctv:synctv@localhost:5432/synctv"
 
 # Redis
-export SYNCTV__REDIS__URL="redis://localhost:6379"
+export SYNCTV_REDIS_URL="redis://localhost:6379"
 
-# JWT Keys
-export SYNCTV__JWT__PRIVATE_KEY_PATH="./keys/jwt_private.pem"
-export SYNCTV__JWT__PUBLIC_KEY_PATH="./keys/jwt_public.pem"
+# JWT Secret (min 32 chars)
+export SYNCTV_JWT_SECRET="your-secure-random-string-at-least-32-chars"
 
 # Server
-export SYNCTV__SERVER__GRPC_PORT=50051
-export SYNCTV__SERVER__HTTP_PORT=8080
+export SYNCTV_SERVER_GRPC_PORT=50051
+export SYNCTV_SERVER_HTTP_PORT=8080
 ```
 
 ### 3. Run Database Migrations
 
 ```bash
 cargo install sqlx-cli --no-default-features --features postgres
-sqlx migrate run --database-url $SYNCTV__DATABASE__URL
+sqlx migrate run --database-url $SYNCTV_DATABASE_URL
 ```
 
 ### 4. Start the Server
 
 ```bash
-# Set JWT secret (required for production)
-export SYNCTV__JWT__SECRET="your-secure-random-string-at-least-32-chars"
+# Set JWT secret (required for production, min 32 chars)
+export SYNCTV_JWT_SECRET="your-secure-random-string-at-least-32-chars"
 
 cargo run --bin synctv
 ```
@@ -125,7 +116,7 @@ grpcurl -plaintext -d '{
 ## Configuration
 
 Configuration can be provided via:
-1. Environment variables (highest priority): `SYNCTV__SECTION__KEY`
+1. Environment variables (highest priority): `SYNCTV_SECTION_KEY`
 2. Config file: `config.toml` or `config.yaml`
 3. Defaults (lowest priority)
 

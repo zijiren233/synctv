@@ -110,21 +110,20 @@ if [ ! -f "$PROJECT_ROOT/.env" ]; then
     echo "Creating .env file..."
     cat > "$PROJECT_ROOT/.env" <<EOF
 # Database
-DATABASE_URL=postgresql://synctv:synctv@localhost:5432/synctv
+SYNCTV_DATABASE_URL=postgresql://synctv:synctv@localhost:5432/synctv
 
 # Redis
-REDIS_URL=redis://localhost:6379
+SYNCTV_REDIS_URL=redis://localhost:6379
 
-# JWT
-SYNCTV__JWT__PRIVATE_KEY_PATH=$KEYS_DIR/jwt_private.pem
-SYNCTV__JWT__PUBLIC_KEY_PATH=$KEYS_DIR/jwt_public.pem
-SYNCTV__JWT__ACCESS_TOKEN_EXPIRES=3600
-SYNCTV__JWT__REFRESH_TOKEN_EXPIRES=2592000
+# JWT (min 32 chars for production)
+SYNCTV_JWT_SECRET=dev-secret-change-me-in-production-at-least-32-chars
+SYNCTV_JWT_ACCESS_TOKEN_DURATION_HOURS=1
+SYNCTV_JWT_REFRESH_TOKEN_DURATION_DAYS=30
 
-# API Server
-API_HOST=0.0.0.0
-API_PORT=8080
-GRPC_PORT=50051
+# Server
+SYNCTV_SERVER_HOST=0.0.0.0
+SYNCTV_SERVER_HTTP_PORT=8080
+SYNCTV_SERVER_GRPC_PORT=50051
 
 # Stream Server
 RTMP_ADDR=0.0.0.0:1935

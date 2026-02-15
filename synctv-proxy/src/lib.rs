@@ -43,6 +43,7 @@ static PROXY_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
+        .read_timeout(BODY_READ_TIMEOUT)
         .redirect(ssrf_safe_redirect_policy())
         .pool_max_idle_per_host(20)
         .pool_idle_timeout(Duration::from_secs(30))

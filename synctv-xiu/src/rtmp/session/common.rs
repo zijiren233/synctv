@@ -609,8 +609,8 @@ impl TStreamHandler for RtmpStreamHandler {
                 | SubscribeType::RtmpRemux2Hls => {
                     if let Some(gops_data) = cache.get_gops_data() {
                         for gop in gops_data {
-                            for channel_data in gop.get_frame_data() {
-                                try_send_prior(&sender, channel_data, "gop frame")?;
+                            for channel_data in gop.frame_data() {
+                                try_send_prior(&sender, channel_data.clone(), "gop frame")?;
                             }
                         }
                     }

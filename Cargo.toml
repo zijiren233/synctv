@@ -152,9 +152,23 @@ utoipa-swagger-ui = { version = "7.1", features = ["axum"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 
+# Networking
+ipnet = "2.10"
+
+# Initialization
+ctor = "0.2"
+
+# Data Structures
+growable-bloom-filter = "2.1"
+async_singleflight = "0.6"
+
+# HTTP Body
+http-body-util = "0.1"
+
 # Testing
 mockall = "0.13"
 wiremock = "0.6"
+tempfile = "3.8"
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports"] }

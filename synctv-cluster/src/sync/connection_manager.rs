@@ -552,25 +552,36 @@ impl ConnectionManager {
     /// Spawn a background task that periodically checks for idle/expired connections
     /// and sends disconnect signals for them.
     ///
-    /// The task runs every `interval` and continues until the returned `JoinHandle` is aborted.
-    #[must_use] 
-    pub fn spawn_cleanup_task(&self, interval: Duration) -> tokio::task::JoinHandle<()> {
+    /// The task runs every `interval` and stops gracefully when `cancel_token` is cancelled.
+    #[must_use]
+    pub fn spawn_cleanup_task(
+        &self,
+        interval: Duration,
+        cancel_token: tokio_util::sync::CancellationToken,
+    ) -> tokio::task::JoinHandle<()> {
         let manager = self.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
             // Skip the first immediate tick
             ticker.tick().await;
             loop {
-                ticker.tick().await;
-                let stale = manager.check_timeouts();
-                if !stale.is_empty() {
-                    info!(
-                        count = stale.len(),
-                        "Cleaning up stale connections"
-                    );
-                    for conn_id in &stale {
-                        manager.disconnect_connection(conn_id);
-                        manager.unregister(conn_id);
+                tokio::select! {
+                    () = cancel_token.cancelled() => {
+                        info!("Connection cleanup task shutting down");
+                        return;
+                    }
+                    _ = ticker.tick() => {
+                        let stale = manager.check_timeouts();
+                        if !stale.is_empty() {
+                            info!(
+                                count = stale.len(),
+                                "Cleaning up stale connections"
+                            );
+                            for conn_id in &stale {
+                                manager.disconnect_connection(conn_id);
+                                manager.unregister(conn_id);
+                            }
+                        }
                     }
                 }
             }

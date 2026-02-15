@@ -25,6 +25,7 @@ use {
     std::sync::atomic::{AtomicU64, Ordering},
     stream::StreamIdentifier,
     tokio::sync::{broadcast, mpsc, Mutex},
+    tokio::task::JoinSet,
     utils::Uuid,
 };
 
@@ -176,23 +177,35 @@ impl StreamDataTransceiver {
         }
     }
 
-    async fn receive_frame_data_loop(
+    fn receive_frame_data_loop(
         mut exit: broadcast::Receiver<()>,
         mut receiver: FrameDataReceiver,
         frame_senders: Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
-    ) {
+        event_sender: Option<mpsc::Sender<TransceiverEvent>>,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     data = receiver.recv() => {
-                       Self::receive_frame_data(data, &frame_senders).await;
+                        if data.is_none() {
+                            // H-3: Publisher dropped — send synthetic UnPublish
+                            // to trigger cleanup of the streams HashMap entry.
+                            tracing::warn!("Frame data receiver closed (publisher dropped)");
+                            if let Some(sender) = &event_sender {
+                                if let Err(e) = sender.try_send(TransceiverEvent::UnPublish {}) {
+                                    tracing::error!("Failed to send synthetic UnPublish: {e}");
+                                }
+                            }
+                            break;
+                        }
+                        Self::receive_frame_data(data, &frame_senders).await;
                     }
                     _ = exit.recv()=>{
                         break;
                     }
                 }
             }
-        });
+        })
     }
 
     /// Snapshot senders and drop counters (Arc<AtomicU64>) under lock, then fan out lock-free.
@@ -225,23 +238,34 @@ impl StreamDataTransceiver {
         }
     }
 
-    async fn receive_packet_data_loop(
+    fn receive_packet_data_loop(
         mut exit: broadcast::Receiver<()>,
         mut receiver: PacketDataReceiver,
         packet_senders: Arc<Mutex<HashMap<Uuid, PacketSubscriberDropCounter>>>,
-    ) {
+        event_sender: Option<mpsc::Sender<TransceiverEvent>>,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     data = receiver.recv() => {
-                       Self::receive_packet_data(data, &packet_senders).await;
+                        if data.is_none() {
+                            // H-3: Publisher dropped — send synthetic UnPublish
+                            tracing::warn!("Packet data receiver closed (publisher dropped)");
+                            if let Some(sender) = &event_sender {
+                                if let Err(e) = sender.try_send(TransceiverEvent::UnPublish {}) {
+                                    tracing::error!("Failed to send synthetic UnPublish: {e}");
+                                }
+                            }
+                            break;
+                        }
+                        Self::receive_packet_data(data, &packet_senders).await;
                     }
                     _ = exit.recv()=>{
                         break;
                     }
                 }
             }
-        });
+        })
     }
 
     async fn receive_statistics_data(
@@ -362,12 +386,12 @@ impl StreamDataTransceiver {
         }
     }
 
-    async fn receive_statistics_data_loop(
+    fn receive_statistics_data_loop(
         mut exit_receive: broadcast::Receiver<()>,
         exit_caclulate: broadcast::Receiver<()>,
         mut receiver: StatisticDataReceiver,
         statistics_data: Arc<Mutex<StatisticsStream>>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         let mut statistic_calculate =
             statistics::StatisticsCalculate::new(statistics_data.clone(), exit_caclulate);
         tokio::spawn(async move { statistic_calculate.start().await });
@@ -377,6 +401,9 @@ impl StreamDataTransceiver {
                 tokio::select! {
                     data = receiver.recv()  =>
                     {
+                        if data.is_none() {
+                            break;
+                        }
                         Self::receive_statistics_data(data, &statistics_data).await;
                     }
                     _ = exit_receive.recv()=>{
@@ -384,10 +411,10 @@ impl StreamDataTransceiver {
                     }
                 }
             }
-        });
+        })
     }
 
-    async fn receive_event_loop(
+    fn receive_event_loop(
         stream_handler: Arc<dyn TStreamHandler>,
         exit: broadcast::Sender<()>,
         mut receiver: TransceiverEventReceiver,
@@ -395,7 +422,7 @@ impl StreamDataTransceiver {
         frame_senders: Arc<Mutex<HashMap<Uuid, SubscriberDropCounter>>>,
         statistic_sender: StatisticDataSender,
         statistics_data: Arc<Mutex<StatisticsStream>>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 if let Some(val) = receiver.recv().await {
@@ -458,39 +485,42 @@ impl StreamDataTransceiver {
                     }
                 }
             }
-        });
+        })
     }
 
-    pub async fn run(self) -> Result<(), StreamHubError> {
+    pub async fn run(self, event_sender: mpsc::Sender<TransceiverEvent>) -> Result<(), StreamHubError> {
         let (tx, _) = broadcast::channel::<()>(1);
+        let mut tasks = JoinSet::new();
 
         if let Some(receiver) = self.data_receiver.frame_receiver {
-            Self::receive_frame_data_loop(
+            let handle = Self::receive_frame_data_loop(
                 tx.subscribe(),
                 receiver,
                 self.id_to_frame_sender.clone(),
-            )
-            .await;
+                Some(event_sender.clone()),
+            );
+            tasks.spawn(async move { handle.await.ok(); });
         }
 
         if let Some(receiver) = self.data_receiver.packet_receiver {
-            Self::receive_packet_data_loop(
+            let handle = Self::receive_packet_data_loop(
                 tx.subscribe(),
                 receiver,
                 self.id_to_packet_sender.clone(),
-            )
-            .await;
+                Some(event_sender.clone()),
+            );
+            tasks.spawn(async move { handle.await.ok(); });
         }
 
-        Self::receive_statistics_data_loop(
+        let stats_handle = Self::receive_statistics_data_loop(
             tx.subscribe(),
             tx.subscribe(),
             self.statistic_data_receiver,
             self.statistic_data.clone(),
-        )
-        .await;
+        );
+        tasks.spawn(async move { stats_handle.await.ok(); });
 
-        Self::receive_event_loop(
+        let event_handle = Self::receive_event_loop(
             self.stream_handler,
             tx,
             self.event_receiver,
@@ -498,8 +528,12 @@ impl StreamDataTransceiver {
             self.id_to_frame_sender,
             self.statistic_data_sender,
             self.statistic_data.clone(),
-        )
-        .await;
+        );
+        // Wait for the event loop to finish (triggered by UnPublish),
+        // then abort remaining tasks.
+        let _ = event_handle.await;
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
 
         Ok(())
     }
@@ -752,14 +786,18 @@ impl StreamsHub {
 
         let statistic_data_sender = transceiver.get_statistics_data_sender();
         let identifier_clone = identifier.clone();
+        let event_sender_clone = event_sender.clone();
 
-        if let Err(err) = transceiver.run().await {
-            tracing::error!(
-                "transceiver run error, idetifier: {identifier_clone}, error: {err}",
-            );
-        } else {
-            tracing::info!("transceiver run success, idetifier: {identifier_clone}");
-        }
+        // H-1: Run transceiver with event_sender so spawned loops can send synthetic UnPublish
+        tokio::spawn(async move {
+            if let Err(err) = transceiver.run(event_sender_clone).await {
+                tracing::error!(
+                    "transceiver run error, idetifier: {identifier_clone}, error: {err}",
+                );
+            } else {
+                tracing::info!("transceiver run success, idetifier: {identifier_clone}");
+            }
+        });
 
         self.streams.insert(identifier.clone(), event_sender);
 

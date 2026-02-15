@@ -107,6 +107,23 @@ impl UserOAuthProviderRepository {
 
         Ok(result.rows_affected() > 0)
     }
+
+    /// Delete all `OAuth2` provider mappings for a user and provider type (single query)
+    pub async fn delete_by_user_and_provider(
+        &self,
+        user_id: &UserId,
+        provider: &OAuth2Provider,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM oauth2_clients WHERE user_id = $1 AND provider = $2"
+        )
+        .bind(user_id.as_str())
+        .bind(provider.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 /// Row representation for SQL queries (`user_id` as String)

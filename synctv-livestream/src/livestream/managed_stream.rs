@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, warn, Instrument};
 
 /// Common lifecycle state shared by all managed streams.
@@ -187,10 +188,12 @@ pub struct StreamPool<S: ManagedStream> {
     pub idle_timeout: Duration,
     /// Maximum age of unused creation locks before cleanup (prevents memory leak)
     creation_lock_max_age: Duration,
+    /// Cancellation token for cleanup tasks — cancelled on shutdown.
+    cancel_token: CancellationToken,
 }
 
 impl<S: ManagedStream> StreamPool<S> {
-    #[must_use] 
+    #[must_use]
     pub fn new(cleanup_check_interval: Duration, idle_timeout: Duration) -> Self {
         Self {
             streams: Arc::new(DashMap::new()),
@@ -199,7 +202,13 @@ impl<S: ManagedStream> StreamPool<S> {
             idle_timeout,
             // Clean up creation locks that haven't been used for 10 minutes
             creation_lock_max_age: Duration::from_mins(10),
+            cancel_token: CancellationToken::new(),
         }
+    }
+
+    /// Cancel all cleanup tasks. Call during server shutdown.
+    pub fn cancel_all(&self) {
+        self.cancel_token.cancel();
     }
 
     /// Try to reuse an existing healthy stream (fast path, no lock).
@@ -251,26 +260,35 @@ impl<S: ManagedStream> StreamPool<S> {
     ///
     /// This should be called once during initialization to prevent memory leaks
     /// from failed stream creation attempts that leave orphaned lock entries.
-    #[must_use] 
+    /// The task respects the pool's CancellationToken and will stop on shutdown.
+    #[must_use]
     pub fn start_creation_lock_cleanup(&self) -> tokio::task::JoinHandle<()> {
         let creation_locks = Arc::clone(&self.creation_locks);
         let max_age = self.creation_lock_max_age;
         let check_interval = self.cleanup_check_interval;
+        let child_token = self.cancel_token.child_token();
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(check_interval);
             loop {
-                interval.tick().await;
-                let before = creation_locks.len();
-                creation_locks.retain(|_key, entry| {
-                    entry.age_seconds() < max_age.as_secs()
-                });
-                let after = creation_locks.len();
-                if before != after {
-                    debug!(
-                        "Cleaned up {} stale creation lock entries",
-                        before - after
-                    );
+                tokio::select! {
+                    _ = child_token.cancelled() => {
+                        debug!("Creation lock cleanup task cancelled (shutdown)");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        let before = creation_locks.len();
+                        creation_locks.retain(|_key, entry| {
+                            entry.age_seconds() < max_age.as_secs()
+                        });
+                        let after = creation_locks.len();
+                        if before != after {
+                            debug!(
+                                "Cleaned up {} stale creation lock entries",
+                                before - after
+                            );
+                        }
+                    }
                 }
             }
         })
@@ -280,6 +298,7 @@ impl<S: ManagedStream> StreamPool<S> {
     ///
     /// `on_idle_cleanup` is called during cleanup, before stopping the stream.
     /// Use it for extra teardown (e.g., Redis unregistration).
+    /// The cleanup task respects the pool's CancellationToken and will exit on shutdown.
     pub fn insert_and_cleanup<F>(
         &self,
         stream_key: String,
@@ -297,25 +316,31 @@ impl<S: ManagedStream> StreamPool<S> {
         let creation_locks = Arc::clone(&self.creation_locks);
         let check_interval = self.cleanup_check_interval;
         let idle_timeout = self.idle_timeout;
+        let child_token = self.cancel_token.child_token();
 
         let span = info_span!("stream_cleanup", stream_key = %stream_key);
         tokio::spawn(
             async move {
-                let result = Self::cleanup_loop(
-                    &stream_key,
-                    &stream,
-                    &streams,
-                    &creation_locks,
-                    check_interval,
-                    idle_timeout,
-                    &on_idle_cleanup,
-                )
-                .await;
-                if let Err(e) = result {
-                    error!("Cleanup task failed for {}: {}", stream_key, e);
-                    stream.lifecycle().abort_task().await;
-                    streams.remove(&stream_key);
-                    creation_locks.remove(&stream_key);
+                tokio::select! {
+                    _ = child_token.cancelled() => {
+                        debug!("Cleanup task cancelled for {} (shutdown)", stream_key);
+                    }
+                    result = Self::cleanup_loop(
+                        &stream_key,
+                        &stream,
+                        &streams,
+                        &creation_locks,
+                        check_interval,
+                        idle_timeout,
+                        &on_idle_cleanup,
+                    ) => {
+                        if let Err(e) = result {
+                            error!("Cleanup task failed for {}: {}", stream_key, e);
+                            stream.lifecycle().abort_task().await;
+                            streams.remove(&stream_key);
+                            creation_locks.remove(&stream_key);
+                        }
+                    }
                 }
             }
             .instrument(span),

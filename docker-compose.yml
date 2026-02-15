@@ -49,14 +49,14 @@ services:
     ports:
       - "8080:8080" # HTTP/REST API
       - "50051:50051" # gRPC
+      - "1935:1935" # RTMP (livestream)
     environment:
-      DATABASE_URL: postgresql://synctv:${POSTGRES_PASSWORD:-synctv}@postgres:5432/synctv
-      REDIS_URL: redis://redis:6379
-      SERVER_HOST: 0.0.0.0
-      SERVER_HTTP_PORT: 8080
-      SERVER_GRPC_PORT: 50051
-      JWT_PRIVATE_KEY_PATH: /app/keys/jwt_private.pem
-      JWT_PUBLIC_KEY_PATH: /app/keys/jwt_public.pem
+      SYNCTV_DATABASE_URL: postgresql://synctv:${POSTGRES_PASSWORD:-synctv}@postgres:5432/synctv
+      SYNCTV_REDIS_URL: redis://redis:6379
+      SYNCTV_SERVER_HOST: 0.0.0.0
+      SYNCTV_SERVER_HTTP_PORT: 8080
+      SYNCTV_SERVER_GRPC_PORT: 50051
+      SYNCTV_JWT_SECRET: ${SYNCTV_JWT_SECRET:?SYNCTV_JWT_SECRET must be set (min 32 chars)}
       RUST_LOG: ${RUST_LOG:-info}
       RUST_BACKTRACE: ${RUST_BACKTRACE:-0}
     depends_on:
@@ -64,9 +64,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      # Mount JWT keys from host (create with: openssl genrsa -out keys/jwt_private.pem 2048)
-      - ./keys:/app/keys:ro
     networks:
       - synctv
     restart: unless-stopped

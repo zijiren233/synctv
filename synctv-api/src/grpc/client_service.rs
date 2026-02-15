@@ -69,38 +69,23 @@ fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
 
 /// Map impls layer error strings to appropriate gRPC Status codes.
 ///
-/// The impls layer currently returns `Result<T, String>`. This function maps
-/// those strings to gRPC status codes using keyword matching. Once the impls
-/// layer migrates to `synctv_core::Error`, callers should use the typed
-/// `From<Error> for tonic::Status` conversion instead.
+/// Uses the shared `classify_error` function from the impls module for
+/// consistent error classification across HTTP and gRPC transports.
 ///
 /// Note: For internal errors, we log the details and return a generic message
 /// to avoid leaking sensitive implementation details to clients.
 fn impls_err_to_status(err: String) -> Status {
-    let lower = err.to_lowercase();
-    if lower.contains("not found") {
-        Status::not_found(err)
-    } else if lower.contains("unauthenticated") || lower.contains("invalid token")
-        || lower.contains("token expired") || lower.contains("not authenticated")
-    {
-        Status::unauthenticated(err)
-    } else if lower.contains("permission") || lower.contains("forbidden")
-        || lower.contains("not allowed") || lower.contains("banned")
-    {
-        Status::permission_denied(err)
-    } else if lower.contains("already exists") || lower.contains("already taken")
-        || lower.contains("already registered")
-    {
-        Status::already_exists(err)
-    } else if lower.contains("invalid") || lower.contains("too short") || lower.contains("too long")
-        || lower.contains("cannot be empty") || lower.contains("too many")
-        || lower.contains("required") || lower.contains("must be")
-    {
-        Status::invalid_argument(err)
-    } else {
-        // Log internal error details but return generic message to client
-        tracing::error!("Internal error: {err}");
-        Status::internal("Internal error")
+    use crate::impls::{classify_error, ErrorKind};
+    match classify_error(&err) {
+        ErrorKind::NotFound => Status::not_found(err),
+        ErrorKind::Unauthenticated => Status::unauthenticated(err),
+        ErrorKind::PermissionDenied => Status::permission_denied(err),
+        ErrorKind::AlreadyExists => Status::already_exists(err),
+        ErrorKind::InvalidArgument => Status::invalid_argument(err),
+        ErrorKind::Internal => {
+            tracing::error!("Internal error: {err}");
+            Status::internal("Internal error")
+        }
     }
 }
 
@@ -276,7 +261,7 @@ impl UserService for ClientServiceImpl {
         &self,
         request: Request<LogoutRequest>,
     ) -> Result<Response<LogoutResponse>, Status> {
-        // Extract token from Authorization header in metadata (transport-specific)
+        // Extract Bearer token from metadata (transport-specific)
         let token = request
             .metadata()
             .get("authorization")
@@ -288,14 +273,10 @@ impl UserService for ClientServiceImpl {
                     None
                 }
             })
-            .ok_or_else(|| Status::unauthenticated("Missing or invalid authorization header"))?;
+            .unwrap_or("");
 
-        self.user_service
-            .logout(token)
-            .await
-            .map_err(|e| internal_err("Failed to logout", e))?;
-
-        Ok(Response::new(LogoutResponse { success: true }))
+        let response = self.client_api.logout(token).await;
+        Ok(Response::new(response))
     }
 
     async fn get_profile(

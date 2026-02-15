@@ -111,13 +111,42 @@ impl ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     pub url: String,
     pub max_connections: u32,
     pub min_connections: u32,
     pub connect_timeout_seconds: u64,
     pub idle_timeout_seconds: u64,
+}
+
+impl std::fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Mask password in database URL if present
+        let masked_url = if let Some(at_pos) = self.url.find('@') {
+            if let Some(colon_pos) = self.url[..at_pos].rfind(':') {
+                let scheme_end = self.url.find("://").map(|p| p + 3).unwrap_or(0);
+                if colon_pos > scheme_end {
+                    // Has password - mask it
+                    format!("{}:****@{}", &self.url[..colon_pos], &self.url[at_pos + 1..])
+                } else {
+                    self.url.clone()
+                }
+            } else {
+                self.url.clone()
+            }
+        } else {
+            self.url.clone()
+        };
+
+        f.debug_struct("DatabaseConfig")
+            .field("url", &masked_url)
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("connect_timeout_seconds", &self.connect_timeout_seconds)
+            .field("idle_timeout_seconds", &self.idle_timeout_seconds)
+            .finish()
+    }
 }
 
 impl Default for DatabaseConfig {
@@ -132,12 +161,44 @@ impl Default for DatabaseConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
     pub url: String,
     pub pool_size: u32,
     pub connect_timeout_seconds: u64,
     pub key_prefix: String,
+}
+
+impl std::fmt::Debug for RedisConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Mask password in Redis URL if present (redis://:password@host or redis://user:password@host)
+        let masked_url = if self.url.contains('@') {
+            if let Some(at_pos) = self.url.find('@') {
+                if let Some(colon_pos) = self.url[..at_pos].rfind(':') {
+                    let scheme_end = self.url.find("://").map(|p| p + 3).unwrap_or(0);
+                    if colon_pos >= scheme_end && colon_pos < at_pos {
+                        // Has password - mask it
+                        format!("{}:****@{}", &self.url[..colon_pos], &self.url[at_pos + 1..])
+                    } else {
+                        self.url.clone()
+                    }
+                } else {
+                    self.url.clone()
+                }
+            } else {
+                self.url.clone()
+            }
+        } else {
+            self.url.clone()
+        };
+
+        f.debug_struct("RedisConfig")
+            .field("url", &masked_url)
+            .field("pool_size", &self.pool_size)
+            .field("connect_timeout_seconds", &self.connect_timeout_seconds)
+            .field("key_prefix", &self.key_prefix)
+            .finish()
+    }
 }
 
 impl Default for RedisConfig {
@@ -151,13 +212,25 @@ impl Default for RedisConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct JwtConfig {
     pub secret: String,
     pub access_token_duration_hours: u64,
     pub refresh_token_duration_days: u64,
     pub guest_token_duration_hours: u64,
     pub clock_skew_leeway_secs: u64,
+}
+
+impl std::fmt::Debug for JwtConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JwtConfig")
+            .field("secret", &"<redacted>")
+            .field("access_token_duration_hours", &self.access_token_duration_hours)
+            .field("refresh_token_duration_days", &self.refresh_token_duration_days)
+            .field("guest_token_duration_hours", &self.guest_token_duration_hours)
+            .field("clock_skew_leeway_secs", &self.clock_skew_leeway_secs)
+            .finish()
+    }
 }
 
 impl Default for JwtConfig {
@@ -429,7 +502,7 @@ impl Config {
             }
         }
 
-        // Override with environment variables (SYNCTV_SERVER_HOST, etc.)
+        // Override with environment variables (SYNCTV_JWT_SECRET, SYNCTV_DATABASE_URL, etc.)
         builder = builder.add_source(
             Environment::with_prefix("SYNCTV")
                 .separator("_")
@@ -513,7 +586,7 @@ impl Config {
                 // Allow default secret in dev mode (just log a warning at startup)
                 tracing::warn!("Using default JWT secret in development mode - do NOT use in production");
             } else {
-                errors.push("JWT secret is set to default value 'change-me-in-production'. Set SYNCTV__JWT__SECRET environment variable or server.development_mode=true for local development".to_string());
+                errors.push("JWT secret is set to default value 'change-me-in-production'. Set SYNCTV_JWT_SECRET environment variable or server.development_mode=true for local development".to_string());
             }
         }
 
@@ -521,7 +594,7 @@ impl Config {
         if !self.server.development_mode
             && self.bootstrap.create_root_user {
                 if self.bootstrap.root_password == "root" {
-                    errors.push("Root password is set to default value 'root'. Set SYNCTV__BOOTSTRAP__ROOT_PASSWORD environment variable or server.development_mode=true for local development".to_string());
+                    errors.push("Root password is set to default value 'root'. Set SYNCTV_BOOTSTRAP_ROOT_PASSWORD environment variable or server.development_mode=true for local development".to_string());
                 }
                 if self.bootstrap.root_username.len() < 3 {
                     errors.push("Root username must be at least 3 characters".to_string());

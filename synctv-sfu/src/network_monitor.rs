@@ -169,8 +169,8 @@ impl NetworkQualityMonitor {
         let avg_rtt = if entry.rtt_samples.is_empty() {
             0
         } else {
-            let sum: u32 = entry.rtt_samples.iter().map(|(_, v)| v).sum();
-            sum / entry.rtt_samples.len() as u32
+            let sum: u64 = entry.rtt_samples.iter().map(|(_, v)| u64::from(*v)).sum();
+            (sum / entry.rtt_samples.len() as u64) as u32
         };
 
         let avg_loss = if entry.loss_samples.is_empty() {

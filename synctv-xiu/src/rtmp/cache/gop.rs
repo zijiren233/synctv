@@ -4,6 +4,10 @@ use {std::collections::VecDeque, std::sync::Arc, crate::streamhub::define::Frame
 /// 1500 frames ≈ 1 minute at 24fps, generous for any reasonable GOP.
 const MAX_FRAMES_PER_GOP: usize = 1500;
 
+/// Max memory per GOP (100 MB) to prevent OOM.
+/// Each frame can vary widely in size (keyframes are larger).
+const MAX_MEMORY_PER_GOP: usize = 100 * 1024 * 1024;
+
 /// A single Group of Pictures.
 ///
 /// Internally stores frames in `Arc<Vec<FrameData>>` so that cloning a `Gop`
@@ -21,6 +25,8 @@ pub struct Gop {
     /// Frames being accumulated for the current (active) GOP.
     /// Empty once frozen.
     pending: Vec<FrameData>,
+    /// Estimated memory usage in bytes.
+    memory_bytes: usize,
 }
 
 impl Default for Gop {
@@ -35,6 +41,17 @@ impl Gop {
         Self {
             frozen: Arc::new(Vec::new()),
             pending: Vec::new(),
+            memory_bytes: 0,
+        }
+    }
+
+    /// Estimate the memory size of a FrameData in bytes.
+    fn frame_memory_size(data: &FrameData) -> usize {
+        match data {
+            FrameData::Video { data, .. } => data.len(),
+            FrameData::Audio { data, .. } => data.len(),
+            FrameData::MetaData { data, .. } => data.len(),
+            FrameData::MediaInfo { .. } => std::mem::size_of::<crate::streamhub::define::MediaInfo>(),
         }
     }
 
@@ -48,6 +65,20 @@ impl Gop {
             }
             return;
         }
+
+        // Check memory limit
+        let frame_size = Self::frame_memory_size(&data);
+        if self.memory_bytes + frame_size > MAX_MEMORY_PER_GOP {
+            tracing::warn!(
+                current_memory_mb = (self.memory_bytes / 1024 / 1024),
+                frame_size_kb = (frame_size / 1024),
+                max_memory_mb = (MAX_MEMORY_PER_GOP / 1024 / 1024),
+                "GOP reached memory limit, dropping frame"
+            );
+            return;
+        }
+
+        self.memory_bytes += frame_size;
         self.pending.push(data);
     }
 
@@ -58,10 +89,23 @@ impl Gop {
             all_frames.extend_from_slice(&self.frozen);
             all_frames.append(&mut self.pending);
             self.frozen = Arc::new(all_frames);
+            // Note: memory_bytes is not reset since frozen frames still consume memory
         }
     }
 
-    /// Get all frame data (frozen + pending).
+    /// Get estimated memory usage in bytes.
+    #[must_use]
+    pub const fn memory_bytes(&self) -> usize {
+        self.memory_bytes
+    }
+
+    /// Get all frame data as a slice (frozen frames only; call `freeze()` first).
+    #[must_use]
+    pub fn frame_data(&self) -> &[FrameData] {
+        &self.frozen
+    }
+
+    /// Get all frame data (frozen + pending), consuming self.
     #[must_use]
     pub fn get_frame_data(mut self) -> Vec<FrameData> {
         self.freeze();
@@ -129,13 +173,14 @@ impl Gops {
         self.size != 0
     }
 
-    /// Get all GOPs. Freezes any pending frames first for zero-copy clone.
+    /// Get all GOPs as a reference. Freezes any pending frames first so
+    /// callers can use `frame_data()` on each Gop without cloning.
     #[must_use]
-    pub fn get_gops(&mut self) -> VecDeque<Gop> {
-        // Freeze the active GOP so clone is cheap
+    pub fn get_gops(&mut self) -> &VecDeque<Gop> {
+        // Freeze the active GOP so frame_data() returns all frames
         if let Some(back) = self.gops.back_mut() {
             back.freeze();
         }
-        self.gops.clone()
+        &self.gops
     }
 }

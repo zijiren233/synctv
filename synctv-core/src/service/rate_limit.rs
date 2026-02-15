@@ -15,6 +15,19 @@ pub enum RateLimitError {
     RedisError(#[from] redis::RedisError),
 }
 
+impl From<RateLimitError> for crate::Error {
+    fn from(err: RateLimitError) -> Self {
+        match err {
+            RateLimitError::RateLimitExceeded { retry_after_seconds } => {
+                Self::InvalidInput(format!("Rate limit exceeded. Try again in {retry_after_seconds}s"))
+            }
+            RateLimitError::RedisError(e) => {
+                Self::Internal(format!("Rate limiter Redis error: {e}"))
+            }
+        }
+    }
+}
+
 /// In-memory sliding window rate limiter (per-instance fallback when Redis is unavailable)
 ///
 /// Uses a `DashMap` of `VecDeque<u64>` (timestamps) per key.

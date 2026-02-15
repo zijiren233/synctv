@@ -372,7 +372,6 @@ impl ClusterManager {
         if is_critical {
             if let Some(tx) = &self.redis_critical_tx {
                 match tx.try_send(PublishRequest {
-                    room_id: event.room_id().cloned(),
                     event,
                 }) {
                     Ok(()) => {
@@ -400,13 +399,11 @@ impl ClusterManager {
             } else if let Some(tx) = &self.redis_publish_tx {
                 // Fallback to normal channel if critical channel not available
                 let _ = tx.try_send(PublishRequest {
-                    room_id: event.room_id().cloned(),
                     event,
                 });
             }
         } else if let Some(tx) = &self.redis_publish_tx {
             match tx.try_send(PublishRequest {
-                room_id: event.room_id().cloned(),
                 event,
             }) {
                 Ok(()) => {

@@ -4,10 +4,10 @@
 #
 # Configuration priority: defaults < config file < environment variables
 #
-# Environment variables use double underscore separator:
-#   SYNCTV__SERVER__HOST=0.0.0.0
-#   SYNCTV__DATABASE__URL=postgresql://...
-#   SYNCTV__OAUTH2__GITHUB__CLIENT_ID=xxx
+# Environment variables use SYNCTV_ prefix with underscore separator:
+#   SYNCTV_SERVER_HOST=0.0.0.0
+#   SYNCTV_DATABASE_URL=postgresql://...
+#   SYNCTV_OAUTH2_GITHUB_CLIENT_ID=xxx
 
 [server]
 host = "0.0.0.0"
@@ -29,8 +29,7 @@ connect_timeout_seconds = 5
 key_prefix = "synctv:"
 
 [jwt]
-private_key_path = "./keys/jwt_private.pem"
-public_key_path = "./keys/jwt_public.pem"
+secret = ""  # Set via SYNCTV_JWT_SECRET env var (min 32 chars)
 access_token_duration_hours = 1
 refresh_token_duration_days = 30
 

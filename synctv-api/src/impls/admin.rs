@@ -61,7 +61,6 @@ impl AdminApiImpl {
         // 2. Cluster-wide via Redis
         if let Some(tx) = &self.redis_publish_tx {
             let _ = tx.try_send(PublishRequest {
-                room_id: Some(RoomId::from_string(room_id.to_string())),
                 event: ClusterEvent::KickPublisher {
                     event_id: nanoid::nanoid!(16),
                     room_id: RoomId::from_string(room_id.to_string()),
@@ -736,7 +735,6 @@ impl AdminApiImpl {
         // 2. Cluster-wide broadcast so other replicas kick their local streams for this user
         if let Some(tx) = &self.redis_publish_tx {
             let _ = tx.try_send(PublishRequest {
-                room_id: None,
                 event: ClusterEvent::KickUser {
                     event_id: nanoid::nanoid!(16),
                     user_id: uid.clone(),

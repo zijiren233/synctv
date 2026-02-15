@@ -25,6 +25,7 @@ redis.workspace = true
 
 # Caching
 dashmap.workspace = true
+moka.workspace = true
 
 # Serialization
 serde.workspace = true

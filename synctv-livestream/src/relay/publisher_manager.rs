@@ -203,9 +203,14 @@ impl PublisherManager {
         loop {
             heartbeat_interval.tick().await;
 
-            for entry in self.active_publishers.iter() {
-                let publisher_key = entry.value();
+            // M-8: Snapshot keys first to avoid holding DashMap read guard during async Redis ops.
+            let snapshot: Vec<String> = self
+                .active_publishers
+                .iter()
+                .map(|entry| entry.value().clone())
+                .collect();
 
+            for publisher_key in &snapshot {
                 // Parse room_id and media_id from the composite key
                 if let Some((room_id, media_id)) = publisher_key.split_once(':') {
                     // Try heartbeat with retries
@@ -235,8 +240,6 @@ impl PublisherManager {
                         }
                     }
 
-                    // Log success at trace level (tracing::trace handles level check internally)
-                    #[allow(clippy::if_same_then_else)]
                     if success {
                         trace!("Heartbeat refreshed for room {} / media {}", room_id, media_id);
                     }

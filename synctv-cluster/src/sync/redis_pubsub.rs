@@ -38,6 +38,9 @@ use synctv_core::service::PermissionService;
 /// Channel naming: `room:{room_id`} for room-specific events
 pub struct RedisPubSub {
     redis_client: RedisClient,
+    /// Shared multiplexed connection for non-Pub/Sub operations (stream reads).
+    /// Avoids creating a fresh connection for every get_latest_stream_id / read_missed_events call.
+    shared_conn: tokio::sync::Mutex<Option<redis::aio::MultiplexedConnection>>,
     message_hub: Arc<RoomMessageHub>,
     node_id: String,
     admin_event_tx: broadcast::Sender<ClusterEvent>,
@@ -60,6 +63,7 @@ impl RedisPubSub {
 
         Ok(Self {
             redis_client,
+            shared_conn: tokio::sync::Mutex::new(None),
             message_hub,
             node_id,
             admin_event_tx,
@@ -167,7 +171,20 @@ impl RedisPubSub {
                 loop {
                     let req = tokio::select! {
                         () = cancel_publisher.cancelled() => {
-                            info!("Redis publisher task cancelled");
+                            // Drain remaining events before exiting to avoid losing critical events
+                            info!("Redis publisher task cancelled, draining remaining events");
+                            while let Ok(req) = publish_rx.try_recv() {
+                                let event_type = req.event.event_type();
+                                match Self::publish_event(&mut conn, &node_id, req.event.clone()).await {
+                                    Ok(_) => {
+                                        debug!(event_type = event_type, "Drained event published");
+                                    }
+                                    Err(e) => {
+                                        warn!(error = %e, event_type = event_type, "Failed to publish drained event");
+                                        break; // Connection likely broken, stop draining
+                                    }
+                                }
+                            }
                             return;
                         }
                         req = publish_rx.recv() => req,
@@ -574,16 +591,27 @@ impl RedisPubSub {
         Ok(subscribers)
     }
 
+    /// Get or create a shared multiplexed connection for non-Pub/Sub operations.
+    async fn get_shared_conn(&self) -> Result<redis::aio::MultiplexedConnection> {
+        let mut guard = self.shared_conn.lock().await;
+        if let Some(ref conn) = *guard {
+            return Ok(conn.clone());
+        }
+        let conn = self.redis_client
+            .get_multiplexed_async_connection()
+            .await
+            .context("Failed to get Redis shared connection")?;
+        *guard = Some(conn.clone());
+        Ok(conn)
+    }
+
     /// Get the ID of the latest entry in the Redis Stream, or `None` if the
     /// stream is empty / does not exist. Used on first connection to snapshot
     /// the cursor so subsequent reconnections can catch up.
     async fn get_latest_stream_id(&self) -> Result<Option<String>> {
         use redis::streams::StreamRangeReply;
 
-        let mut conn = self.redis_client
-            .get_multiplexed_async_connection()
-            .await
-            .context("Failed to get Redis connection for stream info")?;
+        let mut conn = self.get_shared_conn().await?;
 
         // XREVRANGE key + - COUNT 1  →  returns the single newest entry
         let reply: StreamRangeReply = timeout(
@@ -614,10 +642,7 @@ impl RedisPubSub {
         &self,
         last_id: &str,
     ) -> Result<Vec<(String, String, ClusterEvent)>> {
-        let mut conn = self.redis_client
-            .get_multiplexed_async_connection()
-            .await
-            .context("Failed to get Redis connection for catch-up")?;
+        let mut conn = self.get_shared_conn().await?;
 
         let mut events = Vec::new();
         let mut cursor = last_id.to_string();
@@ -697,9 +722,8 @@ enum SubscriberExit {
 }
 
 /// Request to publish an event.
-/// `room_id` is used for room-scoped events; admin events (e.g., `KickUser`) set it to `None`.
+/// The channel is derived from `event.room_id()` in `publish_event`.
 pub struct PublishRequest {
-    pub room_id: Option<RoomId>,
     pub event: ClusterEvent,
 }
 
@@ -791,7 +815,6 @@ mod tests {
 
         publish_tx1
             .send(PublishRequest {
-                room_id: Some(room_id.clone()),
                 event,
             })
             .await

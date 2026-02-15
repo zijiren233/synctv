@@ -33,30 +33,23 @@ use crate::impls::AdminApiImpl;
 
 /// Convert a String error from `AdminApiImpl` into a gRPC Status.
 ///
-/// Uses the same keyword-based mapping as `impls_err_to_status` in
-/// `client_service.rs`. Once the impls layer migrates to typed errors,
-/// this should use `From<synctv_core::Error> for tonic::Status` instead.
+/// Uses the shared `classify_error` function from the impls module for
+/// consistent error classification across HTTP and gRPC transports.
 ///
 /// Note: For internal errors, we log the details and return a generic message
 /// to avoid leaking sensitive implementation details to clients.
 fn api_err(err: String) -> Status {
-    let lower = err.to_lowercase();
-    if lower.contains("not found") {
-        Status::not_found(err)
-    } else if lower.contains("permission") || lower.contains("forbidden")
-        || lower.contains("not allowed")
-    {
-        Status::permission_denied(err)
-    } else if lower.contains("already exists") || lower.contains("already taken") {
-        Status::already_exists(err)
-    } else if lower.contains("invalid") || lower.contains("too short") || lower.contains("too long")
-        || lower.contains("cannot be empty") || lower.contains("must be")
-    {
-        Status::invalid_argument(err)
-    } else {
-        // Log internal error details but return generic message to client
-        tracing::error!("Admin API internal error: {err}");
-        Status::internal("Internal error")
+    use crate::impls::{classify_error, ErrorKind};
+    match classify_error(&err) {
+        ErrorKind::NotFound => Status::not_found(err),
+        ErrorKind::Unauthenticated => Status::unauthenticated(err),
+        ErrorKind::PermissionDenied => Status::permission_denied(err),
+        ErrorKind::AlreadyExists => Status::already_exists(err),
+        ErrorKind::InvalidArgument => Status::invalid_argument(err),
+        ErrorKind::Internal => {
+            tracing::error!("Admin API internal error: {err}");
+            Status::internal("Internal error")
+        }
     }
 }
 

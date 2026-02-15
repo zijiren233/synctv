@@ -460,15 +460,7 @@ impl OAuth2Service {
         user_id: &UserId,
         provider: &OAuth2Provider,
     ) -> Result<bool> {
-        let mappings = self.repository.find_by_user(user_id).await?;
-        let mut deleted = false;
-        for mapping in mappings {
-            if mapping.provider_enum().as_ref() == Some(provider)
-                && self.repository.delete(user_id, provider, &mapping.provider_user_id).await? {
-                    deleted = true;
-                }
-        }
-        Ok(deleted)
+        self.repository.delete_by_user_and_provider(user_id, provider).await
     }
 
     /// Clean up expired `OAuth2` states (maintenance task)

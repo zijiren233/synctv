@@ -7,7 +7,7 @@
 //!
 //! Usage:
 //! 1. Save this configuration as config/oauth2.toml
-//! 2. Or set environment variables (SYNCTV__OAUTH2__PROVIDERS__<INSTANCE_ID>__*)
+//! 2. Or set environment variables (SYNCTV_OAUTH2_PROVIDERS__<INSTANCE_ID>__*)
 
 // ============================================================
 // Method 1: TOML Configuration File Example (config/oauth2.toml)
@@ -73,45 +73,45 @@ client_secret = "custom_client_secret"
 // ============================================================
 
 /*
-# General format: SYNCTV__OAUTH2__<INSTANCE_ID>__<FIELD>
+# General format: SYNCTV_OAUTH2_<INSTANCE_ID>__<FIELD>
 
 # GitHub configuration
-SYNCTV__OAUTH2__GITHUB__TYPE=github
-SYNCTV__OAUTH2__GITHUB__CLIENT_ID=xxx
-SYNCTV__OAUTH2__GITHUB__CLIENT_SECRET=yyy
+SYNCTV_OAUTH2_GITHUB__TYPE=github
+SYNCTV_OAUTH2_GITHUB__CLIENT_ID=xxx
+SYNCTV_OAUTH2_GITHUB__CLIENT_SECRET=yyy
 
 # Logto instance 1
-SYNCTV__OAUTH2__LOGTO1__TYPE=oidc
-SYNCTV__OAUTH2__LOGTO1__ISSUER=https://logto1.your-domain.com
-SYNCTV__OAUTH2__LOGTO1__CLIENT_ID=xxx
-SYNCTV__OAUTH2__LOGTO1__CLIENT_SECRET=yyy
+SYNCTV_OAUTH2_LOGTO1__TYPE=oidc
+SYNCTV_OAUTH2_LOGTO1__ISSUER=https://logto1.your-domain.com
+SYNCTV_OAUTH2_LOGTO1__CLIENT_ID=xxx
+SYNCTV_OAUTH2_LOGTO1__CLIENT_SECRET=yyy
 
 # Logto instance 2
-SYNCTV__OAUTH2__LOGTO2__TYPE=oidc
-SYNCTV__OAUTH2__LOGTO2__ISSUER=https://logto2.your-domain.com
-SYNCTV__OAUTH2__LOGTO2__CLIENT_ID=aaa
-SYNCTV__OAUTH2__LOGTO2__CLIENT_SECRET=bbb
+SYNCTV_OAUTH2_LOGTO2__TYPE=oidc
+SYNCTV_OAUTH2_LOGTO2__ISSUER=https://logto2.your-domain.com
+SYNCTV_OAUTH2_LOGTO2__CLIENT_ID=aaa
+SYNCTV_OAUTH2_LOGTO2__CLIENT_SECRET=bbb
 
 # Casdoor configuration
-SYNCTV__OAUTH2__CASDOOR__TYPE=casdoor
-SYNCTV__OAUTH2__CASDOOR__ENDPOINT=https://casdoor.your-domain.com
-SYNCTV__OAUTH2__CASDOOR__CLIENT_ID=xxx
-SYNCTV__OAUTH2__CASDOOR__CLIENT_SECRET=yyy
+SYNCTV_OAUTH2_CASDOOR__TYPE=casdoor
+SYNCTV_OAUTH2_CASDOOR__ENDPOINT=https://casdoor.your-domain.com
+SYNCTV_OAUTH2_CASDOOR__CLIENT_ID=xxx
+SYNCTV_OAUTH2_CASDOOR__CLIENT_SECRET=yyy
 
 # QQ configuration
-SYNCTV__OAUTH2__QQ__TYPE=qq
-SYNCTV__OAUTH2__QQ__CLIENT_ID=xxx
-SYNCTV__OAUTH2__QQ__CLIENT_SECRET=yyy
-SYNCTV__OAUTH2__QQ__APP_ID=your_qq_app_id
+SYNCTV_OAUTH2_QQ__TYPE=qq
+SYNCTV_OAUTH2_QQ__CLIENT_ID=xxx
+SYNCTV_OAUTH2_QQ__CLIENT_SECRET=yyy
+SYNCTV_OAUTH2_QQ__APP_ID=your_qq_app_id
 
 # Custom OIDC configuration (without .well-known support)
-SYNCTV__OAUTH2__CUSTOM__TYPE=oidc
-SYNCTV__OAUTH2__CUSTOM__ISSUER=https://custom.oidc.provider.com
-SYNCTV__OAUTH2__CUSTOM__AUTH_URL=https://custom.oidc.provider.com/authorize
-SYNCTV__OAUTH2__CUSTOM__TOKEN_URL=https://custom.oidc.provider.com/token
-SYNCTV__OAUTH2__CUSTOM__USERINFO_URL=https://custom.oidc.provider.com/userinfo
-SYNCTV__OAUTH2__CUSTOM__CLIENT_ID=xxx
-SYNCTV__OAUTH2__CUSTOM__CLIENT_SECRET=yyy
+SYNCTV_OAUTH2_CUSTOM__TYPE=oidc
+SYNCTV_OAUTH2_CUSTOM__ISSUER=https://custom.oidc.provider.com
+SYNCTV_OAUTH2_CUSTOM__AUTH_URL=https://custom.oidc.provider.com/authorize
+SYNCTV_OAUTH2_CUSTOM__TOKEN_URL=https://custom.oidc.provider.com/token
+SYNCTV_OAUTH2_CUSTOM__USERINFO_URL=https://custom.oidc.provider.com/userinfo
+SYNCTV_OAUTH2_CUSTOM__CLIENT_ID=xxx
+SYNCTV_OAUTH2_CUSTOM__CLIENT_SECRET=yyy
 */
 
 // ============================================================
@@ -152,9 +152,9 @@ Default scopes:
 
 /*
 Old configuration (not recommended):
-  SYNCTV__OAUTH2__GITHUB__ENABLED=true
-  SYNCTV__OAUTH2__GITHUB__CLIENT_ID=xxx
-  SYNCTV__OAUTH2__GITHUB__CLIENT_SECRET=yyy
+  SYNCTV_OAUTH2_GITHUB__ENABLED=true
+  SYNCTV_OAUTH2_GITHUB__CLIENT_ID=xxx
+  SYNCTV_OAUTH2_GITHUB__CLIENT_SECRET=yyy
 
 New configuration (recommended):
   [oauth2.github]
@@ -163,9 +163,9 @@ New configuration (recommended):
   client_secret = "yyy"
 
 Or using environment variables:
-  SYNCTV__OAUTH2__GITHUB__TYPE=github
-  SYNCTV__OAUTH2__GITHUB__CLIENT_ID=xxx
-  SYNCTV__OAUTH2__GITHUB__CLIENT_SECRET=yyy
+  SYNCTV_OAUTH2_GITHUB__TYPE=github
+  SYNCTV_OAUTH2_GITHUB__CLIENT_ID=xxx
+  SYNCTV_OAUTH2_GITHUB__CLIENT_SECRET=yyy
 */
 
 fn main() {

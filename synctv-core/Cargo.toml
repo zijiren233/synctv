@@ -41,8 +41,8 @@ serde_json.workspace = true
 # Caching
 moka.workspace = true
 dashmap.workspace = true
-growable-bloom-filter = "2.1"
-async_singleflight = "0.6"
+growable-bloom-filter.workspace = true
+async_singleflight.workspace = true
 
 # IDs & Crypto
 nanoid.workspace = true
@@ -57,11 +57,11 @@ anyhow.workspace = true
 thiserror.workspace = true
 bytes.workspace = true
 parking_lot.workspace = true
-ctor = "0.2"
+ctor.workspace = true
 paste = "1.0"
 url.workspace = true
 regex.workspace = true
-ipnet = "2.10"
+ipnet.workspace = true
 
 # HTTP Client
 reqwest.workspace = true

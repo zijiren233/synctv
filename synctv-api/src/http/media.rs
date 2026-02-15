@@ -10,24 +10,23 @@ use axum::{
     response::{IntoResponse, Json},
 };
 
-use crate::http::{AppState, AppResult, middleware::AuthUser};
-use crate::impls::client::media_to_proto;
-use synctv_core::models::RoomId;
+use crate::http::{AppState, AppResult, AppError, middleware::AuthUser};
 
-/// Get current media in playlist
+/// Get current playing media for a room
+///
+/// Delegates to `ClientApiImpl::get_playing_media()` for consistent behavior.
 #[axum::debug_handler]
 pub async fn get_playing_media(
     _auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
-    let room_id = RoomId::from_string(room_id);
-    let media = state
-        .room_service
+    let response = state
+        .client_api
         .get_playing_media(&room_id)
-        .await?;
+        .await
+        .map_err(AppError::internal_server_error)?;
 
-    let response = media.map(|m| media_to_proto(&m));
     Ok(Json(response))
 }
 

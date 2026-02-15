@@ -136,6 +136,8 @@ impl ServerSession {
         // Timeout to prevent slowloris attacks holding handshake slots indefinitely
         let handshake_timeout = tokio::time::Duration::from_secs(10);
         let handshake_start = tokio::time::Instant::now();
+        // M-1: Maximum buffer size during handshake to prevent memory exhaustion
+        const MAX_HANDSHAKE_BUFFER: usize = 8192;
 
         while bytes_len < handshake::define::RTMP_HANDSHAKE_SIZE {
             let remaining = handshake_timeout.checked_sub(handshake_start.elapsed())
@@ -149,6 +151,14 @@ impl ServerSession {
                 }),
             };
             bytes_len += self.bytesio_data.len();
+            if bytes_len > MAX_HANDSHAKE_BUFFER {
+                tracing::warn!(
+                    "RTMP handshake buffer exceeded {MAX_HANDSHAKE_BUFFER} bytes, rejecting"
+                );
+                return Err(SessionError {
+                    value: super::errors::SessionErrorValue::Timeout,
+                });
+            }
             self.handshaker.extend_data(&self.bytesio_data[..])?;
         }
 
@@ -427,13 +437,28 @@ impl ServerSession {
     }
 
     fn on_set_chunk_size(&mut self, chunk_size: usize) -> Result<(), SessionError> {
-        tracing::info!(
-            "[ S<-C ] [set chunk size]  app_name: {}, stream_name: {}, chunk size: {}",
-            self.app_name,
-            self.stream_name,
-            chunk_size
-        );
-        self.unpacketizer.update_max_chunk_size(chunk_size);
+        // L-3: Clamp chunk_size to safe range [128, 65536] to prevent
+        // excessive buffer allocation from malicious clients.
+        const MIN_CHUNK_SIZE: usize = 128;
+        const MAX_CHUNK_SIZE: usize = 65536;
+        let clamped = chunk_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE);
+        if clamped != chunk_size {
+            tracing::warn!(
+                "[ S<-C ] [set chunk size] clamped {} -> {} for app={}, stream={}",
+                chunk_size,
+                clamped,
+                self.app_name,
+                self.stream_name,
+            );
+        } else {
+            tracing::info!(
+                "[ S<-C ] [set chunk size]  app_name: {}, stream_name: {}, chunk size: {}",
+                self.app_name,
+                self.stream_name,
+                chunk_size
+            );
+        }
+        self.unpacketizer.update_max_chunk_size(clamped);
         Ok(())
     }
 

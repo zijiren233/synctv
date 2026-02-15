@@ -326,11 +326,15 @@ impl EmbyClient {
         let prefix = self.get_api_prefix();
         let url = format!("{}{}/Sessions/Logout", self.host, prefix);
 
-        self.client
+        let resp = self.client
             .post(&url)
             .headers(self.build_headers()?)
             .send()
             .await?;
+
+        if !resp.status().is_success() {
+            tracing::warn!(status = %resp.status(), "Emby logout request failed");
+        }
 
         Ok(())
     }
@@ -391,11 +395,15 @@ impl EmbyClient {
             self.host, prefix, url_encode(play_session_id)
         );
 
-        self.client
+        let resp = self.client
             .delete(&url)
             .headers(self.build_headers()?)
             .send()
             .await?;
+
+        if !resp.status().is_success() {
+            tracing::warn!(status = %resp.status(), "Emby delete_active_encodings request failed");
+        }
 
         Ok(())
     }

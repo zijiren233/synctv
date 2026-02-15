@@ -212,33 +212,20 @@ fn require_admin_api(state: &AppState) -> Result<&Arc<crate::impls::AdminApiImpl
 
 /// Map impls-layer error strings to appropriate HTTP status codes.
 ///
-/// Mirrors the keyword matching in `impls_err_to_status` (gRPC) so that
-/// admin HTTP endpoints return semantically correct status codes instead
-/// of mapping everything to 500 Internal Server Error.
+/// Uses the shared `classify_error` function from the impls module for
+/// consistent error classification across HTTP and gRPC transports.
 fn admin_err_to_app_error(err: String) -> AppError {
-    let lower = err.to_lowercase();
-    if lower.contains("not found") {
-        AppError::not_found(err)
-    } else if lower.contains("unauthenticated") || lower.contains("invalid token")
-        || lower.contains("token expired") || lower.contains("not authenticated")
-    {
-        AppError::unauthorized(err)
-    } else if lower.contains("permission") || lower.contains("forbidden")
-        || lower.contains("not allowed") || lower.contains("banned")
-    {
-        AppError::forbidden(err)
-    } else if lower.contains("already exists") || lower.contains("already taken")
-        || lower.contains("already registered")
-    {
-        AppError::conflict(err)
-    } else if lower.contains("invalid") || lower.contains("too short") || lower.contains("too long")
-        || lower.contains("cannot be empty") || lower.contains("too many")
-        || lower.contains("required") || lower.contains("must be")
-    {
-        AppError::bad_request(err)
-    } else {
-        tracing::error!("Admin internal error: {err}");
-        AppError::internal("Internal error")
+    use crate::impls::{classify_error, ErrorKind};
+    match classify_error(&err) {
+        ErrorKind::NotFound => AppError::not_found(err),
+        ErrorKind::Unauthenticated => AppError::unauthorized(err),
+        ErrorKind::PermissionDenied => AppError::forbidden(err),
+        ErrorKind::AlreadyExists => AppError::conflict(err),
+        ErrorKind::InvalidArgument => AppError::bad_request(err),
+        ErrorKind::Internal => {
+            tracing::error!("Admin internal error: {err}");
+            AppError::internal("Internal error")
+        }
     }
 }
 
@@ -556,6 +543,12 @@ async fn get_user_rooms(
 // ------------------------------------------------------------------
 
 #[derive(serde::Deserialize, Default)]
+struct PaginationQuery {
+    page: Option<i32>,
+    page_size: Option<i32>,
+}
+
+#[derive(serde::Deserialize, Default)]
 pub struct ListRoomsQuery {
     pub page: Option<i32>,
     pub page_size: Option<i32>,
@@ -632,10 +625,15 @@ async fn get_room_members(
     _auth: AuthAdmin,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
+    Query(q): Query<PaginationQuery>,
 ) -> AppResult<Json<admin::GetRoomMembersResponse>> {
     let api = require_admin_api(&state)?;
     let resp = api
-        .get_room_members(admin::GetRoomMembersRequest { room_id, page: 1, page_size: 100 })
+        .get_room_members(admin::GetRoomMembersRequest {
+            room_id,
+            page: q.page.unwrap_or(1).max(1),
+            page_size: q.page_size.unwrap_or(100).clamp(1, 500),
+        })
         .await
         .map_err(admin_err_to_app_error)?;
     Ok(Json(resp))

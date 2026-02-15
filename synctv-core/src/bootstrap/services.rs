@@ -155,7 +155,7 @@ pub async fn init_services(
     if oauth2_service.is_some() {
         info!("OAuth2 service initialized");
     } else {
-        info!("OAuth2 service not configured (set SYNCTV__OAUTH2__ENCRYPTION_KEY)");
+        info!("OAuth2 service not configured (set SYNCTV_OAUTH2_ENCRYPTION_KEY)");
     }
 
     // Initialize Settings service
@@ -337,7 +337,7 @@ async fn init_oauth2_service(
 fn load_jwt_service(config: &Config) -> Result<JwtService, anyhow::Error> {
     if config.jwt.secret.is_empty() {
         return Err(anyhow::anyhow!(
-            "JWT secret is empty. Please set SYNCTV__JWT__SECRET environment variable or configure jwt.secret in config file"
+            "JWT secret is empty. Please set SYNCTV_JWT_SECRET environment variable or configure jwt.secret in config file"
         ));
     }
 
@@ -347,12 +347,12 @@ fn load_jwt_service(config: &Config) -> Result<JwtService, anyhow::Error> {
     ];
     if WEAK_SECRETS.contains(&config.jwt.secret.as_str()) {
         warn!("Using a well-known JWT secret! This is insecure for production use.");
-        warn!("Please set SYNCTV__JWT__SECRET to a strong random value.");
+        warn!("Please set SYNCTV_JWT_SECRET to a strong random value.");
     }
     if config.jwt.secret.len() < 32 {
         return Err(anyhow::anyhow!(
             "JWT secret is too short ({} chars). Minimum 32 characters required for security. \
-             Set SYNCTV__JWT__SECRET to a strong random value.",
+             Set SYNCTV_JWT_SECRET to a strong random value.",
             config.jwt.secret.len()
         ));
     }

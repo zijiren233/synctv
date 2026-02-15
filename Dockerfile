@@ -56,7 +56,9 @@ USER synctv
 # Expose ports
 # 8080: HTTP API
 # 50051: gRPC API
-EXPOSE 8080 50051
+# 1935: RTMP (livestream)
+# 3478/udp: STUN (WebRTC)
+EXPOSE 8080 50051 1935 3478/udp
 
 # Set environment variables
 ENV RUST_LOG=info

@@ -4,12 +4,12 @@
 //! - Multiple Redis subscribers exist
 //! - Network issues cause retries
 //! - Events are published multiple times
+//!
+//! Uses `moka::sync::Cache` with TTL-based expiration, eliminating the need
+//! for a manual cleanup task.
 
-use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio_util::sync::CancellationToken;
+use std::time::Duration;
 
 /// Deduplication key for events
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
@@ -67,23 +67,14 @@ impl DedupKey {
     }
 }
 
-/// Deduplication entry with expiration time
-#[derive(Clone)]
-struct DedupEntry {
-    expires_at: Instant,
-}
-
-/// Message deduplicator with automatic cleanup
+/// Message deduplicator using moka TTL cache.
+///
+/// Entries are automatically evicted after `dedup_window` via moka's built-in
+/// TTL support, eliminating the need for a manual cleanup task.
 #[derive(Clone)]
 pub struct MessageDeduplicator {
-    /// Map of dedup keys to expiration times
-    entries: Arc<DashMap<DedupKey, DedupEntry>>,
-    /// Dedup window duration (events older than this are accepted)
-    dedup_window: Duration,
-    /// Cleanup interval
-    cleanup_interval: Duration,
-    /// Cancellation token for graceful shutdown of the cleanup task
-    cancel_token: CancellationToken,
+    /// Cache of dedup keys with TTL-based expiration
+    cache: moka::sync::Cache<DedupKey, ()>,
 }
 
 impl MessageDeduplicator {
@@ -91,28 +82,17 @@ impl MessageDeduplicator {
     ///
     /// # Arguments
     /// * `dedup_window` - How long to remember events (default 5 seconds)
-    /// * `cleanup_interval` - How often to clean expired entries (default 30 seconds)
+    /// * `_cleanup_interval` - Ignored (moka handles cleanup internally), kept for API compatibility
     #[must_use]
-    pub fn new(dedup_window: Duration, cleanup_interval: Duration) -> Self {
-        let cancel_token = CancellationToken::new();
-        let dedup = Self {
-            entries: Arc::new(DashMap::new()),
-            dedup_window,
-            cleanup_interval,
-            cancel_token,
-        };
-
-        // Start cleanup task with cancellation support
-        let dedup_clone = dedup.clone();
-        tokio::spawn(async move {
-            dedup_clone.run_cleanup().await;
-        });
-
-        dedup
+    pub fn new(dedup_window: Duration, _cleanup_interval: Duration) -> Self {
+        let cache = moka::sync::Cache::builder()
+            .time_to_live(dedup_window)
+            .build();
+        Self { cache }
     }
 
     /// Create with default settings (5 second window)
-    #[must_use] 
+    #[must_use]
     pub fn with_defaults() -> Self {
         Self::new(
             Duration::from_secs(5),
@@ -122,97 +102,53 @@ impl MessageDeduplicator {
 
     /// Check if an event should be processed (not a duplicate)
     ///
-    /// Uses `DashMap::entry()` for atomic check-and-insert to prevent TOCTOU races
-    /// where two concurrent calls for the same key could both return `true`.
+    /// Returns `true` if this is a new event, `false` if it's a duplicate
+    /// within the dedup window.
     #[must_use]
     pub fn should_process(&self, key: &DedupKey) -> bool {
-        let now = Instant::now();
-        let new_expiry = now + self.dedup_window;
-
-        match self.entries.entry(key.clone()) {
-            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                if entry.get().expires_at > now {
-                    // Within dedup window, skip (duplicate)
-                    false
-                } else {
-                    // Expired, refresh and process
-                    entry.insert(DedupEntry { expires_at: new_expiry });
-                    true
-                }
-            }
-            dashmap::mapref::entry::Entry::Vacant(entry) => {
-                // Key doesn't exist, insert and process
-                entry.insert(DedupEntry { expires_at: new_expiry });
-                true
-            }
+        // Try to get: if present, it's a duplicate
+        if self.cache.get(key).is_some() {
+            return false;
         }
+        // Insert the key; moka handles TTL expiration automatically
+        self.cache.insert(key.clone(), ());
+        true
     }
 
     /// Mark an event as processed
     pub fn mark_processed(&self, key: DedupKey) {
-        let now = Instant::now();
-        self.entries.insert(key, DedupEntry {
-            expires_at: now + self.dedup_window,
-        });
+        self.cache.insert(key, ());
     }
 
-    /// Shutdown the deduplicator and its cleanup task
+    /// Shutdown the deduplicator (no-op with moka, kept for API compatibility)
     pub fn shutdown(&self) {
-        self.cancel_token.cancel();
-    }
-
-    /// Run periodic cleanup of expired entries (stops when cancelled)
-    async fn run_cleanup(&self) {
-        let mut interval = tokio::time::interval(self.cleanup_interval);
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    self.cleanup_expired();
-                }
-                () = self.cancel_token.cancelled() => {
-                    tracing::debug!("Deduplicator cleanup task shutting down");
-                    return;
-                }
-            }
-        }
-    }
-
-    /// Clean up expired entries
-    fn cleanup_expired(&self) {
-        let now = Instant::now();
-
-        self.entries.retain(|_key, entry| {
-            entry.expires_at > now
-        });
+        self.cache.invalidate_all();
     }
 
     /// Get the number of tracked events
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
-        self.entries.len()
+        // Run pending tasks to get accurate count
+        self.cache.run_pending_tasks();
+        self.cache.entry_count() as usize
     }
 
     /// Check if there are any tracked events
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len() == 0
     }
 
     /// Clear all tracked events (for testing)
     pub fn clear(&self) {
-        self.entries.clear();
+        self.cache.invalidate_all();
+        self.cache.run_pending_tasks();
     }
 }
 
 impl Default for MessageDeduplicator {
     fn default() -> Self {
         Self::with_defaults()
-    }
-}
-
-impl Drop for MessageDeduplicator {
-    fn drop(&mut self) {
-        self.cancel_token.cancel();
     }
 }
 

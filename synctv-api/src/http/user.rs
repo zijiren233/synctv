@@ -29,27 +29,21 @@ pub struct UpdateUserRequest {
 
 /// Logout user
 ///
-/// Extracts the Bearer token from the Authorization header and blacklists it
-/// server-side, matching gRPC logout behavior.
+/// Extracts the Bearer token from the Authorization header and delegates
+/// to `ClientApiImpl.logout()` for consistent behavior with gRPC.
 pub async fn logout(
     _auth: AuthUser,
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> AppResult<Json<LogoutResponse>> {
-    // Extract Bearer token and blacklist it server-side (matching gRPC behavior)
-    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth_header.to_str() {
-            let token = auth_str.strip_prefix("Bearer ")
-                .or_else(|| auth_str.strip_prefix("bearer "));
-            if let Some(token) = token {
-                if let Err(e) = state.user_service.logout(token).await {
-                    tracing::warn!(error = %e, "Failed to blacklist token during logout");
-                }
-            }
-        }
-    }
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
+        .unwrap_or("");
 
-    Ok(Json(LogoutResponse { success: true }))
+    let response = state.client_api.logout(token).await;
+    Ok(Json(response))
 }
 
 /// Get current user info

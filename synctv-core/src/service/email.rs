@@ -9,9 +9,7 @@
 use chrono::{Duration, Utc};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
     message::{header::ContentType, Mailbox, MultiPart},
@@ -91,8 +89,8 @@ pub struct EmailConfig {
 #[derive(Clone)]
 pub struct EmailService {
     config: Option<EmailConfig>,
-    /// In-memory code storage (fallback when Redis is not available)
-    local_codes: Arc<RwLock<HashMap<String, VerificationCode>>>,
+    /// In-memory code storage with TTL (fallback when Redis is not available)
+    local_codes: Arc<moka::sync::Cache<String, VerificationCode>>,
     code_ttl_minutes: i64,
     max_attempts: u32,
     template_manager: Arc<EmailTemplateManager>,
@@ -111,12 +109,20 @@ impl std::fmt::Debug for EmailService {
 }
 
 impl EmailService {
+    /// Build a moka cache for local verification codes with the given TTL
+    fn build_local_codes_cache(ttl_minutes: i64) -> moka::sync::Cache<String, VerificationCode> {
+        moka::sync::Cache::builder()
+            .max_capacity(10_000)
+            .time_to_live(std::time::Duration::from_secs((ttl_minutes.max(1) * 60) as u64))
+            .build()
+    }
+
     /// Create a new email service (without Redis - single node only)
     pub fn new(config: Option<EmailConfig>) -> Result<Self> {
         let template_manager = EmailTemplateManager::new()?;
         Ok(Self {
             config,
-            local_codes: Arc::new(RwLock::new(HashMap::new())),
+            local_codes: Arc::new(Self::build_local_codes_cache(10)),
             code_ttl_minutes: 10, // 10 minutes default
             max_attempts: 3,
             template_manager: Arc::new(template_manager),
@@ -129,7 +135,7 @@ impl EmailService {
         let template_manager = EmailTemplateManager::new()?;
         Ok(Self {
             config,
-            local_codes: Arc::new(RwLock::new(HashMap::new())),
+            local_codes: Arc::new(Self::build_local_codes_cache(code_ttl_minutes)),
             code_ttl_minutes,
             max_attempts: 3,
             template_manager: Arc::new(template_manager),
@@ -142,7 +148,7 @@ impl EmailService {
         let template_manager = EmailTemplateManager::new()?;
         Ok(Self {
             config,
-            local_codes: Arc::new(RwLock::new(HashMap::new())),
+            local_codes: Arc::new(Self::build_local_codes_cache(10)),
             code_ttl_minutes: 10,
             max_attempts: 3,
             template_manager: Arc::new(template_manager),
@@ -171,8 +177,7 @@ impl EmailService {
 
             debug!("Stored verification code in Redis for email {}", &email[..email.len().min(4)]);
         } else {
-            let mut codes = self.local_codes.write().await;
-            codes.insert(email.to_string(), code.clone());
+            self.local_codes.insert(email.to_string(), code.clone());
             debug!("Stored verification code in memory for email {}", &email[..email.len().min(4)]);
         }
         Ok(())
@@ -204,8 +209,7 @@ impl EmailService {
                 None => Ok(None),
             }
         } else {
-            let codes = self.local_codes.read().await;
-            Ok(codes.get(email).cloned())
+            Ok(self.local_codes.get(&email.to_string()))
         }
     }
 
@@ -216,8 +220,7 @@ impl EmailService {
             // For Redis, we just store the updated code (TTL refresh is implicit)
             self.store_code(email, code).await
         } else {
-            let mut codes = self.local_codes.write().await;
-            codes.insert(email.to_string(), code.clone());
+            self.local_codes.insert(email.to_string(), code.clone());
             Ok(())
         }
     }
@@ -241,8 +244,7 @@ impl EmailService {
 
             debug!("Removed verification code from Redis for email {}", &email[..email.len().min(4)]);
         } else {
-            let mut codes = self.local_codes.write().await;
-            codes.remove(email);
+            self.local_codes.invalidate(&email.to_string());
         }
         Ok(())
     }
@@ -488,36 +490,36 @@ impl EmailService {
         }
     }
 
-    /// Atomic verify for in-memory storage: hold write lock across entire operation
+    /// Atomic verify for in-memory storage using moka cache
     async fn verify_code_memory(&self, email: &str, code: &str) -> Result<()> {
-        let mut codes = self.local_codes.write().await;
+        let key = email.to_string();
 
-        let verification_code = codes
-            .get_mut(email)
+        let mut verification_code = self.local_codes.get(&key)
             .ok_or_else(|| Error::InvalidInput("No verification code found".to_string()))?;
 
-        // Check if expired
+        // Check if expired (moka handles TTL, but also check our own expiration)
         let expiration = verification_code.created_at + Duration::minutes(self.code_ttl_minutes);
         if Utc::now() > expiration {
-            codes.remove(email);
+            self.local_codes.invalidate(&key);
             return Err(Error::InvalidInput("Verification code expired".to_string()));
         }
 
         // Check attempts
         verification_code.attempts += 1;
         if verification_code.attempts > self.max_attempts {
-            codes.remove(email);
+            self.local_codes.invalidate(&key);
             return Err(Error::InvalidInput("Too many failed attempts".to_string()));
         }
 
         // Verify code
         if verification_code.code != code {
-            // attempts already incremented in place
+            // Update the attempt count in the cache
+            self.local_codes.insert(key, verification_code);
             return Err(Error::InvalidInput("Invalid verification code".to_string()));
         }
 
         // Remove code after successful verification
-        codes.remove(email);
+        self.local_codes.invalidate(&key);
         Ok(())
     }
 
@@ -781,19 +783,12 @@ impl EmailService {
     }
 
     /// Clean up expired codes (local memory only - Redis handles its own TTL)
+    ///
+    /// Note: moka cache handles TTL-based expiration automatically.
+    /// This method triggers a manual sync of pending evictions.
     pub async fn cleanup_expired_codes(&self) {
-        // Only clean local codes (Redis handles its own TTL)
-        let mut codes = self.local_codes.write().await;
-        let now = Utc::now();
-        let expiration_threshold = now - Duration::minutes(self.code_ttl_minutes);
-
-        let initial_count = codes.len();
-        codes.retain(|_, code| code.created_at > expiration_threshold);
-        let removed = initial_count - codes.len();
-
-        if removed > 0 {
-            debug!("Cleaned up {} expired verification codes from local memory", removed);
-        }
+        // moka handles TTL expiration automatically; run_pending_tasks flushes evictions
+        self.local_codes.run_pending_tasks();
     }
 
     /// Check if email service is configured
