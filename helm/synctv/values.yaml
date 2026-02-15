@@ -284,6 +284,14 @@ secrets:
     username: ""
     password: ""
 
+  ## Credential encryption key (64-char hex string for AES-256-GCM)
+  ## Used to encrypt provider credentials at rest
+  credentialEncryptionKey: ""
+
+  ## OAuth2 encryption key (64-char hex string for AES-256-GCM)
+  ## Required for OAuth2 state encryption
+  oauth2EncryptionKey: ""
+
   ## Bootstrap root password (only used when bootstrap.createRootUser is true)
   bootstrap:
     rootPassword: "CHANGE_ME_IN_PRODUCTION"

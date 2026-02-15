@@ -103,6 +103,9 @@ pub enum ClusterEvent {
         room_id: RoomId,
         user_id: UserId,
         username: String,
+        /// Serialized settings JSON (bytes)
+        #[serde(default)]
+        settings_json: Vec<u8>,
         timestamp: DateTime<Utc>,
     },
 

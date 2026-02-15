@@ -17,6 +17,11 @@ const NONCE_SIZE: usize = 12;
 /// Prefix for encrypted data to distinguish from plaintext
 const ENCRYPTED_PREFIX: &str = "enc:";
 
+/// Key version byte prepended to encrypted payloads for future key rotation support.
+/// When rotating keys, increment this version and use it to select the correct
+/// decryption key.
+const KEY_VERSION: u8 = 0x01;
+
 /// Credential encryption service
 ///
 /// Encrypts and decrypts credential data using AES-256-GCM.
@@ -66,8 +71,8 @@ impl CredentialEncryption {
 
     /// Encrypt JSON credential data
     ///
-    /// Returns a string in the format "enc:<base64(nonce + ciphertext)>"
-    /// The nonce is prepended to the ciphertext for storage.
+    /// Returns a string in the format "enc:<base64(version + nonce + ciphertext)>"
+    /// A version byte is prepended for future key rotation support.
     pub fn encrypt(&self, plaintext: &serde_json::Value) -> Result<String> {
         let plaintext_bytes = serde_json::to_vec(plaintext)
             .map_err(|e| Error::Internal(format!("Failed to serialize credential data: {e}")))?;
@@ -81,8 +86,9 @@ impl CredentialEncryption {
         let ciphertext = self.cipher.encrypt(nonce, plaintext_bytes.as_ref())
             .map_err(|e| Error::Internal(format!("Credential encryption failed: {e}")))?;
 
-        // Prepend nonce to ciphertext and encode as base64
-        let mut combined = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
+        // Prepend version byte + nonce to ciphertext and encode as base64
+        let mut combined = Vec::with_capacity(1 + NONCE_SIZE + ciphertext.len());
+        combined.push(KEY_VERSION);
         combined.extend_from_slice(&nonce_bytes);
         combined.extend_from_slice(&ciphertext);
 
@@ -101,11 +107,19 @@ impl CredentialEncryption {
             let combined = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded)
                 .map_err(|e| Error::Internal(format!("Invalid base64 in encrypted credential: {e}")))?;
 
-            if combined.len() < NONCE_SIZE {
+            if combined.len() < 1 + NONCE_SIZE {
                 return Err(Error::Internal("Encrypted credential data too short".to_string()));
             }
 
-            let (nonce_bytes, ciphertext) = combined.split_at(NONCE_SIZE);
+            let version = combined[0];
+            if version != KEY_VERSION {
+                // Future: select decryption key based on version byte
+                return Err(Error::Internal(format!(
+                    "Unsupported credential encryption version: {version} (expected {KEY_VERSION})"
+                )));
+            }
+
+            let (nonce_bytes, ciphertext) = combined[1..].split_at(NONCE_SIZE);
             let nonce = Nonce::from_slice(nonce_bytes);
 
             let plaintext = self.cipher.decrypt(nonce, ciphertext)

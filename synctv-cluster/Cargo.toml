@@ -17,6 +17,7 @@ futures.workspace = true
 
 # gRPC
 tonic.workspace = true
+tonic-prost.workspace = true
 prost.workspace = true
 prost-types.workspace = true
 
@@ -54,7 +55,7 @@ tracing.workspace = true
 workspace = true
 
 [build-dependencies]
-tonic-build.workspace = true
+tonic-prost-build.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true

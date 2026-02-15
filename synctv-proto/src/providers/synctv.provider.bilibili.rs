@@ -27,7 +27,7 @@ pub struct ParseResponse {
 }
 /// Video information
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VideoInfo {
     #[prost(string, tag = "1")]
     pub bvid: ::prost::alloc::string::String,
@@ -44,7 +44,7 @@ pub struct VideoInfo {
 }
 /// QR code login request
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoginQrRequest {
     /// Optional provider instance name
     #[prost(string, tag = "1")]
@@ -52,7 +52,7 @@ pub struct LoginQrRequest {
 }
 /// QR code response
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct QrCodeResponse {
     #[prost(string, tag = "1")]
     pub url: ::prost::alloc::string::String,
@@ -61,7 +61,7 @@ pub struct QrCodeResponse {
 }
 /// Check QR status request
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CheckQrRequest {
     #[prost(string, tag = "1")]
     pub key: ::prost::alloc::string::String,
@@ -84,7 +84,7 @@ pub struct QrStatusResponse {
 }
 /// Get captcha request
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetCaptchaRequest {
     /// Optional provider instance name
     #[prost(string, tag = "1")]
@@ -92,7 +92,7 @@ pub struct GetCaptchaRequest {
 }
 /// Captcha response
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CaptchaResponse {
     #[prost(string, tag = "1")]
     pub token: ::prost::alloc::string::String,
@@ -103,7 +103,7 @@ pub struct CaptchaResponse {
 }
 /// Send SMS request
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SendSmsRequest {
     #[prost(string, tag = "1")]
     pub phone: ::prost::alloc::string::String,
@@ -119,14 +119,14 @@ pub struct SendSmsRequest {
 }
 /// Send SMS response
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SendSmsResponse {
     #[prost(string, tag = "1")]
     pub captcha_key: ::prost::alloc::string::String,
 }
 /// Login with SMS request
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoginSmsRequest {
     #[prost(string, tag = "1")]
     pub phone: ::prost::alloc::string::String,
@@ -163,7 +163,7 @@ pub struct UserInfoRequest {
 }
 /// User info response
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UserInfoResponse {
     #[prost(bool, tag = "1")]
     pub is_login: bool,
@@ -176,7 +176,7 @@ pub struct UserInfoResponse {
 }
 /// Logout request
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LogoutRequest {
     /// Optional provider instance name
     #[prost(string, tag = "1")]
@@ -184,7 +184,7 @@ pub struct LogoutRequest {
 }
 /// Logout response
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LogoutResponse {
     #[prost(string, tag = "1")]
     pub message: ::prost::alloc::string::String,
@@ -220,7 +220,7 @@ pub mod bilibili_provider_service_client {
     }
     impl<T> BilibiliProviderServiceClient<T>
     where
-        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T: tonic::client::GrpcService<tonic::body::Body>,
         T::Error: Into<StdError>,
         T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
         <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
@@ -241,13 +241,13 @@ pub mod bilibili_provider_service_client {
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
             T: tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
+                http::Request<tonic::body::Body>,
                 Response = http::Response<
-                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
                 >,
             >,
             <T as tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
+                http::Request<tonic::body::Body>,
             >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             BilibiliProviderServiceClient::new(
@@ -298,7 +298,7 @@ pub mod bilibili_provider_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/synctv.provider.bilibili.BilibiliProviderService/Parse",
             );
@@ -325,7 +325,7 @@ pub mod bilibili_provider_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/synctv.provider.bilibili.BilibiliProviderService/LoginQR",
             );
@@ -355,7 +355,7 @@ pub mod bilibili_provider_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/synctv.provider.bilibili.BilibiliProviderService/CheckQR",
             );
@@ -385,7 +385,7 @@ pub mod bilibili_provider_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/synctv.provider.bilibili.BilibiliProviderService/GetCaptcha",
             );
@@ -415,7 +415,7 @@ pub mod bilibili_provider_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/synctv.provider.bilibili.BilibiliProviderService/SendSMS",
             );
@@ -445,7 +445,7 @@ pub mod bilibili_provider_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/synctv.provider.bilibili.BilibiliProviderService/LoginSMS",
             );
@@ -475,7 +475,7 @@ pub mod bilibili_provider_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/synctv.provider.bilibili.BilibiliProviderService/GetUserInfo",
             );
@@ -502,7 +502,7 @@ pub mod bilibili_provider_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/synctv.provider.bilibili.BilibiliProviderService/Logout",
             );
@@ -650,7 +650,7 @@ pub mod bilibili_provider_service_server {
         B: Body + std::marker::Send + 'static,
         B::Error: Into<StdError> + std::marker::Send + 'static,
     {
-        type Response = http::Response<tonic::body::BoxBody>;
+        type Response = http::Response<tonic::body::Body>;
         type Error = std::convert::Infallible;
         type Future = BoxFuture<Self::Response, Self::Error>;
         fn poll_ready(
@@ -690,7 +690,7 @@ pub mod bilibili_provider_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ParseSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -736,7 +736,7 @@ pub mod bilibili_provider_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = LoginQRSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -782,7 +782,7 @@ pub mod bilibili_provider_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = CheckQRSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -828,7 +828,7 @@ pub mod bilibili_provider_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetCaptchaSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -874,7 +874,7 @@ pub mod bilibili_provider_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = SendSMSSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -920,7 +920,7 @@ pub mod bilibili_provider_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = LoginSMSSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -969,7 +969,7 @@ pub mod bilibili_provider_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetUserInfoSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1015,7 +1015,7 @@ pub mod bilibili_provider_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = LogoutSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1032,7 +1032,9 @@ pub mod bilibili_provider_service_server {
                 }
                 _ => {
                     Box::pin(async move {
-                        let mut response = http::Response::new(empty_body());
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
                         let headers = response.headers_mut();
                         headers
                             .insert(

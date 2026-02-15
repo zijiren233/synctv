@@ -10,7 +10,7 @@ use super::{
 use crate::service::RemoteProviderManager;
 use async_trait::async_trait;
 use chrono::Utc;
-use rand::seq::SliceRandom;
+use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -468,7 +468,7 @@ impl DynamicFolder for EmbyProvider {
                 }
 
                 // Pick random item (excluding current)
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 let candidates: Vec<_> = playable_items
                     .iter()
                     .filter(|item| item.path != relative_path)

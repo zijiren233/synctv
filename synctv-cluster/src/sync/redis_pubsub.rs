@@ -263,11 +263,12 @@ impl RedisPubSub {
                     SubscriberExit::Disconnected => {
                         // Connection was healthy before it dropped.
                         // Reset backoff since the server was reachable.
+                        // Use INITIAL_BACKOFF_SECS for the first retry without doubling.
+                        backoff_secs = INITIAL_BACKOFF_SECS;
                         error!(
                             "Redis subscriber stream ended (connection lost), reconnecting after {}s",
-                            INITIAL_BACKOFF_SECS
+                            backoff_secs
                         );
-                        backoff_secs = INITIAL_BACKOFF_SECS;
                     }
                     SubscriberExit::ConnectFailed(e) => {
                         // Could not connect -- keep increasing backoff.
@@ -288,7 +289,9 @@ impl RedisPubSub {
                     () = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
                 }
 
-                // Exponential backoff: double the delay, cap at MAX_BACKOFF_SECS
+                // Exponential backoff: double the delay AFTER the sleep, cap at MAX_BACKOFF_SECS.
+                // After Disconnected, backoff was reset to INITIAL_BACKOFF_SECS above,
+                // so the first retry uses the initial delay without being doubled first.
                 backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
             }
         });
@@ -397,6 +400,17 @@ impl RedisPubSub {
             // Reconnection: catch up on events missed during disconnection.
             // Only read streams for rooms that currently have local subscribers.
             let active_rooms = self.message_hub.active_room_ids();
+
+            // Prune cursors for rooms that no longer have local subscribers.
+            // This prevents unbounded growth of stream_cursors when rooms are
+            // created and destroyed over time.
+            let active_stream_keys_set: std::collections::HashSet<String> = active_rooms
+                .iter()
+                .map(|rid| room_stream_key(rid.as_str()))
+                .collect();
+            stream_cursors.retain(|key, _| {
+                key == ADMIN_STREAM_KEY || active_stream_keys_set.contains(key)
+            });
 
             // Ensure admin stream is always included
             if !stream_cursors.contains_key(ADMIN_STREAM_KEY) {
@@ -746,9 +760,9 @@ impl RedisPubSub {
                     cursor = entry.id.clone();
 
                     let channel = entry.map.get("channel")
-                        .and_then(|v| redis::from_redis_value::<String>(v).ok());
+                        .and_then(|v| redis::from_redis_value::<String>(v.clone()).ok());
                     let payload = entry.map.get("payload")
-                        .and_then(|v| redis::from_redis_value::<String>(v).ok());
+                        .and_then(|v| redis::from_redis_value::<String>(v.clone()).ok());
 
                     if let (Some(chan), Some(payload_str)) = (channel, payload) {
                         match serde_json::from_str::<EventEnvelope>(&payload_str) {

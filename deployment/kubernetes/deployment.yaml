@@ -25,6 +25,12 @@ spec:
         - containerPort: 50051
           name: grpc
           protocol: TCP
+        - containerPort: 1935
+          name: rtmp
+          protocol: TCP
+        - containerPort: 3478
+          name: stun
+          protocol: UDP
 
         # Environment variables (configure via ConfigMap/Secret)
         env:
@@ -129,6 +135,14 @@ spec:
     targetPort: 50051
     protocol: TCP
     name: grpc
+  - port: 1935
+    targetPort: 1935
+    protocol: TCP
+    name: rtmp
+  - port: 3478
+    targetPort: 3478
+    protocol: UDP
+    name: stun
   selector:
     app: synctv
 

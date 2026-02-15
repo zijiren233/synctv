@@ -51,16 +51,16 @@ pub struct LiveQuery {
 pub fn create_live_router() -> Router<AppState> {
     Router::new()
         // FLV streaming endpoint
-        .route("/flv/:media_id.flv", get(handle_flv_stream))
+        .route("/flv/{media_id}.flv", get(handle_flv_stream))
         // HLS playlist endpoint (matches both with and without .m3u8 extension)
-        .route("/hls/list/:media_id", get(handle_hls_playlist))
+        .route("/hls/list/{media_id}", get(handle_hls_playlist))
         // HLS segment endpoint
         .route(
-            "/hls/data/:room_id/:media_id/*segment",
+            "/hls/data/{room_id}/{media_id}/{*segment}",
             get(handle_hls_segment_with_disguise),
         )
         // Stream info endpoints
-        .route("/info/:media_id", get(handle_stream_info))
+        .route("/info/{media_id}", get(handle_stream_info))
         .route("/streams", get(handle_room_streams))
 }
 

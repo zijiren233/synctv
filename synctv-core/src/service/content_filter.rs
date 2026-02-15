@@ -177,7 +177,7 @@ impl ContentFilter {
             return Err(ContentFilterError::EmptyMessage);
         }
 
-        if trimmed.len() > 50 {
+        if trimmed.chars().count() > 50 {
             return Err(ContentFilterError::MessageTooLong { max_length: 50 });
         }
 

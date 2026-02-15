@@ -173,7 +173,7 @@ pub fn create_notification_read_router() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/api/notifications", axum::routing::get(list_notifications))
         .route(
-            "/api/notifications/:id",
+            "/api/notifications/{id}",
             axum::routing::get(get_notification),
         )
 }
@@ -182,7 +182,7 @@ pub fn create_notification_read_router() -> axum::Router<AppState> {
 pub fn create_notification_write_router() -> axum::Router<AppState> {
     axum::Router::new()
         .route(
-            "/api/notifications/:id",
+            "/api/notifications/{id}",
             axum::routing::delete(delete_notification),
         )
         .route(

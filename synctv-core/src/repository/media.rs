@@ -431,9 +431,36 @@ impl MediaRepository {
         Ok(())
     }
 
-    /// Insert a media item and atomically assign the next position in a single query.
-    /// This avoids race conditions from separate SELECT MAX + INSERT operations.
+    /// Get the next available position in a playlist.
+    ///
+    /// When called outside a transaction, uses a plain MAX query (no locking).
+    /// For concurrent-safe usage, prefer `get_next_position_with_tx` inside an
+    /// existing transaction so the `FOR UPDATE` lock is held until commit.
     pub async fn get_next_position(&self, playlist_id: &PlaylistId) -> Result<i32> {
+        let next_pos: i32 = sqlx::query_scalar(
+            r"
+            SELECT COALESCE(MAX(position), -1) + 1
+            FROM media
+            WHERE playlist_id = $1 AND deleted_at IS NULL
+            "
+        )
+        .bind(playlist_id.as_str())
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(next_pos)
+    }
+
+    /// Get the next available position in a playlist within a transaction.
+    ///
+    /// Uses `SELECT ... FOR UPDATE` to lock the rows, preventing concurrent
+    /// inserts from assigning duplicate positions. The lock is held until the
+    /// caller commits or rolls back the transaction.
+    pub async fn get_next_position_with_tx(
+        &self,
+        playlist_id: &PlaylistId,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<i32> {
         let next_pos: i32 = sqlx::query_scalar(
             r"
             SELECT COALESCE(MAX(position), -1) + 1
@@ -443,7 +470,7 @@ impl MediaRepository {
             "
         )
         .bind(playlist_id.as_str())
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **tx)
         .await?;
 
         Ok(next_pos)

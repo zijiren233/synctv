@@ -25,6 +25,9 @@ pub struct Claims {
     pub sub: String,
     /// Token type (access or refresh)
     pub typ: String,
+    /// JWT ID (unique token identifier for efficient blacklisting)
+    #[serde(default)]
+    pub jti: String,
     /// Issued at (Unix timestamp)
     pub iat: i64,
     /// Expiration time (Unix timestamp)
@@ -236,6 +239,7 @@ impl JwtService {
                 TokenType::Refresh => "refresh".to_string(),
                 TokenType::Guest => "guest".to_string(),
             },
+            jti: nanoid::nanoid!(16),
             iat: now.timestamp(),
             exp: (now + duration).timestamp(),
         };
@@ -609,17 +613,17 @@ mod tests {
 
     #[test]
     fn test_claims_type_predicates() {
-        let access = Claims { sub: "u1".into(), typ: "access".into(), iat: 0, exp: 0 };
+        let access = Claims { sub: "u1".into(), typ: "access".into(), jti: String::new(), iat: 0, exp: 0 };
         assert!(access.is_access_token());
         assert!(!access.is_refresh_token());
         assert!(!access.is_guest_token());
 
-        let refresh = Claims { sub: "u1".into(), typ: "refresh".into(), iat: 0, exp: 0 };
+        let refresh = Claims { sub: "u1".into(), typ: "refresh".into(), jti: String::new(), iat: 0, exp: 0 };
         assert!(!refresh.is_access_token());
         assert!(refresh.is_refresh_token());
         assert!(!refresh.is_guest_token());
 
-        let guest = Claims { sub: "u1".into(), typ: "guest".into(), iat: 0, exp: 0 };
+        let guest = Claims { sub: "u1".into(), typ: "guest".into(), jti: String::new(), iat: 0, exp: 0 };
         assert!(!guest.is_access_token());
         assert!(!guest.is_refresh_token());
         assert!(guest.is_guest_token());

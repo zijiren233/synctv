@@ -3,7 +3,7 @@
 //! Distributes requests across available cluster nodes.
 //! Integrates with `HealthMonitor` to exclude unhealthy nodes.
 
-use rand::seq::SliceRandom;
+use rand::prelude::IndexedRandom;
 use std::sync::Arc;
 
 use super::health_monitor::{HealthMonitor, NodeHealth};
@@ -95,7 +95,7 @@ impl LoadBalancer {
         let selected_node = match self.strategy {
             LoadBalancingStrategy::Random => {
                 nodes
-                    .choose(&mut rand::thread_rng())
+                    .choose(&mut rand::rng())
                     .ok_or_else(|| Error::NotFound("No nodes available".to_string()))?
                     .node_id
                     .clone()

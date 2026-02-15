@@ -13,7 +13,6 @@ mod inner {
     use crate::storage::HlsStorage;
     use async_trait::async_trait;
     use bytes::Bytes;
-    use chrono::{DateTime, Utc, Duration as ChronoDuration};
     use opendal::{Operator, services::S3};
     use sha2::{Sha256, Digest};
     use std::io::{Result, Error, ErrorKind};
@@ -150,7 +149,7 @@ mod inner {
             let object_key = self.get_object_key(key);
 
             // Check if object exists using OpenDAL
-            match self.operator.is_exist(&object_key).await {
+            match self.operator.exists(&object_key).await {
                 Ok(exists) => Ok(exists),
                 Err(e) => {
                     tracing::warn!("OSS exists check failed for {}: {}", object_key, e);
@@ -160,10 +159,8 @@ mod inner {
         }
 
         async fn cleanup(&self, older_than: Duration) -> Result<usize> {
-            // Convert Duration to chrono Duration
-            let chrono_duration = ChronoDuration::from_std(older_than)
-                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid duration: {e}")))?;
-            let cutoff_time: DateTime<Utc> = Utc::now() - chrono_duration;
+            // Compute cutoff time using opendal's Timestamp
+            let cutoff_time = opendal::raw::Timestamp::now() - older_than;
             let mut deleted = 0;
 
             let base_path = if self.config.base_path.is_empty() {

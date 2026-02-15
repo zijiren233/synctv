@@ -1,8 +1,7 @@
 // HTTP middleware
 
 use axum::{
-    async_trait,
-    extract::{FromRef, FromRequestParts, Request, State},
+    extract::{FromRef, FromRequestParts, OptionalFromRequestParts, Request, State},
     http::{request::Parts, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -44,7 +43,6 @@ pub struct AuthUser {
     pub user_id: UserId,
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,
@@ -84,7 +82,7 @@ where
             .token_blacklist_service
             .is_blacklisted(&raw_token)
             .await
-            .unwrap_or(false)
+            .unwrap_or(true) // Fail closed: deny if blacklist check errors
         {
             return Err(AppError::unauthorized("Token has been revoked"));
         }
@@ -113,6 +111,29 @@ where
         }
 
         Ok(Self { user_id })
+    }
+}
+
+impl<S> OptionalFromRequestParts<S> for AuthUser
+where
+    S: Send + Sync,
+    AppState: FromRef<S>,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        // If there's no Authorization header, return None (anonymous user)
+        if parts.headers.get(axum::http::header::AUTHORIZATION).is_none() {
+            return Ok(None);
+        }
+        // Otherwise, try to authenticate and return Some or propagate error
+        match <Self as FromRequestParts<S>>::from_request_parts(parts, state).await {
+            Ok(user) => Ok(Some(user)),
+            Err(_) => Ok(None),
+        }
     }
 }
 
@@ -429,15 +450,22 @@ pub async fn security_headers_middleware(
     }
 
     // Content Security Policy
-    // Restricts sources of executable scripts, styles, and other resources
-    // This is a restrictive default - applications may need to customize this
+    // Relaxed for a video platform: allows media from any source (needed for
+    // provider instances like Alist, Emby, Bilibili), WebSocket connections,
+    // data URIs for thumbnails, and inline styles for the player UI.
     if !headers.contains_key("Content-Security-Policy") {
-        // Note: 'unsafe-inline' for style is often needed for inline styles
-        // For APIs, we can be very restrictive
         headers.insert(
             CONTENT_SECURITY_POLICY.clone(),
             axum::http::HeaderValue::from_static(
-                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+                "default-src 'self'; \
+                 media-src * blob:; \
+                 frame-src * blob:; \
+                 connect-src 'self' wss: ws:; \
+                 img-src 'self' data: https:; \
+                 style-src 'self' 'unsafe-inline'; \
+                 script-src 'self'; \
+                 frame-ancestors 'none'; \
+                 base-uri 'none'"
             ),
         );
     }
@@ -665,7 +693,8 @@ mod tests {
             .to_str()
             .unwrap();
 
-        assert!(csp.contains("default-src 'none'"));
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("media-src * blob:"));
         assert!(csp.contains("frame-ancestors 'none'"));
     }
 

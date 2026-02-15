@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dashmap::DashMap;
+use moka::sync::Cache;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, Endpoint};
 use tracing::{debug, warn};
@@ -76,6 +76,14 @@ impl<T> FanOutResult<T> {
     }
 }
 
+/// TTL for cached gRPC channels (5 minutes).
+/// Channels to nodes that are no longer in the registry will be
+/// automatically evicted after this duration of inactivity.
+const CHANNEL_CACHE_TTL_SECS: u64 = 300;
+
+/// Maximum number of cached gRPC channels.
+const CHANNEL_CACHE_MAX_CAPACITY: u64 = 256;
+
 /// Cluster gRPC client for fan-out queries
 ///
 /// Queries all known cluster nodes in parallel and merges their responses.
@@ -84,25 +92,35 @@ impl<T> FanOutResult<T> {
 pub struct ClusterClient {
     node_registry: Arc<NodeRegistry>,
     config: ClusterClientConfig,
-    /// Cached gRPC channels keyed by node gRPC address
-    channels: DashMap<String, Channel>,
+    /// Cached gRPC channels keyed by node gRPC address.
+    /// Entries are automatically evicted after `CHANNEL_CACHE_TTL_SECS` of
+    /// inactivity (no get/insert), preventing unbounded growth from stale nodes.
+    channels: Cache<String, Channel>,
 }
 
 impl ClusterClient {
     /// Create a new cluster client
     pub fn new(node_registry: Arc<NodeRegistry>, config: ClusterClientConfig) -> Self {
+        let channels = Cache::builder()
+            .max_capacity(CHANNEL_CACHE_MAX_CAPACITY)
+            .time_to_idle(Duration::from_secs(CHANNEL_CACHE_TTL_SECS))
+            .build();
+
         Self {
             node_registry,
             config,
-            channels: DashMap::new(),
+            channels,
         }
     }
 
-    /// Get or create a cached gRPC channel for a node address
+    /// Get or create a cached gRPC channel for a node address.
+    ///
+    /// Channels are cached with a TTL; stale entries are automatically evicted
+    /// by the moka cache after `CHANNEL_CACHE_TTL_SECS` of inactivity.
     async fn get_channel(&self, address: &str) -> Result<Channel> {
         // Return cached channel if available
         if let Some(channel) = self.channels.get(address) {
-            return Ok(channel.clone());
+            return Ok(channel);
         }
 
         // Create new channel
@@ -145,7 +163,7 @@ impl ClusterClient {
 
     /// Remove a cached channel (e.g., after connection failure)
     fn invalidate_channel(&self, address: &str) {
-        self.channels.remove(address);
+        self.channels.invalidate(address);
     }
 
     /// Fan-out `GetUserOnlineStatus` to all remote nodes in parallel.

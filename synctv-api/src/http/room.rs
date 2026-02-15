@@ -376,13 +376,11 @@ pub async fn set_room_password(
 pub async fn check_password(
     _auth: AuthUser,
     State(state): State<AppState>,
-    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    connect_info: axum::extract::ConnectInfo<std::net::SocketAddr>,
     Path(room_id): Path<String>,
     Json(req): Json<CheckRoomPasswordRequest>,
 ) -> AppResult<Json<CheckRoomPasswordResponse>> {
-    let client_ip = connect_info
-        .map(|ci| ci.0.ip().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let client_ip = connect_info.0.ip().to_string();
 
     let response = state
         .client_api
@@ -685,7 +683,7 @@ pub async fn reset_room_settings(
 /// Get chat history for a room
 /// GET /`api/rooms/:room_id/chat/history`
 pub async fn get_chat_history(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -696,7 +694,7 @@ pub async fn get_chat_history(
     let req = crate::proto::client::GetChatHistoryRequest { limit, before };
     let response = state
         .client_api
-        .get_chat_history(&room_id, req)
+        .get_chat_history(&auth.user_id.to_string(), &room_id, req)
         .await
         .map_err(super::error::impls_err_to_app_error)?;
 

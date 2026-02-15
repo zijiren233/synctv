@@ -34,19 +34,19 @@ pub fn bilibili_routes() -> Router<AppState> {
         .route("/logout", post(logout))
         // Provider-specific proxy routes
         .route(
-            "/proxy/:room_id/:media_id/mpd",
+            "/proxy/{room_id}/{media_id}/mpd",
             get(serve_mpd).options(synctv_proxy::proxy_options_preflight),
         )
         .route(
-            "/proxy/:room_id/:media_id/stream/:stream_id",
+            "/proxy/{room_id}/{media_id}/stream/{stream_id}",
             get(proxy_stream).options(synctv_proxy::proxy_options_preflight),
         )
         .route(
-            "/proxy/:room_id/:media_id/subtitle/:name",
+            "/proxy/{room_id}/{media_id}/subtitle/{name}",
             get(proxy_subtitle).options(synctv_proxy::proxy_options_preflight),
         )
-        .route("/proxy/:room_id/:media_id/m3u8", get(proxy_m3u8))
-        .route("/proxy/:room_id/:media_id/danmu", get(danmu_sse))
+        .route("/proxy/{room_id}/{media_id}/m3u8", get(proxy_m3u8))
+        .route("/proxy/{room_id}/{media_id}/danmu", get(danmu_sse))
 }
 
 // ------------------------------------------------------------------

@@ -23,7 +23,7 @@ use super::middleware::AuthUser;
 pub fn register_common_routes() -> Router<AppState> {
     Router::new()
         .route("/instances", get(list_instances))
-        .route("/backends/:provider_type", get(list_backends))
+        .route("/backends/{provider_type}", get(list_backends))
 }
 
 /// List all available provider instances

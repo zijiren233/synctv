@@ -5,6 +5,7 @@ pub use synctv_proto::{client, admin};
 pub use synctv_cluster::grpc::synctv::cluster;
 
 pub mod admin_service;
+pub mod blacklist_layer;
 pub mod client_service;
 pub mod interceptors;
 pub mod notification_service;
@@ -175,7 +176,7 @@ pub async fn serve(
         connection_manager,
         email_service,
         email_token_service,
-        token_blacklist_service,
+        token_blacklist_service: token_blacklist_service.clone(),
         settings_registry: settings_registry.clone(),
         providers_manager: providers_manager_for_client,
         config: Arc::new(config.clone()),
@@ -206,8 +207,14 @@ pub async fn serve(
         admin_api,
     );
 
-    // Create server builder
-    let mut server_builder = Server::builder();
+    // Create server builder with blacklist checking tower layer.
+    // This layer extracts the raw JWT bearer token from the HTTP Authorization
+    // header and performs an async Redis blacklist lookup. It runs before tonic
+    // routes and interceptors, so public endpoints (no Authorization header)
+    // pass through without a blacklist check.
+    let blacklist_layer = blacklist_layer::BlacklistCheckLayer::new(token_blacklist_service.clone());
+    let mut server_builder = Server::builder()
+        .layer(blacklist_layer);
 
     // Note: gRPC reflection is disabled - proto definitions are in synctv-proto crate
     // To enable reflection in the future, we would need to re-export descriptor from synctv-proto

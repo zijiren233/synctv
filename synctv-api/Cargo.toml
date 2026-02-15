@@ -24,6 +24,7 @@ futures.workspace = true
 
 # gRPC
 tonic.workspace = true
+tonic-prost.workspace = true
 tonic-web.workspace = true
 tonic-reflection.workspace = true
 tonic-health.workspace = true

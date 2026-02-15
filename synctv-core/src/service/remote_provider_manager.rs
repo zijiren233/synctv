@@ -43,7 +43,7 @@ impl RemoteProviderManager {
     ///
     /// Call this at application startup to establish gRPC connections
     /// to all configured remote provider instances.
-    pub async fn init(&self) -> anyhow::Result<()> {
+    pub async fn init(&self) -> crate::Result<()> {
         tracing::info!("Initializing provider instance manager");
 
         // Load all enabled instances from database
@@ -79,14 +79,15 @@ impl RemoteProviderManager {
     /// Create a gRPC channel for the given provider instance
     ///
     /// Establishes gRPC connection with configured TLS settings, timeout, and middleware.
-    async fn create_grpc_channel(config: &ProviderInstance) -> anyhow::Result<Channel> {
+    async fn create_grpc_channel(config: &ProviderInstance) -> crate::Result<Channel> {
         // Parse timeout
         let timeout = config
             .parse_timeout()
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .map_err(|e| crate::Error::Internal(format!("{e}")))?;
 
         // Create endpoint
-        let mut endpoint = Endpoint::from_shared(config.endpoint.clone())?
+        let mut endpoint = Endpoint::from_shared(config.endpoint.clone())
+            .map_err(|e| crate::Error::Internal(format!("Invalid endpoint: {e}")))?
             .timeout(timeout)
             .tcp_keepalive(Some(Duration::from_secs(30)))
             .http2_keep_alive_interval(Duration::from_secs(30))
@@ -114,11 +115,13 @@ impl RemoteProviderManager {
                 }
             }
 
-            endpoint = endpoint.tls_config(tls_config)?;
+            endpoint = endpoint.tls_config(tls_config)
+                .map_err(|e| crate::Error::Internal(format!("TLS config error: {e}")))?;
         }
 
         // Connect to gRPC server
-        let channel = endpoint.connect().await?;
+        let channel = endpoint.connect().await
+            .map_err(|e| crate::Error::Internal(format!("gRPC connect failed: {e}")))?;
 
         tracing::info!(
             "Established gRPC connection to {} (timeout: {:?}, TLS: {})",
@@ -164,8 +167,8 @@ impl RemoteProviderManager {
     }
 
     /// Get all provider instances with full metadata
-    pub async fn get_all_instances(&self) -> anyhow::Result<Vec<ProviderInstance>> {
-        self.repository.get_all().await.map_err(|e| anyhow::anyhow!(e))
+    pub async fn get_all_instances(&self) -> crate::Result<Vec<ProviderInstance>> {
+        self.repository.get_all().await.map_err(|e| crate::Error::Internal(format!("{e}")))
     }
 
     /// Add a new provider instance
@@ -173,12 +176,12 @@ impl RemoteProviderManager {
     /// 1. Creates gRPC connection
     /// 2. Saves to database
     /// 3. Adds to in-memory registry
-    pub async fn add(&self, config: ProviderInstance) -> anyhow::Result<()> {
+    pub async fn add(&self, config: ProviderInstance) -> crate::Result<()> {
         // Hold write lock for the entire operation to prevent TOCTOU race
         let mut instances = self.instances.write().await;
 
         if instances.contains_key(&config.name) {
-            anyhow::bail!("Instance '{}' already exists", config.name);
+            return Err(crate::Error::AlreadyExists(format!("Instance '{}' already exists", config.name)));
         }
 
         // Create gRPC connection
@@ -199,18 +202,21 @@ impl RemoteProviderManager {
     /// 1. Creates new gRPC connection
     /// 2. Updates database
     /// 3. Replaces in-memory channel (old connection closed automatically)
-    pub async fn update(&self, config: ProviderInstance) -> anyhow::Result<()> {
+    ///
+    /// Holds write lock for the entire DB+memory update to prevent TOCTOU races
+    /// where concurrent reads could see stale channel data during the update.
+    pub async fn update(&self, config: ProviderInstance) -> crate::Result<()> {
+        // Hold write lock for the entire DB+memory update to prevent TOCTOU
+        let mut instances = self.instances.write().await;
+
         // Create new gRPC connection
         let channel = Self::create_grpc_channel(&config).await?;
 
         // Update database
         self.repository.update(&config).await?;
 
-        // Replace in-memory channel (old connection auto-closed)
-        self.instances
-            .write()
-            .await
-            .insert(config.name.clone(), channel);
+        // Replace in-memory channel (old connection auto-closed, still holding lock)
+        instances.insert(config.name.clone(), channel);
 
         tracing::info!("Updated provider instance: {}", config.name);
         Ok(())
@@ -220,7 +226,7 @@ impl RemoteProviderManager {
     ///
     /// 1. Removes from database
     /// 2. Removes from in-memory registry (connection closed automatically)
-    pub async fn delete(&self, name: &str) -> anyhow::Result<()> {
+    pub async fn delete(&self, name: &str) -> crate::Result<()> {
         // Remove from database
         self.repository.delete(name).await?;
 
@@ -234,7 +240,7 @@ impl RemoteProviderManager {
     /// Enable a provider instance
     ///
     /// Re-establishes gRPC connection and adds to active registry.
-    pub async fn enable(&self, name: &str) -> anyhow::Result<()> {
+    pub async fn enable(&self, name: &str) -> crate::Result<()> {
         // Update database
         self.repository.enable(name).await?;
 
@@ -243,7 +249,7 @@ impl RemoteProviderManager {
             .repository
             .get_by_name(name)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Instance '{name}' not found"))?;
+            .ok_or_else(|| crate::Error::NotFound(format!("Instance '{name}' not found")))?;
 
         // Create connection and add to registry
         let channel = Self::create_grpc_channel(&config).await?;
@@ -259,7 +265,7 @@ impl RemoteProviderManager {
     /// Disable a provider instance
     ///
     /// Removes from active registry and closes connection.
-    pub async fn disable(&self, name: &str) -> anyhow::Result<()> {
+    pub async fn disable(&self, name: &str) -> crate::Result<()> {
         // Update database
         self.repository.disable(name).await?;
 

@@ -9,7 +9,7 @@ use crate::provider::{
 };
 use crate::service::RemoteProviderManager;
 use crate::Config;
-use anyhow::Result;
+use crate::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -235,7 +235,7 @@ impl ProvidersManager {
         let factory = self
             .factories
             .get(provider_type)
-            .ok_or_else(|| anyhow::anyhow!("Unknown provider type: {provider_type}"))?;
+            .ok_or_else(|| crate::Error::NotFound(format!("Unknown provider type: {provider_type}")))?;
 
         let provider = factory(instance_id, config, self.instance_manager.clone())?;
 

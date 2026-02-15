@@ -2,7 +2,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compile media provider proto files to src/proto/
     // - Server: For the standalone media-provider-server binary
     // - Client: For synctv-core inter-service communication
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")

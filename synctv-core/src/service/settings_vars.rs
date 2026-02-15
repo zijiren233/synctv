@@ -33,7 +33,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use super::SettingsService;
-use anyhow::Result;
+use crate::Result;
 
 /// Type alias for validator function to reduce type complexity
 type ValidatorFn<T> = Arc<dyn Fn(&T) -> Result<()> + Send + Sync>;
@@ -121,7 +121,7 @@ impl SettingsStorage {
             .settings_service
             .get_all_values()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to load settings: {e}"))?;
+            .map_err(|e| crate::Error::Internal(format!("Failed to load settings: {e}")))?;
 
         let mut storage = self.inner.write();
         *storage = all_values.into_iter().collect();
@@ -141,7 +141,7 @@ impl SettingsStorage {
         self.settings_service
             .update(key, value.clone())
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to persist setting '{key}': {e}"))?;
+            .map_err(|e| crate::Error::Internal(format!("Failed to persist setting '{key}': {e}")))?;
 
         // Only update in-memory cache after successful DB write
         self.inner.write().insert(key.to_string(), value);
@@ -301,7 +301,7 @@ where
     pub fn is_valid_raw(&self, str_value: &str) -> Result<()> {
         let v = str_value
             .parse::<T>()
-            .map_err(|_| anyhow::anyhow!("Invalid value for setting '{}'", self.key))?;
+            .map_err(|_| crate::Error::InvalidInput(format!("Invalid value for setting '{}'", self.key)))?;
 
         // Run custom validator if set
         if let Some(validator) = self.validator.read().as_ref() {
@@ -334,7 +334,8 @@ where
     }
 
     fn is_valid_raw(&self, value: &str) -> Result<()> {
-        let v = value.parse::<T>()?;
+        let v = value.parse::<T>()
+            .map_err(|e| crate::Error::InvalidInput(format!("Invalid setting value: {e}")))?;
 
         // Run custom validator if set
         if let Some(validator) = self.validator.read().as_ref() {
@@ -402,7 +403,7 @@ mod tests {
             if *v > 0 && *v <= 100 {
                 Ok(())
             } else {
-                Err(anyhow::anyhow!("Value must be between 1 and 100"))
+                Err(crate::Error::InvalidInput("Value must be between 1 and 100".into()))
             }
         };
 

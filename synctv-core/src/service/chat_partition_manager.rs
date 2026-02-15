@@ -218,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn test_default_retention_months() {
-        assert_eq!(DEFAULT_RETENTION_MONTHS, 3);
+    fn test_default_retention_days() {
+        assert_eq!(DEFAULT_RETENTION_DAYS, 90);
     }
 }

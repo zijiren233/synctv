@@ -25,9 +25,6 @@ pub use providers::{AlistApiImpl, BilibiliApiImpl, EmbyApiImpl};
 /// Maps keyword patterns in error strings to semantic error categories.
 /// Used by both HTTP and gRPC error mapping functions to ensure consistent
 /// behavior across transports.
-///
-/// Once the impls layer migrates to typed errors (`synctv_core::Error`),
-/// this function should be replaced by `From` impls.
 pub enum ErrorKind {
     NotFound,
     Unauthenticated,
@@ -37,8 +34,72 @@ pub enum ErrorKind {
     Internal,
 }
 
+/// Structured API error that wraps `synctv_core::Error` variants for
+/// type-safe status code mapping. This allows callers that propagate
+/// typed errors to bypass keyword matching entirely.
+///
+/// Use `ApiError::from(core_error)` to convert, then call
+/// `.classify()` for the `ErrorKind`.
+pub enum ApiError {
+    NotFound(String),
+    Authentication(String),
+    Authorization(String),
+    AlreadyExists(String),
+    InvalidInput(String),
+    Internal(String),
+}
+
+impl From<synctv_core::Error> for ApiError {
+    fn from(err: synctv_core::Error) -> Self {
+        match err {
+            synctv_core::Error::NotFound(msg) => Self::NotFound(msg),
+            synctv_core::Error::Authentication(msg) => Self::Authentication(msg),
+            synctv_core::Error::Authorization(msg) => Self::Authorization(msg),
+            synctv_core::Error::AlreadyExists(msg) => Self::AlreadyExists(msg),
+            synctv_core::Error::InvalidInput(msg) => Self::InvalidInput(msg),
+            other => Self::Internal(other.to_string()),
+        }
+    }
+}
+
+impl ApiError {
+    /// Convert this structured error into an `ErrorKind`.
+    pub fn classify(&self) -> ErrorKind {
+        match self {
+            Self::NotFound(_) => ErrorKind::NotFound,
+            Self::Authentication(_) => ErrorKind::Unauthenticated,
+            Self::Authorization(_) => ErrorKind::PermissionDenied,
+            Self::AlreadyExists(_) => ErrorKind::AlreadyExists,
+            Self::InvalidInput(_) => ErrorKind::InvalidArgument,
+            Self::Internal(_) => ErrorKind::Internal,
+        }
+    }
+
+    /// Get the error message.
+    pub fn message(&self) -> &str {
+        match self {
+            Self::NotFound(msg)
+            | Self::Authentication(msg)
+            | Self::Authorization(msg)
+            | Self::AlreadyExists(msg)
+            | Self::InvalidInput(msg)
+            | Self::Internal(msg) => msg,
+        }
+    }
+}
+
 /// Classify an impls-layer error string into a semantic error kind.
+///
+/// First attempts to match known `synctv_core::Error` display prefixes
+/// for structured classification. Falls back to keyword matching for
+/// errors that don't originate from the core layer.
 pub fn classify_error(err: &str) -> ErrorKind {
+    // Try structured prefix matching first (matches synctv_core::Error::Display output)
+    if let Some(kind) = classify_by_prefix(err) {
+        return kind;
+    }
+
+    // Fallback: keyword-based classification for untyped error strings
     let lower = err.to_lowercase();
     if lower.contains("not found") {
         ErrorKind::NotFound
@@ -61,6 +122,29 @@ pub fn classify_error(err: &str) -> ErrorKind {
         ErrorKind::InvalidArgument
     } else {
         ErrorKind::Internal
+    }
+}
+
+/// Try to classify an error string by matching the display prefixes
+/// produced by `synctv_core::Error` variants (e.g., "Not found: ...",
+/// "Authentication error: ..."). Returns `None` if no prefix matches.
+fn classify_by_prefix(err: &str) -> Option<ErrorKind> {
+    if err.starts_with("Not found: ") {
+        Some(ErrorKind::NotFound)
+    } else if err.starts_with("Authentication error: ") {
+        Some(ErrorKind::Unauthenticated)
+    } else if err.starts_with("Authorization error: ") {
+        Some(ErrorKind::PermissionDenied)
+    } else if err.starts_with("Already exists: ") {
+        Some(ErrorKind::AlreadyExists)
+    } else if err.starts_with("Invalid input: ") {
+        Some(ErrorKind::InvalidArgument)
+    } else if err.starts_with("Internal error: ") || err.starts_with("Database error: ")
+        || err.starts_with("Redis error: ") || err.starts_with("Serialization error: ")
+    {
+        Some(ErrorKind::Internal)
+    } else {
+        None
     }
 }
 
@@ -178,5 +262,41 @@ mod tests {
         assert!(matches!(classify_error("Token Expired"), ErrorKind::Unauthenticated));
         assert!(matches!(classify_error("Already Taken"), ErrorKind::AlreadyExists));
         assert!(matches!(classify_error("Cannot Be Empty"), ErrorKind::InvalidArgument));
+    }
+
+    // ========== Structured prefix classification ==========
+
+    #[test]
+    fn test_classify_by_prefix_core_error_display() {
+        // These match the exact Display output of synctv_core::Error variants
+        assert!(matches!(classify_error("Not found: room 123"), ErrorKind::NotFound));
+        assert!(matches!(classify_error("Authentication error: expired"), ErrorKind::Unauthenticated));
+        assert!(matches!(classify_error("Authorization error: forbidden"), ErrorKind::PermissionDenied));
+        assert!(matches!(classify_error("Already exists: user"), ErrorKind::AlreadyExists));
+        assert!(matches!(classify_error("Invalid input: bad field"), ErrorKind::InvalidArgument));
+        assert!(matches!(classify_error("Internal error: oops"), ErrorKind::Internal));
+        assert!(matches!(classify_error("Database error: connection refused"), ErrorKind::Internal));
+    }
+
+    #[test]
+    fn test_api_error_classify() {
+        let err = ApiError::NotFound("room".to_string());
+        assert!(matches!(err.classify(), ErrorKind::NotFound));
+        assert_eq!(err.message(), "room");
+
+        let err = ApiError::Authentication("bad token".to_string());
+        assert!(matches!(err.classify(), ErrorKind::Unauthenticated));
+
+        let err = ApiError::Authorization("denied".to_string());
+        assert!(matches!(err.classify(), ErrorKind::PermissionDenied));
+
+        let err = ApiError::AlreadyExists("dup".to_string());
+        assert!(matches!(err.classify(), ErrorKind::AlreadyExists));
+
+        let err = ApiError::InvalidInput("bad".to_string());
+        assert!(matches!(err.classify(), ErrorKind::InvalidArgument));
+
+        let err = ApiError::Internal("boom".to_string());
+        assert!(matches!(err.classify(), ErrorKind::Internal));
     }
 }

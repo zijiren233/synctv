@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::Result;
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter as GovernorRateLimiter};
 use nonzero_ext::nonzero;
 use redis::AsyncCommands;
@@ -238,6 +238,73 @@ impl RateLimiter {
 
             return Err(RateLimitError::RateLimitExceeded {
                 retry_after_seconds,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Distributed rate limit check that always uses Redis.
+    ///
+    /// Unlike `check_rate_limit` which falls back to in-memory governor when Redis
+    /// is unavailable, this method enforces distributed rate limiting and **denies
+    /// requests (fail closed)** when Redis is unreachable.
+    ///
+    /// Designed for use in async tower middleware layers (e.g., gRPC blacklist or
+    /// rate-limit layers) where per-node-only limiting is insufficient.
+    pub async fn check_rate_limit_distributed(
+        &self,
+        key: &str,
+        max_requests: u32,
+        window_seconds: u64,
+    ) -> std::result::Result<(), RateLimitError> {
+        let Some(ref conn) = self.redis_conn else {
+            tracing::error!(
+                "Distributed rate limit check failed: Redis not configured. Denying request (fail closed)."
+            );
+            return Err(RateLimitError::RateLimitExceeded {
+                retry_after_seconds: 1,
+            });
+        };
+
+        let mut conn = conn.clone();
+        let redis_key = format!("{}{}", self.key_prefix, key);
+        let now = Self::current_timestamp_millis();
+        let window_start = now.saturating_sub(window_seconds * 1000);
+        let expire_seconds = (window_seconds + 1) as i64;
+
+        let script = redis::Script::new(
+            r"
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1])
+            redis.call('ZADD', KEYS[1], ARGV[2], ARGV[2])
+            local count = redis.call('ZCARD', KEYS[1])
+            redis.call('EXPIRE', KEYS[1], ARGV[3])
+            return count
+            "
+        );
+
+        let current_count: u32 = match script
+            .key(&redis_key)
+            .arg(window_start as i64)
+            .arg(now)
+            .arg(expire_seconds)
+            .invoke_async(&mut conn)
+            .await
+        {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!(
+                    "Redis unreachable during distributed rate limit check, denying request (fail closed): {e}"
+                );
+                return Err(RateLimitError::RateLimitExceeded {
+                    retry_after_seconds: 1,
+                });
+            }
+        };
+
+        if current_count > max_requests {
+            return Err(RateLimitError::RateLimitExceeded {
+                retry_after_seconds: 1,
             });
         }
 

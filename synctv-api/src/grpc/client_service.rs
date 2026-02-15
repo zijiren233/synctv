@@ -669,10 +669,10 @@ impl RoomService for ClientServiceImpl {
         &self,
         request: Request<GetChatHistoryRequest>,
     ) -> Result<Response<GetChatHistoryResponse>, Status> {
-        let _user_id = self.get_user_id(&request).await?;
+        let user_id = self.get_user_id(&request).await?;
         let room_id = self.get_room_id(&request)?;
         let req = request.into_inner();
-        let response = self.client_api.get_chat_history(room_id.as_str(), req).await.map_err(impls_err_to_status)?;
+        let response = self.client_api.get_chat_history(user_id.as_str(), room_id.as_str(), req).await.map_err(impls_err_to_status)?;
         Ok(Response::new(response))
     }
 

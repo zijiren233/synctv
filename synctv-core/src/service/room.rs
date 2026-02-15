@@ -4,7 +4,7 @@
 
 use sqlx::PgPool;
 use chrono::{DateTime, Utc};
-use rand::Rng;
+use rand::RngExt;
 
 use crate::{
     cache::CacheInvalidationService,
@@ -535,7 +535,7 @@ impl RoomService {
                 }
                 Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
                     let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
-                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    let jitter = rand::rng().random_range(0..Self::BACKOFF_BASE_MS);
                     tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
                     continue;
                 }
@@ -581,7 +581,7 @@ impl RoomService {
                 Ok(_new_version) => return Ok(settings.clone()),
                 Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
                     let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
-                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    let jitter = rand::rng().random_range(0..Self::BACKOFF_BASE_MS);
                     tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
                     continue;
                 }
@@ -623,7 +623,7 @@ impl RoomService {
                 }
                 Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
                     let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
-                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    let jitter = rand::rng().random_range(0..Self::BACKOFF_BASE_MS);
                     tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
                     continue;
                 }
@@ -681,7 +681,7 @@ impl RoomService {
                 }
                 Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
                     let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
-                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    let jitter = rand::rng().random_range(0..Self::BACKOFF_BASE_MS);
                     tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
                     continue;
                 }
@@ -789,7 +789,7 @@ impl RoomService {
             tx.rollback().await?;
             if attempt + 1 < Self::MAX_RETRIES {
                 let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
-                let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                let jitter = rand::rng().random_range(0..Self::BACKOFF_BASE_MS);
                 tokio::time::sleep(std::time::Duration::from_millis(backoff + jitter)).await;
             }
         }

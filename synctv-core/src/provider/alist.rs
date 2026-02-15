@@ -514,8 +514,7 @@ impl DynamicFolder for AlistProvider {
                     return Ok(None);
                 }
 
-                use rand::Rng;
-                let random_idx = rand::thread_rng().gen_range(0..videos.len());
+                let random_idx = rand::random_range(0..videos.len());
                 let random_item = videos[random_idx];
 
                 let config = playlist

@@ -277,29 +277,29 @@ impl SettingsRegistry {
             signup_enabled: setting!(bool, "server.signup_enabled", storage.clone(), true),
             allow_room_creation: setting!(bool, "server.allow_room_creation", storage.clone(), true),
             max_rooms_per_user: setting!(i64, "server.max_rooms_per_user", storage.clone(), 10,
-                |v: &i64| -> anyhow::Result<()> {
+                |v: &i64| -> crate::Result<()> {
                     if *v > 0 && *v <= 1000 {
                         Ok(())
                     } else {
-                        Err(anyhow::anyhow!("max_rooms_per_user must be between 1 and 1000"))
+                        Err(crate::Error::InvalidInput("max_rooms_per_user must be between 1 and 1000".into()))
                     }
                 }
             ),
             max_members_per_room: setting!(i64, "server.max_members_per_room", storage.clone(), 100,
-                |v: &i64| -> anyhow::Result<()> {
+                |v: &i64| -> crate::Result<()> {
                     if *v > 0 && *v <= MaxMembers::MAX as i64 {
                         Ok(())
                     } else {
-                        Err(anyhow::anyhow!("max_members_per_room must be between 1 and {}", MaxMembers::MAX))
+                        Err(crate::Error::InvalidInput(format!("max_members_per_room must be between 1 and {}", MaxMembers::MAX)))
                     }
                 }
             ),
             max_chat_messages: setting!(u64, "server.max_chat_messages", storage.clone(), 500,
-                |v: &u64| -> anyhow::Result<()> {
+                |v: &u64| -> crate::Result<()> {
                     if *v <= MAX_CHAT_MESSAGES_LIMIT {
                         Ok(())
                     } else {
-                        Err(anyhow::anyhow!("max_chat_messages must be at most {MAX_CHAT_MESSAGES_LIMIT} (0 = unlimited)"))
+                        Err(crate::Error::InvalidInput(format!("max_chat_messages must be at most {MAX_CHAT_MESSAGES_LIMIT} (0 = unlimited)")))
                     }
                 }
             ),
@@ -317,11 +317,11 @@ impl SettingsRegistry {
             disable_create_room: setting!(bool, "room.disable_create_room", storage.clone(), false),
             create_room_need_review: setting!(bool, "room.create_room_need_review", storage.clone(), false),
             room_ttl: setting!(i64, "room.room_ttl", storage.clone(), 172800, // 48 hours in seconds
-                |v: &i64| -> anyhow::Result<()> {
+                |v: &i64| -> crate::Result<()> {
                     if *v >= 0 {
                         Ok(())
                     } else {
-                        Err(anyhow::anyhow!("room_ttl must be non-negative (0 = never expire)"))
+                        Err(crate::Error::InvalidInput("room_ttl must be non-negative (0 = never expire)".into()))
                     }
                 }
             ),
@@ -354,11 +354,11 @@ impl SettingsRegistry {
 
             // Chat message retention settings
             max_chat_messages_per_room: setting!(u64, "chat.max_messages_per_room", storage, 500,
-                |v: &u64| -> anyhow::Result<()> {
+                |v: &u64| -> crate::Result<()> {
                     if *v <= 100000 {
                         Ok(())
                     } else {
-                        Err(anyhow::anyhow!("max_chat_messages_per_room must be <= 100000 (0 = unlimited)"))
+                        Err(crate::Error::InvalidInput("max_chat_messages_per_room must be <= 100000 (0 = unlimited)".into()))
                     }
                 }
             ),

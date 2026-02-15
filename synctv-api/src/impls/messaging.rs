@@ -699,12 +699,12 @@ fn cluster_event_to_server_message(
     use synctv_cluster::sync::ClusterEvent;
 
     match event {
-        ClusterEvent::ChatMessage { username, message, timestamp, position, color, .. } => {
+        ClusterEvent::ChatMessage { user_id, username, message, timestamp, position, color, .. } => {
             Some(ServerMessage {
                 message: Some(Message::Chat(ChatMessageReceive {
                     id: nanoid::nanoid!(12),
                     room_id: room_id.to_string(),
-                    user_id: username.clone(),
+                    user_id: user_id.as_str().to_string(),
                     username: username.clone(),
                     content: message.clone(),
                     timestamp: timestamp.timestamp_micros(),
@@ -803,12 +803,11 @@ fn cluster_event_to_server_message(
                 })),
             })
         }
-        ClusterEvent::RoomSettingsChanged { .. } => {
+        ClusterEvent::RoomSettingsChanged { settings_json, .. } => {
             Some(ServerMessage {
                 message: Some(Message::RoomSettings(RoomSettingsChanged {
                     room_id: room_id.to_string(),
-                    settings: serde_json::to_vec(&serde_json::json!({}))
-                        .unwrap_or_default(),
+                    settings: settings_json.clone(),
                 })),
             })
         }

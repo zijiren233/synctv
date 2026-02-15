@@ -1103,6 +1103,7 @@ impl AdminApiImpl {
             ..Default::default()
         };
 
+        let pool = self.user_service.pool();
         let (
             total_users_res,
             active_users_res,
@@ -1111,6 +1112,7 @@ impl AdminApiImpl {
             active_rooms_res,
             banned_rooms_res,
             provider_count_res,
+            total_media_res,
         ) = tokio::join!(
             self.user_service.list_users(&query_all),
             self.user_service.list_users(&query_active),
@@ -1119,6 +1121,8 @@ impl AdminApiImpl {
             self.room_service.list_rooms(&room_query_active),
             self.room_service.list_rooms(&room_query_banned),
             self.provider_instance_manager.get_all_instances(),
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM media WHERE deleted_at IS NULL")
+                .fetch_one(pool),
         );
 
         let (_, total_users) = total_users_res.unwrap_or((vec![], 0));
@@ -1128,6 +1132,7 @@ impl AdminApiImpl {
         let (_, active_rooms) = active_rooms_res.unwrap_or((vec![], 0));
         let (_, banned_rooms) = banned_rooms_res.unwrap_or((vec![], 0));
         let provider_count = provider_count_res.map_or(0, |i| i.len() as i32);
+        let total_media = total_media_res.unwrap_or(0) as i32;
 
         Ok(crate::proto::admin::GetSystemStatsResponse {
             total_users: total_users as i32,
@@ -1136,7 +1141,7 @@ impl AdminApiImpl {
             total_rooms: total_rooms as i32,
             active_rooms: active_rooms as i32,
             banned_rooms: banned_rooms as i32,
-            total_media: 0,
+            total_media,
             provider_instances: provider_count,
             additional_stats: vec![],
         })

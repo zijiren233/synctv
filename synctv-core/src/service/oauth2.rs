@@ -135,7 +135,7 @@ impl OAuth2Service {
                 .map_err(|e| Error::Internal(format!("Failed to serialize OAuth2 state: {e}")))?;
 
             let mut conn = redis
-                .get_multiplexed_tokio_connection()
+                .get_multiplexed_async_connection()
                 .await
                 .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
@@ -160,7 +160,7 @@ impl OAuth2Service {
             let key = format!("{OAUTH2_STATE_KEY_PREFIX}{state_token}");
 
             let mut conn = redis
-                .get_multiplexed_tokio_connection()
+                .get_multiplexed_async_connection()
                 .await
                 .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 

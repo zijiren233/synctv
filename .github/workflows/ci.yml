@@ -133,8 +133,8 @@ jobs:
 
       - name: Run tests
         env:
-          DATABASE_URL: postgresql://synctv:synctv@localhost:5432/synctv
-          REDIS_URL: redis://localhost:6379
+          SYNCTV_DATABASE_URL: postgresql://synctv:synctv@localhost:5432/synctv
+          SYNCTV_REDIS_URL: redis://localhost:6379
         run: cargo test --verbose --all
 
   # Security audit
@@ -273,8 +273,8 @@ jobs:
 
       - name: Generate coverage
         env:
-          DATABASE_URL: postgresql://synctv:synctv@localhost:5432/synctv
-          REDIS_URL: redis://localhost:6379
+          SYNCTV_DATABASE_URL: postgresql://synctv:synctv@localhost:5432/synctv
+          SYNCTV_REDIS_URL: redis://localhost:6379
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov

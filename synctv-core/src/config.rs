@@ -702,6 +702,18 @@ impl Config {
             ));
         }
 
+        // Validate trusted_proxies CIDR format
+        for (i, proxy) in self.server.trusted_proxies.iter().enumerate() {
+            // Each entry must be a valid CIDR notation or IP address
+            if proxy.parse::<ipnet::IpNet>().is_err()
+                && proxy.parse::<std::net::IpAddr>().is_err()
+            {
+                errors.push(format!(
+                    "server.trusted_proxies[{i}] '{proxy}' is not a valid CIDR or IP address"
+                ));
+            }
+        }
+
         // Warn about missing Redis in production (security features degrade)
         if !self.server.development_mode && self.redis.url.is_empty() {
             tracing::warn!("Redis is not configured in production mode — token blacklist and rate limiting will be DISABLED");

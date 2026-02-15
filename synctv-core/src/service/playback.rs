@@ -13,8 +13,8 @@ use crate::{
     service::{permission::PermissionService, media::MediaService, notification::NotificationService},
     Error, Result,
 };
-use rand::seq::IteratorRandom;
-use rand::Rng;
+use rand::prelude::IteratorRandom;
+use rand::RngExt;
 
 /// Trait for broadcasting playback state changes to cluster replicas.
 ///
@@ -442,7 +442,7 @@ impl PlaybackService {
                 if let Some(ref current_id) = state.playing_media_id {
                     playlist.iter()
                         .filter(|m| &m.id != current_id)
-                        .choose(&mut rand::thread_rng())
+                        .choose(&mut rand::rng())
                 } else {
                     playlist.first()
                 }
@@ -587,7 +587,7 @@ impl PlaybackService {
                 Err(Error::OptimisticLockConflict) if attempt + 1 < Self::MAX_RETRIES => {
                     // Exponential backoff with jitter: base * 2^attempt + random(0..base)
                     let backoff = Self::BACKOFF_BASE_MS * (1 << attempt);
-                    let jitter = rand::thread_rng().gen_range(0..Self::BACKOFF_BASE_MS);
+                    let jitter = rand::rng().random_range(0..Self::BACKOFF_BASE_MS);
                     let delay = backoff + jitter;
                     tracing::debug!(
                         room_id = %room_id.as_str(),

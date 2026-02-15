@@ -414,6 +414,15 @@ impl SfuRoom {
             let packet_size = packet.data.len();
             for subscriber_id in &subscribers {
                 if let Some(peer) = peers.get(subscriber_id) {
+                    // Simulcast quality filtering: skip packets that don't match
+                    // the subscriber's preferred quality layer
+                    if let Some(packet_quality) = packet.quality_layer {
+                        let preferred = peer.get_preferred_quality();
+                        if packet_quality != preferred {
+                            continue;
+                        }
+                    }
+
                     if peer.try_forward_packet(&packet) {
                         peer.record_sent_bytes(packet_size);
                         packets_relayed.fetch_add(1, Ordering::Relaxed);

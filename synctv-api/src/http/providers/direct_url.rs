@@ -18,10 +18,10 @@ use synctv_core::models::{MediaId, RoomId};
 pub fn direct_url_routes() -> Router<AppState> {
     Router::new()
         .route(
-            "/proxy/:room_id/:media_id",
+            "/proxy/{room_id}/{media_id}",
             get(proxy_stream).options(synctv_proxy::proxy_options_preflight),
         )
-        .route("/proxy/:room_id/:media_id/m3u8", get(proxy_m3u8))
+        .route("/proxy/{room_id}/{media_id}/m3u8", get(proxy_m3u8))
 }
 
 // ------------------------------------------------------------------

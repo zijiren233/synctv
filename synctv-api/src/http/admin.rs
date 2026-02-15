@@ -4,7 +4,6 @@
 //! Thin handlers that delegate to `AdminApiImpl`.
 
 use axum::{
-    async_trait,
     extract::{FromRef, FromRequestParts, Path, Query, State},
     http::request::Parts,
     routing::{get, post, put},
@@ -76,7 +75,6 @@ pub struct AuthAdmin {
     pub role: synctv_core::models::UserRole,
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for AuthAdmin
 where
     S: Send + Sync,
@@ -102,7 +100,6 @@ pub struct AuthRoot {
     pub user_id: UserId,
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for AuthRoot
 where
     S: Send + Sync,
@@ -193,41 +190,41 @@ pub fn create_admin_router() -> Router<AppState> {
         .route("/stats", get(get_system_stats))
         // Settings
         .route("/settings", get(get_settings).post(set_settings))
-        .route("/settings/:group", get(get_settings_group))
+        .route("/settings/{group}", get(get_settings_group))
         // Email
         .route("/email/test", post(send_test_email))
         // User management
         .route("/users", get(list_users).post(create_user))
-        .route("/users/:user_id", get(get_user).delete(delete_user))
-        .route("/users/:user_id/role", post(set_user_role))
-        .route("/users/:user_id/password", post(set_user_password))
-        .route("/users/:user_id/username", post(set_user_username))
-        .route("/users/:user_id/ban", post(ban_user))
-        .route("/users/:user_id/unban", post(unban_user))
-        .route("/users/:user_id/approve", post(approve_user))
-        .route("/users/:user_id/rooms", get(get_user_rooms))
+        .route("/users/{user_id}", get(get_user).delete(delete_user))
+        .route("/users/{user_id}/role", post(set_user_role))
+        .route("/users/{user_id}/password", post(set_user_password))
+        .route("/users/{user_id}/username", post(set_user_username))
+        .route("/users/{user_id}/ban", post(ban_user))
+        .route("/users/{user_id}/unban", post(unban_user))
+        .route("/users/{user_id}/approve", post(approve_user))
+        .route("/users/{user_id}/rooms", get(get_user_rooms))
         // Room management
         .route("/rooms", get(list_rooms))
-        .route("/rooms/:room_id", get(get_room).delete(delete_room))
-        .route("/rooms/:room_id/password", post(set_room_password))
-        .route("/rooms/:room_id/members", get(get_room_members))
-        .route("/rooms/:room_id/ban", post(ban_room))
-        .route("/rooms/:room_id/unban", post(unban_room))
-        .route("/rooms/:room_id/approve", post(approve_room))
-        .route("/rooms/:room_id/settings", get(get_room_settings).post(set_room_settings))
-        .route("/rooms/:room_id/settings/reset", post(reset_room_settings))
+        .route("/rooms/{room_id}", get(get_room).delete(delete_room))
+        .route("/rooms/{room_id}/password", post(set_room_password))
+        .route("/rooms/{room_id}/members", get(get_room_members))
+        .route("/rooms/{room_id}/ban", post(ban_room))
+        .route("/rooms/{room_id}/unban", post(unban_room))
+        .route("/rooms/{room_id}/approve", post(approve_room))
+        .route("/rooms/{room_id}/settings", get(get_room_settings).post(set_room_settings))
+        .route("/rooms/{room_id}/settings/reset", post(reset_room_settings))
         // Provider instances
         .route("/providers", get(list_providers).post(add_provider))
-        .route("/providers/:name", put(update_provider).delete(delete_provider))
-        .route("/providers/:name/reconnect", post(reconnect_provider))
-        .route("/providers/:name/enable", post(enable_provider))
-        .route("/providers/:name/disable", post(disable_provider))
+        .route("/providers/{name}", put(update_provider).delete(delete_provider))
+        .route("/providers/{name}/reconnect", post(reconnect_provider))
+        .route("/providers/{name}/enable", post(enable_provider))
+        .route("/providers/{name}/disable", post(disable_provider))
         // Stream management
         .route("/streams", get(list_streams))
-        .route("/streams/:stream_id/kick", post(kick_stream))
+        .route("/streams/{stream_id}/kick", post(kick_stream))
         // Admin management (root only)
         .route("/admins", get(list_admins))
-        .route("/admins/:user_id", post(add_admin).delete(remove_admin))
+        .route("/admins/{user_id}", post(add_admin).delete(remove_admin))
 }
 
 // ------------------------------------------------------------------

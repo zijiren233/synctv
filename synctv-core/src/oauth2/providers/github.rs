@@ -5,7 +5,7 @@ use crate::Error;
 use async_trait::async_trait;
 use oauth2::{
     basic::BasicClient,
-    AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl, TokenResponse,
+    AuthUrl, ClientId, ClientSecret, EndpointSet, EndpointNotSet, RedirectUrl, TokenUrl, TokenResponse,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ pub struct GitHubConfig {
 
 /// GitHub `OAuth2` provider
 pub struct GitHubProvider {
-    client: Arc<BasicClient>,
+    client: Arc<BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>>,
     http_client: Arc<Client>,
 }
 
@@ -34,14 +34,12 @@ impl GitHubProvider {
         let redirect = RedirectUrl::new(redirect_url)
             .map_err(|e| Error::InvalidInput(format!("Invalid GitHub OAuth2 redirect URL: {e}")))?;
         let client = Arc::new(
-            BasicClient::new(
-                ClientId::new(client_id),
-                Some(ClientSecret::new(client_secret)),
+            BasicClient::new(ClientId::new(client_id))
+                .set_client_secret(ClientSecret::new(client_secret))
                 // Well-known constant URLs — expect is safe here
-                AuthUrl::new("https://github.com/login/oauth/authorize".to_string()).expect("valid GitHub auth URL"),
-                Some(TokenUrl::new("https://github.com/login/oauth/access_token".to_string()).expect("valid GitHub token URL")),
-            )
-            .set_redirect_uri(redirect),
+                .set_auth_uri(AuthUrl::new("https://github.com/login/oauth/authorize".to_string()).expect("valid GitHub auth URL"))
+                .set_token_uri(TokenUrl::new("https://github.com/login/oauth/access_token".to_string()).expect("valid GitHub token URL"))
+                .set_redirect_uri(redirect),
         );
 
         Ok(Self {
@@ -70,7 +68,7 @@ impl Provider for GitHubProvider {
         let token = self
             .client
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
-            .request_async(oauth2::reqwest::async_http_client)
+            .request_async(&oauth2::reqwest::Client::new())
             .await
             .map_err(|e| Error::Internal(format!("Failed to exchange code: {e}")))?;
 

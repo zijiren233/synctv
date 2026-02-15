@@ -86,6 +86,10 @@ impl TokenBlacklistService {
     }
 
     /// Check if a token is blacklisted
+    ///
+    /// **Deny-on-error**: If Redis is unreachable, this returns `true` (blacklisted)
+    /// to fail closed. This prevents attackers from using revoked tokens when Redis
+    /// is temporarily unavailable.
     pub async fn is_blacklisted(&self, token: &str) -> Result<bool> {
         let token_hash = hash_token(token);
 
@@ -94,9 +98,16 @@ impl TokenBlacklistService {
 
             let key = format!("token:blacklist:{token_hash}");
 
-            let exists: bool = conn.exists(&key)
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to check token blacklist: {e}")))?;
+            let exists: bool = match conn.exists(&key).await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        "Redis unreachable during blacklist check, denying request (fail closed): {e}"
+                    );
+                    // Fail closed: treat as blacklisted when Redis is unavailable
+                    return Ok(true);
+                }
+            };
 
             Ok(exists)
         } else {

@@ -339,7 +339,11 @@ impl GrpcRateLimitInterceptor {
                     None
                 }
             })
-            .unwrap_or_else(|| "anonymous".to_string());
+            .or_else(|| {
+                // Use peer IP address for anonymous rate limiting instead of a shared bucket
+                request.remote_addr().map(|addr| format!("anon:ip:{}", addr.ip()))
+            })
+            .unwrap_or_else(|| "anon:unknown".to_string());
 
         // Determine rate limit based on the gRPC method path
         let method_path = request

@@ -325,7 +325,7 @@ async fn handle_socket(
     tokio::spawn(async move {
         while let Some(bytes) = rx.recv().await {
             if let Err(e) = ws_sender_sink
-                .send(axum::extract::ws::Message::Binary(bytes))
+                .send(axum::extract::ws::Message::Binary(bytes.into()))
                 .await
             {
                 error!("Failed to send WebSocket message: {}", e);

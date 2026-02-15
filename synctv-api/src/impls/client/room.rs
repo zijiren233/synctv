@@ -539,10 +539,16 @@ impl ClientApiImpl {
 
     pub async fn get_chat_history(
         &self,
+        user_id: &str,
         room_id: &str,
         req: crate::proto::client::GetChatHistoryRequest,
     ) -> Result<crate::proto::client::GetChatHistoryResponse, String> {
+        let uid = UserId::from_string(user_id.to_string());
         let rid = RoomId::from_string(room_id.to_string());
+
+        // Check membership before returning chat history
+        self.room_service.check_membership(&rid, &uid).await
+            .map_err(|e| format!("Forbidden: {e}"))?;
 
         let messages = self.room_service.get_chat_history(&rid, None, req.limit).await
             .map_err(|e| e.to_string())?;

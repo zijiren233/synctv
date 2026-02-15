@@ -26,7 +26,7 @@ use super::middleware::AuthUser;
 use super::{AppError, AppState};
 
 /// Request to create a WebSocket ticket
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateTicketRequest {
     /// Optional room ID to pre-validate membership
     /// If provided, the ticket will only be valid for that room
@@ -34,7 +34,7 @@ pub struct CreateTicketRequest {
 }
 
 /// Response containing the WebSocket ticket
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TicketResponse {
     /// The ticket string to use in WebSocket URL
     pub ticket: String,

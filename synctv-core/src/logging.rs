@@ -112,9 +112,9 @@ fn parse_log_level(level: &str) -> anyhow::Result<Level> {
 /// Generate a trace ID for request tracing
 #[must_use] 
 pub fn generate_trace_id() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let trace_id: u128 = rng.gen();
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let trace_id: u128 = rng.random();
     format!("{trace_id:032x}")
 }
 

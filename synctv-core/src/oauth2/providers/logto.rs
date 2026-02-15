@@ -5,7 +5,7 @@ use crate::Error;
 use async_trait::async_trait;
 use oauth2::{
     basic::BasicClient,
-    AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl, TokenResponse,
+    AuthUrl, ClientId, ClientSecret, EndpointSet, EndpointNotSet, RedirectUrl, TokenUrl, TokenResponse,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ pub struct LogtoConfig {
 /// Supports multiple instances (e.g., logto1, logto2) with different endpoints.
 /// Similar to Go's logtoProvider in synctv/internal/provider/providers/logto.go
 pub struct LogtoProvider {
-    client: Arc<BasicClient>,
+    client: Arc<BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>>,
     endpoint: String,
     http_client: Arc<Client>,
 }
@@ -44,13 +44,11 @@ impl LogtoProvider {
         let redirect = RedirectUrl::new(redirect_url)
             .map_err(|e| Error::InvalidInput(format!("Invalid Logto redirect URL: {e}")))?;
         let client = Arc::new(
-            BasicClient::new(
-                ClientId::new(client_id),
-                Some(ClientSecret::new(client_secret)),
-                auth_url,
-                Some(token_url),
-            )
-            .set_redirect_uri(redirect),
+            BasicClient::new(ClientId::new(client_id))
+                .set_client_secret(ClientSecret::new(client_secret))
+                .set_auth_uri(auth_url)
+                .set_token_uri(token_url)
+                .set_redirect_uri(redirect),
         );
 
         Ok(Self {
@@ -80,7 +78,7 @@ impl Provider for LogtoProvider {
         let token = self
             .client
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
-            .request_async(oauth2::reqwest::async_http_client)
+            .request_async(&oauth2::reqwest::Client::new())
             .await
             .map_err(|e| Error::Internal(format!("Failed to exchange code: {e}")))?;
 

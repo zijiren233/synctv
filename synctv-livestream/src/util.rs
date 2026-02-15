@@ -1,6 +1,6 @@
 //! Shared utilities for the livestream crate.
 
-use rand::Rng;
+use rand::RngExt;
 
 /// Exponential backoff with jitter.
 ///
@@ -12,7 +12,7 @@ pub async fn backoff(attempt: u32, initial_ms: u64, max_ms: u64) {
     // Add jitter: +/- 25% using proper RNG
     let jitter_range = capped / 4;
     let random_offset = if jitter_range > 0 {
-        rand::thread_rng().gen_range(0..=(jitter_range * 2))
+        rand::rng().random_range(0..=(jitter_range * 2))
     } else {
         0
     };

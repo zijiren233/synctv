@@ -15,6 +15,7 @@
 //!   for single-instance deployments but will not work correctly with multiple replicas.
 
 use base64::Engine;
+use rand::RngExt;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -262,9 +263,9 @@ impl WsTicketService {
     /// Generate a secure random ticket string
     fn generate_ticket() -> String {
         // Generate cryptographically secure random bytes
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut bytes = [0u8; TICKET_LENGTH];
-        rand::RngCore::fill_bytes(&mut rng, &mut bytes);
+        rng.fill(&mut bytes);
 
         // Encode as URL-safe base64 (no special characters that could cause issues in URLs)
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)

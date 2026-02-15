@@ -7,7 +7,7 @@
 //! Falls back to in-memory storage when Redis is not configured.
 
 use chrono::{Duration, Utc};
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use lettre::{
@@ -164,7 +164,7 @@ impl EmailService {
                 .map_err(|e| Error::Internal(format!("Failed to serialize verification code: {e}")))?;
 
             let mut conn = redis
-                .get_multiplexed_tokio_connection()
+                .get_multiplexed_async_connection()
                 .await
                 .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
@@ -190,7 +190,7 @@ impl EmailService {
             let key = format!("{EMAIL_CODE_KEY_PREFIX}{email}");
 
             let mut conn = redis
-                .get_multiplexed_tokio_connection()
+                .get_multiplexed_async_connection()
                 .await
                 .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
@@ -232,7 +232,7 @@ impl EmailService {
             let key = format!("{EMAIL_CODE_KEY_PREFIX}{email}");
 
             let mut conn = redis
-                .get_multiplexed_tokio_connection()
+                .get_multiplexed_async_connection()
                 .await
                 .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 
@@ -251,8 +251,8 @@ impl EmailService {
 
     /// Generate a 6-digit verification code
     fn generate_code() -> String {
-        let mut rng = rand::thread_rng();
-        format!("{:06}", rng.gen_range(0..1_000_000))
+        let mut rng = rand::rng();
+        format!("{:06}", rng.random_range(0..1_000_000))
     }
 
     /// Validate email format (RFC 5322 compliant)
@@ -429,7 +429,7 @@ impl EmailService {
         let key = format!("{EMAIL_CODE_KEY_PREFIX}{email}");
 
         let mut conn = redis
-            .get_multiplexed_tokio_connection()
+            .get_multiplexed_async_connection()
             .await
             .map_err(|e| Error::Internal(format!("Redis connection failed: {e}")))?;
 

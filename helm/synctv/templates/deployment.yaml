@@ -115,6 +115,20 @@ spec:
                   name: {{ include "synctv.secretName" . }}
                   key: SYNCTV_EMAIL_SMTP_PASSWORD
             {{- end }}
+            {{- if .Values.secrets.credentialEncryptionKey }}
+            - name: SYNCTV_CREDENTIAL_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "synctv.secretName" . }}
+                  key: SYNCTV_CREDENTIAL_ENCRYPTION_KEY
+            {{- end }}
+            {{- if .Values.secrets.oauth2EncryptionKey }}
+            - name: SYNCTV_OAUTH2_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "synctv.secretName" . }}
+                  key: SYNCTV_OAUTH2_ENCRYPTION_KEY
+            {{- end }}
             {{- if .Values.secrets.bootstrap }}
             {{- if .Values.secrets.bootstrap.rootPassword }}
             - name: SYNCTV_BOOTSTRAP_ROOT_PASSWORD

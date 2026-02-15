@@ -5,7 +5,7 @@ use crate::Error;
 use async_trait::async_trait;
 use oauth2::{
     basic::BasicClient,
-    AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl, TokenResponse,
+    AuthUrl, ClientId, ClientSecret, EndpointSet, EndpointNotSet, RedirectUrl, TokenUrl, TokenResponse,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ pub struct GoogleConfig {
 
 /// Google `OAuth2` provider
 pub struct GoogleProvider {
-    client: Arc<BasicClient>,
+    client: Arc<BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>>,
     http_client: Arc<Client>,
 }
 
@@ -34,13 +34,11 @@ impl GoogleProvider {
         let redirect = RedirectUrl::new(redirect_url)
             .map_err(|e| Error::InvalidInput(format!("Invalid Google OAuth2 redirect URL: {e}")))?;
         let client = Arc::new(
-            BasicClient::new(
-                ClientId::new(client_id),
-                Some(ClientSecret::new(client_secret)),
-                AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string()).expect("valid Google auth URL"),
-                Some(TokenUrl::new("https://oauth2.googleapis.com/token".to_string()).expect("valid Google token URL")),
-            )
-            .set_redirect_uri(redirect),
+            BasicClient::new(ClientId::new(client_id))
+                .set_client_secret(ClientSecret::new(client_secret))
+                .set_auth_uri(AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string()).expect("valid Google auth URL"))
+                .set_token_uri(TokenUrl::new("https://oauth2.googleapis.com/token".to_string()).expect("valid Google token URL"))
+                .set_redirect_uri(redirect),
         );
 
         Ok(Self {
@@ -69,7 +67,7 @@ impl Provider for GoogleProvider {
         let token = self
             .client
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
-            .request_async(oauth2::reqwest::async_http_client)
+            .request_async(&oauth2::reqwest::Client::new())
             .await
             .map_err(|e| Error::Internal(format!("Failed to exchange code: {e}")))?;
 

@@ -151,11 +151,15 @@ impl FlvVideoTagDemuxer {
                         frame_type: tag_header.frame_type,
                         data,
                     };
-                    //print!("flv demux video payload length {}\n", video_data.data.len());
                     return Ok(Some(video_data));
                 }
                 _ => {}
             }
+        } else {
+            tracing::warn!(
+                codec_id = tag_header.codec_id,
+                "Unsupported video codec; only H.264 is supported, dropping frame"
+            );
         }
 
         Ok(None)
@@ -205,11 +209,15 @@ impl FlvAudioTagDemuxer {
                         dts: i64::from(timestamp),
                         data: self.aac_processor.bytes_writer.extract_current_bytes(),
                     };
-                    //print!("flv demux audio payload length {}\n", audio_data.data.len());
                     return Ok(audio_data);
                 }
                 _ => {}
             }
+        } else {
+            tracing::warn!(
+                sound_format = tag_header.sound_format,
+                "Unsupported audio codec; only AAC is supported, dropping frame"
+            );
         }
 
         Ok(FlvDemuxerAudioData::new())
