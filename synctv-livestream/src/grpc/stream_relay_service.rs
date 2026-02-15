@@ -8,6 +8,7 @@ use synctv_xiu::streamhub::{
 };
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream};
+use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
@@ -30,20 +31,24 @@ pub struct StreamRelayServiceImpl {
     stream_hub_event_sender: StreamHubEventSender,
     /// Shared secret for cluster authentication (constant-time comparison)
     cluster_secret: Option<Vec<u8>>,
+    /// Cancellation token for graceful shutdown of forwarding tasks
+    cancel_token: CancellationToken,
 }
 
 impl StreamRelayServiceImpl {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         registry: Arc<StreamRegistry>,
         node_id: String,
         stream_hub_event_sender: StreamHubEventSender,
+        cancel_token: CancellationToken,
     ) -> Self {
         Self {
             registry,
             node_id,
             stream_hub_event_sender,
             cluster_secret: None,
+            cancel_token,
         }
     }
 
@@ -164,14 +169,28 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         // Create a channel for streaming packets
         let (tx, rx) = mpsc::channel(128);
 
-        // Spawn task to forward frames
+        // Spawn task to forward frames with cancellation support
         let stream_name_clone = stream_name.clone();
         let event_sender_clone = self.stream_hub_event_sender.clone();
+        let child_token = self.cancel_token.child_token();
         tokio::spawn(async move {
             // Stream live data from StreamHub subscription
             // (GOP frames are automatically sent first by StreamHub's send_prior_data)
             info!("Streaming live data to puller");
-            while let Some(frame_data) = frame_receiver.recv().await {
+            loop {
+                let frame_data = tokio::select! {
+                    _ = child_token.cancelled() => {
+                        info!("Relay forwarding task cancelled (shutdown)");
+                        break;
+                    }
+                    result = frame_receiver.recv() => {
+                        match result {
+                            Some(data) => data,
+                            None => break, // Channel closed, stream ended
+                        }
+                    }
+                };
+
                 // Extract data, timestamp, and frame_type from FrameData enum
                 let (data, timestamp, frame_type) = match frame_data {
                     synctv_xiu::streamhub::define::FrameData::Video { data, timestamp } => {

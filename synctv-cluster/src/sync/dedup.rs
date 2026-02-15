@@ -104,15 +104,19 @@ impl MessageDeduplicator {
     ///
     /// Returns `true` if this is a new event, `false` if it's a duplicate
     /// within the dedup window.
+    ///
+    /// Uses moka's atomic `get_with()` to avoid the TOCTOU race between
+    /// `get()` and `insert()`. Under concurrent dispatch (e.g., live Pub/Sub
+    /// event + catch-up Stream event arriving simultaneously), only one caller
+    /// will see `is_new = true`; all others get `false`.
     #[must_use]
     pub fn should_process(&self, key: &DedupKey) -> bool {
-        // Try to get: if present, it's a duplicate
-        if self.cache.get(key).is_some() {
-            return false;
-        }
-        // Insert the key; moka handles TTL expiration automatically
-        self.cache.insert(key.clone(), ());
-        true
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let is_new = AtomicBool::new(false);
+        self.cache.get_with(key.clone(), || {
+            is_new.store(true, Ordering::Relaxed);
+        });
+        is_new.load(Ordering::Relaxed)
     }
 
     /// Mark an event as processed
@@ -182,6 +186,48 @@ mod tests {
 
         // After expiration, should process again
         assert!(dedup.should_process(&key));
+    }
+
+    #[tokio::test]
+    async fn test_dedup_concurrent_should_process() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dedup = Arc::new(MessageDeduplicator::with_defaults());
+        let key = DedupKey {
+            event_type: "chat".to_string(),
+            room_id: "room1".to_string(),
+            user_id: "user1".to_string(),
+            extra: String::new(),
+            timestamp_ms: 1000,
+            content_hash: 0,
+        };
+
+        let success_count = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(tokio::sync::Barrier::new(10));
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let dedup = dedup.clone();
+            let key = key.clone();
+            let count = success_count.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                if dedup.should_process(&key) {
+                    count.fetch_add(1, Ordering::Relaxed);
+                }
+            }));
+        }
+
+        for h in handles {
+            h.await.expect("task panicked");
+        }
+
+        // Exactly one thread should have processed the event
+        assert_eq!(success_count.load(Ordering::Relaxed), 1,
+            "Expected exactly 1 successful should_process, got {}",
+            success_count.load(Ordering::Relaxed));
     }
 
     #[tokio::test]

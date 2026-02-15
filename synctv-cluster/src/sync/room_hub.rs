@@ -289,9 +289,15 @@ impl RoomMessageHub {
     }
 
     /// Get the number of active rooms
-    #[must_use] 
+    #[must_use]
     pub fn room_count(&self) -> usize {
         self.rooms.len()
+    }
+
+    /// Get all active room IDs (rooms with at least one subscriber)
+    #[must_use]
+    pub fn active_room_ids(&self) -> Vec<RoomId> {
+        self.rooms.iter().map(|entry| entry.key().clone()).collect()
     }
 
     /// Get total number of active connections

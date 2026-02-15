@@ -120,9 +120,21 @@ impl RoomMemberRepository {
         member: &RoomMember,
         options: &AddMemberOptions,
     ) -> Result<RoomMember> {
-        // Begin transaction
         let mut tx = self.pool.begin().await?;
+        let result = self.add_with_options_tx(member, options, &mut tx).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
 
+    /// Add user to room with role and options using a provided transaction
+    ///
+    /// Same as `add_with_options` but lets the caller control the transaction boundary.
+    pub async fn add_with_options_tx(
+        &self,
+        member: &RoomMember,
+        options: &AddMemberOptions,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<RoomMember> {
         // 1. Check if room exists and lock the row
         let room_row = sqlx::query(
             "SELECT id, status FROM rooms
@@ -130,7 +142,7 @@ impl RoomMemberRepository {
              FOR UPDATE"
         )
         .bind(member.room_id.as_str())
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
 
         let room_row = match room_row {
@@ -155,7 +167,7 @@ impl RoomMemberRepository {
             )
             .bind(member.room_id.as_str())
             .bind(member.user_id.as_str())
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?;
 
             if existing.is_some() {
@@ -172,7 +184,7 @@ impl RoomMemberRepository {
                      WHERE room_id = $1 AND left_at IS NULL"
                 )
                 .bind(member.room_id.as_str())
-                .fetch_one(&mut *tx)
+                .fetch_one(&mut **tx)
                 .await?;
 
                 let count: i64 = count_row.try_get("count")?;
@@ -214,11 +226,8 @@ impl RoomMemberRepository {
         .bind(member.removed_permissions as i64)
         .bind(member.joined_at)
         .bind(member.version)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
-
-        // Commit transaction
-        tx.commit().await?;
 
         self.row_to_member(row)
     }

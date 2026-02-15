@@ -507,3 +507,237 @@ pub fn hsts_header(max_age: u64, include_subdomains: bool, preload: bool) -> Str
 
     value
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    // === RateLimitConfig Tests ===
+
+    #[test]
+    fn test_rate_limit_config_default() {
+        let config = RateLimitConfig::default();
+        assert_eq!(config.auth_max_requests, 5);
+        assert_eq!(config.auth_window_seconds, 60);
+        assert_eq!(config.write_max_requests, 30);
+        assert_eq!(config.write_window_seconds, 60);
+        assert_eq!(config.read_max_requests, 100);
+        assert_eq!(config.read_window_seconds, 60);
+        assert_eq!(config.media_max_requests, 20);
+        assert_eq!(config.media_window_seconds, 60);
+        assert_eq!(config.admin_max_requests, 30);
+        assert_eq!(config.admin_window_seconds, 60);
+        assert_eq!(config.streaming_max_requests, 50);
+        assert_eq!(config.streaming_window_seconds, 60);
+        assert_eq!(config.websocket_max_requests, 10);
+        assert_eq!(config.websocket_window_seconds, 60);
+    }
+
+    #[test]
+    fn test_rate_limit_config_auth_stricter_than_read() {
+        let config = RateLimitConfig::default();
+        assert!(config.auth_max_requests < config.read_max_requests);
+    }
+
+    #[test]
+    fn test_rate_limit_config_websocket_stricter_than_streaming() {
+        let config = RateLimitConfig::default();
+        assert!(config.websocket_max_requests < config.streaming_max_requests);
+    }
+
+    // === HSTS Header Tests ===
+
+    #[test]
+    fn test_hsts_header_basic() {
+        let header = hsts_header(31536000, false, false);
+        assert_eq!(header, "max-age=31536000");
+    }
+
+    #[test]
+    fn test_hsts_header_with_subdomains() {
+        let header = hsts_header(31536000, true, false);
+        assert_eq!(header, "max-age=31536000; includeSubDomains");
+    }
+
+    #[test]
+    fn test_hsts_header_with_preload() {
+        let header = hsts_header(31536000, false, true);
+        assert_eq!(header, "max-age=31536000; preload");
+    }
+
+    #[test]
+    fn test_hsts_header_full() {
+        let header = hsts_header(63072000, true, true);
+        assert_eq!(header, "max-age=63072000; includeSubDomains; preload");
+    }
+
+    #[test]
+    fn test_hsts_header_zero_max_age() {
+        let header = hsts_header(0, false, false);
+        assert_eq!(header, "max-age=0");
+    }
+
+    // === Security Headers Middleware Tests ===
+
+    #[tokio::test]
+    async fn test_security_headers_adds_all_headers() {
+        let app = axum::Router::new()
+            .route(
+                "/test",
+                axum::routing::get(|| async { "ok" }),
+            )
+            .layer(axum::middleware::from_fn(security_headers_middleware));
+
+        let request = Request::builder()
+            .uri("/test")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let headers = response.headers();
+        assert_eq!(headers.get("X-Frame-Options").unwrap(), "DENY");
+        assert_eq!(headers.get("X-Content-Type-Options").unwrap(), "nosniff");
+        assert_eq!(headers.get("X-XSS-Protection").unwrap(), "1; mode=block");
+        assert!(headers.contains_key("Content-Security-Policy"));
+        assert!(headers.contains_key("Referrer-Policy"));
+        assert!(headers.contains_key("Permissions-Policy"));
+        assert!(headers.contains_key("Cache-Control"));
+        assert_eq!(headers.get("Pragma").unwrap(), "no-cache");
+    }
+
+    #[tokio::test]
+    async fn test_security_headers_does_not_overwrite_existing() {
+        let app = axum::Router::new()
+            .route(
+                "/test",
+                axum::routing::get(|| async {
+                    (
+                        [(axum::http::header::HeaderName::from_static("x-frame-options"), "SAMEORIGIN")],
+                        "ok",
+                    )
+                }),
+            )
+            .layer(axum::middleware::from_fn(security_headers_middleware));
+
+        let request = Request::builder()
+            .uri("/test")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Should not overwrite the existing X-Frame-Options header
+        assert_eq!(
+            response.headers().get("X-Frame-Options").unwrap(),
+            "SAMEORIGIN"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_security_headers_csp_policy() {
+        let app = axum::Router::new()
+            .route(
+                "/test",
+                axum::routing::get(|| async { "ok" }),
+            )
+            .layer(axum::middleware::from_fn(security_headers_middleware));
+
+        let request = Request::builder()
+            .uri("/test")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        let csp = response
+            .headers()
+            .get("Content-Security-Policy")
+            .unwrap()
+            .to_str()
+            .unwrap();
+
+        assert!(csp.contains("default-src 'none'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+    }
+
+    #[tokio::test]
+    async fn test_security_headers_cache_control() {
+        let app = axum::Router::new()
+            .route(
+                "/test",
+                axum::routing::get(|| async { "ok" }),
+            )
+            .layer(axum::middleware::from_fn(security_headers_middleware));
+
+        let request = Request::builder()
+            .uri("/test")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        let cache_control = response
+            .headers()
+            .get("Cache-Control")
+            .unwrap()
+            .to_str()
+            .unwrap();
+
+        assert!(cache_control.contains("no-store"));
+        assert!(cache_control.contains("no-cache"));
+        assert!(cache_control.contains("must-revalidate"));
+    }
+
+    // === AuthUser Tests (extracting behavior) ===
+
+    #[test]
+    fn test_auth_user_debug() {
+        let auth_user = AuthUser {
+            user_id: synctv_core::models::id::UserId::from_string("test123".to_string()),
+        };
+        let debug_str = format!("{auth_user:?}");
+        assert!(debug_str.contains("test123"));
+    }
+
+    #[test]
+    fn test_auth_user_clone() {
+        let auth_user = AuthUser {
+            user_id: synctv_core::models::id::UserId::from_string("test123".to_string()),
+        };
+        let cloned = auth_user.clone();
+        assert_eq!(cloned.user_id.as_str(), "test123");
+    }
+
+    // === RateLimitCategory Tests ===
+
+    #[test]
+    fn test_rate_limit_category_debug() {
+        // Ensure all variants are Debug-printable (compile-time check mostly)
+        let categories = [
+            RateLimitCategory::Auth,
+            RateLimitCategory::Write,
+            RateLimitCategory::Read,
+            RateLimitCategory::Media,
+            RateLimitCategory::Admin,
+            RateLimitCategory::Streaming,
+            RateLimitCategory::WebSocket,
+        ];
+        for cat in categories {
+            let s = format!("{cat:?}");
+            assert!(!s.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_rate_limit_category_clone() {
+        let cat = RateLimitCategory::Auth;
+        let cloned = cat;
+        assert!(matches!(cloned, RateLimitCategory::Auth));
+    }
+}

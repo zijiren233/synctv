@@ -337,4 +337,166 @@ mod tests {
         client.set_token("new_token");
         assert!(client.has_token());
     }
+
+    #[test]
+    fn test_client_host_preserved() {
+        let client = AlistClient::new("https://my-server.com:5244").unwrap();
+        assert_eq!(client.host(), "https://my-server.com:5244");
+    }
+
+    #[test]
+    fn test_client_with_token_host() {
+        let client = AlistClient::with_token("https://alist.example.com", "token123").unwrap();
+        assert_eq!(client.host(), "https://alist.example.com");
+        assert!(client.has_token());
+    }
+
+    #[test]
+    fn test_set_token_overwrite() {
+        let mut client = AlistClient::with_token("https://alist.example.com", "old_token").unwrap();
+        assert!(client.has_token());
+        client.set_token("new_token");
+        assert!(client.has_token());
+    }
+
+    // === Alist Types Deserialization Tests ===
+
+    #[test]
+    fn test_alist_resp_deserialize_success() {
+        let json = r#"{"code": 200, "message": "success", "data": {"token": "abc123"}}"#;
+        let resp: crate::alist::types::AlistResp<crate::alist::types::LoginData> = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.code, 200);
+        assert_eq!(resp.message, "success");
+        assert_eq!(resp.data.unwrap().token, "abc123");
+    }
+
+    #[test]
+    fn test_alist_resp_deserialize_no_data() {
+        let json = r#"{"code": 401, "message": "unauthorized", "data": null}"#;
+        let resp: crate::alist::types::AlistResp<crate::alist::types::LoginData> = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.code, 401);
+        assert!(resp.data.is_none());
+    }
+
+    #[test]
+    fn test_fs_list_resp_deserialize() {
+        let json = r#"{
+            "content": [
+                {"name": "movie.mkv", "size": 1000000, "is_dir": false, "modified": 1234567890, "sign": "", "thumb": "", "type": 2}
+            ],
+            "total": 1,
+            "readme": "",
+            "write": false,
+            "provider": "local"
+        }"#;
+        let resp: crate::alist::types::HttpFsListResp = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.total, 1);
+        assert_eq!(resp.content.len(), 1);
+        assert_eq!(resp.content[0].name, "movie.mkv");
+        assert!(!resp.content[0].is_dir);
+    }
+
+    #[test]
+    fn test_fs_get_resp_deserialize() {
+        let json = r#"{
+            "name": "video.mp4",
+            "size": 5000000,
+            "is_dir": false,
+            "modified": 1234567890,
+            "created": 1234567800,
+            "raw_url": "https://cdn.example.com/video.mp4",
+            "provider": "s3"
+        }"#;
+        let resp: crate::alist::types::HttpFsGetResp = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.name, "video.mp4");
+        assert_eq!(resp.size, 5000000);
+        assert!(!resp.is_dir);
+        assert_eq!(resp.raw_url, "https://cdn.example.com/video.mp4");
+        assert_eq!(resp.provider, "s3");
+    }
+
+    #[test]
+    fn test_fs_get_resp_with_defaults() {
+        // Minimal JSON with only required fields, defaults for the rest
+        let json = r#"{"name": "test", "size": 0, "is_dir": true}"#;
+        let resp: crate::alist::types::HttpFsGetResp = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.name, "test");
+        assert!(resp.is_dir);
+        assert_eq!(resp.modified, 0);
+        assert_eq!(resp.raw_url, "");
+        assert!(resp.related.is_empty());
+    }
+
+    #[test]
+    fn test_me_resp_deserialize() {
+        let json = r#"{
+            "id": 1,
+            "username": "admin",
+            "base_path": "/",
+            "role": 0,
+            "disabled": false,
+            "permission": 511,
+            "sso_id": "",
+            "otp": false
+        }"#;
+        let resp: crate::alist::types::HttpMeResp = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, 1);
+        assert_eq!(resp.username, "admin");
+        assert_eq!(resp.role, 0);
+        assert!(!resp.disabled);
+    }
+
+    // === Proto Conversion Tests ===
+
+    #[test]
+    fn test_fs_list_content_to_proto() {
+        let content = crate::alist::types::HttpFsListContent {
+            name: "video.mp4".to_string(),
+            size: 1024,
+            is_dir: false,
+            modified: 1700000000,
+            sign: "abc".to_string(),
+            thumb: "".to_string(),
+            r#type: 2,
+        };
+        let proto: crate::grpc::alist::fs_list_resp::FsListContent = content.into();
+        assert_eq!(proto.name, "video.mp4");
+        assert_eq!(proto.size, 1024);
+        assert!(!proto.is_dir);
+    }
+
+    #[test]
+    fn test_fs_list_resp_to_proto() {
+        let resp = crate::alist::types::HttpFsListResp {
+            content: vec![
+                crate::alist::types::HttpFsListContent {
+                    name: "a.mp4".to_string(),
+                    size: 100,
+                    is_dir: false,
+                    modified: 0,
+                    sign: "".to_string(),
+                    thumb: "".to_string(),
+                    r#type: 0,
+                },
+                crate::alist::types::HttpFsListContent {
+                    name: "folder".to_string(),
+                    size: 0,
+                    is_dir: true,
+                    modified: 0,
+                    sign: "".to_string(),
+                    thumb: "".to_string(),
+                    r#type: 1,
+                },
+            ],
+            total: 2,
+            readme: "readme text".to_string(),
+            write: true,
+            provider: "local".to_string(),
+        };
+        let proto: crate::grpc::alist::FsListResp = resp.into();
+        assert_eq!(proto.total, 2);
+        assert_eq!(proto.content.len(), 2);
+        assert_eq!(proto.readme, "readme text");
+        assert!(proto.write);
+    }
 }

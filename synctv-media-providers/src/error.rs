@@ -87,3 +87,70 @@ impl From<reqwest::header::InvalidHeaderValue> for ProviderClientError {
         Self::InvalidHeader(err.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display_network() {
+        let err = ProviderClientError::Network("connection refused".to_string());
+        assert_eq!(err.to_string(), "Network error: connection refused");
+    }
+
+    #[test]
+    fn test_error_display_http() {
+        let err = ProviderClientError::Http {
+            status: reqwest::StatusCode::NOT_FOUND,
+            url: "https://example.com/api".to_string(),
+        };
+        assert_eq!(err.to_string(), "HTTP error 404 Not Found for https://example.com/api");
+    }
+
+    #[test]
+    fn test_error_display_api() {
+        let err = ProviderClientError::Api {
+            code: 62002,
+            message: "invalid token".to_string(),
+        };
+        assert_eq!(err.to_string(), "API error (code 62002): invalid token");
+    }
+
+    #[test]
+    fn test_error_display_parse() {
+        let err = ProviderClientError::Parse("unexpected EOF".to_string());
+        assert_eq!(err.to_string(), "Parse error: unexpected EOF");
+    }
+
+    #[test]
+    fn test_error_display_auth() {
+        let err = ProviderClientError::Auth("session expired".to_string());
+        assert_eq!(err.to_string(), "Authentication failed: session expired");
+    }
+
+    #[test]
+    fn test_error_display_invalid_config() {
+        let err = ProviderClientError::InvalidConfig("missing host".to_string());
+        assert_eq!(err.to_string(), "Invalid configuration: missing host");
+    }
+
+    #[test]
+    fn test_error_display_response_too_large() {
+        let err = ProviderClientError::ResponseTooLarge { size: 20_000_000 };
+        let msg = err.to_string();
+        assert!(msg.contains("20000000"));
+        assert!(msg.contains(&MAX_RESPONSE_SIZE.to_string()));
+    }
+
+    #[test]
+    fn test_error_from_serde_json() {
+        let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let err: ProviderClientError = json_err.into();
+        assert!(matches!(err, ProviderClientError::Parse(_)));
+    }
+
+    #[test]
+    fn test_max_response_size() {
+        assert_eq!(MAX_RESPONSE_SIZE, 16 * 1024 * 1024);
+    }
+}

@@ -1,7 +1,7 @@
 //! Production-grade resilience patterns for external services
 //!
-//! This module provides timeout, retry configuration, and circuit breaker patterns
-//! for production-ready resilience.
+//! This module provides timeout configuration and re-exports production-grade
+//! circuit breaker (`failsafe`) and retry (`backon`) crates.
 
 pub mod timeout {
     //! Timeout configuration for external service calls
@@ -42,34 +42,34 @@ pub mod timeout {
 
     impl TimeoutConfig {
         /// Create custom timeout config
-        #[must_use] 
+        #[must_use]
         pub fn new() -> Self {
             Self::default()
         }
 
         /// Set database query timeout
-        #[must_use] 
+        #[must_use]
         pub const fn with_db_query_timeout(mut self, timeout: Duration) -> Self {
             self.db_query = timeout;
             self
         }
 
         /// Set Redis timeout
-        #[must_use] 
+        #[must_use]
         pub const fn with_redis_timeout(mut self, timeout: Duration) -> Self {
             self.redis = timeout;
             self
         }
 
         /// Set HTTP request timeout
-        #[must_use] 
+        #[must_use]
         pub const fn with_http_timeout(mut self, timeout: Duration) -> Self {
             self.http = timeout;
             self
         }
 
         /// Set gRPC timeout
-        #[must_use] 
+        #[must_use]
         pub const fn with_grpc_timeout(mut self, timeout: Duration) -> Self {
             self.grpc = timeout;
             self
@@ -78,66 +78,16 @@ pub mod timeout {
 }
 
 pub mod retry {
-    //! Retry configuration for transient failures
-
-    use std::time::Duration;
-
-    /// Retry configuration
-    #[derive(Debug, Clone, Copy)]
-    pub struct RetryConfig {
-        pub max_attempts: u32,
-        pub base_delay_ms: u64,
-        pub max_delay_ms: u64,
-    }
-
-    impl Default for RetryConfig {
-        fn default() -> Self {
-            Self {
-                max_attempts: 3,
-                base_delay_ms: 100,
-                max_delay_ms: 5000,
-            }
-        }
-    }
-
-    impl RetryConfig {
-        /// Create custom retry config
-        #[must_use] 
-        pub fn new() -> Self {
-            Self::default()
-        }
-
-        /// Set max retry attempts
-        #[must_use] 
-        pub const fn with_max_attempts(mut self, attempts: u32) -> Self {
-            self.max_attempts = attempts;
-            self
-        }
-
-        /// Set base delay between retries
-        #[must_use] 
-        pub const fn with_base_delay(mut self, delay: Duration) -> Self {
-            self.base_delay_ms = delay.as_millis() as u64;
-            self
-        }
-
-        /// Set max delay between retries
-        #[must_use] 
-        pub const fn with_max_delay(mut self, delay: Duration) -> Self {
-            self.max_delay_ms = delay.as_millis() as u64;
-            self
-        }
-    }
+    //! Retry utilities
+    //!
+    //! Primary retry logic is provided by the `backon` crate. This module
+    //! retains the `should_retry_error` helper for error classification.
 
     /// Check if an error should be retried
     ///
     /// Checks the error for known transient I/O error kinds, then falls back to
     /// string matching for errors that don't expose `std::io::Error` directly.
-    pub fn should_retry_error(err: &(dyn std::error::Error + 'static), attempt: u32, max_attempts: u32) -> bool {
-        if attempt >= max_attempts {
-            return false;
-        }
-
+    pub fn should_retry_error(err: &(dyn std::error::Error + 'static)) -> bool {
         // Check top-level error for std::io::Error with transient kinds
         if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
             return is_transient_io_error(io_err);
@@ -167,156 +117,41 @@ pub mod retry {
                 | std::io::ErrorKind::UnexpectedEof
         )
     }
-
-    /// Calculate delay before next retry using exponential backoff
-    #[must_use] 
-    pub fn calculate_retry_delay(attempt: u32, base_delay_ms: u64, max_delay_ms: u64) -> Duration {
-        let delay_ms = (base_delay_ms * 2_u64.pow(attempt.saturating_sub(1))).min(max_delay_ms);
-        Duration::from_millis(delay_ms)
-    }
 }
 
 pub mod circuit_breaker {
     //! Circuit breaker pattern for external services
+    //!
+    //! Uses the `failsafe` crate for production-grade circuit breaker logic.
+    //! Re-exports key types for convenience.
 
-    use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
-    /// Circuit breaker state
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum CircuitState {
-        Closed,
-        Open,
-        HalfOpen,
-    }
+    pub use failsafe::CircuitBreaker;
 
-    /// Circuit breaker configuration
-    #[derive(Debug, Clone)]
-    pub struct CircuitBreakerConfig {
-        pub failure_threshold: u32,
-        pub success_threshold: u32,
-        pub timeout: Duration,
-    }
-
-    impl Default for CircuitBreakerConfig {
-        fn default() -> Self {
-            Self {
-                failure_threshold: 5,
-                success_threshold: 2,
-                timeout: Duration::from_mins(1),
-            }
-        }
-    }
-
-    /// Simple circuit breaker
+    /// Create a circuit breaker with sensible defaults for external service calls.
     ///
-    /// Uses `parking_lot::Mutex` instead of `std::sync::Mutex` to avoid
-    /// blocking the async runtime (`parking_lot` never yields to the OS scheduler
-    /// for short critical sections like this).
-    #[derive(Debug, Clone)]
-    pub struct CircuitBreaker {
-        config: CircuitBreakerConfig,
-        state: Arc<parking_lot::Mutex<CircuitBreakerState>>,
+    /// Opens after `failure_threshold` consecutive failures.
+    /// Uses exponential backoff from `min_backoff` to `max_backoff` in open state.
+    pub fn create(
+        failure_threshold: u32,
+        min_backoff: Duration,
+        max_backoff: Duration,
+    ) -> failsafe::StateMachine<
+        failsafe::failure_policy::ConsecutiveFailures<failsafe::backoff::Exponential>,
+        (),
+    > {
+        let backoff = failsafe::backoff::exponential(min_backoff, max_backoff);
+        let policy = failsafe::failure_policy::consecutive_failures(failure_threshold, backoff);
+        failsafe::Config::new().failure_policy(policy).build()
     }
 
-    #[derive(Debug)]
-    struct CircuitBreakerState {
-        state: CircuitState,
-        failures: u32,
-        successes: u32,
-        last_failure_time: Option<Instant>,
-        open_since: Option<Instant>,
-    }
-
-    impl CircuitBreaker {
-        /// Create new circuit breaker
-        #[must_use] 
-        pub fn new(config: CircuitBreakerConfig) -> Self {
-            Self {
-                config,
-                state: Arc::new(parking_lot::Mutex::new(CircuitBreakerState {
-                    state: CircuitState::Closed,
-                    failures: 0,
-                    successes: 0,
-                    last_failure_time: None,
-                    open_since: None,
-                })),
-            }
-        }
-
-        /// Check if request is allowed
-        #[must_use] 
-        pub fn allow_request(&self) -> bool {
-            let mut state = self.state.lock();
-
-            match state.state {
-                CircuitState::Closed => true,
-                CircuitState::Open => {
-                    // Check if we should transition to HalfOpen
-                    if let Some(open_since) = state.open_since {
-                        if open_since.elapsed() >= self.config.timeout {
-                            state.state = CircuitState::HalfOpen;
-                            state.successes = 0;
-                            true
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                }
-                CircuitState::HalfOpen => true,
-            }
-        }
-
-        /// Record successful request
-        pub fn record_success(&self) {
-            let mut state = self.state.lock();
-
-            match state.state {
-                CircuitState::HalfOpen => {
-                    state.successes += 1;
-                    if state.successes >= self.config.success_threshold {
-                        state.state = CircuitState::Closed;
-                        state.failures = 0;
-                    }
-                }
-                CircuitState::Closed => {
-                    state.failures = 0;
-                }
-                CircuitState::Open => {
-                    // Should not happen
-                }
-            }
-        }
-
-        /// Record failed request
-        pub fn record_failure(&self) {
-            let mut state = self.state.lock();
-
-            match state.state {
-                CircuitState::Closed | CircuitState::HalfOpen => {
-                    state.failures += 1;
-                    state.last_failure_time = Some(Instant::now());
-
-                    if state.failures >= self.config.failure_threshold {
-                        state.state = CircuitState::Open;
-                        state.open_since = Some(Instant::now());
-                    }
-                }
-                CircuitState::Open => {
-                    // Already open, just update failure time
-                    state.last_failure_time = Some(Instant::now());
-                }
-            }
-        }
-
-        /// Get current state
-        #[must_use] 
-        pub fn state(&self) -> CircuitState {
-            let state = self.state.lock();
-            state.state
-        }
+    /// Create a circuit breaker with default settings (5 failures, 10-60s backoff)
+    pub fn create_default() -> failsafe::StateMachine<
+        failsafe::failure_policy::ConsecutiveFailures<failsafe::backoff::Exponential>,
+        (),
+    > {
+        create(5, Duration::from_secs(10), Duration::from_secs(60))
     }
 }
 
@@ -325,8 +160,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
     use timeout::TimeoutConfig;
-    use retry::RetryConfig;
-    use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
+    use failsafe::CircuitBreaker;
 
     #[test]
     fn test_timeout_config() {
@@ -337,55 +171,49 @@ mod tests {
     }
 
     #[test]
-    fn test_retry_config() {
-        let config = RetryConfig::new()
-            .with_max_attempts(5);
+    fn test_circuit_breaker_failsafe() {
+        // failsafe requires backoff start >= 1 second
+        let cb = circuit_breaker::create(3, Duration::from_secs(2), Duration::from_secs(10));
 
-        assert_eq!(config.max_attempts, 5);
-    }
-
-    #[test]
-    fn test_circuit_breaker() {
-        let config = CircuitBreakerConfig::default();
-        let cb = CircuitBreaker::new(config);
-
-        // Initially closed
-        assert_eq!(cb.state(), CircuitState::Closed);
-        assert!(cb.allow_request());
+        // Initially closed (call permitted)
+        assert!(cb.is_call_permitted());
 
         // Record failures
-        for _ in 0..5 {
-            cb.record_failure();
+        for _ in 0..3 {
+            cb.on_error();
         }
 
-        // Should be open now
-        assert_eq!(cb.state(), CircuitState::Open);
-        assert!(!cb.allow_request());
+        // Should be open now (call NOT permitted)
+        assert!(!cb.is_call_permitted());
     }
 
     #[test]
-    fn test_retry_delay_calculation() {
-        // Exponential backoff (1-based: attempt 0 and 1 both give base delay)
-        assert_eq!(
-            retry::calculate_retry_delay(0, 100, 5000).as_millis(),
-            100
-        );
-        assert_eq!(
-            retry::calculate_retry_delay(1, 100, 5000).as_millis(),
-            100
-        );
-        assert_eq!(
-            retry::calculate_retry_delay(2, 100, 5000).as_millis(),
-            200
-        );
-        assert_eq!(
-            retry::calculate_retry_delay(3, 100, 5000).as_millis(),
-            400
-        );
-        // Should cap at max_delay
-        assert_eq!(
-            retry::calculate_retry_delay(10, 100, 5000).as_millis(),
-            5000
-        );
+    fn test_circuit_breaker_recovery() {
+        // Use minimum 2s backoff (failsafe requires >= 1s)
+        let cb = circuit_breaker::create(2, Duration::from_secs(2), Duration::from_secs(5));
+
+        // Open the breaker
+        cb.on_error();
+        cb.on_error();
+        assert!(!cb.is_call_permitted());
+
+        // Wait for backoff to elapse (2s + margin)
+        std::thread::sleep(Duration::from_millis(2500));
+
+        // Should allow a probe request (half-open)
+        assert!(cb.is_call_permitted());
+
+        // Record success to close
+        cb.on_success();
+        assert!(cb.is_call_permitted());
+    }
+
+    #[test]
+    fn test_should_retry_error() {
+        let timeout_err = std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout");
+        assert!(retry::should_retry_error(&timeout_err));
+
+        let not_found = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        assert!(!retry::should_retry_error(&not_found));
     }
 }

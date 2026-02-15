@@ -1234,3 +1234,262 @@ fn parse_timeout_to_seconds(timeout: &str) -> u32 {
 fn seconds_to_timeout_string(seconds: u32) -> String {
     format!("{seconds}s")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use synctv_core::models::{
+        RoomId, UserId, UserRole, UserStatus, RoomStatus, RoomRole, MemberStatus,
+    };
+
+    // === Timeout Parsing Tests ===
+
+    #[test]
+    fn test_parse_timeout_to_seconds_valid() {
+        assert_eq!(parse_timeout_to_seconds("10s"), 10);
+        assert_eq!(parse_timeout_to_seconds("30s"), 30);
+        assert_eq!(parse_timeout_to_seconds("0s"), 0);
+        assert_eq!(parse_timeout_to_seconds("300s"), 300);
+    }
+
+    #[test]
+    fn test_parse_timeout_to_seconds_no_suffix() {
+        assert_eq!(parse_timeout_to_seconds("10"), 10);
+    }
+
+    #[test]
+    fn test_parse_timeout_to_seconds_invalid() {
+        assert_eq!(parse_timeout_to_seconds("abc"), 10); // Default fallback
+        assert_eq!(parse_timeout_to_seconds(""), 10);    // Empty string
+    }
+
+    #[test]
+    fn test_seconds_to_timeout_string() {
+        assert_eq!(seconds_to_timeout_string(10), "10s");
+        assert_eq!(seconds_to_timeout_string(0), "0s");
+        assert_eq!(seconds_to_timeout_string(300), "300s");
+    }
+
+    #[test]
+    fn test_timeout_roundtrip() {
+        for secs in [0, 1, 10, 30, 60, 300] {
+            let s = seconds_to_timeout_string(secs);
+            assert_eq!(parse_timeout_to_seconds(&s), secs);
+        }
+    }
+
+    // === Admin Room Proto Conversion Tests ===
+
+    fn make_test_room(status: RoomStatus) -> synctv_core::models::Room {
+        synctv_core::models::Room {
+            id: RoomId::from_string("admin_room_1".to_string()),
+            name: "Admin Test Room".to_string(),
+            description: "Room for admin tests".to_string(),
+            created_by: UserId::from_string("creator_1".to_string()),
+            status,
+            is_banned: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn test_admin_room_to_proto_basic() {
+        let room = make_test_room(RoomStatus::Active);
+        let proto = admin_room_to_proto(&room, None, Some(10));
+
+        assert_eq!(proto.id, "admin_room_1");
+        assert_eq!(proto.name, "Admin Test Room");
+        assert_eq!(proto.description, "Room for admin tests");
+        assert_eq!(proto.creator_id, "creator_1");
+        assert_eq!(proto.member_count, 10);
+        assert!(!proto.is_banned);
+    }
+
+    #[test]
+    fn test_admin_room_to_proto_banned() {
+        let mut room = make_test_room(RoomStatus::Active);
+        room.is_banned = true;
+        let proto = admin_room_to_proto(&room, None, None);
+        assert!(proto.is_banned);
+        assert_eq!(proto.member_count, 0);
+    }
+
+    #[test]
+    fn test_admin_room_to_proto_different_statuses() {
+        for status in [RoomStatus::Active, RoomStatus::Pending, RoomStatus::Closed] {
+            let room = make_test_room(status);
+            let proto = admin_room_to_proto(&room, None, None);
+            assert_eq!(
+                proto.status,
+                synctv_proto::common::RoomStatus::from(status) as i32
+            );
+        }
+    }
+
+    // === Admin User Proto Conversion Tests ===
+
+    fn make_test_user(role: UserRole, status: UserStatus) -> synctv_core::models::User {
+        synctv_core::models::User {
+            id: UserId::from_string("admin_user_1".to_string()),
+            username: "admin_test".to_string(),
+            email: Some("admin@test.com".to_string()),
+            password_hash: "hash".to_string(),
+            role,
+            status,
+            signup_method: None,
+            email_verified: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn test_admin_user_to_proto_all_roles() {
+        for (role, expected) in [
+            (UserRole::Root, synctv_proto::common::UserRole::Root as i32),
+            (UserRole::Admin, synctv_proto::common::UserRole::Admin as i32),
+            (UserRole::User, synctv_proto::common::UserRole::User as i32),
+        ] {
+            let user = make_test_user(role, UserStatus::Active);
+            let proto = admin_user_to_proto(&user);
+            assert_eq!(proto.role, expected);
+        }
+    }
+
+    #[test]
+    fn test_admin_user_to_proto_all_statuses() {
+        for (status, expected) in [
+            (UserStatus::Active, synctv_proto::common::UserStatus::Active as i32),
+            (UserStatus::Pending, synctv_proto::common::UserStatus::Pending as i32),
+            (UserStatus::Banned, synctv_proto::common::UserStatus::Banned as i32),
+        ] {
+            let user = make_test_user(UserRole::User, status);
+            let proto = admin_user_to_proto(&user);
+            assert_eq!(proto.status, expected);
+        }
+    }
+
+    #[test]
+    fn test_admin_user_to_proto_fields() {
+        let user = make_test_user(UserRole::Admin, UserStatus::Active);
+        let proto = admin_user_to_proto(&user);
+
+        assert_eq!(proto.id, "admin_user_1");
+        assert_eq!(proto.username, "admin_test");
+        assert_eq!(proto.email, "admin@test.com");
+    }
+
+    #[test]
+    fn test_admin_user_to_proto_no_email() {
+        let mut user = make_test_user(UserRole::User, UserStatus::Active);
+        user.email = None;
+        let proto = admin_user_to_proto(&user);
+        assert_eq!(proto.email, "");
+    }
+
+    // === Admin Room Member Proto Conversion Tests ===
+
+    fn make_test_member(role: RoomRole) -> synctv_core::models::RoomMemberWithUser {
+        synctv_core::models::RoomMemberWithUser {
+            room_id: RoomId::from_string("room1".to_string()),
+            user_id: UserId::from_string("user1".to_string()),
+            username: "testmember".to_string(),
+            role,
+            status: MemberStatus::Active,
+            added_permissions: 0,
+            removed_permissions: 0,
+            admin_added_permissions: 0,
+            admin_removed_permissions: 0,
+            joined_at: chrono::Utc::now(),
+            is_online: false,
+            banned_at: None,
+            banned_reason: None,
+        }
+    }
+
+    #[test]
+    fn test_admin_room_member_to_proto() {
+        let member = make_test_member(RoomRole::Admin);
+        let proto = admin_room_member_to_proto(&member);
+
+        assert_eq!(proto.room_id, "room1");
+        assert_eq!(proto.user_id, "user1");
+        assert_eq!(proto.username, "testmember");
+        assert_eq!(proto.role, synctv_proto::common::RoomMemberRole::Admin as i32);
+        assert!(!proto.is_online);
+    }
+
+    #[test]
+    fn test_admin_room_member_to_proto_with_permissions() {
+        let mut member = make_test_member(RoomRole::Member);
+        member.added_permissions = 0xAA;
+        member.removed_permissions = 0x55;
+        member.admin_added_permissions = 0xCC;
+        member.admin_removed_permissions = 0x33;
+        let proto = admin_room_member_to_proto(&member);
+
+        assert_eq!(proto.added_permissions, 0xAA);
+        assert_eq!(proto.removed_permissions, 0x55);
+        assert_eq!(proto.admin_added_permissions, 0xCC);
+        assert_eq!(proto.admin_removed_permissions, 0x33);
+    }
+
+    // === Provider Instance Conversion Tests ===
+
+    #[test]
+    fn test_provider_instance_to_proto_enabled() {
+        let instance = synctv_core::models::ProviderInstance {
+            name: "test_provider".to_string(),
+            endpoint: "https://example.com".to_string(),
+            comment: Some("A test provider".to_string()),
+            jwt_secret: None,
+            custom_ca: None,
+            timeout: "30s".to_string(),
+            tls: true,
+            insecure_tls: false,
+            providers: vec!["bilibili".to_string(), "alist".to_string()],
+            enabled: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let proto = provider_instance_to_proto(instance);
+
+        assert_eq!(proto.name, "test_provider");
+        assert_eq!(proto.endpoint, "https://example.com");
+        assert_eq!(proto.comment, "A test provider");
+        assert_eq!(proto.timeout_seconds, 30);
+        assert!(proto.tls);
+        assert!(!proto.insecure_tls);
+        assert_eq!(proto.providers, vec!["bilibili", "alist"]);
+        assert!(proto.enabled);
+        assert_eq!(proto.status, "connected");
+    }
+
+    #[test]
+    fn test_provider_instance_to_proto_disabled() {
+        let instance = synctv_core::models::ProviderInstance {
+            name: "disabled_provider".to_string(),
+            endpoint: "https://disabled.example.com".to_string(),
+            comment: None,
+            jwt_secret: None,
+            custom_ca: None,
+            timeout: "10s".to_string(),
+            tls: false,
+            insecure_tls: false,
+            providers: vec![],
+            enabled: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let proto = provider_instance_to_proto(instance);
+
+        assert_eq!(proto.status, "disabled");
+        assert_eq!(proto.comment, ""); // None -> empty
+        assert!(!proto.enabled);
+    }
+}

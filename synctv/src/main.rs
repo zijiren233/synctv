@@ -11,6 +11,7 @@ use synctv_core::{
     provider::{AlistProvider, BilibiliProvider, EmbyProvider},
 };
 use synctv_cluster::sync::{RoomMessageHub, ConnectionManager, ClusterManager, ClusterConfig};
+use synctv_cluster::discovery::{NodeRegistry, HealthMonitor, LoadBalancer, LoadBalancingStrategy};
 
 use server::{SyncTvServer, Services};
 
@@ -147,6 +148,72 @@ async fn main() -> Result<()> {
                 None
             }
         }
+    };
+
+    // 7.5. Initialize cluster discovery infrastructure (NodeRegistry + HeartbeatLoop + HealthMonitor + LoadBalancer)
+    let (node_registry, health_monitor, load_balancer) = if let Some(ref cm) = cluster_manager {
+        if !config.redis.url.is_empty() {
+            let node_id = cm.node_id().to_string();
+            let heartbeat_timeout_secs: i64 = 30;
+
+            match NodeRegistry::new(Some(config.redis.url.clone()), node_id.clone(), heartbeat_timeout_secs) {
+                Ok(registry) => {
+                    let registry = Arc::new(registry);
+
+                    // Register this node in Redis
+                    if let Err(e) = registry.register(
+                        config.grpc_address(),
+                        config.http_address(),
+                    ).await {
+                        error!("Failed to register node in Redis: {}", e);
+                        (None, None, None)
+                    } else {
+                        info!(
+                            node_id = %node_id,
+                            grpc_address = %config.grpc_address(),
+                            http_address = %config.http_address(),
+                            "Node registered in cluster"
+                        );
+
+                        // Start heartbeat loop (sends heartbeat every heartbeat_timeout/2 seconds)
+                        cm.start_heartbeat_loop(
+                            registry.clone(),
+                            config.grpc_address(),
+                            config.http_address(),
+                        ).await;
+
+                        // Start health monitor (checks node health every 15 seconds)
+                        let health_monitor = Arc::new(HealthMonitor::new(registry.clone(), 15));
+                        match health_monitor.start().await {
+                            Ok(_handle) => {
+                                info!("Health monitor started");
+                            }
+                            Err(e) => {
+                                warn!("Failed to start health monitor: {}", e);
+                            }
+                        }
+
+                        // Create load balancer with LeastConnections strategy
+                        let lb = Arc::new(
+                            LoadBalancer::new(registry.clone(), LoadBalancingStrategy::LeastConnections)
+                                .with_health_monitor(health_monitor.clone())
+                        );
+                        info!("Load balancer initialized with LeastConnections strategy");
+
+                        (Some(registry), Some(health_monitor), Some(lb))
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to create NodeRegistry: {}", e);
+                    (None, None, None)
+                }
+            }
+        } else {
+            info!("Redis not configured, cluster discovery disabled");
+            (None, None, None)
+        }
+    } else {
+        (None, None, None)
     };
 
     // 8. Initialize connection manager with configurable limits
@@ -352,6 +419,9 @@ async fn main() -> Result<()> {
         live_streaming_infrastructure,
         stun_server,
         sfu_manager,
+        node_registry,
+        health_monitor,
+        load_balancer,
     };
 
     let server = SyncTvServer::new(config, services, livestream_state, pool);

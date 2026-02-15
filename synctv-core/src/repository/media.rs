@@ -59,44 +59,70 @@ impl MediaRepository {
 
     /// Batch insert media items
     pub async fn create_batch(&self, items: &[Media]) -> Result<Vec<Media>> {
+        let mut tx = self.pool.begin().await?;
+        let results = self.create_batch_with_executor(items, &mut *tx).await?;
+        tx.commit().await?;
+        Ok(results)
+    }
+
+    /// Batch insert media items using a provided executor (for transaction support)
+    pub async fn create_batch_with_executor<'e, E>(&self, items: &[Media], executor: E) -> Result<Vec<Media>>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         if items.is_empty() {
             return Ok(Vec::new());
         }
 
+        // For executor-based usage, we need to execute all queries on the same executor.
+        // Since sqlx::Executor is consumed on use, we need to use a reference.
+        // The caller should pass &mut *tx where tx is a Transaction.
         let mut results = Vec::with_capacity(items.len());
-        let mut tx = self.pool.begin().await?;
 
-        for item in items {
-            let source_config_json = serde_json::to_value(&item.source_config)?;
+        // Build a single batch insert query for efficiency
+        let mut query_builder = String::from(
+            "INSERT INTO media (id, playlist_id, room_id, creator_id, name, position,
+                               source_provider, source_config, provider_instance_name, added_at)
+             VALUES "
+        );
+        let mut binds = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                query_builder.push_str(", ");
+            }
+            let base = i * 10;
+            query_builder.push_str(&format!(
+                "(${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${})",
+                base + 1, base + 2, base + 3, base + 4, base + 5,
+                base + 6, base + 7, base + 8, base + 9, base + 10
+            ));
+            binds.push(serde_json::to_value(&item.source_config)?);
+        }
+        query_builder.push_str(
+            " RETURNING id, playlist_id, room_id, creator_id, name, position,
+                       source_provider, source_config, provider_instance_name,
+                       added_at, deleted_at"
+        );
 
-            let row = sqlx::query(
-                r"
-                INSERT INTO media (id, playlist_id, room_id, creator_id, name, position,
-                                  source_provider, source_config, provider_instance_name, added_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                 RETURNING id, playlist_id, room_id, creator_id, name, position,
-                           source_provider, source_config, provider_instance_name,
-                           added_at, deleted_at
-                "
-            )
-            .bind(item.id.as_str())
-            .bind(item.playlist_id.as_str())
-            .bind(item.room_id.as_str())
-            .bind(item.creator_id.as_str())
-            .bind(&item.name)
-            .bind(item.position)
-            .bind(item.source_provider.as_str())
-            .bind(&source_config_json)
-            .bind(&item.provider_instance_name)
-            .bind(item.added_at)
-            .fetch_one(&mut *tx)
-            .await?;
-
-            results.push(self.row_to_media(row)?);
+        let mut query = sqlx::query(&query_builder);
+        for (i, item) in items.iter().enumerate() {
+            query = query
+                .bind(item.id.as_str())
+                .bind(item.playlist_id.as_str())
+                .bind(item.room_id.as_str())
+                .bind(item.creator_id.as_str())
+                .bind(&item.name)
+                .bind(item.position)
+                .bind(item.source_provider.as_str())
+                .bind(&binds[i])
+                .bind(&item.provider_instance_name)
+                .bind(item.added_at);
         }
 
-        // Commit transaction
-        tx.commit().await?;
+        let rows = query.fetch_all(executor).await?;
+        for row in rows {
+            results.push(self.row_to_media(row)?);
+        }
 
         Ok(results)
     }
@@ -327,33 +353,40 @@ impl MediaRepository {
 
     /// Swap positions of two media
     pub async fn swap_positions(&self, media_id1: &MediaId, media_id2: &MediaId) -> Result<()> {
-        // All reads and writes inside a single transaction with FOR UPDATE locks
-        // to prevent TOCTOU race conditions with concurrent swaps
         let mut tx = self.pool.begin().await?;
+        self.swap_positions_with_tx(media_id1, media_id2, &mut tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
 
+    /// Swap positions of two media using a provided transaction
+    pub async fn swap_positions_with_tx(
+        &self,
+        media_id1: &MediaId,
+        media_id2: &MediaId,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<()> {
         let pos1: i32 = sqlx::query_scalar("SELECT position FROM media WHERE id = $1 FOR UPDATE")
             .bind(media_id1.as_str())
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
 
         let pos2: i32 = sqlx::query_scalar("SELECT position FROM media WHERE id = $1 FOR UPDATE")
             .bind(media_id2.as_str())
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
 
         sqlx::query("UPDATE media SET position = $2 WHERE id = $1")
             .bind(media_id1.as_str())
             .bind(pos2)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
 
         sqlx::query("UPDATE media SET position = $2 WHERE id = $1")
             .bind(media_id2.as_str())
             .bind(pos1)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
-
-        tx.commit().await?;
 
         Ok(())
     }
@@ -362,17 +395,27 @@ impl MediaRepository {
     /// Takes a list of (`media_id`, `new_position`) tuples and updates them in a transaction.
     /// Uses FOR UPDATE locks to prevent concurrent reordering race conditions.
     pub async fn reorder_batch(&self, updates: &[(MediaId, i32)]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.reorder_batch_with_tx(updates, &mut tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Bulk reorder media items using a provided transaction
+    pub async fn reorder_batch_with_tx(
+        &self,
+        updates: &[(MediaId, i32)],
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<()> {
         if updates.is_empty() {
             return Ok(());
         }
-
-        let mut tx = self.pool.begin().await?;
 
         // Lock all affected rows first to prevent concurrent modification
         for (media_id, _) in updates {
             sqlx::query("SELECT id FROM media WHERE id = $1 AND deleted_at IS NULL FOR UPDATE")
                 .bind(media_id.as_str())
-                .fetch_optional(&mut *tx)
+                .fetch_optional(&mut **tx)
                 .await?;
         }
 
@@ -381,11 +424,9 @@ impl MediaRepository {
             sqlx::query("UPDATE media SET position = $2 WHERE id = $1 AND deleted_at IS NULL")
                 .bind(media_id.as_str())
                 .bind(new_position)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
-
-        tx.commit().await?;
 
         Ok(())
     }

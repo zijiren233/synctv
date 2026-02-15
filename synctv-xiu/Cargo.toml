@@ -11,7 +11,7 @@ oss = ["dep:opendal"]
 
 [dependencies]
 # Byte manipulation
-byteorder = "1.4.2"
+byteorder.workspace = true
 bytes.workspace = true
 
 # Randomness
@@ -55,6 +55,9 @@ uuid.workspace = true
 
 # HTTP
 axum.workspace = true
+
+# Resilience
+backon.workspace = true
 
 # Object storage (optional, behind `oss` feature)
 opendal = { workspace = true, optional = true }

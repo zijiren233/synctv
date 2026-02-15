@@ -1,0 +1,472 @@
+# SyncTV Helm Chart - Production Configuration
+# Documentation: https://github.com/synctv-org/synctv
+
+## Global Settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+## Name Overrides
+nameOverride: ""
+fullnameOverride: ""
+
+## ============================================================================
+## API Deployment (Stateless - HTTP/gRPC)
+## ============================================================================
+api:
+  enabled: true
+  replicaCount: 3
+
+  image:
+    registry: docker.io
+    repository: synctv/synctv
+    tag: "" # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+
+  ## Service Configuration
+  service:
+    type: ClusterIP
+    http:
+      port: 8080
+      targetPort: http
+    grpc:
+      port: 50051
+      targetPort: grpc
+    annotations: {}
+
+  ## Ingress Configuration
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/enable-cors: "true"
+      nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+      nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    hosts:
+      - host: synctv.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: synctv-tls
+        hosts:
+          - synctv.example.com
+
+  ## Resource Limits
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+  ## Autoscaling
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  ## Pod Disruption Budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+  ## Health Checks
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  ## Pod Settings
+  podAnnotations: {}
+  podLabels: {}
+
+  ## Node Selection
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - api
+            topologyKey: kubernetes.io/hostname
+
+## ============================================================================
+## Streaming StatefulSet (Stateful - RTMP/HLS/FLV)
+## ============================================================================
+streaming:
+  enabled: true
+  replicaCount: 3
+
+  image:
+    registry: docker.io
+    repository: synctv/synctv
+    tag: "" # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+
+  ## Service Configuration
+  service:
+    # LoadBalancer for RTMP (requires public IP)
+    type: LoadBalancer
+    annotations:
+      # AWS
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+      # GCP
+      # cloud.google.com/load-balancer-type: "Internal"
+      # Azure
+      # service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    sessionAffinity: ClientIP
+    nodePorts:
+      rtmp: 31935
+      hls: 31081
+      httpflv: 31082
+
+  ## Persistent Volume
+  persistence:
+    enabled: true
+    storageClass: "fast-ssd" # or "gp3" on AWS, "pd-ssd" on GCP
+    accessMode: ReadWriteOnce
+    size: 100Gi
+    annotations: {}
+
+  ## Resource Limits
+  resources:
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+
+  ## Pod Disruption Budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+  ## Health Checks
+  livenessProbe:
+    tcpSocket:
+      port: rtmp
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    tcpSocket:
+      port: rtmp
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  ## Pod Settings
+  podAnnotations: {}
+  podLabels: {}
+
+  ## Node Selection (prefer dedicated streaming nodes)
+  nodeSelector:
+    workload: streaming
+  tolerations:
+    - key: "streaming"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - streaming
+          topologyKey: kubernetes.io/hostname
+
+## ============================================================================
+## TURN/STUN Server Configuration (WebRTC)
+## ============================================================================
+turn:
+  enabled: true
+
+  service:
+    type: LoadBalancer
+    stun:
+      port: 3478
+      targetPort: stun
+      protocol: UDP
+    turn:
+      port: 3478
+      targetPort: turn
+      protocol: TCP
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+
+## ============================================================================
+## Application Configuration
+## ============================================================================
+config:
+  ## Server Settings
+  server:
+    host: "0.0.0.0"
+    httpPort: 8080
+    grpcPort: 50051
+
+  ## Database Configuration (PostgreSQL)
+  database:
+    host: "postgresql.synctv.svc.cluster.local"
+    port: 5432
+    name: "synctv"
+    sslMode: "require"
+    maxConnections: 100
+    # username and password in secrets
+
+  ## Redis Configuration
+  redis:
+    host: "redis-master.synctv.svc.cluster.local"
+    port: 6379
+    db: 0
+    # password in secrets
+
+  ## Cluster Configuration
+  cluster:
+    enabled: true
+    nodeRegistry:
+      enabled: true
+      ttl: "30s"
+    healthMonitor:
+      interval: "15s"
+    loadBalancer:
+      strategy: "least_connections"
+      newNodeWarmup: "60s"
+
+  ## Streaming Configuration
+  streaming:
+    rtmp:
+      port: 1935
+      chunkSize: 4096
+      handshakeTimeout: "10s"
+    hls:
+      segmentDuration: 6
+      playlistLength: 5
+      storageType: "file" # or "s3"
+    storage:
+      path: "/data/streaming"
+      # S3 configuration (if storageType: "s3")
+      # s3:
+      #   region: "us-east-1"
+      #   bucket: "synctv-streaming"
+      #   endpoint: ""
+
+  ## TURN/STUN Configuration
+  turn:
+    enabled: false # set to true if using built-in TURN
+    publicIP: "" # your public IP or leave empty for auto-detect
+    realm: "synctv.example.com"
+    minPort: 49152
+    maxPort: 65535
+
+  ## OAuth2 Providers
+  oauth2:
+    providers: []
+    # Example:
+    # - name: "google"
+    #   clientId: "your-client-id"
+    #   redirectUrl: "https://synctv.example.com/api/oauth2/callback/google"
+    # - name: "github"
+    #   clientId: "your-client-id"
+    #   redirectUrl: "https://synctv.example.com/api/oauth2/callback/github"
+
+  ## Email Configuration (SMTP)
+  email:
+    enabled: true
+    host: "smtp.gmail.com"
+    port: 587
+    from: "noreply@synctv.example.com"
+    # username and password in secrets
+
+  ## JWT Configuration
+  jwt:
+    expiresIn: "7d"
+    # secret in secrets (must be 256-bit)
+
+  ## Rate Limiting
+  rateLimit:
+    enabled: true
+    defaultLimit: 100 # requests per minute
+
+  ## CORS Configuration
+  cors:
+    allowedOrigins:
+      - "https://synctv.example.com"
+      - "https://www.synctv.example.com"
+    allowCredentials: true
+
+  ## Logging Configuration
+  logging:
+    level: "info" # debug, info, warn, error
+    format: "json" # json, text
+
+## ============================================================================
+## Secrets (Override in production!)
+## ============================================================================
+secrets:
+  # Database Credentials
+  database:
+    username: "synctv"
+    password: "CHANGE_ME_IN_PRODUCTION"
+
+  # Redis Password
+  redis:
+    password: "CHANGE_ME_IN_PRODUCTION"
+
+  # JWT Secret (must be 256-bit random string)
+  jwt:
+    secret: "CHANGE_ME_TO_SECURE_256BIT_RANDOM_STRING"
+
+  # Email SMTP Credentials
+  email:
+    username: "apikey"
+    password: "CHANGE_ME_IN_PRODUCTION"
+
+  # OAuth2 Client Secrets
+  oauth2: {}
+    # google:
+    #   clientSecret: "your-client-secret"
+    # github:
+    #   clientSecret: "your-client-secret"
+
+  # Cluster gRPC Auth Secret
+  cluster:
+    grpcSecret: "CHANGE_ME_IN_PRODUCTION"
+
+  # Provider Service Auth Secret
+  provider:
+    authSecret: "CHANGE_ME_IN_PRODUCTION"
+
+## ============================================================================
+## ServiceAccount & RBAC
+## ============================================================================
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+rbac:
+  create: true
+
+## ============================================================================
+## Pod Security
+## ============================================================================
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+
+## ============================================================================
+## Monitoring & Observability
+## ============================================================================
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    namespace: monitoring
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
+## ============================================================================
+## Network Policy
+## ============================================================================
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: synctv
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432 # PostgreSQL
+        - protocol: TCP
+          port: 6379 # Redis
+
+## ============================================================================
+## External Dependencies (Optional)
+## ============================================================================
+# If you want to deploy PostgreSQL and Redis via this chart:
+postgresql:
+  enabled: false
+  # Use Bitnami PostgreSQL chart as dependency
+  # Add to Chart.yaml dependencies:
+  # - name: postgresql
+  #   version: "12.x.x"
+  #   repository: https://charts.bitnami.com/bitnami
+
+redis:
+  enabled: false
+  # Use Bitnami Redis chart as dependency
+  # Add to Chart.yaml dependencies:
+  # - name: redis
+  #   version: "17.x.x"
+  #   repository: https://charts.bitnami.com/bitnami
+
+## ============================================================================
+## Extra Configuration
+## ============================================================================
+extraEnvVars: []
+# - name: CUSTOM_VAR
+#   value: "custom-value"
+
+extraEnvVarsSecret: ""
+extraEnvVarsConfigMap: ""
+
+imagePullSecrets: []

@@ -189,4 +189,81 @@ mod tests {
     fn test_invalid_url() {
         assert!(validate_host("not-a-url").is_err());
     }
+
+    // === Extended SSRF Protection Tests ===
+
+    #[test]
+    fn test_blocked_cgnat() {
+        assert!(validate_host("http://100.64.0.1").is_err());
+        assert!(validate_host("http://100.127.255.255").is_err());
+    }
+
+    #[test]
+    fn test_blocked_multicast() {
+        assert!(validate_host("http://224.0.0.1").is_err());
+        assert!(validate_host("http://239.255.255.255").is_err());
+    }
+
+    #[test]
+    fn test_blocked_broadcast() {
+        assert!(validate_host("http://255.255.255.255").is_err());
+    }
+
+    #[test]
+    fn test_blocked_link_local() {
+        assert!(validate_host("http://169.254.1.1").is_err());
+        assert!(validate_host("http://169.254.169.254").is_err()); // Cloud metadata
+    }
+
+    #[test]
+    fn test_blocked_ipv6_loopback() {
+        assert!(validate_host("http://[::1]").is_err());
+    }
+
+    #[test]
+    fn test_blocked_ipv6_unspecified() {
+        assert!(validate_host("http://[::]").is_err());
+    }
+
+    #[test]
+    fn test_public_ips_allowed() {
+        assert!(validate_host("http://8.8.8.8").is_ok());
+        assert!(validate_host("http://1.1.1.1").is_ok());
+        assert!(validate_host("https://203.0.113.1").is_ok());
+    }
+
+    #[test]
+    fn test_valid_public_hosts() {
+        assert!(validate_host("https://api.example.com").is_ok());
+        assert!(validate_host("http://my-server.org:8096").is_ok());
+        assert!(validate_host("https://cdn.provider.io/path").is_ok());
+    }
+
+    #[test]
+    fn test_validate_required_empty() {
+        let result = validate_required("username", "");
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
+        assert!(status.message().contains("username"));
+    }
+
+    #[test]
+    fn test_validate_required_non_empty() {
+        assert!(validate_required("username", "alice").is_ok());
+        assert!(validate_required("token", "abc123").is_ok());
+    }
+
+    #[test]
+    fn test_validate_host_with_port() {
+        assert!(validate_host("https://example.com:443").is_ok());
+        assert!(validate_host("http://example.com:8080").is_ok());
+        assert!(validate_host("http://127.0.0.1:8080").is_err());
+    }
+
+    #[test]
+    fn test_validate_host_with_path() {
+        assert!(validate_host("https://example.com/api/v1").is_ok());
+        assert!(validate_host("https://example.com/emby").is_ok());
+    }
 }

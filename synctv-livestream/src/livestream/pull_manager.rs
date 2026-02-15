@@ -12,7 +12,8 @@ use crate::{
     livestream::pull_stream::PullStream,
     livestream::managed_stream::{ManagedStream, StreamPool},
 };
-use synctv_xiu::streamhub::define::StreamHubEventSender;
+use synctv_xiu::streamhub::define::{StreamHubEvent, StreamHubEventSender};
+use synctv_xiu::streamhub::stream::StreamIdentifier;
 use tracing::{debug, info, error, warn};
 use std::sync::Arc;
 use std::time::Duration;
@@ -166,11 +167,26 @@ impl PullStreamManager {
         // Initial subscriber
         pull_stream.lifecycle().increment_subscriber_count();
 
-        // Store in pool with idle cleanup (no extra cleanup needed for pull streams)
+        // Store in pool with idle cleanup - send UnPublish to StreamHub on cleanup
+        let hub_sender = self.stream_hub_event_sender.clone();
         self.pool.insert_and_cleanup(
             stream_key,
             pull_stream.clone(),
-            |_stream_key| Box::pin(async {}),
+            move |stream_key: &str| {
+                let hub_sender = hub_sender.clone();
+                let stream_key = stream_key.to_string();
+                Box::pin(async move {
+                    if let Some((room_id, media_id)) = stream_key.split_once(':') {
+                        let identifier = StreamIdentifier::Rtmp {
+                            app_name: "live".to_string(),
+                            stream_name: format!("{room_id}/{media_id}"),
+                        };
+                        if let Err(e) = hub_sender.try_send(StreamHubEvent::UnPublish { identifier }) {
+                            warn!("Failed to send UnPublish for idle-cleaned pull stream {}: {}", stream_key, e);
+                        }
+                    }
+                })
+            },
         );
 
         Ok(pull_stream)

@@ -414,14 +414,15 @@ impl SfuRoom {
                 .map(|entry| entry.key().0.clone())
                 .collect();
 
-            // Forward to each subscriber
+            // Forward to each subscriber via their packet channel
             let packet_size = packet.data.len();
             for subscriber_id in &subscribers {
-                if peers.contains_key(subscriber_id) {
-                    // In a real implementation, we would forward the packet via WebRTC
-                    // Update statistics using atomic counters (no lock contention)
-                    packets_relayed.fetch_add(1, Ordering::Relaxed);
-                    bytes_relayed.fetch_add(packet_size as u64, Ordering::Relaxed);
+                if let Some(peer) = peers.get(subscriber_id) {
+                    if peer.try_forward_packet(&packet) {
+                        peer.record_sent_bytes(packet_size);
+                        packets_relayed.fetch_add(1, Ordering::Relaxed);
+                        bytes_relayed.fetch_add(packet_size as u64, Ordering::Relaxed);
+                    }
                 }
             }
         }

@@ -7,13 +7,14 @@
 //! - Track subscription management
 //! - Peer statistics tracking
 
-use crate::track::QualityLayer;
+use crate::track::{ForwardablePacket, QualityLayer};
 use crate::types::PeerId;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::mpsc;
 
 /// Maximum number of samples to retain in the bandwidth estimator.
 /// This prevents unbounded memory growth under high packet rates.
@@ -95,6 +96,10 @@ impl BandwidthEstimator {
     }
 }
 
+/// Capacity of per-peer packet forwarding channel.
+/// Bounded to prevent OOM from slow subscribers.
+const PEER_PACKET_CHANNEL_CAPACITY: usize = 256;
+
 /// SFU Peer - represents a connected peer in SFU mode
 pub struct SfuPeer {
     /// Peer ID
@@ -108,18 +113,44 @@ pub struct SfuPeer {
 
     /// Peer statistics
     stats: Arc<RwLock<PeerStats>>,
+
+    /// Sender for forwarding RTP packets to this peer.
+    /// The forwarding loop writes packets here; the WebRTC output path reads them.
+    packet_tx: mpsc::Sender<ForwardablePacket>,
+
+    /// Receiver for forwarded RTP packets (taken once by the output task).
+    packet_rx: parking_lot::Mutex<Option<mpsc::Receiver<ForwardablePacket>>>,
 }
 
 impl SfuPeer {
     /// Create a new SFU peer
-    #[must_use] 
+    #[must_use]
     pub fn new(id: PeerId) -> Self {
+        let (packet_tx, packet_rx) = mpsc::channel(PEER_PACKET_CHANNEL_CAPACITY);
         Self {
             id,
             bandwidth_estimator: Arc::new(RwLock::new(BandwidthEstimator::new())),
             preferred_quality: Arc::new(RwLock::new(QualityLayer::Medium)),
             stats: Arc::new(RwLock::new(PeerStats::default())),
+            packet_tx,
+            packet_rx: parking_lot::Mutex::new(Some(packet_rx)),
         }
+    }
+
+    /// Try to send a forwarded RTP packet to this peer.
+    /// Returns false if the channel is full (slow subscriber) or closed.
+    pub fn try_forward_packet(&self, packet: &ForwardablePacket) -> bool {
+        match self.packet_tx.try_send(packet.clone()) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => false,
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
+    }
+
+    /// Take the packet receiver (can only be called once).
+    /// Used by the WebRTC output task to read forwarded packets.
+    pub fn take_packet_receiver(&self) -> Option<mpsc::Receiver<ForwardablePacket>> {
+        self.packet_rx.lock().take()
     }
 
     /// Record received bytes and update bandwidth estimate

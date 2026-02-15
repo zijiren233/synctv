@@ -274,10 +274,15 @@ impl BilibiliClient {
             .header("Content-Type", "application/x-www-form-urlencoded")
             .form(&params);
 
-        // Add BUVID cookies as single Cookie header
+        // Add BUVID cookies as single Cookie header.
+        // Sanitize \r\n to prevent header injection, consistent with add_cookies().
         let cookie_str: String = buvid_cookies
             .iter()
-            .map(|(name, value)| format!("{name}={value}"))
+            .map(|(name, value)| {
+                let safe_name: String = name.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+                let safe_value: String = value.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+                format!("{safe_name}={safe_value}")
+            })
             .collect::<Vec<_>>()
             .join("; ");
         if !cookie_str.is_empty() {
@@ -303,18 +308,14 @@ impl BilibiliClient {
         captcha_key: &str,
     ) -> Result<HashMap<String, String>, BilibiliError> {
         #[derive(Deserialize)]
-        #[allow(dead_code)]
         struct LoginSmsData {
-            url: String,
             status: i32,
-            is_new: bool,
         }
 
         #[derive(Deserialize)]
         struct LoginSmsResp {
             code: i32,
             message: String,
-            #[allow(dead_code)]
             data: Option<LoginSmsData>,
         }
 
@@ -339,7 +340,8 @@ impl BilibiliClient {
             return Err(BilibiliError::Http { status, url: resp.url().to_string() });
         }
 
-        // Extract ALL relevant cookies (SESSDATA, bili_jct, DedeUserID, DedeUserID__ckMd5)
+        // Extract cookies from headers BEFORE consuming body.
+        // Cookies are in Set-Cookie headers, so we must read them before json_with_limit.
         let cookies: HashMap<String, String> = resp.cookies()
             .filter(|c| matches!(c.name(), "SESSDATA" | "bili_jct" | "DedeUserID" | "DedeUserID__ckMd5"))
             .map(|c| (c.name().to_string(), c.value().to_string()))
@@ -347,8 +349,19 @@ impl BilibiliClient {
 
         let json: LoginSmsResp = json_with_limit(resp).await?;
 
+        // Check API-level status before trusting the cookies
         if json.code != 0 {
             return Err(BilibiliError::Api { code: json.code as u64, message: json.message });
+        }
+
+        // Check data.status field -- non-zero indicates SMS login failure
+        if let Some(data) = &json.data {
+            if data.status != 0 {
+                return Err(BilibiliError::Api {
+                    code: data.status as u64,
+                    message: format!("SMS login failed with status: {}", data.status),
+                });
+            }
         }
 
         if cookies.is_empty() {
@@ -1205,5 +1218,230 @@ mod tests {
         assert_eq!(Quality::P1080.to_qn(), 80);
         assert_eq!(Quality::from_qn(64), Quality::P720);
         assert_eq!(Quality::P480.as_str(), "480P");
+    }
+
+    // === Extended URL Extraction Tests ===
+
+    #[test]
+    fn test_extract_bvid_various_formats() {
+        // Standard video URL
+        assert_eq!(
+            BilibiliClient::extract_bvid("https://www.bilibili.com/video/BV1xx411c7XZ"),
+            Some("BV1xx411c7XZ".to_string())
+        );
+        // With query params
+        assert_eq!(
+            BilibiliClient::extract_bvid("https://www.bilibili.com/video/BV1xx411c7XZ?p=2"),
+            Some("BV1xx411c7XZ".to_string())
+        );
+        // Mobile URL
+        assert_eq!(
+            BilibiliClient::extract_bvid("https://m.bilibili.com/video/BV1xx411c7XZ"),
+            Some("BV1xx411c7XZ".to_string())
+        );
+        // Just the BV id
+        assert_eq!(
+            BilibiliClient::extract_bvid("BV1xx411c7XZ"),
+            Some("BV1xx411c7XZ".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_bvid_invalid() {
+        assert_eq!(BilibiliClient::extract_bvid("https://www.bilibili.com/video/av12345"), None);
+        assert_eq!(BilibiliClient::extract_bvid("not-a-url"), None);
+        assert_eq!(BilibiliClient::extract_bvid(""), None);
+    }
+
+    #[test]
+    fn test_extract_epid_various_formats() {
+        assert_eq!(
+            BilibiliClient::extract_epid("https://www.bilibili.com/bangumi/play/ep12345"),
+            Some("ep12345".to_string())
+        );
+        assert_eq!(
+            BilibiliClient::extract_epid("https://www.bilibili.com/bangumi/play/ep99999?from=search"),
+            Some("ep99999".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_epid_invalid() {
+        assert_eq!(BilibiliClient::extract_epid("https://www.bilibili.com/video/BV123"), None);
+        assert_eq!(BilibiliClient::extract_epid(""), None);
+    }
+
+    #[test]
+    fn test_is_short_link_variations() {
+        assert!(BilibiliClient::is_short_link("https://b23.tv/abc123"));
+        assert!(BilibiliClient::is_short_link("http://b23.tv/xyz"));
+        assert!(BilibiliClient::is_short_link("https://b23.tv/episode/12345"));
+        assert!(!BilibiliClient::is_short_link("https://www.bilibili.com/video/BV123"));
+        assert!(!BilibiliClient::is_short_link(""));
+    }
+
+    // === URL Matching Tests ===
+
+    #[test]
+    fn test_match_url_video() {
+        let (media_type, id) = BilibiliClient::match_url("https://www.bilibili.com/video/BV1xx411c7XZ").unwrap();
+        assert_eq!(media_type, "video");
+        assert_eq!(id, "BV1xx411c7XZ");
+    }
+
+    #[test]
+    fn test_match_url_bangumi_ep() {
+        let (media_type, id) = BilibiliClient::match_url("https://www.bilibili.com/bangumi/play/ep12345").unwrap();
+        assert_eq!(media_type, "bangumi");
+        assert_eq!(id, "ep12345");
+    }
+
+    #[test]
+    fn test_match_url_bangumi_ss() {
+        let (media_type, id) = BilibiliClient::match_url("https://www.bilibili.com/bangumi/play/ss67890").unwrap();
+        assert_eq!(media_type, "bangumi");
+        assert_eq!(id, "ss67890");
+    }
+
+    #[test]
+    fn test_match_url_live() {
+        let (media_type, id) = BilibiliClient::match_url("https://live.bilibili.com/live/12345").unwrap();
+        assert_eq!(media_type, "live");
+        assert_eq!(id, "12345");
+    }
+
+    #[test]
+    fn test_match_url_unknown() {
+        let result = BilibiliClient::match_url("https://example.com/unknown");
+        assert!(result.is_err());
+    }
+
+    // === Quality Tests ===
+
+    #[test]
+    fn test_quality_all_variants() {
+        assert_eq!(Quality::P1080.to_qn(), 80);
+        assert_eq!(Quality::P720.to_qn(), 64);
+        assert_eq!(Quality::P480.to_qn(), 32);
+        assert_eq!(Quality::P360.to_qn(), 16);
+    }
+
+    #[test]
+    fn test_quality_from_qn_all() {
+        assert_eq!(Quality::from_qn(80), Quality::P1080);
+        assert_eq!(Quality::from_qn(64), Quality::P720);
+        assert_eq!(Quality::from_qn(32), Quality::P480);
+        assert_eq!(Quality::from_qn(16), Quality::P360);
+    }
+
+    #[test]
+    fn test_quality_from_qn_unknown_defaults() {
+        assert_eq!(Quality::from_qn(0), Quality::P360);
+        assert_eq!(Quality::from_qn(999), Quality::P360);
+    }
+
+    #[test]
+    fn test_quality_as_str_all() {
+        assert_eq!(Quality::P1080.as_str(), "1080P");
+        assert_eq!(Quality::P720.as_str(), "720P");
+        assert_eq!(Quality::P480.as_str(), "480P");
+        assert_eq!(Quality::P360.as_str(), "360P");
+    }
+
+    #[test]
+    fn test_quality_roundtrip() {
+        for q in [Quality::P1080, Quality::P720, Quality::P480, Quality::P360] {
+            assert_eq!(Quality::from_qn(q.to_qn()), q);
+        }
+    }
+
+    // === Client Creation Tests ===
+
+    #[test]
+    fn test_client_creation_no_cookies() {
+        let client = BilibiliClient::new().unwrap();
+        assert!(client.cookies.is_none());
+    }
+
+    #[test]
+    fn test_client_creation_with_cookies() {
+        let mut cookies = HashMap::new();
+        cookies.insert("SESSDATA".to_string(), "abc123".to_string());
+        let client = BilibiliClient::with_cookies(cookies.clone()).unwrap();
+        assert!(client.cookies.is_some());
+        assert_eq!(client.cookies.as_ref().unwrap().get("SESSDATA"), Some(&"abc123".to_string()));
+    }
+
+    // === Type Deserialization Tests ===
+
+    #[test]
+    fn test_video_page_info_deserialize() {
+        let json = r#"{
+            "data": {
+                "title": "Test Video",
+                "pic": "https://example.com/pic.jpg",
+                "bvid": "BV1xx411c7XZ",
+                "aid": 12345,
+                "cid": 67890,
+                "owner": {"name": "TestUser", "face": "https://example.com/face.jpg", "mid": 111},
+                "pages": [{"cid": 67890, "page": 1, "part": "P1", "duration": 120, "dimension": {"width": 1920, "height": 1080, "rotate": 0}}]
+            },
+            "message": "0",
+            "code": 0,
+            "ttl": 1
+        }"#;
+        let resp: types::VideoPageInfoResp = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data.title, "Test Video");
+        assert_eq!(resp.data.bvid, "BV1xx411c7XZ");
+        assert_eq!(resp.data.aid, 12345);
+        assert_eq!(resp.data.pages.len(), 1);
+        assert_eq!(resp.data.pages[0].duration, 120);
+        assert_eq!(resp.code, 0);
+    }
+
+    #[test]
+    fn test_nav_resp_deserialize() {
+        let json = r#"{
+            "data": {"isLogin": true, "uname": "TestUser", "face": "https://example.com/face.jpg", "vipStatus": 1, "mid": 12345},
+            "message": "0",
+            "code": 0,
+            "ttl": 1
+        }"#;
+        let resp: types::NavResp = serde_json::from_str(json).unwrap();
+        assert!(resp.data.is_login);
+        assert_eq!(resp.data.uname, "TestUser");
+        assert_eq!(resp.data.mid, 12345);
+    }
+
+    #[test]
+    fn test_video_url_resp_deserialize() {
+        let json = r#"{
+            "data": {
+                "accept_quality": [80, 64, 32],
+                "accept_description": ["1080P", "720P", "480P"],
+                "quality": 80,
+                "durl": [{"url": "https://cdn.bilibili.com/video.flv", "size": 1000000, "length": 120}]
+            },
+            "message": "0",
+            "code": 0,
+            "ttl": 1
+        }"#;
+        let resp: types::VideoUrlResp = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data.quality, 80);
+        assert_eq!(resp.data.durl.len(), 1);
+        assert_eq!(resp.data.accept_quality, vec![80, 64, 32]);
+    }
+
+    #[test]
+    fn test_qrcode_resp_deserialize() {
+        let json = r#"{
+            "data": {"url": "https://passport.bilibili.com/qrcode", "qrcode_key": "abc123"},
+            "message": "0",
+            "code": 0,
+            "ttl": 180
+        }"#;
+        let resp: types::QrcodeResp = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data.qrcode_key, "abc123");
+        assert_eq!(resp.ttl, 180);
     }
 }

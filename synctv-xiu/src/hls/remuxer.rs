@@ -128,6 +128,8 @@ pub struct CustomHlsRemuxer {
     stream_registry: StreamRegistry,
     /// Cancellation token for graceful shutdown
     cancel_token: CancellationToken,
+    /// Tracked spawned stream handler tasks
+    handler_tasks: tokio::task::JoinSet<()>,
 }
 
 impl CustomHlsRemuxer {
@@ -145,6 +147,7 @@ impl CustomHlsRemuxer {
             segment_manager,
             stream_registry,
             cancel_token,
+            handler_tasks: tokio::task::JoinSet::new(),
         }
     }
 
@@ -154,8 +157,19 @@ impl CustomHlsRemuxer {
         loop {
             let val = tokio::select! {
                 _ = self.cancel_token.cancelled() => {
-                    tracing::info!("HLS remuxer cancelled (shutdown)");
+                    tracing::info!("HLS remuxer cancelled (shutdown), draining {} handler tasks", self.handler_tasks.len());
+                    self.handler_tasks.abort_all();
+                    while self.handler_tasks.join_next().await.is_some() {}
                     return Ok(());
+                }
+                // Reap completed handler tasks without blocking
+                Some(result) = self.handler_tasks.join_next(), if !self.handler_tasks.is_empty() => {
+                    if let Err(e) = result {
+                        if !e.is_cancelled() {
+                            tracing::error!("HLS stream handler task panicked: {}", e);
+                        }
+                    }
+                    continue;
                 }
                 result = self.client_event_consumer.recv() => {
                     match result {
@@ -191,7 +205,7 @@ impl CustomHlsRemuxer {
                             self.stream_registry.clone(),
                         );
 
-                        tokio::spawn(async move {
+                        self.handler_tasks.spawn(async move {
                             if let Err(e) = stream_handler.run().await {
                                 tracing::error!("HLS stream handler error: {}", e);
                             }
@@ -356,48 +370,48 @@ impl StreamHandler {
     }
 }
 
-// Retry configuration for storage operations
-const STORAGE_RETRY_MAX_ATTEMPTS: u32 = 3;
-const STORAGE_RETRY_BASE_DELAY_MS: u64 = 100;
-const STORAGE_RETRY_MAX_DELAY_MS: u64 = 2000;
-
-/// Write data to storage with exponential backoff retry
+/// Write data to storage with exponential backoff retry (via `backon` crate)
 ///
 /// Retries transient storage failures (timeouts, connection errors) up to
-/// `STORAGE_RETRY_MAX_ATTEMPTS` times with exponential backoff.
+/// 3 times with exponential backoff (100ms base, 2s max, with jitter).
 async fn write_with_retry(
     storage: &Arc<dyn HlsStorage>,
     key: &str,
     data: Bytes,
 ) -> std::io::Result<()> {
-    let mut last_error = None;
+    use backon::{ExponentialBuilder, BackoffBuilder};
 
-    for attempt in 1..=STORAGE_RETRY_MAX_ATTEMPTS {
+    let backoff = ExponentialBuilder::default()
+        .with_min_delay(Duration::from_millis(100))
+        .with_max_delay(Duration::from_secs(2))
+        .with_max_times(3)
+        .with_jitter()
+        .build();
+
+    let mut last_err = None;
+    for delay in std::iter::once(Duration::ZERO).chain(backoff) {
+        if delay > Duration::ZERO {
+            tokio::time::sleep(delay).await;
+        }
+
         match storage.write(key, data.clone()).await {
             Ok(()) => return Ok(()),
             Err(e) => {
-                // Check if error is transient and worth retrying
-                if is_transient_error(&e) && attempt < STORAGE_RETRY_MAX_ATTEMPTS {
-                    let delay = calculate_retry_delay(attempt);
-                    tracing::warn!(
-                        "HLS storage write failed (attempt {}/{}): {} - retrying in {:?}",
-                        attempt,
-                        STORAGE_RETRY_MAX_ATTEMPTS,
-                        e,
-                        delay
-                    );
-                    tokio::time::sleep(delay).await;
-                    last_error = Some(e);
-                } else {
+                if !is_transient_error(&e) {
                     return Err(e);
                 }
+                tracing::warn!(
+                    "HLS storage write failed: {} - retrying in {:?}",
+                    e,
+                    delay
+                );
+                last_err = Some(e);
             }
         }
     }
 
-    // All retries exhausted
-    Err(last_error.unwrap_or_else(|| {
-        std::io::Error::other("Storage write failed after all retries")
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::other("Retry exhausted")
     }))
 }
 
@@ -413,14 +427,6 @@ fn is_transient_error(err: &std::io::Error) -> bool {
             | std::io::ErrorKind::Interrupted
             | std::io::ErrorKind::WouldBlock
     )
-}
-
-/// Calculate delay before next retry using exponential backoff
-fn calculate_retry_delay(attempt: u32) -> Duration {
-    // attempt is 1-based, so delay = base * 2^(attempt-1)
-    let delay_ms = (STORAGE_RETRY_BASE_DELAY_MS * 2_u64.pow(attempt.saturating_sub(1)))
-        .min(STORAGE_RETRY_MAX_DELAY_MS);
-    Duration::from_millis(delay_ms)
 }
 
 /// Processes FLV data and generates HLS segments
@@ -610,8 +616,7 @@ impl StreamProcessor {
             .await
             .map_err(|e| {
                 tracing::warn!(
-                    "HLS segment write failed after {} retries: {} - {}",
-                    STORAGE_RETRY_MAX_ATTEMPTS,
+                    "HLS segment write failed after retries: {} - {}",
                     storage_key,
                     e
                 );
@@ -864,17 +869,6 @@ mod tests {
         assert!(!is_transient_error(&std::io::Error::new(std::io::ErrorKind::NotFound, "not found")));
         assert!(!is_transient_error(&std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied")));
         assert!(!is_transient_error(&std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid input")));
-    }
-
-    #[test]
-    fn test_calculate_retry_delay() {
-        // Exponential backoff: delay = base * 2^(attempt-1)
-        // base = 100ms
-        assert_eq!(calculate_retry_delay(1).as_millis(), 100);
-        assert_eq!(calculate_retry_delay(2).as_millis(), 200);
-        assert_eq!(calculate_retry_delay(3).as_millis(), 400);
-        // Should cap at max_delay (2000ms)
-        assert_eq!(calculate_retry_delay(10).as_millis(), 2000);
     }
 
     #[tokio::test]

@@ -7,6 +7,7 @@ pub use synctv_cluster::grpc::synctv::cluster;
 pub mod admin_service;
 pub mod client_service;
 pub mod interceptors;
+pub mod notification_service;
 
 // Provider gRPC services (local implementations)
 // Provider-specific gRPC services are registered from provider instances
@@ -14,6 +15,7 @@ pub mod providers;
 
 pub use admin_service::AdminServiceImpl;
 pub use client_service::ClientServiceImpl;
+pub use notification_service::NotificationServiceImpl;
 pub use interceptors::{
     AuthInterceptor, ClusterAuthInterceptor, LoggingInterceptor, TimeoutInterceptor,
     ValidationInterceptor,
@@ -23,8 +25,10 @@ pub use interceptors::{
 use crate::proto::admin_service_server::AdminServiceServer;
 use crate::proto::client::{
     auth_service_server::AuthServiceServer, email_service_server::EmailServiceServer,
-    media_service_server::MediaServiceServer, public_service_server::PublicServiceServer,
-    room_service_server::RoomServiceServer, user_service_server::UserServiceServer,
+    media_service_server::MediaServiceServer,
+    notification_service_server::NotificationServiceServer,
+    public_service_server::PublicServiceServer, room_service_server::RoomServiceServer,
+    user_service_server::UserServiceServer,
 };
 use tonic::transport::Server;
 
@@ -63,6 +67,8 @@ pub struct GrpcServerConfig<'a> {
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     pub publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
+    pub notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
+    pub node_registry: Option<Arc<synctv_cluster::discovery::NodeRegistry>>,
     pub shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
@@ -92,6 +98,8 @@ pub async fn serve(
     sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
     live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
+    notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
+    node_registry: Option<Arc<synctv_cluster::discovery::NodeRegistry>>,
     shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> anyhow::Result<()> {
     let addr = config.grpc_address().parse()?;
@@ -114,8 +122,9 @@ pub async fn serve(
     let room_service_clone =
         Arc::try_unwrap(room_service_for_client).unwrap_or_else(|arc| (*arc).clone());
 
-    // Extract message_hub reference before moving cluster_manager
+    // Extract message_hub and node_id references before moving cluster_manager
     let message_hub_from_cluster = cluster_manager.message_hub().clone();
+    let cluster_node_id = cluster_manager.node_id().to_string();
 
     // Clone connection_manager for later use
     let connection_manager_for_provider = connection_manager.clone();
@@ -137,6 +146,14 @@ pub async fn serve(
         providers_manager_for_client.clone(),
         settings_registry.clone(),
     ).with_redis_publish_tx(redis_publish_tx.clone()));
+
+    // Create transport-level rate limit interceptor before consuming rate_limiter
+    // Aligned with HTTP tiers: 100 req/min per client (matches HTTP read tier)
+    let grpc_rate_limiter = interceptors::GrpcRateLimitInterceptor::new(
+        rate_limiter.clone(),
+        100, // 100 requests per window
+        60,  // 60 second window
+    );
 
     let client_service = ClientServiceImpl::new(
         user_service_clone,
@@ -193,7 +210,15 @@ pub async fn serve(
     let room_interceptor1 = auth_interceptor.clone();
     let room_interceptor2 = auth_interceptor.clone();
 
-    // Build router - register all client services with appropriate interceptors
+    let rl_auth = grpc_rate_limiter.clone();
+    let rl_user = grpc_rate_limiter.clone();
+    let rl_room = grpc_rate_limiter.clone();
+    let rl_media = grpc_rate_limiter.clone();
+    let rl_public = grpc_rate_limiter.clone();
+    let rl_email = grpc_rate_limiter.clone();
+    let rl_admin = grpc_rate_limiter.clone();
+
+    // Build router - register all client services with rate limiting + auth interceptors
     let client_service_clone1 = client_service.clone();
     let client_service_clone2 = client_service.clone();
     let client_service_clone3 = client_service.clone();
@@ -201,32 +226,68 @@ pub async fn serve(
     let client_service_clone5 = client_service.clone();
 
     let mut router = server_builder
-        // AuthService - no authentication required (public: register, login, refresh_token)
-        .add_service(AuthServiceServer::new(client_service))
-        // UserService - requires JWT authentication (inject UserContext)
+        // AuthService - rate limited (public: register, login, refresh_token)
+        .add_service(AuthServiceServer::with_interceptor(
+            client_service,
+            move |req| rl_auth.check(req),
+        ))
+        // UserService - rate limited + JWT authentication (inject UserContext)
         .add_service(UserServiceServer::with_interceptor(
             client_service_clone1,
-            move |req| user_interceptor.inject_user(req),
+            move |req| {
+                let req = rl_user.check(req)?;
+                user_interceptor.inject_user(req)
+            },
         ))
-        // RoomService - requires JWT + room_id (inject RoomContext)
+        // RoomService - rate limited + JWT + room_id (inject RoomContext)
         .add_service(RoomServiceServer::with_interceptor(
             client_service_clone2,
-            move |req| room_interceptor1.inject_room(req),
+            move |req| {
+                let req = rl_room.check(req)?;
+                room_interceptor1.inject_room(req)
+            },
         ))
-        // MediaService - requires JWT + room_id (inject RoomContext)
+        // MediaService - rate limited + JWT + room_id (inject RoomContext)
         .add_service(MediaServiceServer::with_interceptor(
             client_service_clone3,
-            move |req| room_interceptor2.inject_room(req),
+            move |req| {
+                let req = rl_media.check(req)?;
+                room_interceptor2.inject_room(req)
+            },
         ))
-        // PublicService - no authentication required (public room discovery)
-        .add_service(PublicServiceServer::new(client_service_clone4))
-        // EmailService - no authentication required (send codes, confirm with token)
-        .add_service(EmailServiceServer::new(client_service_clone5))
-        // AdminService - requires JWT authentication (inject UserContext)
+        // PublicService - rate limited (public room discovery)
+        .add_service(PublicServiceServer::with_interceptor(
+            client_service_clone4,
+            move |req| rl_public.check(req),
+        ))
+        // EmailService - rate limited (send codes, confirm with token)
+        .add_service(EmailServiceServer::with_interceptor(
+            client_service_clone5,
+            move |req| rl_email.check(req),
+        ))
+        // AdminService - rate limited + JWT authentication (inject UserContext)
         .add_service(AdminServiceServer::with_interceptor(
             admin_service,
-            move |req| admin_interceptor.inject_user(req),
+            move |req| {
+                let req = rl_admin.check(req)?;
+                admin_interceptor.inject_user(req)
+            },
         ));
+
+    // Register NotificationService if notification_service is configured
+    if let Some(notif_svc) = notification_service {
+        let notification_interceptor = auth_interceptor.clone();
+        let rl_notif = grpc_rate_limiter.clone();
+        let notif_impl = NotificationServiceImpl::new(notif_svc);
+        router = router.add_service(NotificationServiceServer::with_interceptor(
+            notif_impl,
+            move |req| {
+                let req = rl_notif.check(req)?;
+                notification_interceptor.inject_user(req)
+            },
+        ));
+        tracing::info!("NotificationService gRPC registered");
+    }
 
     // Register provider gRPC services
     if let Some(_providers_mgr) = providers_manager {
@@ -290,47 +351,77 @@ pub async fn serve(
         let provider_interceptor1 = auth_interceptor.clone();
         let provider_interceptor2 = auth_interceptor.clone();
         let provider_interceptor3 = auth_interceptor.clone();
+        let rl_provider1 = grpc_rate_limiter.clone();
+        let rl_provider2 = grpc_rate_limiter.clone();
+        let rl_provider3 = grpc_rate_limiter.clone();
 
         router = router.add_service(AlistProviderServiceServer::with_interceptor(
             providers::alist::AlistProviderGrpcService::new(app_state.clone()),
-            move |req| provider_interceptor1.inject_user(req),
+            move |req| {
+                let req = rl_provider1.check(req)?;
+                provider_interceptor1.inject_user(req)
+            },
         ));
         router = router.add_service(BilibiliProviderServiceServer::with_interceptor(
             providers::bilibili::BilibiliProviderGrpcService::new(app_state.clone()),
-            move |req| provider_interceptor2.inject_user(req),
+            move |req| {
+                let req = rl_provider2.check(req)?;
+                provider_interceptor2.inject_user(req)
+            },
         ));
         router = router.add_service(EmbyProviderServiceServer::with_interceptor(
             providers::emby::EmbyProviderGrpcService::new(app_state),
-            move |req| provider_interceptor3.inject_user(req),
+            move |req| {
+                let req = rl_provider3.check(req)?;
+                provider_interceptor3.inject_user(req)
+            },
         ));
     }
 
-    // Register cluster gRPC service (requires cluster_secret to be configured)
+    // Register cluster gRPC service (requires cluster_secret and NodeRegistry)
     if !config.server.cluster_secret.is_empty() {
-        let redis_url = if config.redis.url.is_empty() {
-            None
+        if let Some(ref nr) = node_registry {
+            let cluster_server = synctv_cluster::grpc::ClusterServer::new(
+                nr.clone(),
+                cluster_node_id.clone(),
+            ).with_connection_manager(
+                std::sync::Arc::new(connection_manager_for_provider.clone()),
+            );
+            let cluster_interceptor = ClusterAuthInterceptor::new(config.server.cluster_secret.clone());
+            router = router.add_service(
+                synctv_cluster::grpc::ClusterServiceServer::with_interceptor(
+                    cluster_server,
+                    move |req| cluster_interceptor.validate(req),
+                ),
+            );
+            tracing::info!("Cluster gRPC service registered with shared-secret auth (using shared NodeRegistry)");
         } else {
-            Some(config.redis.url.clone())
-        };
-        match synctv_cluster::discovery::NodeRegistry::new(redis_url, "self".to_string(), 30) {
-            Ok(node_registry) => {
-                let cluster_server = synctv_cluster::grpc::ClusterServer::new(
-                    std::sync::Arc::new(node_registry),
-                    "self".to_string(),
-                ).with_connection_manager(
-                    std::sync::Arc::new(connection_manager_for_provider.clone()),
-                );
-                let cluster_interceptor = ClusterAuthInterceptor::new(config.server.cluster_secret.clone());
-                router = router.add_service(
-                    synctv_cluster::grpc::ClusterServiceServer::with_interceptor(
-                        cluster_server,
-                        move |req| cluster_interceptor.validate(req),
-                    ),
-                );
-                tracing::info!("Cluster gRPC service registered with shared-secret auth");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to create NodeRegistry for cluster gRPC: {e}");
+            // Fallback: create a standalone NodeRegistry for cluster gRPC (single-node mode)
+            let redis_url = if config.redis.url.is_empty() {
+                None
+            } else {
+                Some(config.redis.url.clone())
+            };
+            match synctv_cluster::discovery::NodeRegistry::new(redis_url, cluster_node_id.clone(), 30) {
+                Ok(fallback_registry) => {
+                    let cluster_server = synctv_cluster::grpc::ClusterServer::new(
+                        std::sync::Arc::new(fallback_registry),
+                        cluster_node_id.clone(),
+                    ).with_connection_manager(
+                        std::sync::Arc::new(connection_manager_for_provider.clone()),
+                    );
+                    let cluster_interceptor = ClusterAuthInterceptor::new(config.server.cluster_secret.clone());
+                    router = router.add_service(
+                        synctv_cluster::grpc::ClusterServiceServer::with_interceptor(
+                            cluster_server,
+                            move |req| cluster_interceptor.validate(req),
+                        ),
+                    );
+                    tracing::info!("Cluster gRPC service registered with shared-secret auth (standalone NodeRegistry)");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to create NodeRegistry for cluster gRPC: {e}");
+                }
             }
         }
     }
@@ -376,6 +467,8 @@ pub async fn serve_from_config(config: GrpcServerConfig<'_>) -> anyhow::Result<(
         config.sfu_manager,
         config.live_streaming_infrastructure,
         config.publish_key_service,
+        config.notification_service,
+        config.node_registry,
         config.shutdown_rx,
     )
     .await

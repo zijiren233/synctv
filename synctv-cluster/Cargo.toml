@@ -44,6 +44,9 @@ nanoid.workspace = true
 # Security
 subtle.workspace = true
 
+# Resilience
+failsafe.workspace = true
+
 # Logging
 tracing.workspace = true
 

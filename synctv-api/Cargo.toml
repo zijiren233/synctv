@@ -84,4 +84,4 @@ workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true
-serde_urlencoded = "0.7"
+serde_urlencoded.workspace = true

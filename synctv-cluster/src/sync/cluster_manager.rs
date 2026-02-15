@@ -199,8 +199,14 @@ impl ClusterManager {
         &self.deduplicator
     }
 
+    /// Get this node's unique identifier
+    #[must_use]
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
     /// Get the Redis publish sender
-    #[must_use] 
+    #[must_use]
     pub const fn redis_publish_tx(&self) -> Option<&mpsc::Sender<PublishRequest>> {
         self.redis_publish_tx.as_ref()
     }

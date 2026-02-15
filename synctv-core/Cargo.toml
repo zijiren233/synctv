@@ -58,19 +58,23 @@ thiserror.workspace = true
 bytes.workspace = true
 parking_lot.workspace = true
 ctor.workspace = true
-paste = "1.0"
+paste.workspace = true
 url.workspace = true
 regex.workspace = true
 ipnet.workspace = true
 
 # HTTP Client
 reqwest.workspace = true
-http = "1.0"
+http.workspace = true
 
 # Resilience
 tower.workspace = true
 tower-http.workspace = true
-futures-util = "0.3"
+governor.workspace = true
+nonzero_ext.workspace = true
+backon.workspace = true
+failsafe.workspace = true
+futures-util.workspace = true
 
 # Time
 chrono.workspace = true
@@ -85,8 +89,8 @@ config.workspace = true
 prometheus.workspace = true
 
 # Email
-lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "hostname", "tokio1"] }
-handlebars = "5.1"
+lettre.workspace = true
+handlebars.workspace = true
 
 # Misc
 base64.workspace = true

@@ -61,3 +61,63 @@ pub fn classify_error(err: &str) -> ErrorKind {
         ErrorKind::Internal
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_classify_error_not_found() {
+        assert!(matches!(classify_error("User not found"), ErrorKind::NotFound));
+        assert!(matches!(classify_error("Room Not Found"), ErrorKind::NotFound));
+        assert!(matches!(classify_error("resource NOT FOUND"), ErrorKind::NotFound));
+    }
+
+    #[test]
+    fn test_classify_error_unauthenticated() {
+        assert!(matches!(classify_error("Unauthenticated"), ErrorKind::Unauthenticated));
+        assert!(matches!(classify_error("invalid token"), ErrorKind::Unauthenticated));
+        assert!(matches!(classify_error("Token expired"), ErrorKind::Unauthenticated));
+        assert!(matches!(classify_error("Not authenticated"), ErrorKind::Unauthenticated));
+    }
+
+    #[test]
+    fn test_classify_error_permission_denied() {
+        assert!(matches!(classify_error("Permission denied"), ErrorKind::PermissionDenied));
+        assert!(matches!(classify_error("Forbidden access"), ErrorKind::PermissionDenied));
+        assert!(matches!(classify_error("Operation not allowed"), ErrorKind::PermissionDenied));
+        assert!(matches!(classify_error("User is banned"), ErrorKind::PermissionDenied));
+    }
+
+    #[test]
+    fn test_classify_error_already_exists() {
+        assert!(matches!(classify_error("User already exists"), ErrorKind::AlreadyExists));
+        assert!(matches!(classify_error("Username already taken"), ErrorKind::AlreadyExists));
+        assert!(matches!(classify_error("Email already registered"), ErrorKind::AlreadyExists));
+    }
+
+    #[test]
+    fn test_classify_error_invalid_argument() {
+        assert!(matches!(classify_error("Invalid email format"), ErrorKind::InvalidArgument));
+        assert!(matches!(classify_error("Password too short"), ErrorKind::InvalidArgument));
+        assert!(matches!(classify_error("Username too long"), ErrorKind::InvalidArgument));
+        assert!(matches!(classify_error("Field cannot be empty"), ErrorKind::InvalidArgument));
+        assert!(matches!(classify_error("Too many rooms"), ErrorKind::InvalidArgument));
+        assert!(matches!(classify_error("Email required"), ErrorKind::InvalidArgument));
+        assert!(matches!(classify_error("Password must be alphanumeric"), ErrorKind::InvalidArgument));
+    }
+
+    #[test]
+    fn test_classify_error_internal() {
+        assert!(matches!(classify_error("Something went wrong"), ErrorKind::Internal));
+        assert!(matches!(classify_error("Database connection failed"), ErrorKind::Internal));
+        assert!(matches!(classify_error("Unexpected error"), ErrorKind::Internal));
+    }
+
+    #[test]
+    fn test_classify_error_case_insensitive() {
+        assert!(matches!(classify_error("NOT FOUND"), ErrorKind::NotFound));
+        assert!(matches!(classify_error("PERMISSION denied"), ErrorKind::PermissionDenied));
+        assert!(matches!(classify_error("INVALID token"), ErrorKind::Unauthenticated));
+    }
+}

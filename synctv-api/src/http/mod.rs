@@ -108,232 +108,188 @@ pub struct AppState {
     pub admin_api: Option<Arc<crate::impls::AdminApiImpl>>,
 }
 
-/// Create the HTTP router with all routes
-#[allow(clippy::too_many_arguments)]
-fn create_router(
-    config: Arc<synctv_core::Config>,
-    user_service: Arc<UserService>,
-    room_service: Arc<RoomService>,
-    provider_instance_manager: Arc<RemoteProviderManager>,
-    user_provider_credential_repository: Arc<UserProviderCredentialRepository>,
-    alist_provider: Arc<AlistProvider>,
-    bilibili_provider: Arc<BilibiliProvider>,
-    emby_provider: Arc<EmbyProvider>,
-    message_hub: Arc<synctv_cluster::sync::RoomMessageHub>,
-    cluster_manager: Option<Arc<synctv_cluster::sync::ClusterManager>>,
-    connection_manager: Arc<synctv_cluster::sync::ConnectionManager>,
-    jwt_service: synctv_core::service::JwtService,
-    redis_publish_tx: Option<mpsc::Sender<PublishRequest>>,
-    oauth2_service: Option<Arc<synctv_core::service::OAuth2Service>>,
-    settings_service: Option<Arc<synctv_core::service::SettingsService>>,
-    settings_registry: Option<Arc<synctv_core::service::SettingsRegistry>>,
-    email_service: Option<Arc<synctv_core::service::EmailService>>,
-    publish_key_service: Option<Arc<synctv_core::service::PublishKeyService>>,
-    notification_service: Option<Arc<synctv_core::service::UserNotificationService>>,
-    live_streaming_infrastructure: Option<Arc<LiveStreamingInfrastructure>>,
-    sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
-    rate_limiter: synctv_core::service::rate_limit::RateLimiter,
-    ws_ticket_service: Option<Arc<synctv_core::service::WsTicketService>>,
-) -> axum::Router {
-    // Create the unified API implementation layer
-    let client_api = Arc::new(crate::impls::ClientApiImpl::new(
-        user_service.clone(),
-        room_service.clone(),
-        connection_manager.clone(),
-        config.clone(),
-        sfu_manager,
-        publish_key_service.clone(),
-        jwt_service.clone(),
-        live_streaming_infrastructure.clone(),
-        None, // providers_manager - HTTP uses individual provider instances
-        settings_registry.clone(),
-    ).with_redis_publish_tx(redis_publish_tx.clone()));
+/// Create the HTTP router from configuration struct
+pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
+    let state = build_app_state(config);
+    let router = register_all_routes(state.clone());
+    apply_global_layers(router, &state)
+}
 
-    // AdminApi requires SettingsService; EmailService is optional (send_test_email
-    // will fail gracefully when email is not configured, matching gRPC behavior).
-    let admin_api = settings_service.as_ref().map(|settings_svc| {
-        let email_svc = email_service.clone().unwrap_or_else(|| {
+/// Build `AppState` from `RouterConfig`, creating the shared API implementation layers.
+fn build_app_state(config: RouterConfig) -> AppState {
+    let client_api = Arc::new(crate::impls::ClientApiImpl::new(
+        config.user_service.clone(),
+        config.room_service.clone(),
+        config.connection_manager.clone(),
+        config.config.clone(),
+        config.sfu_manager,
+        config.publish_key_service.clone(),
+        config.jwt_service.clone(),
+        config.live_streaming_infrastructure.clone(),
+        None,
+        config.settings_registry.clone(),
+    ).with_redis_publish_tx(config.redis_publish_tx.clone()));
+
+    let admin_api = config.settings_service.as_ref().map(|settings_svc| {
+        let email_svc = config.email_service.clone().unwrap_or_else(|| {
             Arc::new(synctv_core::service::EmailService::new(None)
                 .expect("EmailService::new(None) should not fail"))
         });
         Arc::new(crate::impls::AdminApiImpl::new(
-            room_service.clone(),
-            user_service.clone(),
+            config.room_service.clone(),
+            config.user_service.clone(),
             settings_svc.clone(),
-            settings_registry.clone(),
+            config.settings_registry.clone(),
             email_svc,
-            connection_manager.clone(),
-            provider_instance_manager.clone(),
-            live_streaming_infrastructure.clone(),
-            redis_publish_tx.clone(),
+            config.connection_manager.clone(),
+            config.provider_instance_manager.clone(),
+            config.live_streaming_infrastructure.clone(),
+            config.redis_publish_tx.clone(),
         ))
     });
 
-    let state = AppState {
-        config: config.clone(),
-        user_service,
-        room_service,
-        provider_instance_manager,
-        user_provider_credential_repository,
-        alist_provider,
-        bilibili_provider,
-        emby_provider,
-        message_hub,
-        cluster_manager,
-        connection_manager,
-        jwt_service,
-        redis_publish_tx,
-        oauth2_service,
-        settings_service,
-        settings_registry,
-        email_service,
-        publish_key_service,
-        notification_service,
-        live_streaming_infrastructure,
-        rate_limiter,
-        ws_ticket_service,
+    AppState {
+        config: config.config,
+        user_service: config.user_service,
+        room_service: config.room_service,
+        provider_instance_manager: config.provider_instance_manager,
+        user_provider_credential_repository: config.user_provider_credential_repository,
+        alist_provider: config.alist_provider,
+        bilibili_provider: config.bilibili_provider,
+        emby_provider: config.emby_provider,
+        message_hub: config.message_hub,
+        cluster_manager: config.cluster_manager,
+        connection_manager: config.connection_manager,
+        jwt_service: config.jwt_service,
+        redis_publish_tx: config.redis_publish_tx,
+        oauth2_service: config.oauth2_service,
+        settings_service: config.settings_service,
+        settings_registry: config.settings_registry,
+        email_service: config.email_service,
+        publish_key_service: config.publish_key_service,
+        notification_service: config.notification_service,
+        live_streaming_infrastructure: config.live_streaming_infrastructure,
+        rate_limiter: config.rate_limiter,
+        ws_ticket_service: config.ws_ticket_service,
         client_api,
         admin_api,
-    };
+    }
+}
 
-    // Note: If admin_api is None, admin endpoints won't work
-    // This is acceptable for configurations without email/settings services
-
-    // Authentication routes — strict rate limiting (5 req/min)
-    let auth_routes = Router::new()
+/// Authentication routes (register, login, refresh, OAuth2 callbacks, password verify).
+/// Strict rate limiting: 5 req/min.
+fn register_auth_routes(state: &AppState) -> Router<AppState> {
+    Router::new()
         .route("/api/auth/register", post(auth::register))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/refresh", post(auth::refresh_token))
-        .route(
-            "/api/oauth2/:provider/callback",
-            get(oauth2::oauth2_callback_get),
-        )
-        .route(
-            "/api/oauth2/:provider/callback",
-            post(oauth2::oauth2_callback_post),
-        )
+        .route("/api/oauth2/:provider/callback", get(oauth2::oauth2_callback_get))
+        .route("/api/oauth2/:provider/callback", post(oauth2::oauth2_callback_post))
         .route("/api/rooms/:room_id/password/verify", post(room::check_password))
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::auth_rate_limit,
-        ));
+        ))
+}
 
-    // Media mutation routes — moderate rate limiting (20 req/min)
-    let media_routes = Router::new()
+/// Media mutation routes (add, remove, reorder, edit, batch operations).
+/// Moderate rate limiting: 20 req/min.
+fn register_media_routes(state: &AppState) -> Router<AppState> {
+    Router::new()
         .route("/api/rooms/:room_id/media", post(room::add_media))
         .route("/api/rooms/:room_id/media", axum::routing::delete(room::clear_playlist))
         .route("/api/rooms/:room_id/media", axum::routing::patch(room::update_media_batch))
-        .route(
-            "/api/rooms/:room_id/media/batch",
-            post(room::push_media_batch),
-        )
-        .route(
-            "/api/rooms/:room_id/media/batch",
-            axum::routing::delete(room::remove_media_batch),
-        )
-        .route(
-            "/api/rooms/:room_id/media/reorder",
-            post(room::reorder_media_batch),
-        )
-        .route(
-            "/api/rooms/:room_id/media/swap",
-            post(room::swap_media_items),
-        )
-        .route(
-            "/api/rooms/:room_id/media/:media_id",
-            axum::routing::delete(room::remove_media),
-        )
-        .route(
-            "/api/rooms/:room_id/media/:media_id",
-            axum::routing::patch(room::edit_media),
-        )
+        .route("/api/rooms/:room_id/media/batch", post(room::push_media_batch))
+        .route("/api/rooms/:room_id/media/batch", axum::routing::delete(room::remove_media_batch))
+        .route("/api/rooms/:room_id/media/reorder", post(room::reorder_media_batch))
+        .route("/api/rooms/:room_id/media/swap", post(room::swap_media_items))
+        .route("/api/rooms/:room_id/media/:media_id", axum::routing::delete(room::remove_media))
+        .route("/api/rooms/:room_id/media/:media_id", axum::routing::patch(room::edit_media))
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::media_rate_limit,
-        ));
+        ))
+}
 
-    // Write routes — moderate rate limiting (30 req/min)
-    let write_routes = Router::new()
+/// Write routes (room CRUD, membership, playback control, playlists, user updates).
+/// Moderate rate limiting: 30 req/min.
+fn register_write_routes(state: &AppState) -> Router<AppState> {
+    Router::new()
         .route("/api/rooms", post(room::create_room))
         .route("/api/rooms/:room_id", axum::routing::delete(room::delete_room))
         .route("/api/rooms/:room_id/members/@me", axum::routing::put(room::join_room))
         .route("/api/rooms/:room_id/members/@me", axum::routing::delete(room::leave_room))
         .route("/api/rooms/:room_id/settings", axum::routing::patch(room::update_room_settings))
         .route("/api/rooms/:room_id/password", axum::routing::patch(room::set_room_password))
-        // Individual playback control routes
         .route("/api/rooms/:room_id/playback/play", post(room::play))
         .route("/api/rooms/:room_id/playback/pause", post(room::pause))
         .route("/api/rooms/:room_id/playback/seek", post(room::seek))
         .route("/api/user", axum::routing::patch(user::update_user))
         .route("/api/auth/session", axum::routing::delete(user::logout))
-        .route(
-            "/api/user/rooms/:room_id",
-            axum::routing::delete(user::delete_my_room),
-        )
+        .route("/api/user/rooms/:room_id", axum::routing::delete(user::delete_my_room))
         .route("/api/oauth2/:provider/bind", post(oauth2::bind_provider))
-        .route(
-            "/api/oauth2/:provider/bind",
-            axum::routing::delete(oauth2::unbind_provider),
-        )
-        .route(
-            "/api/rooms/:room_id/members/:user_id",
-            axum::routing::delete(room_extra::kick_member),
-        )
-        .route(
-            "/api/rooms/:room_id/members/:user_id",
-            axum::routing::patch(room_extra::set_member_permissions),
-        )
-        .route(
-            "/api/rooms/:room_id/bans",
-            post(room_extra::ban_member),
-        )
-        .route(
-            "/api/rooms/:room_id/bans/:user_id",
-            axum::routing::delete(room_extra::unban_member),
-        )
+        .route("/api/oauth2/:provider/bind", axum::routing::delete(oauth2::unbind_provider))
+        .route("/api/rooms/:room_id/members/:user_id", axum::routing::delete(room_extra::kick_member))
+        .route("/api/rooms/:room_id/members/:user_id", axum::routing::patch(room_extra::set_member_permissions))
+        .route("/api/rooms/:room_id/bans", post(room_extra::ban_member))
+        .route("/api/rooms/:room_id/bans/:user_id", axum::routing::delete(room_extra::unban_member))
         .route("/api/rooms/:room_id/playback", axum::routing::patch(room::update_playback))
-        // Playlist CRUD (write)
         .route("/api/rooms/:room_id/playlists", post(room::create_playlist))
-        .route(
-            "/api/rooms/:room_id/playlists/:playlist_id",
-            axum::routing::patch(room::update_playlist),
-        )
-        .route(
-            "/api/rooms/:room_id/playlists/:playlist_id",
-            axum::routing::delete(room::delete_playlist),
-        )
-        // Room settings reset
+        .route("/api/rooms/:room_id/playlists/:playlist_id", axum::routing::patch(room::update_playlist))
+        .route("/api/rooms/:room_id/playlists/:playlist_id", axum::routing::delete(room::delete_playlist))
         .route("/api/rooms/:room_id/settings/reset", post(room::reset_room_settings))
-        // Playback: set current media & speed
         .route("/api/rooms/:room_id/playback/current", post(room::set_current_media))
         .route("/api/rooms/:room_id/playback/speed", post(room::set_playback_speed))
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::write_rate_limit,
-        ));
+        ))
+}
 
-    // Email routes — strict rate limiting (5 req/min) to prevent email spam and token brute-force
+/// Read routes (user info, room discovery, room details, playlists, chat, media, playback).
+/// Rate limited: 100 req/min.
+fn register_read_routes(state: &AppState) -> Router<AppState> {
+    Router::new()
+        .route("/api/user", get(user::get_me))
+        .route("/api/user/rooms", get(user::get_joined_rooms))
+        .route("/api/user/rooms/created", get(user::list_created_rooms))
+        .route("/api/tickets", post(ticket::create_ticket))
+        .route("/api/rooms", get(room::list_or_get_rooms))
+        .route("/api/rooms/hot", get(room::get_hot_rooms))
+        .route("/api/rooms/:room_id/check", get(room::check_room))
+        .route("/api/rooms/:room_id", get(room::get_room))
+        .route("/api/rooms/:room_id/settings", get(room::get_room_settings))
+        .route("/api/rooms/:room_id/members", get(room::get_room_members))
+        .route("/api/rooms/:room_id/playlists", get(room::list_playlists))
+        .route("/api/rooms/:room_id/chat/history", get(room::get_chat_history))
+        .route("/api/rooms/:room_id/media", get(room::get_playlist))
+        .route("/api/rooms/:room_id/movie/:media_id", get(room::get_movie_info))
+        .route("/api/rooms/:room_id/playlists/:playlist_id/items", get(media::list_playlist_items))
+        .route("/api/rooms/:room_id/playback", get(room::get_playback_state))
+        .route_layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::read_rate_limit,
+        ))
+}
+
+/// Assemble all route groups into a single router.
+fn register_all_routes(state: AppState) -> Router<AppState> {
+    let health_router = if state.config.server.development_mode {
+        health::create_health_router_with_metrics()
+    } else {
+        health::create_health_router()
+    };
+
     let email_routes = email_verification::create_email_router()
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::auth_rate_limit,
         ));
 
-    // Use health router with metrics only in development mode
-    let health_router = if config.server.development_mode {
-        health::create_health_router_with_metrics()
-    } else {
-        health::create_health_router()
-    };
-
     let router = Router::new()
-        // Health check endpoints (for monitoring probes; metrics only in dev mode)
         .merge(health_router)
-        // Public endpoints (no authentication required)
         .merge(public::create_public_router())
-        // Email verification and password reset (rate-limited)
         .merge(email_routes)
-        // Publish key routes — strict rate limiting (5 req/min, same as auth)
         .merge(
             publish_key::create_publish_key_router()
                 .route_layer(axum_middleware::from_fn_with_state(
@@ -341,7 +297,6 @@ fn create_router(
                     middleware::auth_rate_limit,
                 ))
         )
-        // Notification routes — split rate limits: read for GETs, write for mutations
         .merge(
             notifications::create_notification_read_router()
                 .route_layer(axum_middleware::from_fn_with_state(
@@ -356,104 +311,49 @@ fn create_router(
                     middleware::write_rate_limit,
                 ))
         )
-        // Rate-limited route groups
-        .merge(auth_routes)
-        .merge(media_routes)
-        .merge(write_routes)
-        // OAuth2 read-only routes — rate limited (100 req/min)
+        .merge(register_auth_routes(&state))
+        .merge(register_media_routes(&state))
+        .merge(register_write_routes(&state))
+        // OAuth2 read-only routes
         .merge(
             Router::new()
-                .route(
-                    "/api/oauth2/:provider/authorize",
-                    get(oauth2::get_authorize_url),
-                )
+                .route("/api/oauth2/:provider/authorize", get(oauth2::get_authorize_url))
                 .route("/api/oauth2/providers", get(oauth2::list_providers))
                 .route_layer(axum_middleware::from_fn_with_state(
                     state.clone(),
                     middleware::read_rate_limit,
                 ))
         )
-        // Read routes — rate limited (100 req/min)
+        .merge(register_read_routes(&state))
+        // Live streaming routes
         .merge(
             Router::new()
-                // User read routes
-                .route("/api/user", get(user::get_me))
-                .route("/api/user/rooms", get(user::get_joined_rooms))
-                .route("/api/user/rooms/created", get(user::list_created_rooms))
-                // WebSocket ticket route (for secure WebSocket authentication)
-                .route("/api/tickets", post(ticket::create_ticket))
-                // Room discovery routes (public)
-                .route("/api/rooms", get(room::list_or_get_rooms))
-                .route("/api/rooms/hot", get(room::get_hot_rooms))
-                .route("/api/rooms/:room_id/check", get(room::check_room))
-                // Room read routes
-                .route("/api/rooms/:room_id", get(room::get_room))
-                .route("/api/rooms/:room_id/settings", get(room::get_room_settings))
-                .route("/api/rooms/:room_id/members", get(room::get_room_members))
-                // Playlist read routes
-                .route("/api/rooms/:room_id/playlists", get(room::list_playlists))
-                // Chat history
-                .route("/api/rooms/:room_id/chat/history", get(room::get_chat_history))
-                // Media read routes
-                .route("/api/rooms/:room_id/media", get(room::get_playlist))
-                // Movie info endpoint (resolves provider playback)
-                .route(
-                    "/api/rooms/:room_id/movie/:media_id",
-                    get(room::get_movie_info),
-                )
-                // Dynamic playlist routes
-                .route(
-                    "/api/rooms/:room_id/playlists/:playlist_id/items",
-                    get(media::list_playlist_items),
-                )
-                // Playback control - read
-                .route("/api/rooms/:room_id/playback", get(room::get_playback_state))
-                .route_layer(axum_middleware::from_fn_with_state(
-                    state.clone(),
-                    middleware::read_rate_limit,
-                ))
-        )
-        // Live streaming routes — rate limited (50 req/min)
-        .merge(
-            Router::new()
-                .nest(
-                    "/api/room/movie/live",
-                    live::create_live_router(),
-                )
+                .nest("/api/room/movie/live", live::create_live_router())
                 .route_layer(axum_middleware::from_fn_with_state(
                     state.clone(),
                     middleware::streaming_rate_limit,
                 ))
         )
-        // WebSocket endpoint — rate limited (10 connection attempts/min)
+        // WebSocket endpoint
         .merge(
             Router::new()
-                .route(
-                    "/ws/rooms/:room_id",
-                    axum::routing::get(websocket::websocket_handler),
-                )
+                .route("/ws/rooms/:room_id", axum::routing::get(websocket::websocket_handler))
                 .route_layer(axum_middleware::from_fn_with_state(
                     state.clone(),
                     middleware::websocket_rate_limit,
                 ))
         )
-        // WebRTC configuration endpoints — rate limited (100 req/min)
+        // WebRTC configuration endpoints
         .merge(
             Router::new()
-                .route(
-                    "/api/rooms/:room_id/webrtc/ice-servers",
-                    get(webrtc::get_ice_servers),
-                )
-                .route(
-                    "/api/rooms/:room_id/webrtc/network-quality",
-                    get(webrtc::get_network_quality),
-                )
+                .route("/api/rooms/:room_id/webrtc/ice-servers", get(webrtc::get_ice_servers))
+                .route("/api/rooms/:room_id/webrtc/network-quality", get(webrtc::get_network_quality))
                 .route_layer(axum_middleware::from_fn_with_state(
                     state.clone(),
                     middleware::read_rate_limit,
                 ))
         )
-        // Admin routes (admin/root role required) — rate limited (30 req/min)
+        // Admin routes
         .merge(
             Router::new()
                 .nest("/api/admin", admin::create_admin_router())
@@ -462,7 +362,7 @@ fn create_router(
                     middleware::admin_rate_limit,
                 ))
         )
-        // Provider routes — rate limited (read: 100 req/min)
+        // Provider routes
         .merge(
             Router::new()
                 .nest("/api/provider", provider_common::register_common_routes())
@@ -474,27 +374,24 @@ fn create_router(
                     state.clone(),
                     middleware::read_rate_limit,
                 ))
-        )
-        ;
+        );
 
-    // Only expose Swagger UI and OpenAPI spec in development mode
-    let router = if config.server.development_mode {
+    // Only expose Swagger UI in development mode
+    if state.config.server.development_mode {
         router.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()))
     } else {
         router
-    };
+    }
+}
 
-    // Apply layers before state
-    // CORS configuration: use allowed origins from config, or permissive in development mode
-    // NOTE: If no origins configured in production, will allow all origins (with strong warning)
-    let cors = if config.server.development_mode {
-        // Development mode: allow all origins for easier testing
+/// Build CORS layer based on configuration.
+fn build_cors_layer(config: &synctv_core::Config) -> CorsLayer {
+    if config.server.development_mode {
         CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
             .allow_headers(Any)
     } else if config.server.cors_allowed_origins.is_empty() {
-        // Production with no configured origins: deny all cross-origin requests
         tracing::warn!(
             "CORS: No allowed origins configured in production. \
              All cross-origin requests will be denied. \
@@ -503,7 +400,6 @@ fn create_router(
         );
         CorsLayer::new()
     } else {
-        // Production: use configured origins only
         let origins: Vec<HeaderValue> = config
             .server
             .cors_allowed_origins
@@ -526,51 +422,23 @@ fn create_router(
                 x_room_id,
             ])
             .allow_credentials(true)
-    };
+    }
+}
 
-    let router = router
-        // CORS support for cross-origin requests
+/// Apply global middleware layers (CORS, body limit, timeout, security headers, tracing)
+/// and bind state.
+fn apply_global_layers(router: Router<AppState>, state: &AppState) -> axum::Router {
+    let cors = build_cors_layer(&state.config);
+
+    router
         .layer(cors)
-        // Limit request body size to prevent DoS attacks (10MB for general endpoints)
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
-        // Request timeout to prevent slow-loris and stuck requests
         .layer(TimeoutLayer::new(std::time::Duration::from_secs(30)))
         .layer(axum_middleware::from_fn(middleware::security_headers_middleware))
         .layer(axum_middleware::from_fn(
             crate::observability::metrics_middleware::metrics_layer,
         ))
-        .layer(TraceLayer::new_for_http());
-
-    // Apply state to all routes (must be last)
-    router.with_state(state)
-}
-
-/// Create the HTTP router from configuration struct
-pub fn create_router_from_config(config: RouterConfig) -> axum::Router {
-    create_router(
-        config.config,
-        config.user_service,
-        config.room_service,
-        config.provider_instance_manager,
-        config.user_provider_credential_repository,
-        config.alist_provider,
-        config.bilibili_provider,
-        config.emby_provider,
-        config.message_hub,
-        config.cluster_manager,
-        config.connection_manager,
-        config.jwt_service,
-        config.redis_publish_tx,
-        config.oauth2_service,
-        config.settings_service,
-        config.settings_registry,
-        config.email_service,
-        config.publish_key_service,
-        config.notification_service,
-        config.live_streaming_infrastructure,
-        config.sfu_manager,
-        config.rate_limiter,
-        config.ws_ticket_service,
-    )
+        .layer(TraceLayer::new_for_http())
+        .with_state(state.clone())
 }
 

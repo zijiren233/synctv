@@ -8,7 +8,8 @@ members = [
     "synctv-livestream",
     "synctv-cluster",
     "synctv-media-providers",
-    "synctv", "synctv-sfu",
+    "synctv",
+    "synctv-sfu",
     # xiu consolidated crate
     "synctv-xiu",
 ]
@@ -28,12 +29,26 @@ unwrap_used = "warn"
 
 [workspace.dependencies]
 # Async Runtime
-tokio = { version = "1.41", features = ["full"] }
-tokio-util = { version = "0.7", features = ["full"] }
+tokio = { version = "1.41", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "time",
+    "sync",
+    "signal",
+    "fs",
+] }
+tokio-util = { version = "0.7", features = ["codec", "io", "rt"] }
 tokio-stream = "0.1"
 
 # gRPC & Protobuf
-tonic = { version = "0.12", default-features = false, features = ["transport", "tls-roots", "prost", "codegen"] }
+tonic = { version = "0.12", default-features = false, features = [
+    "transport",
+    "tls-roots",
+    "prost",
+    "codegen",
+] }
 tonic-web = "0.12"
 tonic-reflection = "0.12"
 tonic-health = "0.12"
@@ -43,7 +58,12 @@ prost-types = "0.13"
 
 # HTTP Framework
 axum = { version = "0.7", features = ["macros", "ws"] }
-tower = { version = "0.5", features = ["full"] }
+tower = { version = "0.5", features = [
+    "util",
+    "timeout",
+    "limit",
+    "load-shed",
+] }
 tower-http = { version = "0.5", features = [
     "trace",
     "compression-full",
@@ -51,8 +71,17 @@ tower-http = { version = "0.5", features = [
     "timeout",
     "cors",
 ] }
-hyper = { version = "1.0", default-features = false, features = ["http1", "http2", "server", "client"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "rustls-tls"] }
+hyper = { version = "1.0", default-features = false, features = [
+    "http1",
+    "http2",
+    "server",
+    "client",
+] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "cookies",
+    "rustls-tls",
+] }
 
 # Database
 sqlx = { version = "0.8", features = [
@@ -89,6 +118,7 @@ subtle = "2.6"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_urlencoded = "0.7"
 indexmap = "2"
 
 # Caching
@@ -108,7 +138,9 @@ hex = "0.4"
 webrtc = "0.11"
 
 # STUN server (turn-rs, STUN-only mode)
-turn-server = { git = "https://github.com/mycrl/turn-rs", default-features = false, features = ["udp"] }
+turn-server = { git = "https://github.com/mycrl/turn-rs", default-features = false, features = [
+    "udp",
+] }
 
 # Streaming (consolidated xiu crate)
 synctv-xiu = { path = "synctv-xiu" }
@@ -136,10 +168,14 @@ bytes = "1.9"
 parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
+futures-util = "0.3"
 hostname = "0.4"
 url = "2.5"
 percent-encoding = "2.3"
 regex = "1.10"
+paste = "1.0"
+byteorder = "1.4"
+http = "1.0"
 
 # Monitoring
 prometheus = "0.14.0"
@@ -155,8 +191,24 @@ chrono = { version = "0.4", features = ["serde"] }
 # Networking
 ipnet = "2.10"
 
+# Email
+lettre = { version = "0.11", default-features = false, features = [
+    "tokio1-rustls-tls",
+    "builder",
+    "smtp-transport",
+    "hostname",
+    "tokio1",
+] }
+handlebars = "5.1"
+
 # Initialization
 ctor = "0.2"
+
+# Resilience
+governor = "0.7"
+nonzero_ext = "0.3"
+backon = "1.3"
+failsafe = "1.3"
 
 # Data Structures
 growable-bloom-filter = "2.1"
@@ -183,3 +235,17 @@ synctv-proxy = { path = "synctv-proxy" }
 synctv-livestream = { path = "synctv-livestream" }
 synctv-sfu = { path = "synctv-sfu" }
 
+[profile.dev]
+debug = 0
+strip = "symbols"
+
+[profile.release]
+opt-level = 3
+debug = 0
+lto = "fat"
+codegen-units = 1
+incremental = false
+panic = "unwind"
+strip = "symbols"
+debug-assertions = false
+overflow-checks = false

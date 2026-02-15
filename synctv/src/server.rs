@@ -56,6 +56,9 @@ pub struct Services {
     pub live_streaming_infrastructure: Option<Arc<synctv_livestream::api::LiveStreamingInfrastructure>>,
     pub stun_server: Option<Arc<synctv_core::service::StunServer>>,
     pub sfu_manager: Option<Arc<synctv_sfu::SfuManager>>,
+    pub node_registry: Option<Arc<synctv_cluster::discovery::NodeRegistry>>,
+    pub health_monitor: Option<Arc<synctv_cluster::discovery::HealthMonitor>>,
+    pub load_balancer: Option<Arc<synctv_cluster::discovery::LoadBalancer>>,
 }
 
 /// `SyncTV` server - manages all server components
@@ -250,7 +253,14 @@ impl SyncTvServer {
             info!("Livestream infrastructure shut down");
         }
 
-        // 5. Shut down cluster manager (cancels Redis Pub/Sub + deduplicator tasks)
+        // 4.5. Shut down health monitor
+        if let Some(ref health_monitor) = self.services.health_monitor {
+            info!("Shutting down health monitor...");
+            health_monitor.shutdown();
+            info!("Health monitor shut down");
+        }
+
+        // 5. Shut down cluster manager (cancels Redis Pub/Sub + heartbeat + deduplicator tasks)
         if let Some(ref cluster_mgr) = self.services.cluster_manager {
             info!("Shutting down cluster manager...");
             cluster_mgr.shutdown().await;
@@ -304,6 +314,8 @@ impl SyncTvServer {
         let sfu_manager = self.services.sfu_manager.clone();
         let live_streaming_infrastructure = self.services.live_streaming_infrastructure.clone();
         let publish_key_service = self.services.publish_key_service.clone();
+        let notification_service = self.services.notification_service.clone();
+        let node_registry = self.services.node_registry.clone();
 
         let handle = tokio::spawn(async move {
             info!("Starting gRPC server on {}...", config.grpc_address());
@@ -329,6 +341,8 @@ impl SyncTvServer {
                 sfu_manager,
                 live_streaming_infrastructure,
                 Some(publish_key_service),
+                notification_service,
+                node_registry,
                 Some(shutdown_rx),
             )
             .await

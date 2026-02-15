@@ -81,9 +81,11 @@ impl AdminServiceImpl {
         }
     }
 
-    /// Check if user has admin role and return their role.
-    /// Also checks banned/deleted status and token invalidation (matching HTTP `AuthAdmin`).
-    async fn check_admin_get_role(
+    /// Validate admin authentication: extract user from JWT, check banned/deleted
+    /// status, and verify token has not been invalidated by password change.
+    ///
+    /// Returns the authenticated user's role. Shared by `check_admin` and `check_root`.
+    async fn validate_auth(
         &self,
         request: &Request<impl std::fmt::Debug>,
     ) -> Result<synctv_core::models::UserRole, Status> {
@@ -95,17 +97,17 @@ impl AdminServiceImpl {
         let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
         let token_iat = user_context.iat;
 
-        // Load user from database to get current role
+        // Load user from database to get current role and status
         let user = self
             .user_service
             .get_user(&user_id)
             .await
             .map_err(|e| {
-                tracing::error!("Failed to get user for admin check: {e}");
-                Status::internal("Failed to get user for admin check")
+                tracing::error!("Failed to get user for auth check: {e}");
+                Status::internal("Failed to verify user")
             })?;
 
-        // Check banned/deleted status (matching HTTP AuthAdmin extractor)
+        // Check banned/deleted status (matching HTTP AuthAdmin/AuthRoot extractors)
         if user.is_deleted() || user.status == synctv_core::models::UserStatus::Banned {
             return Err(Status::unauthenticated("Authentication failed"));
         }
@@ -122,11 +124,19 @@ impl AdminServiceImpl {
             ));
         }
 
-        // Check if user has admin role
-        if !user.role.is_admin_or_above() {
+        Ok(user.role)
+    }
+
+    /// Check if user has admin role and return their role.
+    async fn check_admin_get_role(
+        &self,
+        request: &Request<impl std::fmt::Debug>,
+    ) -> Result<synctv_core::models::UserRole, Status> {
+        let role = self.validate_auth(request).await?;
+        if !role.is_admin_or_above() {
             return Err(Status::permission_denied("Admin role required"));
         }
-        Ok(user.role)
+        Ok(role)
     }
 
     /// Check if user has admin role (load from database)
@@ -135,45 +145,9 @@ impl AdminServiceImpl {
     }
 
     /// Check if user has root role (load from database).
-    /// Also checks banned/deleted status and token invalidation (matching HTTP `AuthRoot`).
     async fn check_root(&self, request: &Request<impl std::fmt::Debug>) -> Result<(), Status> {
-        let user_context = request
-            .extensions()
-            .get::<super::interceptors::UserContext>()
-            .ok_or_else(|| Status::unauthenticated("Authentication required"))?;
-
-        let user_id = synctv_core::models::UserId::from_string(user_context.user_id.clone());
-        let token_iat = user_context.iat;
-
-        // Load user from database to get current role
-        let user = self
-            .user_service
-            .get_user(&user_id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to get user for root check: {e}");
-                Status::internal("Failed to get user for root check")
-            })?;
-
-        // Check banned/deleted status (matching HTTP AuthRoot extractor)
-        if user.is_deleted() || user.status == synctv_core::models::UserStatus::Banned {
-            return Err(Status::unauthenticated("Authentication failed"));
-        }
-
-        // Reject tokens issued before last password change
-        if self
-            .user_service
-            .is_token_invalidated_by_password_change(&user_id, token_iat)
-            .await
-            .unwrap_or(false)
-        {
-            return Err(Status::unauthenticated(
-                "Token invalidated due to password change. Please log in again.",
-            ));
-        }
-
-        // Check if user has root role
-        if !matches!(user.role, synctv_core::models::UserRole::Root) {
+        let role = self.validate_auth(request).await?;
+        if !matches!(role, synctv_core::models::UserRole::Root) {
             return Err(Status::permission_denied("Root role required"));
         }
         Ok(())

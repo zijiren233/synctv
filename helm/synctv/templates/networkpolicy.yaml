@@ -1,0 +1,177 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "synctv.fullname" . }}-api
+  labels:
+    {{- include "synctv.api.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "synctv.api.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    {{- toYaml .Values.networkPolicy.policyTypes | nindent 4 }}
+  {{- if has "Ingress" .Values.networkPolicy.policyTypes }}
+  ingress:
+    # Allow ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.config.server.httpPort }}
+    # Allow internal cluster traffic (for gRPC)
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "synctv.api.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "synctv.streaming.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.config.server.grpcPort }}
+    # Allow Prometheus scraping
+    {{- if .Values.metrics.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: {{ .Values.config.server.httpPort }}
+    {{- end }}
+  {{- end }}
+  {{- if has "Egress" .Values.networkPolicy.policyTypes }}
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgresql
+      ports:
+        - protocol: TCP
+          port: {{ .Values.config.database.port }}
+    # Allow Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: {{ .Values.config.redis.port }}
+    # Allow internal cluster traffic
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "synctv.api.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "synctv.streaming.selectorLabels" . | nindent 14 }}
+    # Allow external HTTPS (for OAuth2, media providers)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+  {{- end }}
+---
+{{- if .Values.streaming.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "synctv.fullname" . }}-streaming
+  labels:
+    {{- include "synctv.streaming.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "synctv.streaming.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    {{- toYaml .Values.networkPolicy.policyTypes | nindent 4 }}
+  {{- if has "Ingress" .Values.networkPolicy.policyTypes }}
+  ingress:
+    # Allow RTMP from anywhere (external publishers)
+    - from:
+        - namespaceSelector: {}
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.config.streaming.rtmp.port }}
+    # Allow HLS/HTTP-FLV from API and external
+    - from:
+        - namespaceSelector: {}
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8081  # HLS
+        - protocol: TCP
+          port: 8082  # HTTP-FLV
+    # Allow internal cluster communication
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "synctv.api.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "synctv.streaming.selectorLabels" . | nindent 14 }}
+    # Allow Prometheus scraping
+    {{- if .Values.metrics.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8081
+    {{- end }}
+  {{- end }}
+  {{- if has "Egress" .Values.networkPolicy.policyTypes }}
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: {{ .Values.config.redis.port }}
+    # Allow internal cluster traffic
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "synctv.api.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "synctv.streaming.selectorLabels" . | nindent 14 }}
+    # Allow external HTTPS (for pulling external streams)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+  {{- end }}
+{{- end }}
+{{- end }}

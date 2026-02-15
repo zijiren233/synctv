@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use futures::stream::StreamExt;
 use redis::{AsyncCommands, Client as RedisClient};
 use redis::streams::StreamReadReply;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{timeout, Duration};
@@ -17,10 +18,25 @@ const INITIAL_BACKOFF_SECS: u64 = 1;
 /// Maximum backoff delay for subscriber reconnection
 const MAX_BACKOFF_SECS: u64 = 30;
 
-/// Redis Stream key for reliable event delivery
-const EVENT_STREAM_KEY: &str = "synctv:events:stream";
-/// Max length of the event stream (approximate)
+/// Redis Stream key for admin/cluster-wide events (no room_id)
+const ADMIN_STREAM_KEY: &str = "synctv:admin:events:stream";
+/// Max length of each per-room stream (approximate)
 const MAX_STREAM_LENGTH: usize = 10000;
+
+/// Build the Redis Stream key for a specific room
+fn room_stream_key(room_id: &str) -> String {
+    format!("synctv:room:{}:events", room_id)
+}
+
+/// Build the Redis Stream key for a given event.
+/// Room events go to per-room streams; admin events go to the global admin stream.
+fn stream_key_for_event(event: &ClusterEvent) -> String {
+    if let Some(room_id) = event.room_id() {
+        room_stream_key(room_id.as_str())
+    } else {
+        ADMIN_STREAM_KEY.to_string()
+    }
+}
 
 use super::dedup::{DedupKey, MessageDeduplicator};
 use super::events::ClusterEvent;
@@ -230,11 +246,11 @@ impl RedisPubSub {
         // Spawn task to handle subscribing with exponential backoff on reconnection
         tokio::spawn(async move {
             let mut backoff_secs = INITIAL_BACKOFF_SECS;
-            // Track the last processed Redis Stream ID across reconnections.
-            // "$" means "start from latest" on first connection (no catch-up for
-            // events before the process existed). After processing real entries
-            // this is updated to the actual stream ID so reconnections can catch up.
-            let mut last_stream_id = "$".to_string();
+            // Track per-stream cursors (per-room + admin) across reconnections.
+            // On first connect, cursors are snapshotted from stream tips.
+            // On reconnect, catch-up reads only active rooms' streams.
+            let mut stream_cursors: HashMap<String, String> = HashMap::new();
+            let mut is_first_connect = true;
 
             loop {
                 // Check cancellation before each reconnect attempt
@@ -243,7 +259,7 @@ impl RedisPubSub {
                     return;
                 }
 
-                match self_clone.run_subscriber(&mut last_stream_id).await {
+                match self_clone.run_subscriber(&mut stream_cursors, &mut is_first_connect).await {
                     SubscriberExit::Disconnected => {
                         // Connection was healthy before it dropped.
                         // Reset backoff since the server was reachable.
@@ -282,16 +298,23 @@ impl RedisPubSub {
 
     /// Run the subscriber task.
     ///
-    /// `last_stream_id` tracks the last processed Redis Stream entry ID. On
-    /// first connection it should be `"$"` (start from latest). After
-    /// reconnection the subscriber uses it to catch up on missed events. The
-    /// value is updated in-place as stream entries are processed so it persists
-    /// across reconnections.
+    /// `stream_cursors` maps each stream key (per-room or admin) to the last
+    /// processed Redis Stream entry ID. On first connection these are initialized
+    /// from the current stream tips. After reconnection the subscriber catches
+    /// up only on streams for rooms with local subscribers, avoiding the N*M
+    /// amplification of a single global stream.
+    ///
+    /// `is_first_connect` is set to `true` on the first connection. On first
+    /// connect we snapshot the stream tips; on reconnect we catch up.
     ///
     /// Returns `SubscriberExit::Disconnected` if the connection was established but then
     /// the stream ended (Redis disconnected). Returns `SubscriberExit::ConnectFailed` if
     /// the initial connection or subscription failed.
-    async fn run_subscriber(&self, last_stream_id: &mut String) -> SubscriberExit {
+    async fn run_subscriber(
+        &self,
+        stream_cursors: &mut HashMap<String, String>,
+        is_first_connect: &mut bool,
+    ) -> SubscriberExit {
         let mut pubsub = match timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
             self.redis_client.get_async_pubsub(),
@@ -333,49 +356,96 @@ impl RedisPubSub {
 
         info!("Redis subscriber connected, listening to synctv:room:* and synctv:admin:* channels");
 
-        if *last_stream_id == "$" {
-            // First connection: snapshot the current stream tip so we can catch
-            // up from this point if the connection drops later.
-            match self.get_latest_stream_id().await {
-                Ok(Some(id)) => {
-                    info!(stream_id = %id, "Initialized stream cursor from current tip");
-                    *last_stream_id = id;
-                }
-                Ok(None) => {
-                    // Stream is empty or doesn't exist yet; use "0" so any
-                    // future entries will be caught on reconnection.
-                    *last_stream_id = "0".to_string();
-                }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        "Failed to read latest stream ID, using '0' as fallback"
-                    );
-                    *last_stream_id = "0".to_string();
-                }
-            }
-        } else {
-            // Reconnection: catch up on events missed during disconnection.
-            match self.read_missed_events(last_stream_id).await {
-                Ok(events) => {
-                    if !events.is_empty() {
-                        info!(
-                            count = events.len(),
-                            from_id = %last_stream_id,
-                            "Catching up on missed events from Redis Stream"
+        if *is_first_connect {
+            *is_first_connect = false;
+
+            // First connection: snapshot the current stream tips for active rooms
+            // and the admin stream so we can catch up from these points if the
+            // connection drops later.
+            let active_rooms = self.message_hub.active_room_ids();
+            let mut streams_to_snapshot: Vec<String> = active_rooms
+                .iter()
+                .map(|rid| room_stream_key(rid.as_str()))
+                .collect();
+            streams_to_snapshot.push(ADMIN_STREAM_KEY.to_string());
+
+            for stream_key in streams_to_snapshot {
+                match self.get_latest_stream_id_for(&stream_key).await {
+                    Ok(Some(id)) => {
+                        debug!(stream_key = %stream_key, stream_id = %id, "Initialized stream cursor");
+                        stream_cursors.insert(stream_key, id);
+                    }
+                    Ok(None) => {
+                        stream_cursors.insert(stream_key, "0".to_string());
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            stream_key = %stream_key,
+                            "Failed to read latest stream ID, using '0' as fallback"
                         );
-                        for (stream_id, channel, event) in events {
-                            self.dispatch_event(&channel, event).await;
-                            *last_stream_id = stream_id;
-                        }
+                        stream_cursors.insert(stream_key, "0".to_string());
                     }
                 }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        "Failed to read missed events from Redis Stream, continuing with live events"
-                    );
+            }
+            info!(
+                room_count = active_rooms.len(),
+                "Initialized {} stream cursors (rooms + admin)",
+                stream_cursors.len()
+            );
+        } else {
+            // Reconnection: catch up on events missed during disconnection.
+            // Only read streams for rooms that currently have local subscribers.
+            let active_rooms = self.message_hub.active_room_ids();
+
+            // Ensure admin stream is always included
+            if !stream_cursors.contains_key(ADMIN_STREAM_KEY) {
+                stream_cursors.insert(ADMIN_STREAM_KEY.to_string(), "0".to_string());
+            }
+
+            // Add cursors for any new rooms that appeared while disconnected
+            for rid in &active_rooms {
+                let key = room_stream_key(rid.as_str());
+                stream_cursors.entry(key).or_insert_with(|| "0".to_string());
+            }
+
+            // Build the set of streams to catch up from (active rooms + admin)
+            let active_stream_keys: Vec<String> = {
+                let mut keys: Vec<String> = active_rooms
+                    .iter()
+                    .map(|rid| room_stream_key(rid.as_str()))
+                    .collect();
+                keys.push(ADMIN_STREAM_KEY.to_string());
+                keys
+            };
+
+            let mut total_caught_up = 0usize;
+            for stream_key in &active_stream_keys {
+                let cursor = stream_cursors.get(stream_key).cloned().unwrap_or_else(|| "0".to_string());
+                match self.read_missed_events_from(stream_key, &cursor).await {
+                    Ok(events) => {
+                        for (stream_id, channel, event) in events {
+                            self.dispatch_event(&channel, event).await;
+                            stream_cursors.insert(stream_key.clone(), stream_id);
+                            total_caught_up += 1;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            stream_key = %stream_key,
+                            "Failed to read missed events from stream, continuing"
+                        );
+                    }
                 }
+            }
+
+            if total_caught_up > 0 {
+                info!(
+                    total_events = total_caught_up,
+                    streams = active_stream_keys.len(),
+                    "Caught up on missed events from per-room streams"
+                );
             }
         }
 
@@ -538,8 +608,10 @@ impl RedisPubSub {
 
     /// Publish an event to Redis
     ///
-    /// Uses both Pub/Sub (for real-time delivery) and Stream (for reliability).
-    /// If a subscriber disconnects, it can catch up by reading from the stream.
+    /// Uses both Pub/Sub (for real-time delivery) and per-room Stream (for reliability).
+    /// If a subscriber disconnects, it can catch up by reading only the streams
+    /// for rooms that have local subscribers, avoiding the N*M amplification of
+    /// a single global stream.
     async fn publish_event(
         conn: &mut redis::aio::MultiplexedConnection,
         node_id: &str,
@@ -555,19 +627,20 @@ impl RedisPubSub {
         // Wrap event in envelope with node_id
         let envelope = EventEnvelope {
             node_id: node_id.to_string(),
-            event,
+            event: event.clone(),
         };
 
         let payload =
             serde_json::to_string(&envelope).context("Failed to serialize event envelope")?;
 
-        // 1. Add to Redis Stream for reliable delivery (catch-up after disconnect)
-        // Using XADD with MAXLEN to prevent unbounded growth
+        // 1. Add to per-room Redis Stream for reliable delivery (catch-up after disconnect)
+        // Room events go to synctv:room:{room_id}:events, admin events to synctv:admin:events:stream
+        let stream_key = stream_key_for_event(&event);
         use redis::streams::StreamMaxlen;
         let stream_result = timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
             conn.xadd_maxlen::<_, _, _, _, String>(
-                EVENT_STREAM_KEY,
+                &stream_key,
                 StreamMaxlen::Approx(MAX_STREAM_LENGTH),
                 "*",  // Auto-generate ID
                 &[("channel", channel.as_str()), ("payload", payload.as_str())],
@@ -575,7 +648,7 @@ impl RedisPubSub {
         ).await;
 
         if let Err(e) = &stream_result {
-            warn!(error = ?e, "Failed to add event to Redis Stream (non-critical)");
+            warn!(error = ?e, stream_key = %stream_key, "Failed to add event to Redis Stream (non-critical)");
             // Continue with Pub/Sub even if Stream fails
         }
 
@@ -605,10 +678,10 @@ impl RedisPubSub {
         Ok(conn)
     }
 
-    /// Get the ID of the latest entry in the Redis Stream, or `None` if the
-    /// stream is empty / does not exist. Used on first connection to snapshot
-    /// the cursor so subsequent reconnections can catch up.
-    async fn get_latest_stream_id(&self) -> Result<Option<String>> {
+    /// Get the ID of the latest entry in the given Redis Stream, or `None` if
+    /// the stream is empty / does not exist. Used on first connection to snapshot
+    /// per-room cursors so subsequent reconnections can catch up.
+    async fn get_latest_stream_id_for(&self, stream_key: &str) -> Result<Option<String>> {
         use redis::streams::StreamRangeReply;
 
         let mut conn = self.get_shared_conn().await?;
@@ -616,7 +689,7 @@ impl RedisPubSub {
         // XREVRANGE key + - COUNT 1  →  returns the single newest entry
         let reply: StreamRangeReply = timeout(
             Duration::from_secs(REDIS_TIMEOUT_SECS),
-            conn.xrevrange_count(EVENT_STREAM_KEY, "+", "-", 1usize),
+            conn.xrevrange_count(stream_key, "+", "-", 1usize),
         )
         .await
         .context("Timed out reading latest stream ID")?
@@ -630,7 +703,7 @@ impl RedisPubSub {
     /// Number of events to read per XREAD call during catch-up
     const CATCHUP_BATCH_SIZE: usize = 1000;
 
-    /// Read missed events from Redis Stream after reconnection.
+    /// Read missed events from a specific Redis Stream after reconnection.
     ///
     /// Loops XREAD until no more events are returned (or up to `MAX_CATCHUP_ITERATIONS`
     /// iterations) to ensure complete catch-up even when > 1000 events were missed.
@@ -638,8 +711,9 @@ impl RedisPubSub {
     /// Returns a list of `(stream_id, channel, event)` tuples for events that
     /// occurred after `last_id`. The caller should update its tracked stream ID
     /// to the last returned `stream_id`.
-    async fn read_missed_events(
+    async fn read_missed_events_from(
         &self,
+        stream_key: &str,
         last_id: &str,
     ) -> Result<Vec<(String, String, ClusterEvent)>> {
         let mut conn = self.get_shared_conn().await?;
@@ -648,13 +722,10 @@ impl RedisPubSub {
         let mut cursor = last_id.to_string();
 
         for iteration in 0..Self::MAX_CATCHUP_ITERATIONS {
-            // XREAD returns StreamReadReply { keys: Vec<StreamKey> }
-            // Each StreamKey has `key` (the stream name) and `ids: Vec<StreamId>`.
-            // Each StreamId has `id` (e.g. "1234567890-0") and `map: HashMap<String, Value>`.
             let reply: StreamReadReply = timeout(
                 Duration::from_secs(REDIS_TIMEOUT_SECS),
                 conn.xread_options(
-                    &[EVENT_STREAM_KEY],
+                    &[stream_key],
                     &[&cursor],
                     &redis::streams::StreamReadOptions::default().count(Self::CATCHUP_BATCH_SIZE),
                 ),
@@ -664,13 +735,11 @@ impl RedisPubSub {
             .context("Failed to read from Redis Stream")?;
 
             let mut batch_count = 0;
-            for stream_key in reply.keys {
-                for entry in stream_key.ids {
+            for sk in reply.keys {
+                for entry in sk.ids {
                     batch_count += 1;
-                    // Update cursor to the latest processed ID
                     cursor = entry.id.clone();
 
-                    // Extract "channel" and "payload" fields from the stream entry
                     let channel = entry.map.get("channel")
                         .and_then(|v| redis::from_redis_value::<String>(v).ok());
                     let payload = entry.map.get("payload")
@@ -679,13 +748,12 @@ impl RedisPubSub {
                     if let (Some(chan), Some(payload_str)) = (channel, payload) {
                         match serde_json::from_str::<EventEnvelope>(&payload_str) {
                             Ok(envelope) => {
-                                // Skip events from this node
                                 if envelope.node_id != self.node_id {
                                     events.push((entry.id, chan, envelope.event));
                                 }
                             }
                             Err(e) => {
-                                warn!(error = %e, "Failed to parse event envelope from stream");
+                                warn!(error = %e, stream_key = %stream_key, "Failed to parse event envelope from stream");
                             }
                         }
                     }
@@ -693,13 +761,13 @@ impl RedisPubSub {
             }
 
             if batch_count < Self::CATCHUP_BATCH_SIZE {
-                // No more events to read
                 break;
             }
 
             if iteration == Self::MAX_CATCHUP_ITERATIONS - 1 {
                 warn!(
                     total_events = events.len(),
+                    stream_key = %stream_key,
                     "Catch-up reached max iterations ({}), some events may be missed",
                     Self::MAX_CATCHUP_ITERATIONS
                 );
