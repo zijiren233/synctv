@@ -7,32 +7,35 @@ use super::id::{RoomId, UserId};
 use super::permission::PermissionBits;
 use crate::Error;
 
+/// Room lifecycle status (independent of ban state)
+///
+/// Status transitions:
+/// - Active ↔ Closed: Room creator or admin can toggle
+/// - Pending → Active: On first activity or explicit activation
+///
+/// Note: Banned state is tracked separately via `is_banned` field
+/// to allow unbanning without losing the previous status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum RoomStatus {
     #[default]
-    Pending,
     Active,
-    Banned,
+    Pending,
+    Closed,
 }
 
 impl RoomStatus {
-    #[must_use] 
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::Pending => "pending",
             Self::Active => "active",
-            Self::Banned => "banned",
+            Self::Pending => "pending",
+            Self::Closed => "closed",
         }
     }
 
-    #[must_use] 
-    pub const fn is_banned(&self) -> bool {
-        matches!(self, Self::Banned)
-    }
-
-    #[must_use] 
+    #[must_use]
     pub const fn is_pending(&self) -> bool {
         matches!(self, Self::Pending)
     }
@@ -41,9 +44,15 @@ impl RoomStatus {
     pub const fn is_active(&self) -> bool {
         matches!(self, Self::Active)
     }
+
+    #[must_use]
+    pub const fn is_closed(&self) -> bool {
+        matches!(self, Self::Closed)
+    }
 }
 
-// Database mapping: RoomStatus -> SMALLINT (1=active, 2=pending, 3=banned)
+// Database mapping: RoomStatus -> SMALLINT
+// Values: 1=active, 2=pending, 3=closed
 impl sqlx::Type<sqlx::Postgres> for RoomStatus {
     fn type_info() -> sqlx::postgres::PgTypeInfo {
         <i16 as sqlx::Type<sqlx::Postgres>>::type_info()
@@ -55,7 +64,7 @@ impl sqlx::Encode<'_, sqlx::Postgres> for RoomStatus {
         let val: i16 = match self {
             Self::Active => 1,
             Self::Pending => 2,
-            Self::Banned => 3,
+            Self::Closed => 3,
         };
         <i16 as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&val, buf)
     }
@@ -67,9 +76,39 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for RoomStatus {
         match val {
             1 => Ok(Self::Active),
             2 => Ok(Self::Pending),
-            3 => Ok(Self::Banned),
+            3 => Ok(Self::Closed),
             _ => Err(format!("Invalid RoomStatus value: {val}").into()),
         }
+    }
+}
+
+// Conversion from proto RoomStatus to core RoomStatus
+impl From<synctv_proto::common::RoomStatus> for RoomStatus {
+    fn from(value: synctv_proto::common::RoomStatus) -> Self {
+        match value {
+            synctv_proto::common::RoomStatus::Active => Self::Active,
+            synctv_proto::common::RoomStatus::Pending => Self::Pending,
+            synctv_proto::common::RoomStatus::Closed => Self::Closed,
+            synctv_proto::common::RoomStatus::Unspecified => Self::Active,
+        }
+    }
+}
+
+// Conversion from core RoomStatus to proto RoomStatus
+impl From<RoomStatus> for synctv_proto::common::RoomStatus {
+    fn from(value: RoomStatus) -> Self {
+        match value {
+            RoomStatus::Active => Self::Active,
+            RoomStatus::Pending => Self::Pending,
+            RoomStatus::Closed => Self::Closed,
+        }
+    }
+}
+
+// Conversion from core RoomStatus to i32 (via proto enum)
+impl From<RoomStatus> for i32 {
+    fn from(value: RoomStatus) -> Self {
+        synctv_proto::common::RoomStatus::from(value) as i32
     }
 }
 
@@ -121,14 +160,19 @@ pub struct Room {
     #[serde(default)]
     pub description: String,
     pub created_by: UserId,
+    /// Room lifecycle status (Active/Pending/Closed)
     pub status: RoomStatus,
+    /// Ban flag - independent of status, allows unbanning without losing previous status
+    /// Only global admins can set/clear this flag
+    #[serde(default)]
+    pub is_banned: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
 impl Room {
-    #[must_use] 
+    #[must_use]
     pub fn new(name: String, created_by: UserId) -> Self {
         let now = Utc::now();
         Self {
@@ -137,6 +181,7 @@ impl Room {
             description: String::new(),
             created_by,
             status: RoomStatus::Active,
+            is_banned: false,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -153,15 +198,35 @@ impl Room {
             description,
             created_by,
             status: RoomStatus::Active,
+            is_banned: false,
             created_at: now,
             updated_at: now,
             deleted_at: None,
         }
     }
 
-    #[must_use] 
+    /// Check if room is usable (active status, not banned, not deleted)
+    #[must_use]
     pub fn is_active(&self) -> bool {
-        self.status == RoomStatus::Active && self.deleted_at.is_none()
+        self.status == RoomStatus::Active && !self.is_banned && self.deleted_at.is_none()
+    }
+
+    /// Check if room is banned
+    #[must_use]
+    pub const fn is_banned(&self) -> bool {
+        self.is_banned
+    }
+
+    /// Ban the room (admin only)
+    pub fn ban(&mut self) {
+        self.is_banned = true;
+        self.updated_at = Utc::now();
+    }
+
+    /// Unban the room, restoring previous status (admin only)
+    pub fn unban(&mut self) {
+        self.is_banned = false;
+        self.updated_at = Utc::now();
     }
 }
 
@@ -197,6 +262,11 @@ pub struct RoomListQuery {
     pub page_size: i32,
     pub status: Option<RoomStatus>,
     pub search: Option<String>,
+    /// Filter by ban status (None = don't filter, Some(true) = banned only, Some(false) = not banned)
+    #[serde(default)]
+    pub is_banned: Option<bool>,
+    /// Filter by creator
+    pub creator_id: Option<String>,
 }
 
 impl Default for RoomListQuery {
@@ -206,6 +276,8 @@ impl Default for RoomListQuery {
             page_size: 20,
             status: Some(RoomStatus::Active),
             search: None,
+            is_banned: Some(false), // By default, exclude banned rooms
+            creator_id: None,
         }
     }
 }

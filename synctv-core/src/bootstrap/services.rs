@@ -280,7 +280,9 @@ async fn init_oauth2_service(
         let mut full_config = full_config.clone();
 
         // Add redirect_url to config (merge it in)
-        let redirect_url = format!("http://{}/api/oauth2/{}/callback", config.server.host, instance_name);
+        // Use configured scheme (http/https) to support reverse proxy TLS termination
+        let scheme = &config.oauth2.redirect_scheme;
+        let redirect_url = format!("{}://{}/api/oauth2/{}/callback", scheme, config.server.host, instance_name);
         if let Some(mapping) = full_config.as_object_mut() {
             mapping.insert(
                 "redirect_url".to_string(),

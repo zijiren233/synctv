@@ -1150,11 +1150,12 @@ impl RoomService {
             description: room.description,
             creator_id: room.created_by.as_str().to_string(),
             creator_username,
-            status: room.status.as_str().to_string(),
+            status: synctv_proto::common::RoomStatus::from(room.status) as i32,
             settings: settings_bytes,
             member_count,
             created_at: room.created_at.timestamp(),
             updated_at: room.updated_at.timestamp(),
+            is_banned: room.is_banned,
         };
 
         Ok(GetRoomResponse {
@@ -1178,10 +1179,15 @@ impl RoomService {
         if !request.status.is_empty() {
             query.status = match request.status.as_str() {
                 "active" => Some(RoomStatus::Active),
-                "banned" => Some(RoomStatus::Banned),
                 "pending" => Some(RoomStatus::Pending),
+                "closed" => Some(RoomStatus::Closed),
                 _ => None,
             };
+        }
+
+        // Handle is_banned filter separately
+        if let Some(is_banned) = request.is_banned {
+            query.is_banned = Some(is_banned);
         }
 
         if !request.search.is_empty() {
@@ -1237,11 +1243,12 @@ impl RoomService {
                     description: r.room.description,
                     creator_id: r.room.created_by.as_str().to_string(),
                     creator_username,
-                    status: r.room.status.as_str().to_string(),
+                    status: synctv_proto::common::RoomStatus::from(r.room.status) as i32,
                     settings: settings_bytes,
                     member_count: r.member_count,
                     created_at: r.room.created_at.timestamp(),
                     updated_at: r.room.updated_at.timestamp(),
+                    is_banned: r.room.is_banned,
                 }
             })
             .collect())
@@ -1364,19 +1371,36 @@ impl RoomService {
         Ok(updated_room)
     }
 
-    /// Ban a room
+    /// Ban a room (admin only)
     ///
-    /// Changes room status to banned.
-    /// Only admins can ban rooms.
+    /// Sets the is_banned flag. The room retains its previous status (Active/Closed/etc).
+    /// Only global admins can ban rooms.
     pub async fn ban_room(&self, room_id: &RoomId) -> Result<Room> {
         let room = self.room_repo.get_by_id(room_id).await?
             .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
 
-        if room.status.is_banned() {
+        if room.is_banned {
             return Err(Error::InvalidInput("Room is already banned".to_string()));
         }
 
-        let updated_room = self.room_repo.update_status(room_id, RoomStatus::Banned).await?;
+        let updated_room = self.room_repo.update_ban_status(room_id, true).await?;
+
+        Ok(updated_room)
+    }
+
+    /// Unban a room (admin only)
+    ///
+    /// Clears the is_banned flag. The room returns to its previous status.
+    /// Only global admins can unban rooms.
+    pub async fn unban_room(&self, room_id: &RoomId) -> Result<Room> {
+        let room = self.room_repo.get_by_id(room_id).await?
+            .ok_or_else(|| Error::NotFound("Room not found".to_string()))?;
+
+        if !room.is_banned {
+            return Err(Error::InvalidInput("Room is not banned".to_string()));
+        }
+
+        let updated_room = self.room_repo.update_ban_status(room_id, false).await?;
 
         Ok(updated_room)
     }

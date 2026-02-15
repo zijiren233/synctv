@@ -33,11 +33,11 @@ mod room_service_unit_tests {
         status = RoomStatus::Active;
         assert!(status.is_active());
         assert!(!status.is_pending());
-        assert!(!status.is_banned());
+        assert!(!status.is_closed());
 
-        // Active -> Banned
-        status = RoomStatus::Banned;
-        assert!(status.is_banned());
+        // Active -> Closed
+        status = RoomStatus::Closed;
+        assert!(status.is_closed());
         assert!(!status.is_active());
     }
 

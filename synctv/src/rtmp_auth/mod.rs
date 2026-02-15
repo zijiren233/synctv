@@ -113,7 +113,7 @@ impl AuthCallback for SyncTvRtmpAuth {
             .await
             .map_err(|e| format!("Failed to load room: {e}"))?;
 
-        if room.status == RoomStatus::Banned {
+        if room.is_banned {
             return Err(format!("Room {app_name} is banned").into());
         }
 

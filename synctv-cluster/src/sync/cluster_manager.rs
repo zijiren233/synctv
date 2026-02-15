@@ -32,6 +32,12 @@ pub struct ClusterConfig {
     pub dedup_window: Duration,
     /// How often to cleanup dedup entries
     pub cleanup_interval: Duration,
+    /// Capacity for the high-priority critical event channel.
+    /// Critical events are never dropped; senders block when full.
+    pub critical_channel_capacity: usize,
+    /// Capacity for the normal-priority Redis publish channel.
+    /// Normal events are dropped with warning when full.
+    pub publish_channel_capacity: usize,
 }
 
 impl Default for ClusterConfig {
@@ -41,12 +47,11 @@ impl Default for ClusterConfig {
             node_id: format!("node_{}", nanoid::nanoid!(8)),
             dedup_window: Duration::from_secs(5),
             cleanup_interval: Duration::from_secs(30),
+            critical_channel_capacity: 1000,
+            publish_channel_capacity: 10_000,
         }
     }
 }
-
-/// Capacity for the high-priority publish channel for critical events.
-const CRITICAL_CHANNEL_CAPACITY: usize = 1000;
 
 /// Cluster synchronization manager
 ///
@@ -75,6 +80,10 @@ pub struct ClusterManager {
     cancel_token: CancellationToken,
     /// Node registry + heartbeat handle (behind Mutex for async shutdown from &self)
     heartbeat_state: tokio::sync::Mutex<HeartbeatState>,
+    /// Capacity for the critical event channel (for logging)
+    critical_channel_capacity: usize,
+    /// Capacity for the publish channel (for logging)
+    publish_channel_capacity: usize,
 }
 
 /// State for the background heartbeat loop, guarded by Mutex for async shutdown
@@ -119,10 +128,11 @@ impl ClusterManager {
                 )?
             );
 
-            let tx = redis_pubsub.clone().start().await?;
+            let tx = redis_pubsub.clone().start(config.publish_channel_capacity).await?;
             // Critical events share the same Redis publisher but use a separate
             // bounded channel so they are never dropped when the normal channel is full.
-            let (critical_tx, mut critical_rx) = mpsc::channel::<PublishRequest>(CRITICAL_CHANNEL_CAPACITY);
+            let critical_capacity = config.critical_channel_capacity;
+            let (critical_tx, mut critical_rx) = mpsc::channel::<PublishRequest>(critical_capacity);
             // Forward critical events into the normal publish channel using `.send().await`
             // (blocks until space available, never drops).
             let normal_tx = tx.clone();
@@ -163,6 +173,8 @@ impl ClusterManager {
             admin_event_tx,
             redis_pubsub,
             cancel_token: CancellationToken::new(),
+            critical_channel_capacity: config.critical_channel_capacity,
+            publish_channel_capacity: config.publish_channel_capacity,
             heartbeat_state: tokio::sync::Mutex::new(HeartbeatState {
                 node_registry: None,
                 handle: None,
@@ -372,7 +384,7 @@ impl ClusterManager {
                         let tx = tx.clone();
                         warn!(
                             "Critical event publish channel full (capacity {}), spawning retry task",
-                            CRITICAL_CHANNEL_CAPACITY
+                            self.critical_channel_capacity
                         );
                         tokio::spawn(async move {
                             if let Err(e) = tx.send(req).await {
@@ -403,7 +415,7 @@ impl ClusterManager {
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     warn!(
                         "Redis publish channel full (capacity {}), dropping event",
-                        RedisPubSub::PUBLISH_CHANNEL_CAPACITY
+                        self.publish_channel_capacity
                     );
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
@@ -503,6 +515,8 @@ mod tests {
             node_id: "test_node".to_string(),
             dedup_window: Duration::from_secs(1),
             cleanup_interval: Duration::from_secs(1),
+            critical_channel_capacity: 1000,
+            publish_channel_capacity: 10_000,
         };
 
         let manager = ClusterManager::new(config, None).await.unwrap();
@@ -552,6 +566,8 @@ mod tests {
             node_id: "test_node".to_string(),
             dedup_window: Duration::from_secs(1),
             cleanup_interval: Duration::from_secs(1),
+            critical_channel_capacity: 1000,
+            publish_channel_capacity: 10_000,
         };
 
         let manager = ClusterManager::new(config, None).await.unwrap();
@@ -590,6 +606,8 @@ mod tests {
             node_id: "test_node".to_string(),
             dedup_window: Duration::from_secs(1),
             cleanup_interval: Duration::from_secs(1),
+            critical_channel_capacity: 1000,
+            publish_channel_capacity: 10_000,
         };
 
         let manager = ClusterManager::new(config, None).await.unwrap();

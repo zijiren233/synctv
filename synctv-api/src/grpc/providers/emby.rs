@@ -11,6 +11,12 @@ use crate::impls::providers::{extract_instance_name, get_provider_binds};
 use crate::proto::providers::emby::emby_provider_service_server::EmbyProviderService;
 use crate::proto::providers::emby::{LoginRequest, LoginResponse, ListRequest, ListResponse, GetMeRequest, GetMeResponse, LogoutRequest, LogoutResponse, GetBindsRequest, GetBindsResponse, BindInfo};
 
+/// Log an internal error and return a generic gRPC status to avoid leaking details.
+fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
+    tracing::error!("{context}: {err}");
+    Status::internal(context)
+}
+
 /// Emby Provider gRPC Service
 ///
 /// Thin wrapper that delegates to `EmbyApiImpl`.
@@ -39,7 +45,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         self.api.login(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Emby login failed", e))
     }
 
     async fn list(&self, request: Request<ListRequest>) -> Result<Response<ListResponse>, Status> {
@@ -50,7 +56,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         self.api.list(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Emby list failed", e))
     }
 
     async fn get_me(&self, request: Request<GetMeRequest>) -> Result<Response<GetMeResponse>, Status> {
@@ -61,7 +67,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         self.api.get_me(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Emby get_me failed", e))
     }
 
     async fn logout(&self, request: Request<LogoutRequest>) -> Result<Response<LogoutResponse>, Status> {
@@ -71,7 +77,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
         self.api.logout(req)
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Emby logout failed", e))
     }
 
     async fn get_binds(&self, request: Request<GetBindsRequest>) -> Result<Response<GetBindsResponse>, Status> {
@@ -87,7 +93,7 @@ impl EmbyProviderService for EmbyProviderGrpcService {
             "emby_user_id",
         )
         .await
-        .map_err(Status::internal)?;
+        .map_err(|e| internal_err("Failed to get Emby binds", e))?;
 
         let binds = provider_binds
             .into_iter()

@@ -30,9 +30,9 @@ pub struct Room {
     pub name: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub created_by: ::prost::alloc::string::String,
-    /// pending, active, banned
-    #[prost(string, tag = "4")]
-    pub status: ::prost::alloc::string::String,
+    /// Room lifecycle status (Active/Pending/Closed)
+    #[prost(enumeration = "super::common::RoomStatus", tag = "4")]
+    pub status: i32,
     /// JSON settings
     #[prost(bytes = "vec", tag = "5")]
     pub settings: ::prost::alloc::vec::Vec<u8>,
@@ -46,6 +46,9 @@ pub struct Room {
     /// Last updated timestamp
     #[prost(int64, tag = "9")]
     pub updated_at: i64,
+    /// Ban flag set by global admin only
+    #[prost(bool, tag = "10")]
+    pub is_banned: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -933,8 +936,6 @@ pub struct RoomSettingsChanged {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ErrorMessage {
     #[prost(string, tag = "1")]
-    pub code: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
 }
 /// Chat History

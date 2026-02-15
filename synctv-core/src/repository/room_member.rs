@@ -749,6 +749,7 @@ impl RoomMemberRepository {
                     description: row.try_get("description")?,
                     created_by: UserId::from_string(row.try_get("created_by")?),
                     status,
+                    is_banned: row.try_get("is_banned")?,
                     created_at: row.try_get("created_at")?,
                     updated_at: row.try_get("updated_at")?,
                     deleted_at: row.try_get("deleted_at")?,

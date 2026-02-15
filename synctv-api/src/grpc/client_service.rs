@@ -73,6 +73,9 @@ fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
 /// those strings to gRPC status codes using keyword matching. Once the impls
 /// layer migrates to `synctv_core::Error`, callers should use the typed
 /// `From<Error> for tonic::Status` conversion instead.
+///
+/// Note: For internal errors, we log the details and return a generic message
+/// to avoid leaking sensitive implementation details to clients.
 fn impls_err_to_status(err: String) -> Status {
     let lower = err.to_lowercase();
     if lower.contains("not found") {
@@ -95,6 +98,7 @@ fn impls_err_to_status(err: String) -> Status {
     {
         Status::invalid_argument(err)
     } else {
+        // Log internal error details but return generic message to client
         tracing::error!("Internal error: {err}");
         Status::internal("Internal error")
     }

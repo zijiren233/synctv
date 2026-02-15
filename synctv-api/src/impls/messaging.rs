@@ -853,15 +853,9 @@ fn cluster_event_to_server_message(
                 })),
             })
         }
-        ClusterEvent::SystemNotification { message, level, .. } => {
-            let code = match level {
-                synctv_cluster::sync::events::NotificationLevel::Info => "INFO",
-                synctv_cluster::sync::events::NotificationLevel::Warning => "WARNING",
-                synctv_cluster::sync::events::NotificationLevel::Error => "ERROR",
-            };
+        ClusterEvent::SystemNotification { message, .. } => {
             Some(ServerMessage {
                 message: Some(Message::Error(ErrorMessage {
-                    code: code.to_string(),
                     message: message.clone(),
                 })),
             })

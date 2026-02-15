@@ -459,6 +459,22 @@ pub mod cluster_service_client {
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// Cluster coordination service for multi-replica deployment
+    ///
+    /// Architecture Overview:
+    /// - Redis is the SOLE discovery mechanism for this cluster
+    /// - Nodes self-register in Redis via NodeRegistry::register() on startup
+    /// - Heartbeats are sent directly to Redis via NodeRegistry::heartbeat()
+    /// - Events are broadcast via Redis Pub/Sub through ClusterManager
+    ///
+    /// Endpoint Usage:
+    /// - RegisterNode: UNUSED - kept for potential future node-to-node gRPC discovery
+    /// - Heartbeat: UNUSED - kept for potential future node-to-node gRPC discovery
+    /// - GetNodes: ACTIVE - returns all known nodes from Redis registry
+    /// - DeregisterNode: ACTIVE - handles graceful shutdown with epoch validation
+    /// - SyncRoomState: DEPRECATED - returns UNIMPLEMENTED; use Redis Pub/Sub instead
+    /// - BroadcastEvent: DEPRECATED - returns UNIMPLEMENTED; use ClusterManager instead
+    /// - GetUserOnlineStatus: ACTIVE - fan-out query for user presence
+    /// - GetRoomConnections: ACTIVE - fan-out query for room participants
     #[derive(Debug, Clone)]
     pub struct ClusterServiceClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -540,6 +556,7 @@ pub mod cluster_service_client {
             self
         }
         /// Node registration and health
+        /// NOTE: RegisterNode and Heartbeat are currently unused - nodes use Redis directly
         pub async fn register_node(
             &mut self,
             request: impl tonic::IntoRequest<super::RegisterNodeRequest>,
@@ -641,6 +658,8 @@ pub mod cluster_service_client {
             self.inner.unary(req, path, codec).await
         }
         /// State synchronization
+        /// NOTE: These are DEPRECATED - use Redis Pub/Sub via ClusterManager instead
+        /// Both endpoints return UNIMPLEMENTED status
         pub async fn sync_room_state(
             &mut self,
             request: impl tonic::IntoRequest<super::SyncRoomStateRequest>,
@@ -693,7 +712,7 @@ pub mod cluster_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
-        /// User connection tracking
+        /// User connection tracking - ACTIVE endpoints for fan-out queries
         pub async fn get_user_online_status(
             &mut self,
             request: impl tonic::IntoRequest<super::GetUserOnlineStatusRequest>,
@@ -768,6 +787,7 @@ pub mod cluster_service_server {
     #[async_trait]
     pub trait ClusterService: std::marker::Send + std::marker::Sync + 'static {
         /// Node registration and health
+        /// NOTE: RegisterNode and Heartbeat are currently unused - nodes use Redis directly
         async fn register_node(
             &self,
             request: tonic::Request<super::RegisterNodeRequest>,
@@ -797,6 +817,8 @@ pub mod cluster_service_server {
             tonic::Status,
         >;
         /// State synchronization
+        /// NOTE: These are DEPRECATED - use Redis Pub/Sub via ClusterManager instead
+        /// Both endpoints return UNIMPLEMENTED status
         async fn sync_room_state(
             &self,
             request: tonic::Request<super::SyncRoomStateRequest>,
@@ -811,7 +833,7 @@ pub mod cluster_service_server {
             tonic::Response<super::BroadcastEventResponse>,
             tonic::Status,
         >;
-        /// User connection tracking
+        /// User connection tracking - ACTIVE endpoints for fan-out queries
         async fn get_user_online_status(
             &self,
             request: tonic::Request<super::GetUserOnlineStatusRequest>,
@@ -828,6 +850,22 @@ pub mod cluster_service_server {
         >;
     }
     /// Cluster coordination service for multi-replica deployment
+    ///
+    /// Architecture Overview:
+    /// - Redis is the SOLE discovery mechanism for this cluster
+    /// - Nodes self-register in Redis via NodeRegistry::register() on startup
+    /// - Heartbeats are sent directly to Redis via NodeRegistry::heartbeat()
+    /// - Events are broadcast via Redis Pub/Sub through ClusterManager
+    ///
+    /// Endpoint Usage:
+    /// - RegisterNode: UNUSED - kept for potential future node-to-node gRPC discovery
+    /// - Heartbeat: UNUSED - kept for potential future node-to-node gRPC discovery
+    /// - GetNodes: ACTIVE - returns all known nodes from Redis registry
+    /// - DeregisterNode: ACTIVE - handles graceful shutdown with epoch validation
+    /// - SyncRoomState: DEPRECATED - returns UNIMPLEMENTED; use Redis Pub/Sub instead
+    /// - BroadcastEvent: DEPRECATED - returns UNIMPLEMENTED; use ClusterManager instead
+    /// - GetUserOnlineStatus: ACTIVE - fan-out query for user presence
+    /// - GetRoomConnections: ACTIVE - fan-out query for room participants
     #[derive(Debug)]
     pub struct ClusterServiceServer<T> {
         inner: Arc<T>,

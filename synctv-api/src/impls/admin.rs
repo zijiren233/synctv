@@ -89,7 +89,7 @@ impl AdminApiImpl {
             Some(match req.status.as_str() {
                 "active" => synctv_core::models::RoomStatus::Active,
                 "pending" => synctv_core::models::RoomStatus::Pending,
-                "banned" => synctv_core::models::RoomStatus::Banned,
+                "closed" => synctv_core::models::RoomStatus::Closed,
                 _ => synctv_core::models::RoomStatus::Active,
             })
         };
@@ -99,6 +99,8 @@ impl AdminApiImpl {
             page_size,
             status,
             search: if req.search.is_empty() { None } else { Some(req.search) },
+            is_banned: req.is_banned,
+            creator_id: if req.creator_id.is_empty() { None } else { Some(req.creator_id) },
         };
 
         let (rooms, total) = self.room_service.list_rooms(&query).await
@@ -634,7 +636,7 @@ impl AdminApiImpl {
                         error = %e,
                         "Failed to set role after user creation; user exists with default role"
                     );
-                    return Err(format!("User created but role update failed: {e}"));
+                    return Err("User created but role update failed".to_string());
                 }
             }
         } else {
@@ -835,11 +837,11 @@ impl AdminApiImpl {
         let rid = RoomId::from_string(req.room_id);
         let room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
 
-        if matches!(room.status, synctv_core::models::RoomStatus::Banned) {
+        if room.is_banned {
             return Err("Room is already banned".to_string());
         }
 
-        let updated = self.room_service.update_room_status(&rid, synctv_core::models::RoomStatus::Banned).await
+        let updated = self.room_service.ban_room(&rid).await
             .map_err(|e| e.to_string())?;
 
         // Force disconnect all connections in the banned room
@@ -871,11 +873,11 @@ impl AdminApiImpl {
         let rid = RoomId::from_string(req.room_id);
         let room = self.room_service.get_room(&rid).await.map_err(|e| e.to_string())?;
 
-        if !matches!(room.status, synctv_core::models::RoomStatus::Banned) {
+        if !room.is_banned {
             return Err("Room is not banned".to_string());
         }
 
-        let updated = self.room_service.update_room_status(&rid, synctv_core::models::RoomStatus::Active).await
+        let updated = self.room_service.unban_room(&rid).await
             .map_err(|e| e.to_string())?;
 
         Ok(crate::proto::admin::UnbanRoomResponse {
@@ -1049,7 +1051,7 @@ impl AdminApiImpl {
 
         let room_query_banned = synctv_core::models::RoomListQuery {
             page: 1, page_size: 1,
-            status: Some(synctv_core::models::RoomStatus::Banned),
+            is_banned: Some(true),
             ..Default::default()
         };
         let (_, banned_rooms) = self.room_service.list_rooms(&room_query_banned).await.unwrap_or((vec![], 0));
@@ -1149,11 +1151,12 @@ fn admin_room_to_proto(
         description: room.description.clone(),
         creator_id: room.created_by.to_string(),
         creator_username: String::new(), // Would need to fetch user
-        status: room.status.as_str().to_string(),
+        status: synctv_proto::common::RoomStatus::from(room.status) as i32,
         settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
         member_count: member_count.unwrap_or(0),
         created_at: room.created_at.timestamp(),
         updated_at: room.updated_at.timestamp(),
+        is_banned: room.is_banned,
     }
 }
 

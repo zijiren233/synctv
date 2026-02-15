@@ -171,7 +171,8 @@ impl From<synctv_core::Error> for AppError {
 /// Convert `serde_json` errors to HTTP errors
 impl From<serde_json::Error> for AppError {
     fn from(err: serde_json::Error) -> Self {
-        Self::bad_request(format!("JSON error: {err}"))
+        tracing::error!("JSON serialization/deserialization error: {}", err);
+        Self::bad_request("Invalid request data format")
     }
 }
 

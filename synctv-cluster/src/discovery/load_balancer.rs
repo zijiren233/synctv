@@ -109,7 +109,7 @@ impl LoadBalancer {
                         n.metadata
                             .get("connections")
                             .and_then(|v| v.parse::<usize>().ok())
-                            .unwrap_or(usize::MAX)
+                            .unwrap_or(0)
                     })
                     .ok_or_else(|| Error::NotFound("No nodes available".to_string()))?
                     .node_id

@@ -3,18 +3,37 @@ syntax = "proto3";
 package synctv.cluster;
 
 // Cluster coordination service for multi-replica deployment
+//
+// Architecture Overview:
+// - Redis is the SOLE discovery mechanism for this cluster
+// - Nodes self-register in Redis via NodeRegistry::register() on startup
+// - Heartbeats are sent directly to Redis via NodeRegistry::heartbeat()
+// - Events are broadcast via Redis Pub/Sub through ClusterManager
+//
+// Endpoint Usage:
+// - RegisterNode: UNUSED - kept for potential future node-to-node gRPC discovery
+// - Heartbeat: UNUSED - kept for potential future node-to-node gRPC discovery
+// - GetNodes: ACTIVE - returns all known nodes from Redis registry
+// - DeregisterNode: ACTIVE - handles graceful shutdown with epoch validation
+// - SyncRoomState: DEPRECATED - returns UNIMPLEMENTED; use Redis Pub/Sub instead
+// - BroadcastEvent: DEPRECATED - returns UNIMPLEMENTED; use ClusterManager instead
+// - GetUserOnlineStatus: ACTIVE - fan-out query for user presence
+// - GetRoomConnections: ACTIVE - fan-out query for room participants
 service ClusterService {
     // Node registration and health
+    // NOTE: RegisterNode and Heartbeat are currently unused - nodes use Redis directly
     rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
     rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
     rpc GetNodes(GetNodesRequest) returns (GetNodesResponse);
     rpc DeregisterNode(DeregisterNodeRequest) returns (DeregisterNodeResponse);
 
     // State synchronization
+    // NOTE: These are DEPRECATED - use Redis Pub/Sub via ClusterManager instead
+    // Both endpoints return UNIMPLEMENTED status
     rpc SyncRoomState(SyncRoomStateRequest) returns (SyncRoomStateResponse);
     rpc BroadcastEvent(BroadcastEventRequest) returns (BroadcastEventResponse);
 
-    // User connection tracking
+    // User connection tracking - ACTIVE endpoints for fan-out queries
     rpc GetUserOnlineStatus(GetUserOnlineStatusRequest) returns (GetUserOnlineStatusResponse);
     rpc GetRoomConnections(GetRoomConnectionsRequest) returns (GetRoomConnectionsResponse);
 }

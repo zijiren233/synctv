@@ -134,6 +134,7 @@ impl RoomFixture {
             description: self.description,
             created_by: self.created_by,
             status: crate::models::RoomStatus::Active,
+            is_banned: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             deleted_at: None,

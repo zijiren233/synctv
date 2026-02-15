@@ -257,7 +257,7 @@ impl NodeRegistry {
             ));
         }
         let result = self.get_conn(client).await;
-        if let Ok(_) = &result { self.circuit_breaker.record_success() } else {
+        if result.is_ok() { self.circuit_breaker.record_success() } else {
             // Invalidate cached connection so the next attempt creates a fresh one
             *self.cached_conn.lock().await = None;
             self.circuit_breaker.record_failure();

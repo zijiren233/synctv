@@ -562,6 +562,7 @@ pub struct ListRoomsQuery {
     pub status: Option<String>,
     pub search: Option<String>,
     pub creator_id: Option<String>,
+    pub is_banned: Option<bool>,
 }
 
 async fn list_rooms(
@@ -577,6 +578,7 @@ async fn list_rooms(
             status: q.status.unwrap_or_default(),
             search: q.search.unwrap_or_default(),
             creator_id: q.creator_id.unwrap_or_default(),
+            is_banned: q.is_banned,
         })
         .await
         .map_err(admin_err_to_app_error)?;

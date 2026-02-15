@@ -700,12 +700,14 @@ impl ClientApiImpl {
             i64::from(req.limit)
         };
 
-        // Query for active rooms
+        // Query for active, non-banned rooms
         let query = synctv_core::models::RoomListQuery {
             page: 1,
             page_size: 100,
             search: None,
             status: Some(synctv_core::models::RoomStatus::Active),
+            is_banned: Some(false),
+            creator_id: None,
         };
 
         let (rooms, _total) = self.room_service.list_rooms(&query).await
@@ -1413,7 +1415,10 @@ impl ClientApiImpl {
                 active: false,
                 publisher: None,
             }),
-            Err(e) => Err(format!("Failed to query stream info: {e}")),
+            Err(e) => {
+                tracing::error!("Failed to query stream info: {e}");
+                Err("Failed to query stream info".to_string())
+            }
         }
     }
 
@@ -2019,11 +2024,12 @@ fn room_to_proto_basic(
         name: room.name.clone(),
         description: room.description.clone(),
         created_by: room.created_by.as_str().to_string(),
-        status: room.status.as_str().to_string(),
+        status: synctv_proto::common::RoomStatus::from(room.status) as i32,
         settings: serde_json::to_vec(&room_settings).unwrap_or_default(),
         created_at: room.created_at.timestamp(),
         member_count: member_count.unwrap_or(0),
         updated_at: room.updated_at.timestamp(),
+        is_banned: room.is_banned,
     }
 }
 

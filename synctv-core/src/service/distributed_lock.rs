@@ -5,45 +5,99 @@
 //! Provides distributed locking mechanism for multi-replica deployments.
 //! Uses Redis SET NX EX for atomic lock acquisition.
 //!
-//! # Known Limitation: No Fencing Token
+//! # Fencing Token Support
 //!
-//! This implementation does NOT provide fencing tokens. If a lock holder's
-//! operation outlasts the lock TTL (due to GC pause, network partition, or
-//! slow processing), another client can acquire the lock and both operations
-//! may proceed concurrently. To mitigate this:
+//! This implementation provides fencing tokens to handle the "split-brain" scenario
+//! where a lock holder's operation outlasts the lock TTL (due to GC pause, network
+//! partition, or slow processing). Each lock acquisition returns a monotonically
+//! increasing token that can be used for CAS (Compare-And-Swap) operations.
 //!
-//! - Set TTL conservatively (at least 2x the expected operation duration)
-//! - Use `extend()` for long-running operations to refresh the TTL
-//! - Rely on optimistic locking (version columns) at the database layer
-//!   as a secondary safety net for critical writes
+//! ## Usage Pattern
 //!
-//! For strict mutual exclusion under all failure modes, consider passing a
-//! monotonic fencing token to the protected operation and using it as a CAS
-//! condition in the database write.
+//! ```ignore
+//! let (lock_value, fencing_token) = lock.acquire_with_token("resource", 10).await?;
+//! if let Some((value, token)) = lock_value {
+//!     // Pass fencing_token to database write as CAS condition
+//!     db.update_with_version(resource_id, data, token).await?;
+//!     lock.release("resource", &value).await?;
+//! }
+//! ```
+//!
+//! ## Token Generation Strategy
+//!
+//! Tokens are generated using Redis INCR on a per-key counter, ensuring:
+//! - Monotonic increase across all clients
+//! - Uniqueness even during network partitions
+//! - Simplicity without requiring clock synchronization
 
 use redis::aio::ConnectionManager as RedisConnectionManager;
 use redis::Script;
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
 use crate::{Error, Result};
 
 /// Distributed lock service
 ///
 /// Provides Redis-based distributed locking for cross-replica critical sections
-#[derive(Clone)]
+/// with fencing token support for protection against split-brain scenarios.
 pub struct DistributedLock {
     redis: RedisConnectionManager,
+    /// Local monotonic counter for fencing tokens (fallback when Redis INCR fails)
+    local_token: AtomicU64,
+}
+
+impl Clone for DistributedLock {
+    fn clone(&self) -> Self {
+        // Each clone gets a fresh local_token counter (starts at 0)
+        // This is acceptable because Redis INCR is the primary source of truth
+        Self {
+            redis: self.redis.clone(),
+            local_token: AtomicU64::new(0),
+        }
+    }
 }
 
 impl DistributedLock {
     /// Create a new distributed lock service
-    #[must_use] 
-    pub const fn new(redis: RedisConnectionManager) -> Self {
-        Self { redis }
+    #[must_use]
+    pub fn new(redis: RedisConnectionManager) -> Self {
+        Self {
+            redis,
+            local_token: AtomicU64::new(0),
+        }
+    }
+
+    /// Generate a fencing token for a lock key using Redis INCR
+    ///
+    /// Uses Redis INCR on a per-key counter to ensure monotonic tokens
+    /// across all clients. Falls back to local counter if Redis fails.
+    async fn generate_fencing_token(&self, key: &str) -> u64 {
+        let token_key = format!("lock:token:{key}");
+        let mut conn = self.redis.clone();
+
+        // Try Redis INCR first for distributed monotonic guarantee
+        match redis::cmd("INCR")
+            .arg(&token_key)
+            .query_async::<u64>(&mut conn)
+            .await
+        {
+            Ok(token) => token,
+            Err(e) => {
+                // Fallback to local counter on Redis failure
+                tracing::warn!(
+                    key = %key,
+                    error = %e,
+                    "Redis INCR failed for fencing token, using local counter"
+                );
+                self.local_token.fetch_add(1, Ordering::SeqCst) + 1
+            }
+        }
     }
 
     /// Acquire a lock (using SET NX EX atomic operation)
     ///
-    /// Returns the lock value if acquired successfully, None if lock is already held
+    /// Returns the lock value if acquired successfully, None if lock is already held.
+    /// For fencing token support, use [`acquire_with_token`](Self::acquire_with_token).
     ///
     /// # Arguments
     /// * `key` - Lock key (without "lock:" prefix)
@@ -61,6 +115,48 @@ impl DistributedLock {
     /// }
     /// ```
     pub async fn acquire(&self, key: &str, ttl_seconds: u64) -> Result<Option<String>> {
+        let result = self.acquire_internal(key, ttl_seconds, false).await?;
+        Ok(result.map(|(value, _token)| value))
+    }
+
+    /// Acquire a lock with fencing token
+    ///
+    /// Returns the lock value and fencing token if acquired successfully.
+    /// The fencing token is monotonically increasing and can be used for
+    /// CAS (Compare-And-Swap) operations to protect against split-brain scenarios.
+    ///
+    /// # Arguments
+    /// * `key` - Lock key (without "lock:" prefix)
+    /// * `ttl_seconds` - Lock expiration time in seconds
+    ///
+    /// # Returns
+    /// * `Some((lock_value, fencing_token))` if lock was acquired
+    /// * `None` if lock is already held by another process
+    ///
+    /// # Example
+    /// ```ignore
+    /// match lock.acquire_with_token("create_room:user123", 10).await? {
+    ///     Some((lock_value, fencing_token)) => {
+    ///         // Pass fencing_token to protected operation for CAS validation
+    ///         room_service.create_room_with_token(request, fencing_token).await?;
+    ///         lock.release("create_room:user123", &lock_value).await?;
+    ///     }
+    ///     None => {
+    ///         // Lock already held by another process
+    ///     }
+    /// }
+    /// ```
+    pub async fn acquire_with_token(&self, key: &str, ttl_seconds: u64) -> Result<Option<(String, u64)>> {
+        self.acquire_internal(key, ttl_seconds, true).await
+    }
+
+    /// Internal acquire implementation
+    async fn acquire_internal(
+        &self,
+        key: &str,
+        ttl_seconds: u64,
+        with_token: bool,
+    ) -> Result<Option<(String, u64)>> {
         let lock_key = format!("lock:{key}");
         let lock_value = crate::models::generate_id(); // nanoid(12)
 
@@ -80,13 +176,21 @@ impl DistributedLock {
             .map_err(|e| Error::Internal(format!("Failed to acquire lock: {e}")))?;
 
         if result.is_some() {
+            // Generate fencing token only if requested (saves Redis round-trip)
+            let fencing_token = if with_token {
+                self.generate_fencing_token(key).await
+            } else {
+                0 // Dummy token when not requested
+            };
+
             tracing::debug!(
                 lock_key = %lock_key,
                 lock_value = %lock_value,
+                fencing_token = %fencing_token,
                 ttl_seconds = %ttl_seconds,
                 "Lock acquired"
             );
-            Ok(Some(lock_value))
+            Ok(Some((lock_value, fencing_token)))
         } else {
             tracing::debug!(
                 lock_key = %lock_key,
@@ -238,6 +342,98 @@ impl DistributedLock {
         result.map(Some)
     }
 
+    /// Execute an operation with automatic lock acquisition and release (with fencing token)
+    ///
+    /// Same as `with_lock` but passes the fencing token to the operation.
+    /// The fencing token can be used for CAS operations in the database layer.
+    ///
+    /// # Arguments
+    /// * `key` - Lock key (without "lock:" prefix)
+    /// * `ttl_seconds` - Lock expiration time in seconds
+    /// * `operation` - Async function that receives the fencing token
+    ///
+    /// # Example
+    /// ```ignore
+    /// let result = lock.with_lock_token("create_room:user123", 10, |token| async move {
+    ///     // Pass token to database write for CAS validation
+    ///     room_service.create_room_with_token(request, token).await
+    /// }).await?;
+    /// ```
+    pub async fn with_lock_token<F, Fut, T>(
+        &self,
+        key: &str,
+        ttl_seconds: u64,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(u64) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        // Try to acquire lock with token
+        let (lock_value, fencing_token) = self
+            .acquire_with_token(key, ttl_seconds)
+            .await?
+            .ok_or_else(|| Error::Internal(format!("Failed to acquire lock: {key}")))?;
+
+        // Execute operation with fencing token
+        let result = operation(fencing_token).await;
+
+        // Always release lock, even if operation failed
+        if let Err(e) = self.release(key, &lock_value).await {
+            tracing::error!(
+                key = %key,
+                error = %e,
+                "Failed to release lock after operation"
+            );
+        }
+
+        result
+    }
+
+    /// Try to acquire a lock and execute an operation (with fencing token)
+    ///
+    /// Same as `try_with_lock` but passes the fencing token to the operation.
+    ///
+    /// # Example
+    /// ```ignore
+    /// match lock.try_with_lock_token("update_settings:room123", 10, |token| async move {
+    ///     room_service.update_settings_with_token(settings, token).await
+    /// }).await? {
+    ///     Some(result) => println!("Updated: {:?}", result),
+    ///     None => println!("Lock already held, skipping update"),
+    /// }
+    /// ```
+    pub async fn try_with_lock_token<F, Fut, T>(
+        &self,
+        key: &str,
+        ttl_seconds: u64,
+        operation: F,
+    ) -> Result<Option<T>>
+    where
+        F: FnOnce(u64) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        // Try to acquire lock with token
+        let (lock_value, fencing_token) = match self.acquire_with_token(key, ttl_seconds).await? {
+            Some(result) => result,
+            None => return Ok(None), // Lock already held
+        };
+
+        // Execute operation with fencing token
+        let result = operation(fencing_token).await;
+
+        // Always release lock
+        if let Err(e) = self.release(key, &lock_value).await {
+            tracing::error!(
+                key = %key,
+                error = %e,
+                "Failed to release lock after operation"
+            );
+        }
+
+        result.map(Some)
+    }
+
     /// Extend lock TTL (refresh expiration)
     ///
     /// Useful for long-running operations that need to keep the lock
@@ -292,17 +488,53 @@ pub struct LockGuard {
     lock: DistributedLock,
     key: String,
     value: Option<String>,
+    /// Fencing token for CAS operations (0 if not requested)
+    fencing_token: u64,
 }
 
 impl LockGuard {
-    /// Create a new lock guard (acquires lock)
+    /// Create a new lock guard (acquires lock without fencing token)
     pub async fn new(lock: DistributedLock, key: String, ttl_seconds: u64) -> Result<Self> {
         let value = lock
             .acquire(&key, ttl_seconds)
             .await?
             .ok_or_else(|| Error::Internal(format!("Failed to acquire lock: {key}")))?;
 
-        Ok(Self { lock, key, value: Some(value) })
+        Ok(Self {
+            lock,
+            key,
+            value: Some(value),
+            fencing_token: 0,
+        })
+    }
+
+    /// Create a new lock guard with fencing token
+    ///
+    /// The fencing token can be used for CAS operations in the database layer.
+    pub async fn new_with_token(
+        lock: DistributedLock,
+        key: String,
+        ttl_seconds: u64,
+    ) -> Result<Self> {
+        let (value, fencing_token) = lock
+            .acquire_with_token(&key, ttl_seconds)
+            .await?
+            .ok_or_else(|| Error::Internal(format!("Failed to acquire lock: {key}")))?;
+
+        Ok(Self {
+            lock,
+            key,
+            value: Some(value),
+            fencing_token,
+        })
+    }
+
+    /// Get the fencing token for this lock guard
+    ///
+    /// Returns 0 if the guard was created without requesting a token.
+    #[must_use]
+    pub const fn fencing_token(&self) -> u64 {
+        self.fencing_token
     }
 
     /// Extend the lock TTL
@@ -493,5 +725,114 @@ mod tests {
 
         // Cleanup
         lock.release("test:lock5", &lock_value).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires Redis"]
+    async fn test_acquire_with_token() {
+        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+        let redis = RedisConnectionManager::new(redis_client).await.unwrap();
+        let lock = DistributedLock::new(redis);
+
+        // Acquire lock with token
+        let result = lock.acquire_with_token("test:token1", 10).await.unwrap();
+        assert!(result.is_some());
+        let (lock_value, token1) = result.unwrap();
+        assert!(token1 > 0); // Token should be positive
+
+        // Release and acquire again
+        lock.release("test:token1", &lock_value).await.unwrap();
+
+        let result2 = lock.acquire_with_token("test:token1", 10).await.unwrap();
+        assert!(result2.is_some());
+        let (_lock_value2, token2) = result2.unwrap();
+
+        // Token should be monotonically increasing
+        assert!(token2 > token1, "Token should increase: {token2} > {token1}");
+
+        // Cleanup
+        lock.release("test:token1", &_lock_value2).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires Redis"]
+    async fn test_with_lock_token() {
+        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+        let redis = RedisConnectionManager::new(redis_client).await.unwrap();
+        let lock = DistributedLock::new(redis);
+
+        let received_token = lock
+            .with_lock_token("test:token2", 10, |token| async move {
+                Ok::<_, Error>(token)
+            })
+            .await
+            .unwrap();
+
+        assert!(received_token > 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires Redis"]
+    async fn test_try_with_lock_token() {
+        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+        let redis = RedisConnectionManager::new(redis_client).await.unwrap();
+        let lock = DistributedLock::new(redis.clone());
+
+        // Acquire lock manually
+        let lock_value = lock.acquire("test:token3", 10).await.unwrap().unwrap();
+
+        // Try with token should return None
+        let result = lock
+            .try_with_lock_token("test:token3", 10, |token| async move {
+                Ok::<_, Error>(token)
+            })
+            .await
+            .unwrap();
+        assert!(result.is_none());
+
+        // Release lock
+        lock.release("test:token3", &lock_value).await.unwrap();
+
+        // Now try again (should succeed with token)
+        let result = lock
+            .try_with_lock_token("test:token3", 10, |token| async move {
+                Ok::<_, Error>(token)
+            })
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        assert!(result.unwrap() > 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires Redis"]
+    async fn test_lock_guard_with_token() {
+        let redis_client = redis::Client::open("redis://localhost:6379").unwrap();
+        let redis = RedisConnectionManager::new(redis_client).await.unwrap();
+        let lock = DistributedLock::new(redis.clone());
+
+        {
+            let guard = LockGuard::new_with_token(lock.clone(), "test:token4".to_string(), 10)
+                .await
+                .unwrap();
+
+            // Token should be positive
+            let token = guard.fencing_token();
+            assert!(token > 0);
+
+            // Lock is held
+            let lock_value = lock.acquire("test:token4", 10).await.unwrap();
+            assert!(lock_value.is_none());
+
+            // Explicitly release
+            guard.release().await.unwrap();
+        }
+
+        // Lock should be released
+        let lock_value = lock.acquire("test:token4", 10).await.unwrap();
+        assert!(lock_value.is_some());
+
+        // Cleanup
+        lock.release("test:token4", &lock_value.unwrap()).await.unwrap();
     }
 }

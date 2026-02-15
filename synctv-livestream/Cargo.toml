@@ -56,6 +56,7 @@ tracing-subscriber.workspace = true
 
 # Crypto
 subtle.workspace = true
+rand.workspace = true
 
 # JWT
 jsonwebtoken.workspace = true

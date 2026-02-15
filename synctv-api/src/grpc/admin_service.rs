@@ -36,6 +36,9 @@ use crate::impls::AdminApiImpl;
 /// Uses the same keyword-based mapping as `impls_err_to_status` in
 /// `client_service.rs`. Once the impls layer migrates to typed errors,
 /// this should use `From<synctv_core::Error> for tonic::Status` instead.
+///
+/// Note: For internal errors, we log the details and return a generic message
+/// to avoid leaking sensitive implementation details to clients.
 fn api_err(err: String) -> Status {
     let lower = err.to_lowercase();
     if lower.contains("not found") {
@@ -51,7 +54,8 @@ fn api_err(err: String) -> Status {
     {
         Status::invalid_argument(err)
     } else {
-        tracing::error!("Admin API error: {err}");
+        // Log internal error details but return generic message to client
+        tracing::error!("Admin API internal error: {err}");
         Status::internal("Internal error")
     }
 }

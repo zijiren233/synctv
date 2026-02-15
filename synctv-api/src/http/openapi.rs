@@ -21,6 +21,22 @@ pub struct UserSchema {
     pub email_verified: bool,
 }
 
+/// Room status enum matching proto definition
+#[derive(ToSchema)]
+#[schema(example = "active")]
+pub enum RoomStatusSchema {
+    /// Room is active and operational
+    Active,
+    /// Room is pending approval/activation
+    Pending,
+    /// Room is closed by owner
+    Closed,
+    /// Room is archived
+    Archived,
+    /// Room is banned by admin
+    Banned,
+}
+
 #[derive(ToSchema)]
 #[schema(example = json!({"id": "room_abc", "name": "Movie Night", "description": "Watch movies together every Friday", "created_by": "user123", "status": "active", "member_count": 5, "created_at": 1700000000, "updated_at": 1700000000}))]
 pub struct RoomSchema {
@@ -28,7 +44,7 @@ pub struct RoomSchema {
     pub name: String,
     pub description: String,
     pub created_by: String,
-    pub status: String,
+    pub status: RoomStatusSchema,
     pub member_count: i32,
     pub created_at: i64,
     pub updated_at: i64,

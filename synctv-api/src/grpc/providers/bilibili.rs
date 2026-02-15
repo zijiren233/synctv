@@ -11,6 +11,12 @@ use crate::impls::providers::extract_instance_name;
 use crate::proto::providers::bilibili::bilibili_provider_service_server::BilibiliProviderService;
 use crate::proto::providers::bilibili::{ParseRequest, ParseResponse, LoginQrRequest, QrCodeResponse, CheckQrRequest, QrStatusResponse, GetCaptchaRequest, CaptchaResponse, SendSmsRequest, SendSmsResponse, LoginSmsRequest, LoginSmsResponse, UserInfoRequest, UserInfoResponse, LogoutRequest, LogoutResponse};
 
+/// Log an internal error and return a generic gRPC status to avoid leaking details.
+fn internal_err(context: &str, err: impl std::fmt::Display) -> Status {
+    tracing::error!("{context}: {err}");
+    Status::internal(context)
+}
+
 /// Bilibili Provider gRPC Service
 ///
 /// Thin wrapper that delegates to `BilibiliApiImpl`.
@@ -40,7 +46,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         self.api.parse(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Bilibili parse failed", e))
     }
 
     async fn login_qr(&self, request: Request<LoginQrRequest>) -> Result<Response<QrCodeResponse>, Status> {
@@ -51,7 +57,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         self.api.login_qr(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Bilibili login_qr failed", e))
     }
 
     async fn check_qr(&self, request: Request<CheckQrRequest>) -> Result<Response<QrStatusResponse>, Status> {
@@ -62,7 +68,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         self.api.check_qr(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Bilibili check_qr failed", e))
     }
 
     async fn get_captcha(&self, request: Request<GetCaptchaRequest>) -> Result<Response<CaptchaResponse>, Status> {
@@ -73,7 +79,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         self.api.get_captcha(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Bilibili get_captcha failed", e))
     }
 
     async fn send_sms(&self, request: Request<SendSmsRequest>) -> Result<Response<SendSmsResponse>, Status> {
@@ -84,7 +90,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         self.api.send_sms(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Bilibili send_sms failed", e))
     }
 
     async fn login_sms(&self, request: Request<LoginSmsRequest>) -> Result<Response<LoginSmsResponse>, Status> {
@@ -95,7 +101,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         self.api.login_sms(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Bilibili login_sms failed", e))
     }
 
     async fn get_user_info(&self, request: Request<UserInfoRequest>) -> Result<Response<UserInfoResponse>, Status> {
@@ -106,7 +112,7 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         self.api.get_user_info(req, instance_name.as_deref())
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Bilibili get_user_info failed", e))
     }
 
     async fn logout(&self, request: Request<LogoutRequest>) -> Result<Response<LogoutResponse>, Status> {
@@ -116,6 +122,6 @@ impl BilibiliProviderService for BilibiliProviderGrpcService {
         self.api.logout(req)
             .await
             .map(Response::new)
-            .map_err(Status::internal)
+            .map_err(|e| internal_err("Bilibili logout failed", e))
     }
 }

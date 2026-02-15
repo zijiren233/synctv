@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use crate::{
     models::{oauth2_client::OAuth2Provider, UserId},
@@ -56,7 +57,7 @@ pub struct OAuth2UserInfo {
 ///
 /// State storage:
 /// - When Redis is available: states are stored in Redis with TTL (multi-node safe)
-/// - When Redis is not available: states are stored in memory (single-node only)
+/// - When Redis is not available: states are stored in memory with TTL via moka cache (single-node only)
 #[derive(Clone)]
 pub struct OAuth2Service {
     repository: UserOAuthProviderRepository,
@@ -64,8 +65,8 @@ pub struct OAuth2Service {
     providers: Arc<RwLock<HashMap<String, Box<dyn OAuth2ProviderTrait>>>>,
     /// Map of instance name -> provider enum type
     provider_types: Arc<RwLock<HashMap<String, OAuth2Provider>>>,
-    /// In-memory state storage (fallback when Redis is not available)
-    local_states: Arc<RwLock<HashMap<String, OAuth2State>>>,
+    /// In-memory state storage with TTL (fallback when Redis is not available)
+    local_states: Arc<moka::future::Cache<String, OAuth2State>>,
     /// Optional Redis client for distributed state storage
     redis: Option<Arc<redis::Client>>,
     /// Allowlist of permitted redirect domains (empty = relative paths only)
@@ -84,11 +85,15 @@ impl OAuth2Service {
     /// Create new `OAuth2` service (without Redis - single node only)
     #[must_use]
     pub fn new(repository: UserOAuthProviderRepository) -> Self {
+        let local_states = moka::future::Cache::builder()
+            .max_capacity(MAX_LOCAL_STATES as u64)
+            .time_to_live(Duration::from_secs(OAUTH2_STATE_TTL_SECONDS))
+            .build();
         Self {
             repository,
             providers: Arc::new(RwLock::new(HashMap::new())),
             provider_types: Arc::new(RwLock::new(HashMap::new())),
-            local_states: Arc::new(RwLock::new(HashMap::new())),
+            local_states: Arc::new(local_states),
             redis: None,
             allowed_redirect_domains: Arc::new(Vec::new()),
         }
@@ -97,11 +102,15 @@ impl OAuth2Service {
     /// Create new `OAuth2` service with Redis support (multi-node safe)
     #[must_use]
     pub fn with_redis(repository: UserOAuthProviderRepository, redis: Arc<redis::Client>) -> Self {
+        let local_states = moka::future::Cache::builder()
+            .max_capacity(MAX_LOCAL_STATES as u64)
+            .time_to_live(Duration::from_secs(OAUTH2_STATE_TTL_SECONDS))
+            .build();
         Self {
             repository,
             providers: Arc::new(RwLock::new(HashMap::new())),
             provider_types: Arc::new(RwLock::new(HashMap::new())),
-            local_states: Arc::new(RwLock::new(HashMap::new())),
+            local_states: Arc::new(local_states),
             redis: Some(redis),
             allowed_redirect_domains: Arc::new(Vec::new()),
         }
@@ -135,13 +144,8 @@ impl OAuth2Service {
 
             debug!("Stored OAuth2 state in Redis for token {}", &state_token[..8]);
         } else {
-            let mut states = self.local_states.write().await;
-            if states.len() >= MAX_LOCAL_STATES {
-                return Err(Error::Internal(
-                    "Too many pending OAuth2 authorization requests. Please try again later.".to_string(),
-                ));
-            }
-            states.insert(state_token.to_string(), state.clone());
+            // moka cache handles capacity and TTL automatically
+            self.local_states.insert(state_token.to_string(), state.clone()).await;
             debug!("Stored OAuth2 state in memory for token {}", &state_token[..8]);
         }
         Ok(())
@@ -173,9 +177,10 @@ impl OAuth2Service {
                 None => Err(Error::Authentication("Invalid or expired OAuth2 state".to_string())),
             }
         } else {
-            let mut states = self.local_states.write().await;
-            states
+            // moka cache: remove returns the removed value if it existed
+            self.local_states
                 .remove(state_token)
+                .await
                 .ok_or_else(|| Error::Authentication("Invalid or expired OAuth2 state".to_string()))
         }
     }
@@ -468,24 +473,12 @@ impl OAuth2Service {
 
     /// Clean up expired `OAuth2` states (maintenance task)
     ///
-    /// Note: When using Redis, states are automatically cleaned up via TTL.
-    /// This method only cleans up local in-memory states.
-    pub async fn cleanup_expired_states(&self, max_age_seconds: i64) -> Result<()> {
-        // Only clean local states (Redis handles its own TTL)
-        let mut states = self.local_states.write().await;
-        let now = chrono::Utc::now();
-        let initial_count = states.len();
-
-        states.retain(|_, state| {
-            let age = now.signed_duration_since(state.created_at).num_seconds();
-            age < max_age_seconds
-        });
-
-        let removed = initial_count - states.len();
-        if removed > 0 {
-            debug!("Cleaned up {} expired OAuth2 states from local memory", removed);
-        }
-
+    /// Note: Both Redis and moka cache handle TTL automatically.
+    /// This method is now a no-op but kept for API compatibility.
+    pub async fn cleanup_expired_states(&self, _max_age_seconds: i64) -> Result<()> {
+        // moka cache handles TTL expiration automatically via time_to_live policy
+        // Redis handles its own TTL via SETEX
+        // This method is kept for API compatibility but is now a no-op
         Ok(())
     }
 

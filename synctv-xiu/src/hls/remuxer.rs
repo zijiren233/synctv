@@ -7,11 +7,12 @@
 // - Generates M3U8 dynamically in memory, no file writes
 
 use crate::hls::segment_manager::SegmentManager;
-use bytes::BytesMut;
+use crate::storage::HlsStorage;
+use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use crate::streamhub::{
     define::{
         BroadcastEvent, BroadcastEventReceiver, FrameData, FrameDataReceiver,
@@ -342,6 +343,73 @@ impl StreamHandler {
     }
 }
 
+// Retry configuration for storage operations
+const STORAGE_RETRY_MAX_ATTEMPTS: u32 = 3;
+const STORAGE_RETRY_BASE_DELAY_MS: u64 = 100;
+const STORAGE_RETRY_MAX_DELAY_MS: u64 = 2000;
+
+/// Write data to storage with exponential backoff retry
+///
+/// Retries transient storage failures (timeouts, connection errors) up to
+/// `STORAGE_RETRY_MAX_ATTEMPTS` times with exponential backoff.
+async fn write_with_retry(
+    storage: &Arc<dyn HlsStorage>,
+    key: &str,
+    data: Bytes,
+) -> std::io::Result<()> {
+    let mut last_error = None;
+
+    for attempt in 1..=STORAGE_RETRY_MAX_ATTEMPTS {
+        match storage.write(key, data.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                // Check if error is transient and worth retrying
+                if is_transient_error(&e) && attempt < STORAGE_RETRY_MAX_ATTEMPTS {
+                    let delay = calculate_retry_delay(attempt);
+                    tracing::warn!(
+                        "HLS storage write failed (attempt {}/{}): {} - retrying in {:?}",
+                        attempt,
+                        STORAGE_RETRY_MAX_ATTEMPTS,
+                        e,
+                        delay
+                    );
+                    tokio::time::sleep(delay).await;
+                    last_error = Some(e);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    // All retries exhausted
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::other("Storage write failed after all retries")
+    }))
+}
+
+/// Check if an I/O error is transient and worth retrying
+fn is_transient_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::TimedOut
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::WouldBlock
+    )
+}
+
+/// Calculate delay before next retry using exponential backoff
+fn calculate_retry_delay(attempt: u32) -> Duration {
+    // attempt is 1-based, so delay = base * 2^(attempt-1)
+    let delay_ms = (STORAGE_RETRY_BASE_DELAY_MS * 2_u64.pow(attempt.saturating_sub(1)))
+        .min(STORAGE_RETRY_MAX_DELAY_MS);
+    Duration::from_millis(delay_ms)
+}
+
 /// Processes FLV data and generates HLS segments
 struct StreamProcessor {
     app_name: String,
@@ -522,12 +590,20 @@ impl StreamProcessor {
             ts_name
         );
 
-        // Write segment to storage
-        self.segment_manager
-            .storage()
-            .write(&storage_key, ts_data.into())
+        // Write segment to storage with retry
+        let storage = self.segment_manager.storage().clone();
+        let data: Bytes = ts_data.into();
+        write_with_retry(&storage, &storage_key, data)
             .await
-            .map_err(|e| HlsRemuxerError::StorageError(e.to_string()))?;
+            .map_err(|e| {
+                tracing::warn!(
+                    "HLS segment write failed after {} retries: {} - {}",
+                    STORAGE_RETRY_MAX_ATTEMPTS,
+                    storage_key,
+                    e
+                );
+                HlsRemuxerError::StorageError(e.to_string())
+            })?;
 
         tracing::debug!(
             "Wrote segment: {} ({}ms, {} bytes)",
@@ -758,5 +834,49 @@ mod tests {
 
         let error = HlsRemuxerError::StorageError("storage failed".to_string());
         assert_eq!(error.to_string(), "Storage error: storage failed");
+    }
+
+    #[test]
+    fn test_is_transient_error() {
+        // Transient errors - should retry
+        assert!(is_transient_error(&std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout")));
+        assert!(is_transient_error(&std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset")));
+        assert!(is_transient_error(&std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused")));
+        assert!(is_transient_error(&std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "aborted")));
+        assert!(is_transient_error(&std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broken pipe")));
+        assert!(is_transient_error(&std::io::Error::new(std::io::ErrorKind::Interrupted, "interrupted")));
+        assert!(is_transient_error(&std::io::Error::new(std::io::ErrorKind::WouldBlock, "would block")));
+
+        // Non-transient errors - should not retry
+        assert!(!is_transient_error(&std::io::Error::new(std::io::ErrorKind::NotFound, "not found")));
+        assert!(!is_transient_error(&std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied")));
+        assert!(!is_transient_error(&std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid input")));
+    }
+
+    #[test]
+    fn test_calculate_retry_delay() {
+        // Exponential backoff: delay = base * 2^(attempt-1)
+        // base = 100ms
+        assert_eq!(calculate_retry_delay(1).as_millis(), 100);
+        assert_eq!(calculate_retry_delay(2).as_millis(), 200);
+        assert_eq!(calculate_retry_delay(3).as_millis(), 400);
+        // Should cap at max_delay (2000ms)
+        assert_eq!(calculate_retry_delay(10).as_millis(), 2000);
+    }
+
+    #[tokio::test]
+    async fn test_write_with_retry_success() {
+        use crate::storage::MemoryStorage;
+
+        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn HlsStorage>;
+        let data = Bytes::from_static(b"test segment data");
+
+        // Should succeed immediately
+        let result = write_with_retry(&storage, "test-key", data.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify data was written
+        let read_data = storage.read("test-key").await.unwrap();
+        assert_eq!(data, read_data);
     }
 }

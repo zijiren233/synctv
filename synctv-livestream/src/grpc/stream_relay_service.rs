@@ -103,7 +103,10 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         let publisher_info = registry
             .get_publisher(&req.room_id, &req.media_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get publisher: {e}")))?
+            .map_err(|e| {
+                tracing::error!("Failed to get publisher: {e}");
+                Status::internal("Failed to get publisher info")
+            })?
             .ok_or_else(|| Status::not_found("No active publisher for this media"))?;
 
         if publisher_info.node_id != self.node_id {
@@ -148,7 +151,10 @@ impl stream_relay_service_server::StreamRelayService for StreamRelayServiceImpl 
         let subscribe_result = event_result_receiver
             .await
             .map_err(|_| Status::internal("Subscribe result channel closed"))?
-            .map_err(|e| Status::internal(format!("Subscribe failed: {e}")))?;
+            .map_err(|e| {
+                tracing::error!("Subscribe failed: {e}");
+                Status::internal("Stream subscription failed")
+            })?;
 
         let mut frame_receiver = subscribe_result
             .0

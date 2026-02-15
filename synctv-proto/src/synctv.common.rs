@@ -135,3 +135,39 @@ impl RoomMemberRole {
         }
     }
 }
+/// Room lifecycle status (independent of ban state)
+/// Banned state is tracked via is_banned field on Room message
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RoomStatus {
+    Unspecified = 0,
+    Active = 1,
+    Pending = 2,
+    /// Reserved: 4, 5 (previously ARCHIVED, BANNED - now using is_banned field)
+    Closed = 3,
+}
+impl RoomStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ROOM_STATUS_UNSPECIFIED",
+            Self::Active => "ROOM_STATUS_ACTIVE",
+            Self::Pending => "ROOM_STATUS_PENDING",
+            Self::Closed => "ROOM_STATUS_CLOSED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ROOM_STATUS_UNSPECIFIED" => Some(Self::Unspecified),
+            "ROOM_STATUS_ACTIVE" => Some(Self::Active),
+            "ROOM_STATUS_PENDING" => Some(Self::Pending),
+            "ROOM_STATUS_CLOSED" => Some(Self::Closed),
+            _ => None,
+        }
+    }
+}

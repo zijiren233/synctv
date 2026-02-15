@@ -81,15 +81,15 @@ impl RedisPubSub {
         self.cancel_token.cancel();
     }
 
-    /// Capacity for the publish channel. Events are dropped with a warning when full
-    /// (e.g., during a prolonged Redis outage).
-    pub const PUBLISH_CHANNEL_CAPACITY: usize = 10_000;
-
     /// Start the Pub/Sub service
     /// This spawns a background task that subscribes to all room channels
-    pub async fn start(self: Arc<Self>) -> Result<mpsc::Sender<PublishRequest>> {
+    ///
+    /// # Arguments
+    /// * `publish_channel_capacity` - Capacity for the publish channel. Events are
+    ///   dropped with a warning when full (e.g., during a prolonged Redis outage).
+    pub async fn start(self: Arc<Self>, publish_channel_capacity: usize) -> Result<mpsc::Sender<PublishRequest>> {
         // Create bounded channel for publishing events to prevent OOM under Redis outage
-        let (publish_tx, mut publish_rx) = mpsc::channel::<PublishRequest>(Self::PUBLISH_CHANNEL_CAPACITY);
+        let (publish_tx, mut publish_rx) = mpsc::channel::<PublishRequest>(publish_channel_capacity);
 
         // Clone for the publish task
         let publish_client = self.redis_client.clone();
@@ -766,8 +766,8 @@ mod tests {
         );
 
         // Start both
-        let publish_tx1 = pubsub1.start().await.unwrap();
-        let _publish_tx2 = pubsub2.start().await.unwrap();
+        let publish_tx1 = pubsub1.start(10_000).await.unwrap();
+        let _publish_tx2 = pubsub2.start(10_000).await.unwrap();
 
         // Wait for connections to establish
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;

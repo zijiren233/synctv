@@ -93,12 +93,13 @@ message AdminRoom {
     string name = 2;
     string creator_id = 3;
     string creator_username = 4;
-    string status = 5; // active, closed, banned, pending
+    synctv.common.RoomStatus status = 5; // Room lifecycle status (Active/Pending/Closed)
     bytes settings = 6;
     int32 member_count = 7;
     int64 created_at = 8;
     int64 updated_at = 9;
     string description = 10; // Room description
+    bool is_banned = 11; // Ban flag set by global admin only
 }
 
 message ProviderInstance {
@@ -341,9 +342,10 @@ message ApproveUserResponse {
 message ListRoomsRequest {
     int32 page = 1;
     int32 page_size = 2;
-    string status = 3; // Optional filter: active, closed, banned, pending
+    string status = 3; // Optional filter: active, closed, pending (use is_banned for ban filter)
     string search = 4; // Search by name
     string creator_id = 5; // Optional filter by creator
+    optional bool is_banned = 6; // Optional filter by ban status (true = banned only, false = not banned, absent = all)
 }
 
 message ListRoomsResponse {

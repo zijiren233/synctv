@@ -30,9 +30,9 @@ pub struct AdminRoom {
     pub creator_id: ::prost::alloc::string::String,
     #[prost(string, tag = "4")]
     pub creator_username: ::prost::alloc::string::String,
-    /// active, closed, banned, pending
-    #[prost(string, tag = "5")]
-    pub status: ::prost::alloc::string::String,
+    /// Room lifecycle status (Active/Pending/Closed)
+    #[prost(enumeration = "super::common::RoomStatus", tag = "5")]
+    pub status: i32,
     #[prost(bytes = "vec", tag = "6")]
     pub settings: ::prost::alloc::vec::Vec<u8>,
     #[prost(int32, tag = "7")]
@@ -44,6 +44,9 @@ pub struct AdminRoom {
     /// Room description
     #[prost(string, tag = "10")]
     pub description: ::prost::alloc::string::String,
+    /// Ban flag set by global admin only
+    #[prost(bool, tag = "11")]
+    pub is_banned: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -442,7 +445,7 @@ pub struct ListRoomsRequest {
     pub page: i32,
     #[prost(int32, tag = "2")]
     pub page_size: i32,
-    /// Optional filter: active, closed, banned, pending
+    /// Optional filter: active, closed, pending (use is_banned for ban filter)
     #[prost(string, tag = "3")]
     pub status: ::prost::alloc::string::String,
     /// Search by name
@@ -451,6 +454,9 @@ pub struct ListRoomsRequest {
     /// Optional filter by creator
     #[prost(string, tag = "5")]
     pub creator_id: ::prost::alloc::string::String,
+    /// Optional filter by ban status (true = banned only, false = not banned, absent = all)
+    #[prost(bool, optional, tag = "6")]
+    pub is_banned: ::core::option::Option<bool>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]

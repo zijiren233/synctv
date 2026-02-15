@@ -29,6 +29,16 @@ enum RoomMemberRole {
     ROOM_MEMBER_ROLE_CREATOR = 4;
 }
 
+// Room lifecycle status (independent of ban state)
+// Banned state is tracked via is_banned field on Room message
+enum RoomStatus {
+    ROOM_STATUS_UNSPECIFIED = 0;
+    ROOM_STATUS_ACTIVE = 1;
+    ROOM_STATUS_PENDING = 2;
+    ROOM_STATUS_CLOSED = 3;
+    // Reserved: 4, 5 (previously ARCHIVED, BANNED - now using is_banned field)
+}
+
 // ==================== Shared Types ====================
 
 // Room member information (shared between admin and client APIs)

@@ -18,6 +18,7 @@ pub struct Config {
     pub webrtc: WebRTCConfig,
     pub connection_limits: ConnectionLimitsConfig,
     pub bootstrap: BootstrapConfig,
+    pub cluster: ClusterChannelConfig,
 }
 
 impl std::fmt::Debug for Config {
@@ -35,6 +36,7 @@ impl std::fmt::Debug for Config {
             .field("webrtc", &self.webrtc)
             .field("connection_limits", &self.connection_limits)
             .field("bootstrap", &"<redacted>")
+            .field("cluster", &self.cluster)
             .finish()
     }
 }
@@ -233,12 +235,23 @@ pub struct OAuth2Config {
     /// Provider configurations (e.g., github, google, logto1, logto2)
     #[serde(default)]
     pub providers: serde_json::Value,
+    /// URL scheme for OAuth2 redirect URLs.
+    /// Supported values: "http", "https"
+    /// Default: "http" for backward compatibility.
+    /// When behind a reverse proxy terminating TLS, set this to "https".
+    #[serde(default = "default_redirect_scheme")]
+    pub redirect_scheme: String,
+}
+
+fn default_redirect_scheme() -> String {
+    "http".to_string()
 }
 
 impl Default for OAuth2Config {
     fn default() -> Self {
         Self {
             providers: serde_json::json!({}),
+            redirect_scheme: default_redirect_scheme(),
         }
     }
 }
@@ -639,6 +652,35 @@ impl Default for BootstrapConfig {
     }
 }
 
+/// Cluster channel capacity configuration
+///
+/// Controls the buffer sizes for internal channels used in cluster communication.
+/// Larger values provide more resilience during traffic spikes but use more memory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClusterChannelConfig {
+    /// Capacity for the high-priority critical event channel.
+    /// Critical events (KickPublisher, KickUser, PermissionChanged) are never dropped;
+    /// when this channel is full, senders block until space is available.
+    /// Default: 1000
+    pub critical_channel_capacity: usize,
+
+    /// Capacity for the normal-priority Redis publish channel.
+    /// Normal events are dropped with a warning when this channel is full
+    /// (e.g., during a prolonged Redis outage).
+    /// Default: 10000
+    pub publish_channel_capacity: usize,
+}
+
+impl Default for ClusterChannelConfig {
+    fn default() -> Self {
+        Self {
+            critical_channel_capacity: 1000,
+            publish_channel_capacity: 10_000,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,6 +700,7 @@ mod tests {
             webrtc: WebRTCConfig::default(),
             connection_limits: ConnectionLimitsConfig::default(),
             bootstrap: BootstrapConfig::default(),
+            cluster: ClusterChannelConfig::default(),
         });
 
         assert!(!config.database_url().is_empty());
@@ -692,6 +735,7 @@ mod tests {
             webrtc: WebRTCConfig::default(),
             connection_limits: ConnectionLimitsConfig::default(),
             bootstrap: BootstrapConfig::default(),
+            cluster: ClusterChannelConfig::default(),
         };
 
         assert_eq!(config.grpc_address(), "127.0.0.1:50051");

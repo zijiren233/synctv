@@ -14,13 +14,28 @@ use crate::sync::connection_manager::ConnectionManager;
 ///
 /// Handles node registration, heartbeats, and state synchronization.
 ///
-/// **Architecture note**: Redis is the sole discovery mechanism. Nodes register
-/// themselves in Redis via `NodeRegistry::register()` on startup and send
-/// periodic heartbeats via `NodeRegistry::heartbeat()`. The `RegisterNode` and
-/// `Heartbeat` gRPC RPCs below exist for receiving registrations/heartbeats
-/// from peer nodes, but no client code currently calls them -- discovery is
-/// entirely Redis-based. The useful gRPC endpoints are `GetNodes`,
-/// `GetUserOnlineStatus`, and `GetRoomConnections` (fan-out queries).
+/// # Architecture Overview
+///
+/// Redis is the **sole discovery mechanism** for this cluster:
+/// - Nodes self-register in Redis via `NodeRegistry::register()` on startup
+/// - Periodic heartbeats are sent directly to Redis via `NodeRegistry::heartbeat()`
+/// - Graceful deregistration uses `NodeRegistry::unregister()` with epoch validation
+///
+/// # Endpoint Usage Status
+///
+/// | Endpoint | Status | Notes |
+/// |----------|--------|-------|
+/// | `RegisterNode` | UNUSED | Kept for potential future node-to-node gRPC discovery |
+/// | `Heartbeat` | UNUSED | Kept for potential future node-to-node gRPC discovery |
+/// | `GetNodes` | ACTIVE | Returns all known nodes from Redis registry |
+/// | `DeregisterNode` | ACTIVE | Handles graceful shutdown with epoch validation |
+/// | `SyncRoomState` | DEPRECATED | Returns `UNIMPLEMENTED`; use Redis Pub/Sub instead |
+/// | `BroadcastEvent` | DEPRECATED | Returns `UNIMPLEMENTED`; use `ClusterManager` instead |
+/// | `GetUserOnlineStatus` | ACTIVE | Fan-out query for user presence across nodes |
+/// | `GetRoomConnections` | ACTIVE | Fan-out query for room participants across nodes |
+///
+/// The `RegisterNode` and `Heartbeat` gRPC handlers exist for potential future
+/// node-to-node gRPC discovery but no client code currently calls them.
 #[derive(Clone)]
 pub struct ClusterServer {
     node_registry: Arc<NodeRegistry>,
@@ -118,10 +133,17 @@ impl ClusterServer {
 impl ClusterService for ClusterServer {
     /// Register a new node in the cluster.
     ///
-    /// NOTE: This is currently unused -- no client code calls this RPC.
-    /// Redis is the sole discovery mechanism (nodes self-register via
-    /// `NodeRegistry::register()`). This handler exists for potential future
-    /// node-to-node gRPC discovery.
+    /// # Status: UNUSED
+    ///
+    /// No client code calls this RPC. Nodes self-register directly in Redis
+    /// via `NodeRegistry::register()` on startup. This handler exists for
+    /// potential future node-to-node gRPC discovery but is currently unused.
+    ///
+    /// # Implementation Note
+    ///
+    /// If called, this handler will register the remote node in Redis via
+    /// `NodeRegistry::register_remote()`. This allows peer-to-peer registration
+    /// if needed in future architectures.
     async fn register_node(
         &self,
         request: Request<RegisterNodeRequest>,
@@ -149,7 +171,7 @@ impl ClusterService for ClusterServer {
                 error = %e,
                 "Failed to register node in cluster"
             );
-            return Err(Status::internal(format!("Failed to register node: {e}")));
+            return Err(Status::internal("Failed to register node"));
         }
 
         tracing::info!(
@@ -179,8 +201,17 @@ impl ClusterService for ClusterServer {
 
     /// Handle heartbeat from a node.
     ///
-    /// NOTE: This is currently unused -- no client code calls this RPC.
-    /// Heartbeats are sent directly to Redis via `NodeRegistry::heartbeat()`.
+    /// # Status: UNUSED
+    ///
+    /// No client code calls this RPC. Heartbeats are sent directly to Redis
+    /// via `NodeRegistry::heartbeat()` in a background task started by
+    /// `ClusterManager::start_heartbeat_loop()`.
+    ///
+    /// # Implementation Note
+    ///
+    /// If called, this handler will update the remote node's heartbeat in Redis
+    /// via `NodeRegistry::heartbeat_remote()`. This allows peer-to-peer heartbeat
+    /// if needed in future architectures.
     async fn heartbeat(
         &self,
         request: Request<HeartbeatRequest>,
@@ -196,7 +227,7 @@ impl ClusterService for ClusterServer {
                 error = %e,
                 "Failed to update heartbeat"
             );
-            return Err(Status::internal(format!("Failed to update heartbeat: {e}")));
+            return Err(Status::internal("Failed to update heartbeat"));
         }
 
         tracing::trace!(

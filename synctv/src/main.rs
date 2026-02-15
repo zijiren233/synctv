@@ -117,6 +117,8 @@ async fn main() -> Result<()> {
             node_id: generate_node_id(),
             dedup_window: std::time::Duration::from_secs(5),
             cleanup_interval: std::time::Duration::from_secs(30),
+            critical_channel_capacity: config.cluster.critical_channel_capacity,
+            publish_channel_capacity: config.cluster.publish_channel_capacity,
         };
         match ClusterManager::new(cluster_config, None).await {
             Ok(manager) => Some(Arc::new(manager)),
@@ -131,6 +133,8 @@ async fn main() -> Result<()> {
             node_id: generate_node_id(),
             dedup_window: std::time::Duration::from_secs(5),
             cleanup_interval: std::time::Duration::from_secs(30),
+            critical_channel_capacity: config.cluster.critical_channel_capacity,
+            publish_channel_capacity: config.cluster.publish_channel_capacity,
         };
         match ClusterManager::new(cluster_config, permission_service).await {
             Ok(manager) => {
