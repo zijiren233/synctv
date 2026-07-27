@@ -1,0 +1,33 @@
+apiVersion: v1
+entries:
+  synctv:
+  - annotations:
+      category: Media
+      licenses: MIT
+    apiVersion: v2
+    appVersion: 1.0.1-rc.1
+    created: "2026-07-27T14:11:48.703632025Z"
+    description: A distributed video synchronization platform with real-time streaming
+      (RTMP/HLS/WebRTC)
+    digest: 7edb76735c0ace3b9b19db0e118ee824a793612c9d020e68f632a56270743223
+    home: https://github.com/synctv-org/synctv
+    icon: https://docs.syncs.tv/logo-notext.svg
+    keywords:
+    - synctv
+    - video
+    - streaming
+    - rtmp
+    - hls
+    - websocket
+    - webrtc
+    maintainers:
+    - email: team@synctv.example.com
+      name: SyncTV Team
+    name: synctv
+    sources:
+    - https://github.com/synctv-org/synctv
+    type: application
+    urls:
+    - https://zijiren233.github.io/synctv/synctv-1.0.1-rc.1.tgz
+    version: 1.0.1-rc.1
+generated: "2026-07-27T14:11:48.699909603Z"
