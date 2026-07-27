@@ -3,7 +3,7 @@ title: Runtime settings 参考
 description: 数据库热更新设置的语义、默认值、校验规则、适用范围和 CLI 示例。
 ---
 
-import { Aside, Card, CardGrid, TabItem, Tabs } from '@astrojs/starlight/components';
+import { Aside, TabItem, Tabs } from '@astrojs/starlight/components';
 
 ## Runtime settings 是什么
 
@@ -254,17 +254,7 @@ synctv settings update --set 'oauth2.providers=[{"name":"github","enableSignup":
 
 ## 修改前检查
 
-<CardGrid>
-  <Card title="先确认是否应热更新" icon="setting">
-    如果是端口、secret、数据库、Redis、TLS 或 cache 启用，应该改启动配置而不是 runtime settings。
-  </Card>
-  <Card title="先查当前值" icon="magnifier">
-    修改前运行 `synctv settings get <key>`，记录当前值，方便回滚。
-  </Card>
-  <Card title="关注多副本同步" icon="cloud-download">
-    多副本依赖 PostgreSQL 通知同步，修改后观察所有副本日志和行为。
-  </Card>
-  <Card title="保留变更原因" icon="document">
-    对注册、房间创建、代理和权限默认值这类策略变更记录 reason。
-  </Card>
-</CardGrid>
+- **先确认是否应热更新**： 如果是端口、secret、数据库、Redis、TLS 或 cache 启用，应该改启动配置而不是 runtime settings。
+- **先查当前值**： 修改前运行 `synctv settings get <key>`，记录当前值，方便回滚。
+- **关注多副本同步**： 多副本依赖 PostgreSQL 通知同步，修改后观察所有副本日志和行为。
+- **保留变更原因**： 对注册、房间创建、代理和权限默认值这类策略变更记录 reason。

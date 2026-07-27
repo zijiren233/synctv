@@ -30,7 +30,7 @@ Most fields can keep their defaults. Production launch should prioritize secrets
 | `livestream.*` | RTMP/FLV/HLS livestreaming | HLS storage model differs between replicas | Restart required | Use shared filesystem or OSS for high traffic |
 | `proxy_slice_cache.*` | Proxy Range slice cache is needed | Expecting full-file cache | Restart required | Mount enough storage; only Range slices are cached |
 
-Shortest verification loop:
+Run these checks after changing configuration:
 
 ```bash
 synctv config validate

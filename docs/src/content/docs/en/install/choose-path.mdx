@@ -1,37 +1,27 @@
 ---
 title: Choose a Deployment
-description: Choose Docker Compose, Helm, or a local development environment based on operating scale.
+description: Compare the infrastructure and operating requirements of Docker Compose and Helm.
 ---
 
-import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+Docker Compose covers most self-hosted installations. Helm is for platforms that already run Kubernetes, Ingress, and centralized secret management.
 
-## Deployment Options
+<table class="deployment-matrix">
+  <thead><tr><th>Requirement</th><th>Docker Compose</th><th>Helm</th></tr></thead>
+  <tbody>
+    <tr><td>Environment</td><td>One Linux server, NAS, or virtual machine</td><td>Existing Kubernetes cluster</td></tr>
+    <tr><td>SyncTV replicas</td><td>One</td><td>One or more</td></tr>
+    <tr><td>PostgreSQL / Redis</td><td>Started by Compose</td><td>In-cluster or managed services</td></tr>
+    <tr><td>TLS entry point</td><td>Existing reverse proxy</td><td>Ingress Controller</td></tr>
+    <tr><td>Secrets</td><td>Local env files</td><td>Kubernetes Secret or an external secret system</td></tr>
+    <tr><td>Installation</td><td><a href="../quick-start/">Docker Compose</a></td><td><a href="../helm/">Helm</a></td></tr>
+  </tbody>
+</table>
 
-<CardGrid>
-  <LinkCard
-    title="Docker Compose"
-    href="../quick-start/"
-    description="For one server, NAS, or virtual machine. Includes SyncTV, PostgreSQL, and Redis and is the default self-hosted path."
-  />
-  <LinkCard
-    title="Helm / Kubernetes"
-    href="../helm/"
-    description="For an existing Kubernetes platform, multiple replicas, and centralized Ingress, Secrets, and monitoring."
-  />
-  <LinkCard
-    title="Local Development"
-    href="../../develop/local-development/"
-    description="For code changes, API debugging, and tests. Development Compose supplies local dependencies."
-  />
-</CardGrid>
-
-<Aside type="tip">
-Use Docker Compose for a single host or first self-hosted installation. Use Helm when you already operate Kubernetes and need multiple replicas.
-</Aside>
+Use the [local development environment](../../develop/local-development/) for source changes. Its Compose file starts development dependencies only.
 
 ## Production Requirements
 
-Both production paths require:
+Complete these items before serving production traffic:
 
 - Persistent PostgreSQL data and tested backups.
 - Durable JWT, OPAQUE, and credential-encryption secrets.
@@ -39,4 +29,4 @@ Both production paths require:
 - Shared PostgreSQL, Redis, and cluster secrets for multiple replicas.
 - A backup and migration check before upgrades.
 
-After installation, complete the [Production Checklist](../production-checklist/). Existing installations should follow [Upgrades and Migrations](../../operations/upgrades/).
+The [Production Checklist](../production-checklist/) contains the full set of checks. Follow [Upgrades and Migrations](../../operations/upgrades/) for an existing installation.

@@ -3,21 +3,29 @@ title: 管理 SyncTV
 description: 管理用户、房间、权限、Provider、运行设置和维护任务。
 ---
 
-import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
+
+管理命令通过 `synctv admin` 调用 management gRPC。先确认管理入口和认证方式，再执行变更。
 
 <Aside type="caution">
 management gRPC、metrics 和内部调试入口只应通过 Unix socket、内网、VPN、堡垒机或 Kubernetes exec 访问。TCP management 必须配置 `management.auth_token`。
 </Aside>
 
-<CardGrid>
-  <LinkCard title="用户" href="./users/" description="创建用户、封禁和解封、修改全局角色、检查账号安全状态。" />
-  <LinkCard title="房间与成员" href="./rooms-members/" description="管理房间生命周期、成员、播放控制和直播入口。" />
-  <LinkCard title="角色与权限" href="./permissions/" description="查询角色默认值、权限计算、房间设置和成员覆盖。" />
-  <LinkCard title="审核与治理" href="./reviews-moderation/" description="处理注册、建房、加房审核和封禁。" />
-  <LinkCard title="Provider" href="./providers/" description="创建、启停、更新、重连和删除 Provider instance。" />
-  <LinkCard title="运行设置" href="./runtime-settings/" description="热更新注册、代理、CORS、聊天和房间策略。" />
-  <LinkCard title="认证与安全" href="./authentication-security/" description="管理登录方式、2FA、token 和认证边界。" />
-  <LinkCard title="维护任务" href="./maintenance/" description="检查状态、清理 stream、驱逐缓存并验证结果。" />
-</CardGrid>
+## 账号与访问
 
-命令参数见 [CLI 参考](../reference/cli/)，生产依赖和管理面要求见 [部署与运行边界](../operations/deployment-boundaries/)。
+- [用户](./users/)：创建用户、封禁、全局角色和账号安全状态。
+- [角色与权限](./permissions/)：全局角色、房间角色、权限计算和成员覆盖。
+- [认证与安全](./authentication-security/)：登录方式、2FA、token 和认证边界。
+
+## 房间与内容
+
+- [房间与成员](./rooms-members/)：房间生命周期、成员、播放控制和直播入口。
+- [审核与治理](./reviews-moderation/)：注册、建房、加房审核和封禁。
+- [Provider](./providers/)：创建、启停、更新、重连和删除 Provider instance。
+
+## 服务策略与维护
+
+- [运行设置](./runtime-settings/)：热更新注册、代理、CORS、聊天和房间策略。
+- [维护任务](./maintenance/)：检查状态、清理 stream、驱逐缓存并验证结果。
+
+[CLI 参考](../reference/cli/)列出完整参数；[部署与运行边界](../operations/deployment-boundaries/)说明生产依赖和管理面要求。

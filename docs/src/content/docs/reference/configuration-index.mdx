@@ -30,7 +30,7 @@ OAuth2 provider 实例属于 [Runtime settings](../runtime-settings/#oauth2)。�
 | `livestream.*` | RTMP/FLV/HLS 直播 | 多副本 HLS 存储模型不一致 | 需要重启 | 高流量使用共享文件系统或 OSS |
 | `proxy_slice_cache.*` | 需要代理 Range slice 缓存 | 误以为会缓存完整文件 | 需要重启 | 挂载容量足够的目录，只缓存 Range slice |
 
-最短验证闭环：
+修改配置后运行：
 
 ```bash
 synctv config validate

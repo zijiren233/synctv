@@ -123,7 +123,7 @@ export default defineConfig({
             { label: '升级与迁移', translations: { en: 'Upgrades and Migrations' }, slug: 'operations/upgrades' },
             { label: '备份与恢复', translations: { en: 'Backup and Restore' }, slug: 'operations/backup-restore' },
           ],
-          collapsed: false,
+          collapsed: true,
         },
         {
           label: '配置',
@@ -166,7 +166,7 @@ export default defineConfig({
               ],
             },
           ],
-          collapsed: false,
+          collapsed: true,
         },
         {
           label: '管理',
@@ -183,7 +183,7 @@ export default defineConfig({
             { label: '数据与保留策略', translations: { en: 'Data and Retention' }, slug: 'operations/data-retention' },
             { label: '维护任务', translations: { en: 'Maintenance Tasks' }, slug: 'admin/maintenance' },
           ],
-          collapsed: false,
+          collapsed: true,
         },
         {
           label: '运维',
@@ -196,7 +196,7 @@ export default defineConfig({
             { label: '安全加固与密钥轮换', translations: { en: 'Hardening and Secret Rotation' }, slug: 'operations/security-hardening-and-rotation' },
             { label: '部署与运行边界', translations: { en: 'Deployment and Runtime Boundaries' }, slug: 'operations/deployment-boundaries' },
           ],
-          collapsed: false,
+          collapsed: true,
         },
         {
           label: '开发与集成',
@@ -214,7 +214,6 @@ export default defineConfig({
             { label: '缓存一致性', translations: { en: 'Cache Consistency' }, slug: 'develop/cache-consistency' },
             { label: '实现契约', translations: { en: 'Implementation Contracts' }, slug: 'develop/implementation-contracts' },
             { label: '项目发布流程', translations: { en: 'Project Release Process' }, slug: 'operations/release' },
-            { label: '文档写作规范', translations: { en: 'Documentation Style Guide' }, slug: 'develop/documentation-style-guide' },
           ],
           collapsed: true,
         },
@@ -231,7 +230,7 @@ export default defineConfig({
             { label: '错误码', translations: { en: 'Errors' }, slug: 'reference/errors' },
             { label: 'API 与 protobuf 演进', translations: { en: 'API and Protobuf Evolution' }, slug: 'reference/api-versioning' },
             { label: 'Metrics Catalog', slug: 'reference/metrics-catalog' },
-            { label: '限制与非目标', translations: { en: 'Limitations and Non-goals' }, slug: 'reference/limitations' },
+            { label: '已知限制', translations: { en: 'Known Limitations' }, slug: 'reference/limitations' },
             { label: '术语', translations: { en: 'Glossary' }, slug: 'reference/glossary' },
           ],
           collapsed: true,

@@ -1,75 +1,55 @@
 ---
-title: SyncTV Server Documentation
-description: Install, upgrade, configure, and operate SyncTV Server.
-template: splash
-hero:
-  tagline: Install, configure, and operate a self-hosted SyncTV Server.
-  actions:
-    - text: Install with Docker Compose
-      link: install/quick-start/
-      icon: rocket
-      variant: primary
-    - text: Helm / Kubernetes
-      link: install/helm/
-      icon: approve-check-circle
-    - text: Upgrade an Existing Instance
-      link: operations/upgrades/
-      icon: document
+title: SyncTV Server
+description: Deploy, configure, and operate SyncTV Server.
+tableOfContents: false
 ---
 
-import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 import LocaleChoiceTracker from '../../../components/LocaleChoiceTracker.astro';
 
 <LocaleChoiceTracker />
 
-## Install
+<p class="docs-home-lead">
+Use Docker Compose on a single host or Helm in an existing Kubernetes cluster. Then configure public access, durable secrets, backups, and monitoring.
+</p>
 
-<CardGrid>
-  <LinkCard
-    title="Docker Compose"
-    href="install/quick-start/"
-    description="Run SyncTV, PostgreSQL, and Redis on one server, NAS, or virtual machine."
-  />
-  <LinkCard
-    title="Helm / Kubernetes"
-    href="install/helm/"
-    description="Deploy SyncTV with Secrets, PVCs, Ingress, metrics, and multiple replicas."
-  />
-  <LinkCard
-    title="Choose a Deployment"
-    href="install/choose-path/"
-    description="Compare Compose, Helm, and local development environments."
-  />
-</CardGrid>
+<div class="docs-directory">
+  <section>
+    <h2>Deploy</h2>
+    <ul class="docs-link-list">
+      <li><a href="install/quick-start/"><strong>Install with Docker Compose</strong><span>Server, NAS, or virtual machine</span></a></li>
+      <li><a href="install/helm/"><strong>Install with Helm</strong><span>Kubernetes, Ingress, and multiple replicas</span></a></li>
+      <li><a href="operations/upgrades/"><strong>Upgrade an installation</strong><span>Backup, migrate, and roll back</span></a></li>
+      <li><a href="install/production-checklist/"><strong>Production checklist</strong><span>TLS, secrets, data, and monitoring</span></a></li>
+    </ul>
+  </section>
 
-<Aside type="caution">
-Production deployments need persistent PostgreSQL data, durable secrets, and HTTPS for public access. Complete the [Production Checklist](install/production-checklist/) after installation.
-</Aside>
+  <section>
+    <h2>Configure</h2>
+    <ul class="docs-link-list">
+      <li><a href="configuration/how-configuration-works/"><strong>Loading and precedence</strong><span>YAML, environment variables, and secret files</span></a></li>
+      <li><a href="configuration/full-example/"><strong>Configuration examples</strong><span>Minimal production config and full field template</span></a></li>
+      <li><a href="configuration/security/"><strong>Security and secrets</strong><span>JWT, OPAQUE, CORS, and credential encryption</span></a></li>
+      <li><a href="reference/configuration-index/"><strong>Configuration fields</strong><span>Types, defaults, and restart requirements</span></a></li>
+    </ul>
+  </section>
 
-## Configure and Operate
+  <section>
+    <h2>Administer and operate</h2>
+    <ul class="docs-link-list">
+      <li><a href="admin/"><strong>Administer SyncTV</strong><span>Users, rooms, permissions, and Providers</span></a></li>
+      <li><a href="operations/observability/"><strong>Monitoring and runbooks</strong><span>Health, metrics, logs, and alerts</span></a></li>
+      <li><a href="operations/backup-restore/"><strong>Backup and restore</strong><span>PostgreSQL, secrets, and recovery drills</span></a></li>
+      <li><a href="operations/troubleshooting/"><strong>Troubleshoot</strong><span>Errors, status codes, and runtime signals</span></a></li>
+    </ul>
+  </section>
 
-<CardGrid>
-  <LinkCard
-    title="Configuration"
-    href="configuration/how-configuration-works/"
-    description="Understand the loading order for YAML, environment variables, secret files, and CLI overrides."
-  />
-  <LinkCard
-    title="Administration"
-    href="admin/"
-    description="Manage users, rooms, permissions, Providers, runtime settings, and maintenance tasks."
-  />
-  <LinkCard
-    title="Operations"
-    href="operations/observability/"
-    description="Set up monitoring, backups, upgrades, capacity planning, and troubleshooting."
-  />
-</CardGrid>
-
-## Releases and Clients
-
-- [Server Releases](https://github.com/synctv-org/synctv/releases/latest): containers, Helm charts, and server changes.
-- [SyncTV App Releases](https://github.com/synctv-org/synctv-app/releases/latest): Android, iOS, macOS, Windows, and Linux clients.
-- [Configuration Fields](reference/configuration-index/): static fields supported by the current version.
-
-SyncTV is licensed under MIT. Source code, issues, and contribution information are on [GitHub](https://github.com/synctv-org/synctv).
+  <section>
+    <h2>Develop and reference</h2>
+    <ul class="docs-link-list">
+      <li><a href="develop/local-development/"><strong>Local development</strong><span>Dependencies, databases, tests, and code generation</span></a></li>
+      <li><a href="reference/cli/"><strong>CLI</strong><span>Service control and administration commands</span></a></li>
+      <li><a href="reference/openapi/"><strong>OpenAPI</strong><span>HTTP API specification and client generation</span></a></li>
+      <li><a href="reference/grpc/"><strong>gRPC</strong><span>Public API, management API, and reflection</span></a></li>
+    </ul>
+  </section>
+</div>

@@ -1,77 +1,57 @@
 ---
-title: SyncTV Server 文档
-description: 安装、升级、配置和维护 SyncTV Server。
-template: splash
-hero:
-  tagline: 安装、配置和维护自托管 SyncTV Server。
-  actions:
-    - text: Docker Compose 安装
-      link: install/quick-start/
-      icon: rocket
-      variant: primary
-    - text: Helm / Kubernetes
-      link: install/helm/
-      icon: approve-check-circle
-    - text: 升级现有实例
-      link: operations/upgrades/
-      icon: document
+title: SyncTV Server
+description: 部署、配置和运营 SyncTV Server。
+tableOfContents: false
 ---
 
-import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 import LocaleRedirect from '../../components/LocaleRedirect.astro';
 import LocaleChoiceTracker from '../../components/LocaleChoiceTracker.astro';
 
 <LocaleRedirect />
 <LocaleChoiceTracker />
 
-## 安装
+<p class="docs-home-lead">
+在单台服务器上使用 Docker Compose；在现有 Kubernetes 集群中使用 Helm。安装完成后配置公网入口、长期密钥、备份和监控。
+</p>
 
-<CardGrid>
-  <LinkCard
-    title="Docker Compose"
-    href="install/quick-start/"
-    description="在一台服务器、NAS 或虚拟机上运行 SyncTV、PostgreSQL 和 Redis。"
-  />
-  <LinkCard
-    title="Helm / Kubernetes"
-    href="install/helm/"
-    description="使用 Secret、PVC、Ingress、metrics 和多副本部署 SyncTV。"
-  />
-  <LinkCard
-    title="选择部署方式"
-    href="install/choose-path/"
-    description="比较 Compose、Helm 和本地开发环境的适用范围。"
-  />
-</CardGrid>
+<div class="docs-directory">
+  <section>
+    <h2>部署</h2>
+    <ul class="docs-link-list">
+      <li><a href="install/quick-start/"><strong>Docker Compose 安装</strong><span>服务器、NAS 或虚拟机</span></a></li>
+      <li><a href="install/helm/"><strong>Helm 安装</strong><span>Kubernetes、Ingress 与多副本</span></a></li>
+      <li><a href="operations/upgrades/"><strong>升级现有实例</strong><span>备份、迁移与回滚</span></a></li>
+      <li><a href="install/production-checklist/"><strong>生产部署清单</strong><span>TLS、密钥、数据与监控</span></a></li>
+    </ul>
+  </section>
 
-<Aside type="caution">
-生产环境需要持久化 PostgreSQL 和长期 secret，并通过 HTTPS 提供公网访问。完成安装后执行[生产部署清单](install/production-checklist/)。
-</Aside>
+  <section>
+    <h2>配置</h2>
+    <ul class="docs-link-list">
+      <li><a href="configuration/how-configuration-works/"><strong>加载顺序</strong><span>YAML、环境变量与 secret 文件</span></a></li>
+      <li><a href="configuration/full-example/"><strong>配置示例</strong><span>最小生产配置和完整字段模板</span></a></li>
+      <li><a href="configuration/security/"><strong>安全与密钥</strong><span>JWT、OPAQUE、CORS 与凭据加密</span></a></li>
+      <li><a href="reference/configuration-index/"><strong>配置字段</strong><span>类型、默认值与重启要求</span></a></li>
+    </ul>
+  </section>
 
-## 配置与管理
+  <section>
+    <h2>管理与运维</h2>
+    <ul class="docs-link-list">
+      <li><a href="admin/"><strong>管理 SyncTV</strong><span>用户、房间、权限与 Provider</span></a></li>
+      <li><a href="operations/observability/"><strong>监控与运行手册</strong><span>健康检查、metrics、日志与告警</span></a></li>
+      <li><a href="operations/backup-restore/"><strong>备份与恢复</strong><span>PostgreSQL、密钥与恢复演练</span></a></li>
+      <li><a href="operations/troubleshooting/"><strong>排障</strong><span>按错误、状态码和运行信号定位问题</span></a></li>
+    </ul>
+  </section>
 
-<CardGrid>
-  <LinkCard
-    title="配置"
-    href="configuration/how-configuration-works/"
-    description="了解 YAML、环境变量、secret 文件和 CLI 覆盖的加载顺序。"
-  />
-  <LinkCard
-    title="管理"
-    href="admin/"
-    description="管理用户、房间、权限、Provider、运行设置和维护任务。"
-  />
-  <LinkCard
-    title="运维"
-    href="operations/observability/"
-    description="配置监控，执行备份、升级、容量规划和故障排查。"
-  />
-</CardGrid>
-
-## 版本与客户端
-
-- [Server Releases](https://github.com/synctv-org/synctv/releases/latest)：容器、Helm chart 和服务端变更。
-- [SyncTV App Releases](https://github.com/synctv-org/synctv-app/releases/latest)：Android、iOS、macOS、Windows 和 Linux 客户端。
-- [配置字段参考](reference/configuration-index/)：当前版本支持的静态配置字段。
-
-SyncTV 使用 MIT 许可证。源代码、问题跟踪和贡献说明位于 [GitHub](https://github.com/synctv-org/synctv)。
+  <section>
+    <h2>开发与参考</h2>
+    <ul class="docs-link-list">
+      <li><a href="develop/local-development/"><strong>本地开发</strong><span>依赖、数据库、测试与代码生成</span></a></li>
+      <li><a href="reference/cli/"><strong>CLI</strong><span>服务控制与管理命令</span></a></li>
+      <li><a href="reference/openapi/"><strong>OpenAPI</strong><span>HTTP API 规范与客户端生成</span></a></li>
+      <li><a href="reference/grpc/"><strong>gRPC</strong><span>公开 API、management API 与 reflection</span></a></li>
+    </ul>
+  </section>
+</div>
