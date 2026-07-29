@@ -566,23 +566,6 @@ pub fn load_config() -> Result<Config> {
     })
 }
 
-fn load_core_config_with_env_map_and_data_dir_override(
-    config_file: Option<&str>,
-    env: &HashMap<String, String>,
-    data_dir_override: Option<&str>,
-    extensions: &ConfigLoadExtensions,
-) -> Result<Config, ConfigError> {
-    let loaded =
-        load_core_config_with_env_lenient(config_file, env, data_dir_override, extensions)?;
-    if !loaded.unknown.is_empty() {
-        return Err(ConfigError::Message(format!(
-            "strict configuration rejected unknown setting(s): {}",
-            loaded.unknown.strict_error_message()
-        )));
-    }
-    Ok(loaded.config)
-}
-
 fn load_core_config_with_env_lenient(
     config_file: Option<&str>,
     env: &HashMap<String, String>,

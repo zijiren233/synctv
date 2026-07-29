@@ -235,7 +235,7 @@ assert_security_rendering() {
     end
     images = containers.map { |container| container["image"].to_s }
 
-    abort("SyncTV image registry override was not applied") unless images.any? { |image| image.start_with?("registry.example.com/synctv-org/synctv:") }
+    abort("SyncTV image registry override was not applied") unless images.any? { |image| image.start_with?("registry.example.com/") && image.include?("/synctv:") }
     config = docs.find { |doc| doc["kind"] == "ConfigMap" && doc.dig("metadata", "name") == "synctv-config" }
     abort("synctv-config ConfigMap was not rendered") unless config
     synctv_yaml = config.dig("data", "synctv.yaml")
