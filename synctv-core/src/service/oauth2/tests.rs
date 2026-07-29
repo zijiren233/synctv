@@ -313,6 +313,23 @@ fn test_redirect_url_with_credentials_rejected() {
 }
 
 #[test]
+fn test_redirect_url_requires_runtime_allowlist_match() {
+    let allowed = vec!["https://syncs.tv/oauth2/callback".to_string()];
+    assert!(OAuth2Service::validate_redirect_url_with_runtime_allowlist(
+        "https://syncs.tv/oauth2/callback",
+        &allowed,
+        &[],
+    )
+    .is_ok());
+    assert!(OAuth2Service::validate_redirect_url_with_runtime_allowlist(
+        "https://syncs.tv/other",
+        &allowed,
+        &[],
+    )
+    .is_err());
+}
+
+#[test]
 fn test_redirect_malformed_url_rejected() {
     let domains = vec!["example.com".to_string()];
     let result =

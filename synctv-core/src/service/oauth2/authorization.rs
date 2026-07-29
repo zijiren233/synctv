@@ -75,7 +75,15 @@ impl OAuth2Service {
     ) -> Result<PreparedOAuth2Authorization> {
         Self::validate_operation_target(operation, target_user_id)?;
         if let Some(ref url) = redirect_url {
-            Self::validate_redirect_url_with_allowlist(url, &self.allowed_redirect_domains)?;
+            let allowed_urls = match &self.runtime_settings_store {
+                Some(settings) => settings.oauth2.allowed_redirect_urls.get()?.0,
+                None => Vec::new(),
+            };
+            Self::validate_redirect_url_with_runtime_allowlist(
+                url,
+                &allowed_urls,
+                &self.allowed_redirect_domains,
+            )?;
         }
 
         let provider = self.provider_entry(instance_name).await?.provider;
@@ -163,6 +171,14 @@ impl OAuth2Service {
         url: &str,
         allowed_domains: &[String],
     ) -> Result<()> {
+        Self::validate_redirect_url_with_runtime_allowlist(url, &[], allowed_domains)
+    }
+
+    pub(super) fn validate_redirect_url_with_runtime_allowlist(
+        url: &str,
+        allowed_urls: &[String],
+        allowed_domains: &[String],
+    ) -> Result<()> {
         if url.trim().is_empty() {
             return Err(Error::InvalidInput(
                 "Redirect URL cannot be empty".to_string(),
@@ -194,6 +210,14 @@ impl OAuth2Service {
                 if scheme != "https" {
                     return Err(Error::InvalidInput(
                         "Only HTTPS redirect URLs are allowed for non-loopback hosts".to_string(),
+                    ));
+                }
+                if !allowed_urls.is_empty() {
+                    if allowed_urls.iter().any(|allowed| allowed == url) {
+                        return Ok(());
+                    }
+                    return Err(Error::InvalidInput(
+                        "Redirect URL is not in the OAuth2 allowed redirect URLs list".to_string(),
                     ));
                 }
                 if allowed_domains.is_empty() {
