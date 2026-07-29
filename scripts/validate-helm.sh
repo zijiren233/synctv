@@ -203,6 +203,26 @@ assert_deployment_annotation() {
   ' "$file" "$annotation" "$expected"
 }
 
+assert_app_env_contract() {
+  local file="$1"
+  ruby -ryaml -e '
+    file, source_root = ARGV
+    docs = YAML.load_stream(File.read(file)).compact
+    deployment = docs.find { |doc| doc["kind"] == "Deployment" && doc.dig("metadata", "name") == "synctv" }
+    abort("synctv Deployment was not rendered in #{file}") unless deployment
+    pod_spec = deployment.dig("spec", "template", "spec") || {}
+    abort("synctv Deployment must set enableServiceLinks=false") unless pod_spec["enableServiceLinks"] == false
+    container = Array(pod_spec["containers"]).find { |item| item["name"] == "synctv" }
+    abort("synctv container was not rendered in #{file}") unless container
+    rendered = Array(container["env"]).filter_map { |item| item["name"] if item["name"].to_s.start_with?("SYNCTV_") }
+    supported = Dir.glob(File.join(source_root, "**", "*.rs")).flat_map do |path|
+      File.read(path).scan(/"(SYNCTV_[A-Z0-9_]+)"/).flatten
+    end.uniq
+    unknown = rendered - supported
+    abort("unsupported SYNCTV_ environment variable(s) rendered in #{file}: #{unknown.join(", ")}") unless unknown.empty?
+  ' "$file" synctv/src
+}
+
 assert_security_rendering() {
   local file="$1"
   ruby -ryaml -e '
@@ -592,6 +612,7 @@ assert_deployment_annotation "$tmp_dir/existing-secret.yaml" synctv.io/secret-ro
 assert_bootstrap_env_value "$tmp_dir/explicit-email-outbox-key.yaml" EMAIL_OUTBOX_KEY 5959595959595959595959595959595959595959595959595959595959595959
 assert_file_storage_s3_file_credentials_rendering "$tmp_dir/file-storage-s3-files.yaml"
 validate_rendered_synctv_config "$tmp_dir/default.yaml"
+assert_app_env_contract "$tmp_dir/default.yaml"
 validate_rendered_synctv_config "$tmp_dir/security.yaml"
 validate_rendered_synctv_config "$tmp_dir/cluster-replicas.yaml"
 validate_rendered_synctv_config_with_file_storage_s3_secret_files "$tmp_dir/file-storage-s3-files.yaml"

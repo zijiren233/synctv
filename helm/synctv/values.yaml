@@ -662,7 +662,7 @@ secretBootstrap:
       memory: 64Mi
 
 secrets:
-  ## Database credentials injected via SYNCTV_DATABASE_USER / SYNCTV_DATABASE_PASSWORD
+  ## Database credentials injected via SYNCTV_DATABASE_USERNAME / SYNCTV_DATABASE_PASSWORD
   database:
     ## Leave empty to auto-generate a secure 32-character random password (recommended)
     ## On upgrades, the existing password is preserved automatically
