@@ -235,7 +235,7 @@ assert_security_rendering() {
     end
     images = containers.map { |container| container["image"].to_s }
 
-    abort("SyncTV image registry override was not applied") unless images.any? { |image| image.start_with?("registry.example.com/synctvorg/synctv:") }
+    abort("SyncTV image registry override was not applied") unless images.any? { |image| image.start_with?("registry.example.com/zijiren233/synctv:") }
     abort("PostgreSQL image registry override was not applied") unless images.include?("registry.example.com/postgres:18.1-bookworm")
     abort("Redis image registry override was not applied") unless images.include?("registry.example.com/redis:8.4.0-bookworm")
 

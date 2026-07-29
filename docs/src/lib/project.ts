@@ -1,4 +1,4 @@
-const defaultRepository = 'synctv-org/synctv';
+const defaultRepository = 'zijiren233/synctv';
 const defaultAppVersion = '1.0.2-rc.2';
 
 function readEnv(name: string): string | undefined {

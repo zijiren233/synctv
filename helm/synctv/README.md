@@ -44,13 +44,13 @@ Set `safety.allowStandaloneReplicas=true` only when you intentionally want multi
 Install the released OCI chart:
 
 ```bash
-helm install synctv oci://ghcr.io/synctv-org/synctv/charts/synctv \
+helm install synctv oci://ghcr.io/zijiren233/synctv/charts/synctv \
   --version 1.0.2-rc.2 \
   --namespace synctv \
   --create-namespace
 ```
 
-The default parent OCI repository is `ghcr.io/synctv-org/synctv/charts`. Helm
+The default parent OCI repository is `ghcr.io/zijiren233/synctv/charts`. Helm
 appends the chart name, so the install reference ends with `/synctv`.
 Maintainers can override the publishing target with `HELM_OCI_REPOSITORY`.
 
