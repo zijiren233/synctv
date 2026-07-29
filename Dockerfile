@@ -27,6 +27,8 @@ ENV SQLX_OFFLINE=true
 # fully explicit feature set.
 ARG SYNCTV_BUILD_NO_DEFAULT_FEATURES=false
 ARG SYNCTV_BUILD_FEATURES="k8s,mimalloc,openapi"
+ARG SYNCTV_BUILD_JOBS=2
+ENV CARGO_BUILD_JOBS=$SYNCTV_BUILD_JOBS
 
 # Copy entire source tree
 COPY . .
