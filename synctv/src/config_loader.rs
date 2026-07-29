@@ -775,17 +775,21 @@ pub fn load_config_with_options(options: &LoadConfigOptions) -> Result<Config> {
         if options.verbose {
             tracing::info!(path = %display_path, "Loading config file");
         }
-        match load_core_config_with_env_map_and_data_dir_override(
+        match load_core_config_with_env_lenient(
             Some(&path),
             &env,
             options.data_dir.as_deref(),
             &options.extensions,
         ) {
-            Ok(cfg) => {
+            Ok(loaded) => {
+                if !loaded.unknown.is_empty() {
+                    let message = loaded.unknown.strict_error_message();
+                    tracing::warn!("Ignoring unknown configuration setting(s): {message}");
+                }
                 if options.verbose {
                     tracing::info!(path = %display_path, "Config file loaded");
                 }
-                cfg
+                loaded.config
             }
             Err(e) => {
                 let source = if options.config_path.is_some() {
@@ -815,12 +819,19 @@ pub fn load_config_with_options(options: &LoadConfigOptions) -> Result<Config> {
         if options.verbose {
             tracing::info!("No config file found, using environment variables");
         }
-        load_core_config_with_env_map_and_data_dir_override(
-            None,
-            &env,
-            options.data_dir.as_deref(),
-            &options.extensions,
-        )?
+        {
+            let loaded = load_core_config_with_env_lenient(
+                None,
+                &env,
+                options.data_dir.as_deref(),
+                &options.extensions,
+            )?;
+            if !loaded.unknown.is_empty() {
+                let message = loaded.unknown.strict_error_message();
+                tracing::warn!("Ignoring unknown configuration setting(s): {message}");
+            }
+            loaded.config
+        }
     };
 
     set_default_timezone_name(&config.time.timezone).map_err(|error| {

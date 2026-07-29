@@ -202,7 +202,7 @@ fn cli_parses_global_data_dir() {
 }
 
 #[test]
-fn serve_config_context_rejects_unknown_inputs_strictly() {
+fn serve_config_context_warns_on_unknown_inputs() {
     let _env_lock = acquire_env_test_lock();
     let _unknown_env = EnvVarGuard::set("SYNCTV_UNKNOWN_BOOT_FLAG", "1");
     let context = CliConfigContext::new(GlobalConfigArgs {
@@ -210,14 +210,9 @@ fn serve_config_context_rejects_unknown_inputs_strictly() {
         ..GlobalConfigArgs::default()
     });
 
-    let err = context
-        .strict_validated_config()
-        .expect_err("serve config loading should fail on unsupported SYNCTV_ inputs");
-
-    assert!(
-        err.to_string().contains("SYNCTV_UNKNOWN_BOOT_FLAG"),
-        "strict startup error should name the unsupported environment variable: {err}"
-    );
+    context
+        .validated_config()
+        .expect("serve config loading should ignore unsupported SYNCTV_ inputs");
 }
 
 #[test]
