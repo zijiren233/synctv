@@ -2,7 +2,7 @@ name: Docs
 
 on:
   push:
-    branches: [next]
+    branches: ['**']
     paths:
       - ".github/workflows/docs.yml"
       - "docs/**"
@@ -14,8 +14,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
