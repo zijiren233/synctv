@@ -5670,6 +5670,7 @@ fn render_human_output_uses_proto_json_for_admin_settings() {
     .expect("room settings output should render");
     let rendered_oauth2 = render_human_output(&synctv_proto::admin::RuntimeSettings {
         oauth2: Some(synctv_proto::admin::OAuth2Settings {
+            allowed_redirect_urls: vec!["https://syncs.tv/oauth2/callback".into()],
             providers: vec![synctv_proto::admin::OAuth2ProviderSettings {
                 name: "github-main".into(),
                 enable_signup: true,
@@ -5697,6 +5698,10 @@ fn render_human_output_uses_proto_json_for_admin_settings() {
     assert_eq!(
         rendered_oauth2["oauth2"]["providers"][0]["name"],
         "github-main"
+    );
+    assert_eq!(
+        rendered_oauth2["oauth2"]["allowedRedirectUrls"][0],
+        "https://syncs.tv/oauth2/callback"
     );
     assert_eq!(
         rendered_oauth2["oauth2"]["providers"][0]["github"]["clientId"],
