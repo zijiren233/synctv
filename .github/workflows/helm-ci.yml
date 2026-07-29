@@ -2,7 +2,7 @@ name: Helm CI
 
 on:
   push:
-    branches: ['**']
+    branches: [next]
     tags:
       - "v*"
     paths:

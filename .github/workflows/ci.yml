@@ -2,7 +2,7 @@ name: CI Pipeline
 
 on:
   push:
-    branches: ['**']
+    branches: [next]
   pull_request:
     branches: ['**']
   schedule:

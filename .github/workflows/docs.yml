@@ -2,7 +2,7 @@ name: Docs
 
 on:
   push:
-    branches: ['**']
+    branches: [next]
     paths:
       - ".github/workflows/docs.yml"
       - "docs/**"
