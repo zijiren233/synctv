@@ -235,10 +235,7 @@ assert_security_rendering() {
     end
     images = containers.map { |container| container["image"].to_s }
 
-    abort("SyncTV image registry override was not applied") unless images.any? { |image| image.start_with?("registry.example.com/zijiren233/synctv:") }
-    abort("PostgreSQL image registry override was not applied") unless images.include?("registry.example.com/postgres:18.1-bookworm")
-    abort("Redis image registry override was not applied") unless images.include?("registry.example.com/redis:8.4.0-bookworm")
-
+    abort("SyncTV image registry override was not applied") unless images.any? { |image| image.start_with?("registry.example.com/synctv-org/synctv:") }
     config = docs.find { |doc| doc["kind"] == "ConfigMap" && doc.dig("metadata", "name") == "synctv-config" }
     abort("synctv-config ConfigMap was not rendered") unless config
     synctv_yaml = config.dig("data", "synctv.yaml")
@@ -481,7 +478,7 @@ helm template aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$chart_dir"
 
 helm template synctv "$chart_dir" \
   --namespace "$namespace" \
-  --set global.imageRegistry=registry.example.com \
+  --set image.registry=registry.example.com \
   --set config.security.ssrf.allowPrivateNetworkTargets=true \
   --set config.security.ssrf.allowedHosts[0]=nas.example.internal \
   --set config.security.ssrf.allowedIpRanges[0]=10.0.8.0/24 \

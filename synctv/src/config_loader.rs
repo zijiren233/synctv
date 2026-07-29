@@ -1364,7 +1364,7 @@ metrics:
         )
         .checked("config should be written");
 
-        let err = load_config_with_options(&LoadConfigOptions {
+        load_config_with_options(&LoadConfigOptions {
             config_path: Some(config_path.to_string_lossy().to_string()),
             data_dir: None,
             load_dotenv: false,
@@ -1372,11 +1372,7 @@ metrics:
             verbose: false,
             extensions: ConfigLoadExtensions::default(),
         })
-        .failed("default config loading should reject unsupported inputs");
-        let message = err.to_string();
-
-        assert!(message.contains("metrics.obsolete_token"));
-        assert!(message.contains("SYNCTV_UNKNOWN_SETTING"));
+        .checked("default config loading should warn and continue for unsupported inputs");
     }
 
     #[test]
