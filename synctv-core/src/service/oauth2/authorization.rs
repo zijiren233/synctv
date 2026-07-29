@@ -79,11 +79,7 @@ impl OAuth2Service {
                 Some(settings) => settings.oauth2.allowed_redirect_urls.get()?.0,
                 None => Vec::new(),
             };
-            Self::validate_redirect_url_with_runtime_allowlist(
-                url,
-                &allowed_urls,
-                &self.allowed_redirect_domains,
-            )?;
+            Self::validate_redirect_url_with_allowlist(url, &allowed_urls)?;
         }
 
         let provider = self.provider_entry(instance_name).await?.provider;
@@ -169,15 +165,7 @@ impl OAuth2Service {
 
     pub(super) fn validate_redirect_url_with_allowlist(
         url: &str,
-        allowed_domains: &[String],
-    ) -> Result<()> {
-        Self::validate_redirect_url_with_runtime_allowlist(url, &[], allowed_domains)
-    }
-
-    pub(super) fn validate_redirect_url_with_runtime_allowlist(
-        url: &str,
         allowed_urls: &[String],
-        allowed_domains: &[String],
     ) -> Result<()> {
         if url.trim().is_empty() {
             return Err(Error::InvalidInput(
@@ -212,27 +200,12 @@ impl OAuth2Service {
                         "Only HTTPS redirect URLs are allowed for non-loopback hosts".to_string(),
                     ));
                 }
-                if !allowed_urls.is_empty() {
-                    if allowed_urls.iter().any(|allowed| allowed == url) {
-                        return Ok(());
-                    }
-                    return Err(Error::InvalidInput(
-                        "Redirect URL is not in the OAuth2 allowed redirect URLs list".to_string(),
-                    ));
+                if allowed_urls.iter().any(|allowed| allowed == url) {
+                    return Ok(());
                 }
-                if allowed_domains.is_empty() {
-                    return Err(Error::InvalidInput(
-                        "Redirect URL domain allowlist is empty and the host is not loopback."
-                            .to_string(),
-                    ));
-                }
-                if !Self::redirect_host_matches_allowlist(host, allowed_domains) {
-                    return Err(Error::InvalidInput(format!(
-                        "Redirect URL domain '{host}' is not in the allowed domains list"
-                    )));
-                }
-
-                Ok(())
+                Err(Error::InvalidInput(
+                    "Redirect URL is not in the OAuth2 allowed redirect URLs list".to_string(),
+                ))
             }
             Err(_) => Err(Error::InvalidInput(
                 "Redirect URL must be an absolute http(s) URL with a host".to_string(),
@@ -242,24 +215,5 @@ impl OAuth2Service {
 
     fn is_loopback_host(host: &str) -> bool {
         matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
-    }
-
-    fn redirect_host_matches_allowlist(host: &str, allowed_domains: &[String]) -> bool {
-        allowed_domains
-            .iter()
-            .any(|domain| Self::redirect_domain_matches(host, domain))
-    }
-
-    fn redirect_domain_matches(host: &str, allowed_domain: &str) -> bool {
-        if !allowed_domain.contains('.') {
-            return false;
-        }
-        if host == allowed_domain {
-            return true;
-        }
-
-        let suffix = format!(".{allowed_domain}");
-        host.strip_suffix(&suffix)
-            .is_some_and(|prefix| !prefix.contains('.'))
     }
 }

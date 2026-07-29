@@ -421,7 +421,6 @@ pub struct CoreServicesOptions {
     pub jwt: JwtOptions,
     pub password_complexity: PasswordComplexityOptions,
     pub passkey: PasskeyServiceOptions,
-    pub oauth2_allowed_redirect_domains: Vec<String>,
 }
 
 impl Default for CoreServicesOptions {
@@ -438,7 +437,6 @@ impl Default for CoreServicesOptions {
             jwt: JwtOptions::default(),
             password_complexity: PasswordComplexityOptions::default(),
             passkey: PasskeyServiceOptions::default(),
-            oauth2_allowed_redirect_domains: Vec::new(),
         }
     }
 }
@@ -1137,7 +1135,6 @@ pub async fn init_services_with_options(
         Arc::clone(&user_service),
         &shared_state_profile,
         runtime_options.ssrf_guard.clone(),
-        service_options.oauth2_allowed_redirect_domains.clone(),
     )?;
     info!("OAuth2 service initialized");
 
@@ -1292,7 +1289,6 @@ fn init_oauth2_service(
     user_service: Arc<UserService>,
     profile: &SharedStateProfile,
     ssrf_guard: synctv_common::ssrf::SsrfGuard,
-    allowed_redirect_domains: Vec<String>,
 ) -> Result<Option<Arc<OAuth2Service>>, anyhow::Error> {
     let provider_registry = synctv_core::oauth2::providers::provider_registry(ssrf_guard.clone());
     info!("OAuth2 provider registry initialized");
@@ -1306,7 +1302,6 @@ fn init_oauth2_service(
         ssrf_guard,
         matches!(profile.state_mode(), SharedStateMode::SharedRequired),
         OAuth2ServiceRuntime {
-            allowed_redirect_domains,
             runtime_settings_store: Some(runtime_settings_store),
             user_service: Some(user_service),
         },

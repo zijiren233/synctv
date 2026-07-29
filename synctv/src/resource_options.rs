@@ -265,14 +265,6 @@ fn passkey_options(config: &AppConfig) -> PasskeyServiceOptions {
 }
 
 pub fn core_services_options(config: &AppConfig) -> CoreServicesOptions {
-    let oauth2_allowed_redirect_domains = config
-        .webauthn
-        .allowed_origins
-        .iter()
-        .filter_map(|origin| url::Url::parse(origin).ok())
-        .filter_map(|origin| origin.host_str().map(str::to_owned))
-        .collect();
-
     CoreServicesOptions {
         security: security_options(config),
         media_providers: media_providers_options(config),
@@ -285,7 +277,6 @@ pub fn core_services_options(config: &AppConfig) -> CoreServicesOptions {
         jwt: jwt_options(config),
         password_complexity: password_complexity_options(config),
         passkey: passkey_options(config),
-        oauth2_allowed_redirect_domains,
     }
 }
 
